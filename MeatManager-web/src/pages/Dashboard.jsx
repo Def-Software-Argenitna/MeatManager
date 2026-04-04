@@ -265,6 +265,11 @@ const Dashboard = () => {
                             color="#ec4899"
                         />
                         <QuickAction
+                            label="Caja"
+                            onClick={() => navigate('/caja')}
+                            color="#22c55e"
+                        />
+                        <QuickAction
                             label="Ver Inventario"
                             onClick={() => navigate('/stock')}
                             color="#8b5cf6"

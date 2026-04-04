@@ -101,7 +101,7 @@ const Sidebar = ({ isCollapsed }) => {
   const operationItems = [
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
     { title: 'Ventas', path: '/ventas', icon: Banknote },
-    { title: 'Cierre de Caja', path: '/cierre-caja', icon: Calculator },
+    { title: 'Caja', path: '/caja', icon: Calculator },
     { title: 'Compras', path: '/compras', icon: ShoppingCart },
     { title: 'Stock', path: '/stock', icon: PackageSearch },
   ];

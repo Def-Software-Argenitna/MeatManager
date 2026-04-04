@@ -74,15 +74,16 @@ const Manual = () => {
         },
         {
             id: 'caja',
-            title: 'Cierre de Caja y Gastos',
+            title: 'Caja, Apertura y Cierre',
             icon: <Calculator size={24} />,
             color: '#e67e22',
             content: [
                 {
                     subtitle: 'Cuadrar el día',
                     steps: [
-                        'En "Cierre de Caja", cargá los Gastos que tuviste (luz, fletes, etc.).',
-                        'El sistema te muestra el total neto por cada medio de pago.',
+                        'En "Caja", registrá la apertura del día por cada medio de pago.',
+                        'Cargá retiros, gastos e ingresos manuales para que el saldo quede conciliado.',
+                        'El sistema te muestra el saldo acumulado por cada medio de pago.',
                         'Revisá el historial de ventas para detectar errores.',
                         'Hacé el arqueo físico y compará con el total del sistema.'
                     ]
