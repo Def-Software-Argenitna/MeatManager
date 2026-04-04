@@ -1,0 +1,36 @@
+services:
+  web-main:
+    image: ${GHCR_NAMESPACE}/meatmanager-web:main
+    container_name: meatmanager-web-main
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4100:80"
+
+  api-main:
+    image: ${GHCR_NAMESPACE}/meatmanager-api:main
+    container_name: meatmanager-api-main
+    restart: unless-stopped
+    env_file:
+      - ./env/api-main.env
+    volumes:
+      - ./secrets/firebase-service-account.json:/app/firebase-service-account.json:ro
+    ports:
+      - "127.0.0.1:4101:3001"
+
+  web-dev:
+    image: ${GHCR_NAMESPACE}/meatmanager-web:dev
+    container_name: meatmanager-web-dev
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:4200:80"
+
+  api-dev:
+    image: ${GHCR_NAMESPACE}/meatmanager-api:dev
+    container_name: meatmanager-api-dev
+    restart: unless-stopped
+    env_file:
+      - ./env/api-dev.env
+    volumes:
+      - ./secrets/firebase-service-account.json:/app/firebase-service-account.json:ro
+    ports:
+      - "127.0.0.1:4201:3001"
