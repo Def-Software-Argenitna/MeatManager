@@ -42,12 +42,25 @@ EXPO_PUBLIC_FIREBASE_APP_ID=
 EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID=
 ```
 
+## API
+
+La app ahora reporta ubicacion a la API usando token Firebase y la variable:
+
+```bash
+EXPO_PUBLIC_API_URL=http://35.225.156.199:3001
+```
+
+Ya te la dejé cargada en [`.env`](/Users/rodrigocortes/Documents/GitHub/MeatManager/MeatManager-mobile/.env).
+
+Si cambiás de servidor, actualizá ese valor y reiniciá Expo.
+
 ## Colecciones usadas
 
 - `orders_delivery`
-- `drivers_locations`
 
 ## Observaciones
 
 - La app sigue el mismo esquema del `DeliveryPortal` web.
-- El tracking hoy queda en primer plano. Si después querés, el siguiente paso natural es fondo/background tracking y autenticacion real de usuarios.
+- El login ya usa Firebase Auth.
+- La ubicacion online ya no depende de Firestore: se envía a la API para persistencia en Redis.
+- El tracking hoy queda en primer plano. El siguiente paso natural es fondo/background tracking.

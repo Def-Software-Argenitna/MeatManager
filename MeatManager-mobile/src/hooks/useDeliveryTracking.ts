@@ -89,6 +89,9 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
             await updateDriverLocation({
               lat,
               lng,
+              accuracy: position.coords.accuracy ?? null,
+              speed: position.coords.speed ?? null,
+              heading: position.coords.heading ?? null,
               repartidor: currentDriverName,
               time: new Date().toISOString(),
             });

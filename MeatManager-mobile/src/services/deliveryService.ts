@@ -3,12 +3,12 @@ import {
   doc,
   onSnapshot,
   query,
-  setDoc,
   updateDoc,
   where,
 } from 'firebase/firestore';
 
-import { firestore } from '../config/firebase';
+import { apiBaseUrl } from '../config/env';
+import { auth, firestore } from '../config/firebase';
 import type { DeliveryOrder, DriverLocation } from '../types/delivery';
 
 export function subscribeToAssignedOrders(
@@ -44,8 +44,38 @@ export function subscribeToAssignedOrders(
   );
 }
 
-export async function updateDriverLocation(location: DriverLocation) {
-  await setDoc(doc(firestore, 'drivers_locations', location.repartidor), location);
+export async function updateDriverLocation(location: DriverLocation & {
+  accuracy?: number | null;
+  speed?: number | null;
+  heading?: number | null;
+}) {
+  const currentUser = auth.currentUser;
+  if (!currentUser) {
+    throw new Error('No hay una sesion autenticada para reportar ubicacion.');
+  }
+
+  const token = await currentUser.getIdToken();
+  const response = await fetch(`${apiBaseUrl}/api/delivery/location`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      lat: location.lat,
+      lng: location.lng,
+      accuracy: location.accuracy ?? null,
+      speed: location.speed ?? null,
+      heading: location.heading ?? null,
+      time: location.time,
+      repartidor: location.repartidor,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.error || 'No se pudo sincronizar ubicacion con la API.');
+  }
 }
 
 export async function markOrderAsDelivered(orderId: string) {
