@@ -3,8 +3,8 @@ services:
     image: ${GHCR_NAMESPACE}/meatmanager-web:main
     container_name: meatmanager-web-main
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:4100:80"
+    networks:
+      - shared_proxy
 
   api-main:
     image: ${GHCR_NAMESPACE}/meatmanager-api:main
@@ -14,15 +14,15 @@ services:
       - ./env/api-main.env
     volumes:
       - ./secrets/firebase-service-account.json:/app/firebase-service-account.json:ro
-    ports:
-      - "127.0.0.1:4101:3001"
+    networks:
+      - shared_proxy
 
   web-dev:
     image: ${GHCR_NAMESPACE}/meatmanager-web:dev
     container_name: meatmanager-web-dev
     restart: unless-stopped
-    ports:
-      - "127.0.0.1:4200:80"
+    networks:
+      - shared_proxy
 
   api-dev:
     image: ${GHCR_NAMESPACE}/meatmanager-api:dev
@@ -32,5 +32,10 @@ services:
       - ./env/api-dev.env
     volumes:
       - ./secrets/firebase-service-account.json:/app/firebase-service-account.json:ro
-    ports:
-      - "127.0.0.1:4201:3001"
+    networks:
+      - shared_proxy
+
+networks:
+  shared_proxy:
+    external: true
+    name: gestionclientes_gestionclientes_net

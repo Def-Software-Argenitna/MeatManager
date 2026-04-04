@@ -1,0 +1,32 @@
+{
+  "expo": {
+    "name": "MeatManager Delivery",
+    "slug": "meatmanager-delivery",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#f7f4ee"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.meatmanager.delivery",
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real."
+      }
+    },
+    "android": {
+      "package": "com.meatmanager.delivery",
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      "expo-location"
+    ]
+  }
+}
