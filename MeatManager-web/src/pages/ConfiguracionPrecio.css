@@ -1,24 +1,58 @@
-.neo-card {
-  background: #fff;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+.config-precio-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.config-precio-card {
+  max-width: 540px;
+  margin: 1.5rem auto 0;
   padding: 2rem;
 }
 
-.neo-button {
-  background: #22c55e;
-  color: #fff;
-  border: none;
-  border-radius: 4px;
-  padding: 0.5rem 1.5rem;
-  font-size: 1rem;
-  cursor: pointer;
-  margin-top: 1rem;
+.config-precio-title {
+  margin: 0 0 1.5rem;
+  color: var(--color-text-main);
+  font-size: 1.4rem;
 }
 
-select {
-  padding: 0.4rem 1rem;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  margin-left: 0.5rem;
+.config-precio-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.config-precio-field label {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 700;
+}
+
+.config-precio-preview {
+  margin-top: 1.25rem;
+  padding: 1rem 1.1rem;
+  border-radius: var(--radius-md);
+  background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+
+.config-precio-preview-label {
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.4rem;
+}
+
+.config-precio-preview-value {
+  color: var(--color-primary);
+  font-size: 1.8rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
+.config-precio-btn {
+  margin-top: 1.25rem;
 }

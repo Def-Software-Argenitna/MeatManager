@@ -35,7 +35,6 @@ export const ALL_ROUTES = [
     { path: '/config/productos-compra', label: 'Catálogo Compras',  group: 'Configuración' },
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
     { path: '/config/licencia',         label: 'Licencia',          group: 'Configuración' },
-    { path: '/config/mantenimiento',    label: 'Mantenimiento',     group: 'Configuración' },
     { path: '/config/seguridad',        label: 'Seguridad/Usuarios',group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];

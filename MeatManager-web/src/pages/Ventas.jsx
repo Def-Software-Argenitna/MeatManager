@@ -1017,6 +1017,10 @@ const Ventas = () => {
             ? { id: 'current_account', name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0 }
             : null
     ), [selectedClientId, selectedClientHasCurrentAccount]);
+    const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
+    const availableSplitMethods = React.useMemo(() => (
+        currentAccountMethod ? [...(dbPaymentMethods || []), currentAccountMethod] : (dbPaymentMethods || [])
+    ), [currentAccountMethod, dbPaymentMethods]);
 
     const getMethodById = React.useCallback((id) => {
         if (id === 'current_account') return currentAccountMethod;
@@ -2034,30 +2038,35 @@ const Ventas = () => {
                                             )}
                                         </button>
                                     ))}
-                                    {currentAccountMethod && (
-                                        <button
-                                            onClick={() => {
-                                                setSelectedPaymentMethod(currentAccountMethod.id);
-                                                setCashReceived('');
-                                            }}
-                                            style={{
-                                                padding: '0.75rem',
-                                                borderRadius: 'var(--radius-md)',
-                                                border: selectedPaymentMethod === currentAccountMethod.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                                background: selectedPaymentMethod === currentAccountMethod.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
-                                                color: 'var(--color-text-main)',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                alignItems: 'center',
-                                                gap: '0.2rem',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        >
-                                            <div style={{ fontSize: '1.8rem', lineHeight: 1 }}>📋</div>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>Cuenta Corriente</div>
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => {
+                                            if (!currentAccountAvailable || !currentAccountMethod) return;
+                                            setSelectedPaymentMethod(currentAccountMethod.id);
+                                            setCashReceived('');
+                                        }}
+                                        disabled={!currentAccountAvailable}
+                                        title={currentAccountAvailable ? 'Registrar venta en cuenta corriente' : 'Seleccioná un cliente con cuenta corriente habilitada'}
+                                        style={{
+                                            padding: '0.75rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: selectedPaymentMethod === currentAccountMethod?.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                            background: selectedPaymentMethod === currentAccountMethod?.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
+                                            color: currentAccountAvailable ? 'var(--color-text-main)' : 'var(--color-text-muted)',
+                                            cursor: currentAccountAvailable ? 'pointer' : 'not-allowed',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            gap: '0.2rem',
+                                            transition: 'all 0.2s',
+                                            opacity: currentAccountAvailable ? 1 : 0.55
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '1.8rem', lineHeight: 1 }}>📋</div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>Cuenta Corriente</div>
+                                        <div style={{ fontSize: '0.68rem', textAlign: 'center', color: currentAccountAvailable ? '#f59e0b' : 'var(--color-text-muted)' }}>
+                                            {currentAccountAvailable ? 'Cliente habilitado' : 'Elegí un cliente'}
+                                        </div>
+                                    </button>
                                 </div>
                             ) : (
                                 <div style={{ display: 'grid', gap: '0.75rem' }}>
@@ -2071,10 +2080,13 @@ const Ventas = () => {
                                                         <span>Medio</span>
                                                         <select
                                                             value={row.methodId || ''}
-                                                            onChange={(e) => updateSplitPayment(index, 'methodId', Number(e.target.value))}
+                                                            onChange={(e) => {
+                                                                const rawValue = e.target.value;
+                                                                updateSplitPayment(index, 'methodId', rawValue === 'current_account' ? rawValue : Number(rawValue));
+                                                            }}
                                                             style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
                                                         >
-                                                            {dbPaymentMethods?.map(m => (
+                                                            {availableSplitMethods?.map(m => (
                                                                 <option key={m.id} value={m.id}>{m.name}</option>
                                                             ))}
                                                         </select>

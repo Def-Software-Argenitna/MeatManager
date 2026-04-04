@@ -14,6 +14,7 @@ const BRAND_MAP = {
     mercado_pago: { label: 'MP', bg: '#00a6ff', color: '#ffffff' },
     uala: { label: 'U', bg: '#06b6d4', color: '#ffffff' },
     cuenta_dni: { label: 'DNI', bg: '#1d4ed8', color: '#ffffff' },
+    cuenta_corriente: { label: 'CC', bg: '#c2410c', color: '#ffffff' },
     personal_pay: { label: 'PP', bg: '#111827', color: '#ffffff' },
     modo: { label: 'MODO', bg: '#7c3aed', color: '#ffffff' },
     bitcoin: { label: 'BTC', bg: '#f59e0b', color: '#111827' },
@@ -30,6 +31,7 @@ function getBrandKey(method = {}) {
     if (name.includes('posnet')) return 'posnet';
     if (name.includes('ualá') || name.includes('uala')) return 'uala';
     if (name.includes('cuenta dni')) return 'cuenta_dni';
+    if (name.includes('cuenta corriente')) return 'cuenta_corriente';
     if (name.includes('personal pay')) return 'personal_pay';
     if (name.includes('modo')) return 'modo';
     if (name.includes('bitcoin')) return 'bitcoin';
@@ -47,6 +49,7 @@ function getBrandKey(method = {}) {
     if (bank.includes('naranja') || name.includes('naranja')) return 'naranja';
     if (method.type === 'crypto') return 'crypto';
     if (method.type === 'transfer') return 'transfer';
+    if (method.type === 'cuenta_corriente') return 'cuenta_corriente';
     if (method.type === 'card') return 'posnet';
     if (method.type === 'cash') return 'cash';
     return 'cash';

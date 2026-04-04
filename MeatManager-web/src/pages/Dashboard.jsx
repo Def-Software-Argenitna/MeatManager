@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { useUser } from '../context/UserContext';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
+import './Dashboard.css';
 
 const Dashboard = () => {
     const navigate = useNavigate();
@@ -94,13 +95,13 @@ const Dashboard = () => {
     };
 
     return (
-        <div className="animate-fade-in">
+        <div className="dashboard-page animate-fade-in">
             <header className="page-header">
                 <h1 className="page-title">Dashboard</h1>
                 <p className="page-description">Resumen en tiempo real de tu carnicería</p>
             </header>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1.5rem', marginBottom: '2rem' }}>
+            <div className="dashboard-stats-grid">
                 <StatCard
                     title="Ventas del Día"
                     value={formatCurrency(totalVentasDia)}
@@ -182,15 +183,15 @@ const Dashboard = () => {
                 )}
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(500px, 1fr))', gap: '1.5rem' }}>
-                <div style={{ backgroundColor: 'var(--color-bg-card)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <h3 style={{ fontSize: '1.2rem' }}>Últimas Ventas</h3>
-                        <button onClick={() => navigate('/ventas/historial')} style={{ background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.9rem' }}>Ver todas</button>
+            <div className="dashboard-main-grid">
+                <div className="dashboard-panel">
+                    <div className="dashboard-panel-header">
+                        <h3 className="dashboard-section-title">Últimas Ventas</h3>
+                        <button onClick={() => navigate('/ventas/historial')} className="dashboard-link-btn">Ver todas</button>
                     </div>
 
                     {(!allVentas || allVentas.length === 0) ? (
-                        <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: '2rem' }}>No hay ventas registradas aún.</p>
+                        <p className="dashboard-empty">No hay ventas registradas aún.</p>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-muted)' }}>
                             <thead>
@@ -245,9 +246,9 @@ const Dashboard = () => {
                     )}
                 </div>
 
-                <div style={{ backgroundColor: 'var(--color-bg-card)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
-                    <h3 style={{ fontSize: '1.2rem', marginBottom: '1rem' }}>Accesos Rápidos</h3>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                <div className="dashboard-panel">
+                    <h3 className="dashboard-section-title" style={{ marginBottom: '1rem' }}>Accesos Rápidos</h3>
+                    <div className="dashboard-actions-grid">
                         <QuickAction
                             label="Nueva Venta"
                             onClick={() => navigate('/ventas')}
@@ -273,7 +274,7 @@ const Dashboard = () => {
             </div>
 
             {isAdmin && (
-                <div style={{ marginTop: '1.5rem', backgroundColor: 'var(--color-bg-card)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
+                <div className="dashboard-panel dashboard-remote-panel">
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
                         <div>
                             <h3 style={{ fontSize: '1.2rem', margin: 0 }}>Dashboard de Sucursales</h3>
@@ -347,10 +348,10 @@ const Dashboard = () => {
 };
 
 const StatCard = ({ title, value, icon, trend, isNegative, isWarning }) => (
-    <div style={{ backgroundColor: 'var(--color-bg-card)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+    <div className="dashboard-stat-card">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>{title}</span>
-            <div style={{ padding: '0.5rem', borderRadius: '50%', backgroundColor: 'var(--color-bg-main)' }}>
+            <div className="dashboard-stat-icon">
                 {icon ? React.createElement(icon, { size: 20, color: isWarning ? '#f59e0b' : 'var(--color-primary)' }) : null}
             </div>
         </div>
@@ -366,10 +367,10 @@ const StatCard = ({ title, value, icon, trend, isNegative, isWarning }) => (
 const QuickAction = ({ label, onClick, color }) => (
     <button
         onClick={onClick}
+        className="dashboard-quick-action"
         style={{
             padding: '1.5rem',
             borderRadius: 'var(--radius-md)',
-            backgroundColor: 'var(--color-bg-main)',
             border: `1px solid ${color}40`,
             color: color,
             fontWeight: '600',
@@ -388,7 +389,7 @@ const QuickAction = ({ label, onClick, color }) => (
 );
 
 const MiniMetric = ({ label, value, isWarning }) => (
-    <div style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--color-bg-main)', border: '1px solid var(--color-border)', textAlign: 'center' }}>
+    <div className="dashboard-mini-metric" style={{ textAlign: 'center' }}>
         <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{label}</div>
         <div style={{ fontSize: '0.95rem', fontWeight: 700, color: isWarning ? '#f59e0b' : 'var(--color-text-main)' }}>{value}</div>
     </div>

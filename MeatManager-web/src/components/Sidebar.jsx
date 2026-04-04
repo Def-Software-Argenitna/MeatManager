@@ -5,7 +5,6 @@ import {
   Banknote,
   ShoppingCart,
   PackageSearch,
-  Database,
   Utensils,
   UtensilsCrossed,
   Grid,
@@ -128,7 +127,6 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
     { title: 'Licencia', path: '/config/licencia', icon: ShieldCheck },
-    { title: 'Mantenimiento', path: '/config/mantenimiento', icon: Database },
     { title: 'Usuarios / Seguridad', path: '/config/seguridad', icon: Lock },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
@@ -197,7 +195,7 @@ const Sidebar = ({ isCollapsed }) => {
     if (!hasVisibleItems) return null;
 
     return (
-      <div className="nav-group nested">
+      <div className="nav-group">
         <button
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
           onClick={() => !isCollapsed && setDespostadaOpen(!isDespostadaOpen)}
@@ -312,7 +310,7 @@ const Sidebar = ({ isCollapsed }) => {
         </div>
         {!isCollapsed && (
           <div style={{ marginTop: '0.75rem', textAlign: 'center', opacity: 0.3, fontSize: '0.55rem', letterSpacing: '0.1em', fontWeight: '700' }}>
-            © 2026 MEATMANAGER · TODOS LOS DERECHOS RESERVADOS
+            © 2026 MEATMANAGER · TODOS LOS DERECHOS RESERVADOS · DEF-SOFTWARE
           </div>
         )}
       </div>

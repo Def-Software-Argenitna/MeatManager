@@ -54,6 +54,78 @@ body {
     overflow: hidden;
 }
 
+.neo-card::before, .card::before, .panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--glass-reflection);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.neo-card > *, .card > *, .panel > * {
+    position: relative;
+    z-index: 1;
+}
+
+.page-header {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-bottom: 1.5rem;
+}
+
+.page-title {
+    font-size: clamp(2rem, 3vw, 2.6rem);
+    line-height: 1.05;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    color: #fff;
+    text-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+}
+
+.page-description {
+    font-size: 1rem;
+    color: var(--color-text-muted);
+    max-width: 760px;
+}
+
+.neo-input,
+input.neo-input,
+select.neo-input,
+textarea.neo-input {
+    width: 100%;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+    color: var(--color-text-main);
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 1rem;
+    backdrop-filter: blur(16px);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.06),
+        0 10px 24px rgba(0,0,0,0.16);
+    outline: none;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.neo-input:focus,
+input.neo-input:focus,
+select.neo-input:focus,
+textarea.neo-input:focus {
+    border-color: rgba(249, 115, 22, 0.45);
+    box-shadow:
+        inset 0 1px 0 rgba(255,255,255,0.08),
+        0 0 0 3px rgba(249, 115, 22, 0.12),
+        0 14px 28px rgba(0,0,0,0.2);
+}
+
+.neo-input::placeholder,
+input.neo-input::placeholder,
+textarea.neo-input::placeholder {
+    color: #7f8ea7;
+}
+
 /* TABLE MODERNIZATION */
 table {
     width: 100%;
