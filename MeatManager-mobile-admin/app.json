@@ -1,0 +1,25 @@
+{
+  "expo": {
+    "name": "MeatManager Admin",
+    "slug": "meatmanager-mobile-admin",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.meatmanager.admin"
+    },
+    "android": {
+      "package": "com.meatmanager.admin",
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F0E5"
+      }
+    },
+    "extra": {
+      "projectStage": "starter"
+    }
+  }
+}
