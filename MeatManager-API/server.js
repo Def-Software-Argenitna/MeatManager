@@ -9,6 +9,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
+const { createClient } = require('redis');
 
 // ── Firebase Admin init ────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT || 'firebase-service-account.json');
@@ -67,6 +68,96 @@ const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
+const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
+
+const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.REDIS_TLS || '').trim().toLowerCase()
+);
+const redisTlsRejectUnauthorized = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.REDIS_TLS_REJECT_UNAUTHORIZED || '').trim().toLowerCase()
+);
+
+const redisClient = createClient({
+    username: process.env.REDIS_USER || undefined,
+    password: process.env.REDIS_PASS || undefined,
+    database: Number(process.env.REDIS_DB || 0),
+    socket: {
+        host: process.env.REDIS_HOST,
+        port: Number(process.env.REDIS_PORT || 6379),
+        tls: redisTlsEnabled,
+        rejectUnauthorized: redisTlsRejectUnauthorized,
+    },
+});
+
+redisClient.on('error', (error) => {
+    console.error('[REDIS ERROR]', error.message);
+});
+
+function getRedisDriverLocationKey(tenantId, firebaseUid) {
+    return `mm:delivery:location:${tenantId}:${firebaseUid}`;
+}
+
+function getRedisDriversSortedSetKey(tenantId) {
+    return `mm:delivery:drivers:${tenantId}`;
+}
+
+async function storeDriverLocationPresence({
+    tenantId,
+    firebaseUid,
+    payload,
+    ttlSeconds = REDIS_TRACKING_TTL_SECONDS,
+}) {
+    const now = Date.now();
+    const locationKey = getRedisDriverLocationKey(tenantId, firebaseUid);
+    const driversKey = getRedisDriversSortedSetKey(tenantId);
+
+    const normalizedPayload = {
+        ...payload,
+        tenantId,
+        firebaseUid,
+        lastSeenAt: new Date(now).toISOString(),
+    };
+
+    const multi = redisClient.multi();
+    multi.set(locationKey, JSON.stringify(normalizedPayload), { EX: ttlSeconds });
+    multi.zAdd(driversKey, [{ score: now, value: firebaseUid }]);
+    multi.expire(driversKey, Math.max(ttlSeconds * 4, ttlSeconds + 30));
+    await multi.exec();
+
+    return normalizedPayload;
+}
+
+async function getActiveDriverLocations(tenantId, ttlSeconds = REDIS_TRACKING_TTL_SECONDS) {
+    const now = Date.now();
+    const cutoff = now - ttlSeconds * 1000;
+    const driversKey = getRedisDriversSortedSetKey(tenantId);
+
+    await redisClient.zRemRangeByScore(driversKey, 0, cutoff);
+    const firebaseUids = await redisClient.zRange(driversKey, 0, -1);
+    if (!firebaseUids.length) return [];
+
+    const values = await Promise.all(
+        firebaseUids.map((firebaseUid) =>
+            redisClient.get(getRedisDriverLocationKey(tenantId, firebaseUid))
+        )
+    );
+
+    return values
+        .map((value) => {
+            if (!value) return null;
+            try {
+                return JSON.parse(value);
+            } catch {
+                return null;
+            }
+        })
+        .filter(Boolean)
+        .sort((left, right) => {
+            const leftTs = new Date(left.lastSeenAt || 0).getTime();
+            const rightTs = new Date(right.lastSeenAt || 0).getTime();
+            return rightTs - leftTs;
+        });
+}
 
 function normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();
@@ -801,6 +892,22 @@ async function verifyFirebaseToken(req, res, next) {
         return next();
     } catch {
         return res.status(401).json({ error: 'Token inválido o expirado' });
+    }
+}
+
+async function verifyFirebaseTokenWithClient(req, res, next) {
+    try {
+        await new Promise((resolve, reject) => {
+            verifyFirebaseToken(req, res, (error) => {
+                if (error) reject(error);
+                else resolve();
+            });
+        });
+        req.clientAccess = await getTenantClientData(req.firebaseUser);
+        return next();
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo validar el usuario' });
     }
 }
 
@@ -2015,19 +2122,95 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: POST /api/delivery/location ─────────────────────────────────────
+app.post('/api/delivery/location', verifyFirebaseTokenWithClient, async (req, res) => {
+    try {
+        const tenantId = Number(req.clientAccess?.clientId || req.clientAccess?.id || DEFAULT_OPERATIONAL_TENANT_ID);
+        const firebaseUid = String(req.firebaseUser?.uid || '').trim();
+        const lat = Number(req.body?.lat);
+        const lng = Number(req.body?.lng);
+        const accuracy = req.body?.accuracy == null ? null : Number(req.body.accuracy);
+        const speed = req.body?.speed == null ? null : Number(req.body.speed);
+        const heading = req.body?.heading == null ? null : Number(req.body.heading);
+
+        if (!firebaseUid) {
+            return res.status(400).json({ error: 'Usuario Firebase inválido' });
+        }
+        if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+            return res.status(400).json({ error: 'lat y lng son requeridos' });
+        }
+
+        const payload = await storeDriverLocationPresence({
+            tenantId,
+            firebaseUid,
+            payload: {
+                lat,
+                lng,
+                accuracy: Number.isFinite(accuracy) ? accuracy : null,
+                speed: Number.isFinite(speed) ? speed : null,
+                heading: Number.isFinite(heading) ? heading : null,
+                repartidor: req.clientAccess?.name || req.clientAccess?.empresa || req.firebaseUser?.email || firebaseUid,
+                email: req.firebaseUser?.email || null,
+            },
+        });
+
+        return res.json({
+            ok: true,
+            ttlSeconds: REDIS_TRACKING_TTL_SECONDS,
+            location: payload,
+        });
+    } catch (err) {
+        console.error('[DELIVERY LOCATION WRITE ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudo guardar la ubicacion en Redis' });
+    }
+});
+
+// ── RUTA: GET /api/delivery/locations ─────────────────────────────────────
+app.get('/api/delivery/locations', verifyFirebaseTokenWithClient, async (req, res) => {
+    try {
+        const tenantId = Number(req.clientAccess?.clientId || req.clientAccess?.id || DEFAULT_OPERATIONAL_TENANT_ID);
+        const locations = await getActiveDriverLocations(tenantId);
+        return res.json({
+            ok: true,
+            ttlSeconds: REDIS_TRACKING_TTL_SECONDS,
+            count: locations.length,
+            locations,
+        });
+    } catch (err) {
+        console.error('[DELIVERY LOCATION READ ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudo leer ubicaciones desde Redis' });
+    }
+});
+
 // ── RUTA: GET /health ──────────────────────────────────────────────────────
-app.get('/health', (req, res) => res.json({ ok: true, ts: new Date() }));
+app.get('/health', (req, res) => res.json({
+    ok: true,
+    ts: new Date(),
+    redis: process.env.REDIS_HOST ? redisClient.isReady : false,
+}));
 
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 ensureClientsControlStore()
-    .then(() => ensureOperationalTenantIsolation())
+    .then(() => {
+        console.log('[BOOT] Clients control store OK');
+        return ensureOperationalTenantIsolation();
+    })
+    .then(async () => {
+        console.log('[BOOT] Operational tenant isolation OK');
+        if (process.env.REDIS_HOST) {
+            await redisClient.connect();
+            console.log(`[REDIS] Conectado a ${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`);
+        } else {
+            console.warn('[REDIS] REDIS_HOST no configurado. Tracking de delivery deshabilitado.');
+        }
+    })
     .then(() => {
         app.listen(PORT, () => {
             console.log(`MeatManager API corriendo en puerto ${PORT}`);
         });
     })
     .catch((err) => {
-        console.error('[AUTH STORE INIT ERROR]', err.message);
+        console.error('[AUTH STORE INIT ERROR]', err?.stack || err?.message || err);
         process.exit(1);
     });

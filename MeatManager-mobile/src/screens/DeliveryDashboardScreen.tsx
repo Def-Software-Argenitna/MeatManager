@@ -12,23 +12,15 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { OrderCard } from '../components/OrderCard';
+import { useAuthSession } from '../hooks/useAuthSession';
 import { useDeliveryTracking } from '../hooks/useDeliveryTracking';
-import { usePersistentState } from '../hooks/usePersistentState';
 import { theme } from '../theme';
 import { LoginScreen } from './LoginScreen';
 
 export function DeliveryDashboardScreen() {
-  const {
-    value: driverName,
-    setValue: setDriverName,
-    isLoading,
-  } = usePersistentState('delivery_name');
+  const { user, driverName, login, logout, isLoading } = useAuthSession();
   const { orders, locationText, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
     useDeliveryTracking(driverName || null);
-
-  const logout = async () => {
-    await setDriverName('');
-  };
 
   if (isLoading) {
     return (
@@ -38,11 +30,11 @@ export function DeliveryDashboardScreen() {
     );
   }
 
-  if (!driverName) {
+  if (!user) {
     return (
       <LoginScreen
-        onSubmit={async (name) => {
-          await setDriverName(name);
+        onSubmit={async (email, password) => {
+          return login(email, password);
         }}
       />
     );
@@ -60,7 +52,7 @@ export function DeliveryDashboardScreen() {
             <View style={styles.hero}>
               <View style={styles.heroText}>
                 <Text style={styles.eyebrow}>Turno activo</Text>
-                <Text style={styles.title}>Hola, {driverName}</Text>
+                <Text style={styles.title}>Hola, {driverName || user.email || 'Repartidor'}</Text>
                 <Text style={styles.subtitle}>
                   {isTracking ? 'En linea y rastreando' : 'Seguimiento pausado'}
                 </Text>

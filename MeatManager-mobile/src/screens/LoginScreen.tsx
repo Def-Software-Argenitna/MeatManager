@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -12,16 +13,31 @@ import {
 import { theme } from '../theme';
 
 type Props = {
-  onSubmit: (name: string) => Promise<void> | void;
+  onSubmit: (email: string, password: string) => Promise<{ ok: boolean; error?: string } | void>;
 };
 
 export function LoginScreen({ onSubmit }: Props) {
-  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleSubmit = async () => {
-    const normalizedName = name.trim();
-    if (!normalizedName) return;
-    await onSubmit(normalizedName);
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail || !password) {
+      setError('Completa email y contrasena');
+      return;
+    }
+
+    setIsSubmitting(true);
+    setError('');
+    const result = await onSubmit(normalizedEmail, password);
+
+    if (result && 'ok' in result && !result.ok) {
+      setError(result.error || 'No se pudo iniciar sesion');
+    }
+
+    setIsSubmitting(false);
   };
 
   return (
@@ -33,21 +49,43 @@ export function LoginScreen({ onSubmit }: Props) {
         <Text style={styles.kicker}>MeatManager Mobile</Text>
         <Text style={styles.title}>Portal de reparto</Text>
         <Text style={styles.description}>
-          Ingresá tu nombre para ver tus pedidos asignados y compartir tu ubicacion en tiempo real.
+          Ingresa con la misma cuenta Firebase de la web para ver tus pedidos asignados y compartir tu ubicacion en tiempo real.
         </Text>
 
         <TextInput
-          autoCapitalize="words"
+          autoCapitalize="none"
           autoCorrect={false}
-          onChangeText={setName}
-          placeholder="Ej: Juan"
+          keyboardType="email-address"
+          onChangeText={setEmail}
+          placeholder="tu@email.com"
           placeholderTextColor={theme.colors.muted}
           style={styles.input}
-          value={name}
+          value={email}
         />
 
-        <Pressable style={({ pressed }) => [styles.button, pressed && styles.buttonPressed]} onPress={handleSubmit}>
-          <Text style={styles.buttonText}>Comenzar turno</Text>
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          onChangeText={setPassword}
+          placeholder="Contrasena"
+          placeholderTextColor={theme.colors.muted}
+          secureTextEntry
+          style={styles.input}
+          value={password}
+        />
+
+        {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+        <Pressable
+          style={({ pressed }) => [styles.button, (pressed || isSubmitting) && styles.buttonPressed]}
+          onPress={handleSubmit}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <ActivityIndicator color={theme.colors.white} />
+          ) : (
+            <Text style={styles.buttonText}>Ingresar</Text>
+          )}
         </Pressable>
       </View>
     </KeyboardAvoidingView>
@@ -102,6 +140,11 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     fontSize: 16,
     color: theme.colors.text,
+  },
+  errorText: {
+    color: theme.colors.danger,
+    fontWeight: '600',
+    lineHeight: 21,
   },
   button: {
     minHeight: 54,

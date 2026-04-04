@@ -8,6 +8,8 @@ const fallbackFirebaseConfig = {
   measurementId: 'G-4HSB4DH9B9',
 };
 
+const trimSlash = (value: string) => value.replace(/\/$/, '');
+
 export const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || fallbackFirebaseConfig.apiKey,
   authDomain: process.env.EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN || fallbackFirebaseConfig.authDomain,
@@ -19,3 +21,5 @@ export const firebaseConfig = {
   measurementId:
     process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID || fallbackFirebaseConfig.measurementId,
 };
+
+export const apiBaseUrl = trimSlash(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:3001');
