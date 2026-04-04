@@ -27,7 +27,8 @@ const MenuDigital = () => {
     const [copiedPortal, setCopiedPortal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
 
-    const { isPro, supportNumber } = useLicense();
+    const { hasModule, supportNumber, installationId } = useLicense();
+    const hasMenuDigital = hasModule('menu-digital');
 
     const menuItems = useLiveQuery(() => db.menu_digital.toArray());
     const catalogItems = useLiveQuery(() => db.purchase_items.toArray());
@@ -101,7 +102,7 @@ const MenuDigital = () => {
                     <p className="page-description">Elegí qué cortes mostrar y gestioná tus precios de venta</p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                    {!isPro && (
+                    {!hasMenuDigital && (
                         <button className="neo-button" onClick={copyLink}>
                             {copied ? <Check size={20} color="#22c55e" /> : <Share2 size={20} />}
                             {copied ? 'Copiado!' : 'Copiar Lista (Manual)'}
@@ -152,7 +153,7 @@ const MenuDigital = () => {
                 </div>
             </div>
 
-            {isPro ? (
+            {hasMenuDigital ? (
                 <div className="bot-config-area animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
                     <div className="neo-card" style={{ padding: '1.25rem', borderLeft: '4px solid #25D366' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
@@ -216,7 +217,7 @@ const MenuDigital = () => {
                                 className="neo-button full-width"
                                 style={{ gap: '0.5rem', background: '#1e293b', color: 'white' }}
                                 onClick={() => {
-                                    const msg = `Hola! Soy de *${shopName}* y tengo la versión PRO de MeatManager. Me gustaría pedir un turno para configurar mi Portal de Clientes en Vercel. Mi ID de Instalación es: ${localStorage.getItem('meatmanager_install_id') || 'N/A'}`;
+                                    const msg = `Hola! Soy de *${shopName}* y tengo el módulo Menú Digital activo en MeatManager. Me gustaría pedir un turno para configurar mi Portal de Clientes en Vercel. Mi ID de Instalación es: ${installationId || 'N/A'}`;
                                     window.open(`https://wa.me/${supportNumber}?text=${encodeURIComponent(msg)}`, '_blank');
                                 }}
                             >

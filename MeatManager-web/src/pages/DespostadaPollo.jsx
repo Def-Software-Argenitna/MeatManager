@@ -3,6 +3,8 @@ import { Save, RotateCcw, Check } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import { scaleService } from '../utils/SerialScaleService';
+import { useLicense } from '../context/LicenseContext';
+import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import './DespostadaPollo.css';
 
 // Detailed cuts mapping for chicken
@@ -19,9 +21,12 @@ const CHICKEN_MAP = [
 ];
 
 const DespostadaPollo = () => {
+    const { hasModule } = useLicense();
     // Session State
     const [initialWeight, setInitialWeight] = useState('');
     const [selectedLotId, setSelectedLotId] = useState(null);
+    const [selectedLotSupplier, setSelectedLotSupplier] = useState('');
+    const [costPerKg, setCostPerKg] = useState(0);
     const [isSessionStarted, setIsSessionStarted] = useState(false);
 
     // DB Data
@@ -42,6 +47,18 @@ const DespostadaPollo = () => {
         ? ((processedWeight / initialWeight) * 100).toFixed(1)
         : 0;
 
+    if (!hasModule('despostada')) {
+        return (
+            <div className="pro-locked-container animate-fade-in">
+                <h2>Módulo de Despostada</h2>
+                <p>La despostada se habilita desde Gestión de Clientes, no por código local.</p>
+                <button className="neo-button pro-btn" onClick={() => window.location.hash = '#/config/licencia'}>
+                    Ver estado de licencias
+                </button>
+            </div>
+        );
+    }
+
     const startSession = async () => {
         if (!initialWeight || initialWeight <= 0) {
             alert("Por favor ingrese el peso inicial o seleccione un animal de stock.");
@@ -50,9 +67,25 @@ const DespostadaPollo = () => {
         setIsSessionStarted(true);
     };
 
-    const handleSelectLot = (lot) => {
+    const handleSelectLot = async (lot) => {
         setSelectedLotId(lot.id);
+        setSelectedLotSupplier(lot.supplier || '');
         setInitialWeight(lot.weight);
+
+        if (lot.purchase_id) {
+            const purchase = await db.compras.get(lot.purchase_id);
+            if (purchase?.items_detail) {
+                const itemMatch = purchase.items_detail.find(i =>
+                    i.type === 'despostada' && (i.species === 'pollo' || i.name.toLowerCase().includes('pollo'))
+                );
+                if (itemMatch) {
+                    const cost = itemMatch.unit === 'kg'
+                        ? itemMatch.unit_price
+                        : (itemMatch.unit_price / (itemMatch.weight / itemMatch.quantity));
+                    setCostPerKg(cost || 0);
+                }
+            }
+        }
     };
 
     const finishSession = async () => {
@@ -63,19 +96,23 @@ const DespostadaPollo = () => {
                 await db.animal_lots.update(selectedLotId, { status: 'despostado' });
             }
 
-            await db.despostada_logs.add({
+            const selectedLot = availableLots?.find((lot) => lot.id === selectedLotId) || null;
+            await db.despostada_logs.add(buildDespostadaLogPayload({
                 type: 'pollo',
-                date: new Date(),
-                total_weight: initialWeight,
-                yield_percentage: parseFloat(yieldPercentage),
-                lot_id: selectedLotId,
-                synced: 0
-            });
+                supplier: selectedLotSupplier,
+                initialWeight,
+                yieldPercentage,
+                cuts: logs,
+                selectedLot,
+                costPerKg
+            }));
 
             setIsSessionStarted(false);
             setLogs([]);
             setInitialWeight('');
             setSelectedLotId(null);
+            setSelectedLotSupplier('');
+            setCostPerKg(0);
             alert('Proceso finalizado.');
         }
     };
@@ -129,7 +166,9 @@ const DespostadaPollo = () => {
 
         const newLog = {
             cutId: selectedCutId,
+            cutNumber: cutInfo.number,
             cutName: cutInfo.name,
+            cutCategory: cutInfo.category,
             weight: weightVal,
             timestamp: new Date()
         };

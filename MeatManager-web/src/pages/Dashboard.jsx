@@ -58,7 +58,7 @@ const Dashboard = () => {
         []
     );
 
-    const { isPro } = useLicense();
+    const { hasModule } = useLicense();
 
     // Calculations
     const totalVentasDia = ventasDia?.reduce((acc, v) => acc + (parseFloat(v.total) || 0), 0) || 0;
@@ -136,7 +136,7 @@ const Dashboard = () => {
                     trend="Stock Bajo (<10)"
                     isNegative={lowStockCount > 5}
                 />
-                {isPro && (
+                {hasModule('informes-pro') && (
                     <StatCard
                         title="Rendimiento Avg"
                         value={`${avgYield}%`}
@@ -186,7 +186,7 @@ const Dashboard = () => {
                 <div style={{ backgroundColor: 'var(--color-bg-card)', padding: '1.5rem', borderRadius: 'var(--radius-lg)', border: '1px solid var(--color-border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <h3 style={{ fontSize: '1.2rem' }}>Últimas Ventas</h3>
-                        <button onClick={() => navigate('/ventas')} style={{ background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.9rem' }}>Ver todas</button>
+                        <button onClick={() => navigate('/ventas/historial')} style={{ background: 'none', border: 'none', color: 'var(--color-primary)', cursor: 'pointer', fontSize: '0.9rem' }}>Ver todas</button>
                     </div>
 
                     {(!allVentas || allVentas.length === 0) ? (

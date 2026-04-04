@@ -26,6 +26,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { fdb } from '../firebase';
 import { collection, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
+import { useLicense } from '../context/LicenseContext';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -80,6 +81,7 @@ function ChangeView({ center, zoom }) {
 }
 
 const Logistica = () => {
+    const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedPedido, setSelectedPedido] = useState(null);
@@ -97,13 +99,14 @@ const Logistica = () => {
         insurance_expiry: ''
     });
 
-    const pedidos = useLiveQuery(() =>
-        db.pedidos?.where('delivery_type').equals('delivery').toArray()
-    );
+    const pedidos = useLiveQuery(async () => {
+        const rows = await db.pedidos?.toArray();
+        return (rows || []).filter((pedido) => pedido.delivery_type === 'delivery');
+    });
 
     const registeredDrivers = useLiveQuery(() => db.repartidores?.toArray());
     const settings = useLiveQuery(() => db.settings.toArray());
-    const isPro = useLiveQuery(() => db.settings.get('isPro'))?.value === true;
+    const hasLogisticsModule = hasModule('logistica');
 
 
     useEffect(() => {
@@ -157,7 +160,7 @@ const Logistica = () => {
         await db.pedidos.update(id, { repartidor: driverName, status: 'ready' });
 
         // CLOUD SYNC: Push assigned order to Firestore
-        if (isPro) {
+        if (hasLogisticsModule) {
             try {
                 const pedido = pedidos.find(p => p.id === id);
                 if (pedido) {
@@ -176,7 +179,7 @@ const Logistica = () => {
 
     // REAL-TIME CLOUD LISTENERS
     useEffect(() => {
-        if (!isPro) return;
+        if (!hasLogisticsModule) return;
 
         // 1. Listen for Driver Locations
         const unsubLocations = onSnapshot(collection(fdb, "drivers_locations"), (snapshot) => {
@@ -206,7 +209,7 @@ const Logistica = () => {
             unsubLocations();
             unsubStatus();
         };
-    }, [isPro]);
+    }, [hasLogisticsModule]);
 
     const checkExpiry = (date) => {
         if (!date) return 'missing';

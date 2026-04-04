@@ -83,6 +83,33 @@
     color: var(--color-primary);
 }
 
+.license-list {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.license-item {
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.9rem 1rem;
+    background: rgba(255,255,255,0.03);
+}
+
+.license-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.55rem;
+    border-radius: 999px;
+    background: rgba(34, 197, 94, 0.12);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    color: #22c55e;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
 .pro-btn {
     background: linear-gradient(to right, #eab308, #ca8a04) !important;
     color: white !important;

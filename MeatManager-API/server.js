@@ -63,6 +63,10 @@ const CLIENT_USERS_TABLE = process.env.CLIENT_USERS_TABLE || 'client_users';
 const CLIENT_LICENSES_TABLE = process.env.CLIENT_LICENSES_TABLE || 'client_licenses';
 const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE || 'client_user_permissions';
 const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
+const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
+const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
+const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
+const TENANT_COLUMN = 'tenant_id';
 
 function normalizeEmail(email) {
     return String(email || '').trim().toLowerCase();
@@ -87,6 +91,375 @@ function parseFeatureFlags(value) {
         return parsed;
     } catch {
         return {};
+    }
+}
+
+function parseBooleanLike(value) {
+    if (value == null) return false;
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'number') return value === 1;
+    const normalized = String(value).trim().toLowerCase();
+    return ['1', 'true', 'yes', 'y', 'si', 'sí', 'on'].includes(normalized);
+}
+
+function normalizeLicenseToken(value) {
+    return String(value || '').trim().toLowerCase();
+}
+
+function licenseAppliesToWebapp(license) {
+    const code = normalizeLicenseToken(license?.internalCode);
+    const category = normalizeLicenseToken(license?.category);
+    const commercialName = normalizeLicenseToken(license?.commercialName);
+
+    if (parseBooleanLike(license?.appliesToWebapp)) {
+        return true;
+    }
+
+    if (category.includes('webapp')) {
+        return true;
+    }
+
+    if (['base_mm', 'man_webpage', 'superuser', 'su'].includes(code)) {
+        return true;
+    }
+
+    if (commercialName === 'superuser') {
+        return true;
+    }
+
+    return false;
+}
+
+const TENANT_SCOPED_TABLES = new Set([
+    'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
+    'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
+    'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
+    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+]);
+
+const TENANT_ID_TABLES = [
+    'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
+    'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
+    'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
+    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+];
+
+const TABLES_WITH_NUMERIC_ID = [
+    'payment_methods', 'categories', 'suppliers', 'purchase_items', 'stock',
+    'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
+    'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
+    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+];
+
+function isTenantScopedTable(table) {
+    return TENANT_SCOPED_TABLES.has(String(table || '').trim());
+}
+
+async function hasColumn(conn, dbName, tableName, columnName) {
+    const [rows] = await conn.query(
+        `SELECT 1
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName, columnName]
+    );
+    return rows.length > 0;
+}
+
+async function getPrimaryKeyColumns(conn, dbName, tableName) {
+    const [rows] = await conn.query(
+        `SELECT COLUMN_NAME
+         FROM information_schema.KEY_COLUMN_USAGE
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+         ORDER BY ORDINAL_POSITION ASC`,
+        [dbName, tableName]
+    );
+    return rows.map((row) => row.COLUMN_NAME);
+}
+
+async function hasIndex(conn, dbName, tableName, indexName) {
+    const [rows] = await conn.query(
+        `SELECT 1
+         FROM information_schema.STATISTICS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND INDEX_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName, indexName]
+    );
+    return rows.length > 0;
+}
+
+async function hasForeignKey(conn, dbName, tableName, constraintName) {
+    const [rows] = await conn.query(
+        `SELECT 1
+         FROM information_schema.REFERENTIAL_CONSTRAINTS
+         WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName, constraintName]
+    );
+    return rows.length > 0;
+}
+
+async function ensureTenantIdColumn(conn, tableName) {
+    if (await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, TENANT_COLUMN)) {
+        return;
+    }
+
+    const afterClause = tableName === 'settings' ? 'AFTER `key`' : 'AFTER `id`';
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+         ADD COLUMN \`${TENANT_COLUMN}\` BIGINT NULL ${afterClause}`
+    );
+}
+
+async function backfillTenantId(conn, tableName) {
+    if (!(await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, TENANT_COLUMN))) return;
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+         SET \`${TENANT_COLUMN}\` = ?
+         WHERE \`${TENANT_COLUMN}\` IS NULL`,
+        [DEFAULT_OPERATIONAL_TENANT_ID]
+    );
+}
+
+async function ensureTableTenantIndexes(conn, tableName) {
+    const idxTenant = `idx_${tableName}_tenant`;
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, tableName, idxTenant))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+                 ADD INDEX \`${idxTenant}\` (\`${TENANT_COLUMN}\`)`
+            );
+        } catch (error) {
+            if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
+
+    const uniqueTenantId = `uniq_${tableName}_tenant_id`;
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, tableName, uniqueTenantId))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+                 ADD UNIQUE KEY \`${uniqueTenantId}\` (\`${TENANT_COLUMN}\`, \`id\`)`
+            );
+        } catch (error) {
+            if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
+}
+
+async function ensureCompositePrimaryKey(conn, tableName) {
+    const primaryColumns = await getPrimaryKeyColumns(conn, OPERATIONAL_DB_NAME, tableName);
+    if (primaryColumns.length === 2 && primaryColumns[0] === 'id' && primaryColumns[1] === TENANT_COLUMN) {
+        await ensureTableTenantIndexes(conn, tableName);
+        return;
+    }
+
+    if (primaryColumns.length > 0) {
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+             DROP PRIMARY KEY,
+             ADD PRIMARY KEY (\`id\`, \`${TENANT_COLUMN}\`)`
+        );
+    } else {
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+             ADD PRIMARY KEY (\`id\`, \`${TENANT_COLUMN}\`)`
+        );
+    }
+    await ensureTableTenantIndexes(conn, tableName);
+}
+
+async function ensureSettingsPrimaryKey(conn) {
+    const primaryColumns = await getPrimaryKeyColumns(conn, OPERATIONAL_DB_NAME, 'settings');
+    if (!(primaryColumns.length === 2 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'key')) {
+        if (primaryColumns.length > 0) {
+            await conn.query(`ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings DROP PRIMARY KEY`);
+        }
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+             ADD PRIMARY KEY (\`${TENANT_COLUMN}\`, \`key\`)`
+        );
+    }
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'settings', 'idx_settings_key'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+                 ADD INDEX idx_settings_key (\`key\`)`
+            );
+        } catch (error) {
+            if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
+}
+
+async function ensureTenantScopedForeignKeys(conn) {
+    const fkDefinitions = [
+        {
+            table: 'categories',
+            constraint: 'categories_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.categories
+                ADD CONSTRAINT categories_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, parent_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.categories (\`${TENANT_COLUMN}\`, id)
+                ON DELETE SET NULL`,
+            indexName: 'idx_categories_tenant_parent',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.categories
+                ADD INDEX idx_categories_tenant_parent (\`${TENANT_COLUMN}\`, parent_id)`,
+        },
+        {
+            table: 'purchase_items',
+            constraint: 'purchase_items_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
+                ADD CONSTRAINT purchase_items_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, category_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.categories (\`${TENANT_COLUMN}\`, id)
+                ON DELETE SET NULL`,
+            indexName: 'idx_purchase_items_tenant_category',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
+                ADD INDEX idx_purchase_items_tenant_category (\`${TENANT_COLUMN}\`, category_id)`,
+        },
+        {
+            table: 'ventas',
+            constraint: 'ventas_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas
+                ADD CONSTRAINT ventas_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, client_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.clients (\`${TENANT_COLUMN}\`, id)
+                ON DELETE SET NULL`,
+            indexName: 'idx_ventas_tenant_client',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas
+                ADD INDEX idx_ventas_tenant_client (\`${TENANT_COLUMN}\`, client_id)`,
+        },
+        {
+            table: 'ventas_items',
+            constraint: 'ventas_items_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas_items
+                ADD CONSTRAINT ventas_items_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, venta_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.ventas (\`${TENANT_COLUMN}\`, id)
+                ON DELETE CASCADE`,
+            indexName: 'idx_ventas_items_tenant_venta',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas_items
+                ADD INDEX idx_ventas_items_tenant_venta (\`${TENANT_COLUMN}\`, venta_id)`,
+        },
+        {
+            table: 'compras_items',
+            constraint: 'compras_items_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.compras_items
+                ADD CONSTRAINT compras_items_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, purchase_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.compras (\`${TENANT_COLUMN}\`, id)
+                ON DELETE CASCADE`,
+            indexName: 'idx_compras_items_tenant_purchase',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.compras_items
+                ADD INDEX idx_compras_items_tenant_purchase (\`${TENANT_COLUMN}\`, purchase_id)`,
+        },
+        {
+            table: 'user_permissions',
+            constraint: 'user_permissions_ibfk_1',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.user_permissions
+                ADD CONSTRAINT user_permissions_ibfk_1
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, user_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.users (\`${TENANT_COLUMN}\`, id)
+                ON DELETE CASCADE`,
+            indexName: 'idx_user_permissions_tenant_user',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.user_permissions
+                ADD INDEX idx_user_permissions_tenant_user (\`${TENANT_COLUMN}\`, user_id)`,
+        },
+    ];
+
+    for (const definition of fkDefinitions) {
+        if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, definition.table, definition.indexName))) {
+            try {
+                await conn.query(definition.indexSql);
+            } catch (error) {
+                if (error?.code !== 'ER_DUP_KEYNAME') {
+                    throw error;
+                }
+            }
+        }
+        if (!(await hasForeignKey(conn, OPERATIONAL_DB_NAME, definition.table, definition.constraint))) {
+            try {
+                await conn.query(definition.addSql);
+            } catch (error) {
+                if (!['ER_CANT_CREATE_TABLE', 'ER_DUP_KEYNAME', 'ER_CANNOT_ADD_FOREIGN'].includes(error?.code)) {
+                    throw error;
+                }
+            }
+        }
+    }
+}
+
+async function ensureOperationalTenantIsolation() {
+    const adminConn = await provisionPool.getConnection();
+    try {
+        await adminConn.query(`CREATE DATABASE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+
+        const conn = await mysql.createConnection({
+            host: process.env.DB_HOST,
+            port: parseInt(process.env.DB_PORT) || 3306,
+            user: process.env.DB_PROVISION_USER,
+            password: process.env.DB_PROVISION_PASS,
+            database: OPERATIONAL_DB_NAME,
+        });
+        try {
+            for (const sql of getSchemaTables()) {
+                await conn.query(sql);
+            }
+
+            for (const tableName of TENANT_ID_TABLES) {
+                await ensureTenantIdColumn(conn, tableName);
+            }
+
+            for (const tableName of TENANT_ID_TABLES) {
+                await backfillTenantId(conn, tableName);
+            }
+
+            const fksToDrop = [
+                ['categories', 'categories_ibfk_1'],
+                ['purchase_items', 'purchase_items_ibfk_1'],
+                ['ventas', 'ventas_ibfk_1'],
+                ['ventas_items', 'ventas_items_ibfk_1'],
+                ['compras_items', 'compras_items_ibfk_1'],
+                ['user_permissions', 'user_permissions_ibfk_1'],
+            ];
+
+            for (const [tableName, constraintName] of fksToDrop) {
+                if (await hasForeignKey(conn, OPERATIONAL_DB_NAME, tableName, constraintName)) {
+                    try {
+                        await conn.query(
+                            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+                             DROP FOREIGN KEY \`${constraintName}\``
+                        );
+                    } catch (error) {
+                        if (error?.code !== 'ER_CANT_DROP_FIELD_OR_KEY') {
+                            throw error;
+                        }
+                    }
+                }
+            }
+
+            await ensureSettingsPrimaryKey(conn);
+            for (const tableName of TABLES_WITH_NUMERIC_ID) {
+                await ensureCompositePrimaryKey(conn, tableName);
+            }
+
+            await ensureTenantScopedForeignKeys(conn);
+        } finally {
+            await conn.end();
+        }
+    } finally {
+        adminConn.release();
     }
 }
 
@@ -191,6 +564,7 @@ async function getClientAccessContext({ uid, email }) {
                 l.internalCode,
                 l.category,
                 l.billingScope,
+                l.isMandatory,
                 l.featureFlags,
                 l.status AS licenseStatus,
                 l.appliesToWebapp
@@ -205,12 +579,17 @@ async function getClientAccessContext({ uid, email }) {
 
         const effectiveLicenses = licenseRows
             .filter((license) => {
-                if (Number(license.appliesToWebapp) !== 1) return false;
+                if (!licenseAppliesToWebapp(license)) return false;
 
                 const matchesUser = license.userId == null || String(license.userId) === String(user.id);
                 const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
 
-                return matchesUser && matchesBranch;
+                const isMandatoryBase =
+                    Number(license.isMandatory) === 1 ||
+                    normalizeLicenseToken(license.internalCode) === 'base_mm' ||
+                    normalizeLicenseToken(license.category) === 'base_webapp';
+
+                return (matchesUser && matchesBranch) || isMandatoryBase;
             })
             .map((license) => ({
                 clientLicenseId: license.clientLicenseId,
@@ -219,9 +598,12 @@ async function getClientAccessContext({ uid, email }) {
                 internalCode: license.internalCode,
                 category: license.category,
                 billingScope: license.billingScope,
-                appliesToWebapp: Number(license.appliesToWebapp) === 1,
+                appliesToWebapp: licenseAppliesToWebapp(license),
                 featureFlags: parseFeatureFlags(license.featureFlags),
-            }));
+            }))
+            .filter((license, index, arr) => (
+                arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+            ));
 
         return {
             user,
@@ -284,6 +666,17 @@ function buildAccessResponse(accessContext) {
         clientId: accessContext.client.id,
         clientStatus: accessContext.client.status,
         licenses: accessContext.effectiveLicenses,
+    };
+}
+
+function tenantWhereClause(table, tenantId, prefix = '') {
+    if (!isTenantScopedTable(table)) {
+        return { sql: '1 = 1', params: [] };
+    }
+    const scopedColumn = prefix ? `${prefix}.\`${TENANT_COLUMN}\`` : `\`${TENANT_COLUMN}\``;
+    return {
+        sql: `${scopedColumn} = ?`,
+        params: [tenantId],
     };
 }
 
@@ -419,11 +812,11 @@ function dbNameFromCuit(cuit) {
     return `mm_${sanitized}`;
 }
 
-async function ensureTenantDatabase(cuit, empresa) {
-    const dbName = dbNameFromCuit(cuit);
+async function ensureTenantDatabase({ clientId, cuit, empresa }) {
     const conn = await provisionPool.getConnection();
 
     try {
+        const dbName = OPERATIONAL_DB_NAME;
         const [rows] = await conn.query(
             `SELECT SCHEMA_NAME FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`,
             [dbName]
@@ -456,7 +849,6 @@ async function ensureTenantDatabase(cuit, empresa) {
         if (!isNew) {
             console.log(`[PROVISION] BD existente: ${dbName} — acceso OK`);
         }
-
         return { dbName, isNew };
     } finally {
         conn.release();
@@ -467,25 +859,36 @@ async function ensureTenantDatabase(cuit, empresa) {
 function getSchemaTables() {
     return [
         `CREATE TABLE IF NOT EXISTS settings (
-            \`key\`  VARCHAR(100) PRIMARY KEY,
-            value   TEXT
+            \`key\`      VARCHAR(100) NOT NULL,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            value       TEXT,
+            PRIMARY KEY (\`${TENANT_COLUMN}\`, \`key\`),
+            INDEX idx_settings_key (\`key\`)
         )`,
         `CREATE TABLE IF NOT EXISTS payment_methods (
             id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name        VARCHAR(100) NOT NULL,
             type        VARCHAR(50),
             percentage  DECIMAL(5,2) DEFAULT 0,
-            enabled     TINYINT(1) DEFAULT 1
+            enabled     TINYINT(1) DEFAULT 1,
+            UNIQUE KEY uniq_payment_methods_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_payment_methods_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS categories (
             id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name        VARCHAR(100) NOT NULL,
             parent_id   INT,
             synced      TINYINT(1) DEFAULT 0,
-            FOREIGN KEY (parent_id) REFERENCES categories(id) ON DELETE SET NULL
+            UNIQUE KEY uniq_categories_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_categories_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_categories_tenant_parent (\`${TENANT_COLUMN}\`, parent_id),
+            CONSTRAINT categories_ibfk_1 FOREIGN KEY (\`${TENANT_COLUMN}\`, parent_id) REFERENCES categories(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
         `CREATE TABLE IF NOT EXISTS suppliers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150),
             cuit            VARCHAR(20),
             iva_condition   VARCHAR(50),
@@ -499,10 +902,13 @@ function getSchemaTables() {
             zip_code        VARCHAR(20),
             email           VARCHAR(150),
             synced          TINYINT(1) DEFAULT 0,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_suppliers_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_suppliers_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150) NOT NULL,
             category_id     INT,
             last_price      DECIMAL(12,2) DEFAULT 0,
@@ -512,10 +918,14 @@ function getSchemaTables() {
             \`usage\`       VARCHAR(50),
             plu             VARCHAR(20),
             synced          TINYINT(1) DEFAULT 0,
-            FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL
+            UNIQUE KEY uniq_purchase_items_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_purchase_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_purchase_items_tenant_category (\`${TENANT_COLUMN}\`, category_id),
+            CONSTRAINT purchase_items_ibfk_1 FOREIGN KEY (\`${TENANT_COLUMN}\`, category_id) REFERENCES categories(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
         `CREATE TABLE IF NOT EXISTS stock (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150) NOT NULL,
             type            VARCHAR(50),
             quantity        DECIMAL(12,3) DEFAULT 0,
@@ -524,10 +934,13 @@ function getSchemaTables() {
             category_id     INT,
             reference       VARCHAR(100),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_stock_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_stock_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS clients (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150) NOT NULL,
             first_name      VARCHAR(100),
             last_name       VARCHAR(100),
@@ -546,10 +959,13 @@ function getSchemaTables() {
             has_initial_balance TINYINT(1) DEFAULT 0,
             last_updated    DATETIME,
             synced          TINYINT(1) DEFAULT 0,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_clients_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_clients_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS ventas (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             date                DATETIME NOT NULL,
             total               DECIMAL(12,2) NOT NULL,
             payment_method      VARCHAR(100),
@@ -563,20 +979,28 @@ function getSchemaTables() {
             source              VARCHAR(50),
             synced              TINYINT(1) DEFAULT 0,
             created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (client_id) REFERENCES clients(id) ON DELETE SET NULL
+            UNIQUE KEY uniq_ventas_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_ventas_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_ventas_tenant_client (\`${TENANT_COLUMN}\`, client_id),
+            FOREIGN KEY (\`${TENANT_COLUMN}\`, client_id) REFERENCES clients(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
         `CREATE TABLE IF NOT EXISTS ventas_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             venta_id        INT NOT NULL,
             product_name    VARCHAR(150),
             quantity        DECIMAL(12,3),
             price           DECIMAL(12,2),
             subtotal        DECIMAL(12,2),
             synced          TINYINT(1) DEFAULT 0,
-            FOREIGN KEY (venta_id) REFERENCES ventas(id) ON DELETE CASCADE
+            UNIQUE KEY uniq_ventas_items_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_ventas_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_ventas_items_tenant_venta (\`${TENANT_COLUMN}\`, venta_id),
+            FOREIGN KEY (\`${TENANT_COLUMN}\`, venta_id) REFERENCES ventas(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS compras (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             date            DATETIME NOT NULL,
             supplier        VARCHAR(150),
             supplier_id     INT,
@@ -585,10 +1009,13 @@ function getSchemaTables() {
             payment_method  VARCHAR(100),
             is_account      TINYINT(1) DEFAULT 0,
             synced          TINYINT(1) DEFAULT 0,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_compras_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_compras_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS compras_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             purchase_id     INT NOT NULL,
             product_name    VARCHAR(150),
             quantity        DECIMAL(12,3),
@@ -597,30 +1024,40 @@ function getSchemaTables() {
             subtotal        DECIMAL(12,2),
             destination     VARCHAR(50),
             synced          TINYINT(1) DEFAULT 0,
-            FOREIGN KEY (purchase_id) REFERENCES compras(id) ON DELETE CASCADE
+            UNIQUE KEY uniq_compras_items_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_compras_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_compras_items_tenant_purchase (\`${TENANT_COLUMN}\`, purchase_id),
+            FOREIGN KEY (\`${TENANT_COLUMN}\`, purchase_id) REFERENCES compras(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS animal_lots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             purchase_id     INT,
             supplier        VARCHAR(150),
             date            DATETIME,
             species         VARCHAR(50),
             weight          DECIMAL(12,3),
             status          VARCHAR(50),
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_animal_lots_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_animal_lots_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS despostada_logs (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             type                VARCHAR(50),
             date                DATETIME,
             supplier            VARCHAR(150),
             total_weight        DECIMAL(12,3),
             yield_percentage    DECIMAL(5,2),
             lot_id              INT,
-            synced              TINYINT(1) DEFAULT 0
+            synced              TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_despostada_logs_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_despostada_logs_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS pedidos (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             customer_id     INT,
             customer_name   VARCHAR(150),
             items           JSON,
@@ -632,10 +1069,13 @@ function getSchemaTables() {
             repartidor      VARCHAR(100),
             source          VARCHAR(50),
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
-            sync_cloud      TINYINT(1) DEFAULT 0
+            sync_cloud      TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_pedidos_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_pedidos_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS repartidores (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150),
             vehicle         VARCHAR(100),
             plate           VARCHAR(20),
@@ -644,18 +1084,24 @@ function getSchemaTables() {
             license_expiry  DATE,
             insurance_expiry DATE,
             status          VARCHAR(50),
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_repartidores_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_repartidores_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS menu_digital (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             product_name    VARCHAR(150),
             price           DECIMAL(12,2),
             category        VARCHAR(100),
             is_offer        TINYINT(1) DEFAULT 0,
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_menu_digital_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS caja_movimientos (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             type            VARCHAR(50),
             amount          DECIMAL(12,2),
             category        VARCHAR(100),
@@ -666,10 +1112,13 @@ function getSchemaTables() {
             payment_method_id INT,
             receipt_number  INT,
             receipt_code    VARCHAR(32),
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS deleted_sales_history (
             id                      INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             sale_id                 INT,
             receipt_number          INT,
             receipt_code            VARCHAR(32),
@@ -683,43 +1132,61 @@ function getSchemaTables() {
             source                  VARCHAR(50),
             authorization_verified  TINYINT(1) DEFAULT 0,
             sale_snapshot           LONGTEXT,
-            items_snapshot          LONGTEXT
+            items_snapshot          LONGTEXT,
+            UNIQUE KEY uniq_deleted_sales_history_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_deleted_sales_history_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS branch_stock_snapshots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             branch_code     VARCHAR(20),
             branch_name     VARCHAR(150),
             snapshot_at     DATETIME,
-            imported_at     DATETIME
+            imported_at     DATETIME,
+            UNIQUE KEY uniq_branch_stock_snapshots_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_branch_stock_snapshots_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             product_id      INT,
             price           DECIMAL(12,2),
             plu             VARCHAR(20),
-            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS users (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             username        VARCHAR(100) NOT NULL,
             pin             VARCHAR(20),
             role            ENUM('admin','employee') DEFAULT 'employee',
             active          TINYINT(1) DEFAULT 1,
-            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_users_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_users_tenant (\`${TENANT_COLUMN}\`)
         )`,
         `CREATE TABLE IF NOT EXISTS user_permissions (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             user_id         INT NOT NULL,
             path            VARCHAR(200) NOT NULL,
-            FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            UNIQUE KEY uniq_user_permissions_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_user_permissions_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_user_permissions_tenant_user (\`${TENANT_COLUMN}\`, user_id),
+            FOREIGN KEY (\`${TENANT_COLUMN}\`, user_id) REFERENCES users(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS app_logs (
             id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             level           VARCHAR(20),
             message         TEXT,
             details         TEXT,
             timestamp       DATETIME,
-            synced          TINYINT(1) DEFAULT 0
+            synced          TINYINT(1) DEFAULT 0,
+            UNIQUE KEY uniq_app_logs_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_app_logs_tenant (\`${TENANT_COLUMN}\`)
         )`,
     ];
 }
@@ -730,12 +1197,12 @@ function getSchemaTables() {
 async function handleProvision(req, res) {
     try {
         const ownerData = await getTenantClientData(req.firebaseUser);
-        const { cuit, empresa } = ownerData;
+        const { cuit, empresa, clientId } = ownerData;
         if (!cuit) {
             return res.status(403).json({ error: 'CUIT no configurado para este usuario' });
         }
 
-        const { dbName, isNew } = await ensureTenantDatabase(cuit, empresa);
+        const { dbName, isNew } = await ensureTenantDatabase({ clientId, cuit, empresa });
 
         res.json({
             ok: true,
@@ -759,26 +1226,27 @@ app.post('/provision', verifyFirebaseToken, handleProvision);
 app.post('/api/provision', verifyFirebaseToken, handleProvision);
 
 // ── Tenant cache & lazy pools ──────────────────────────────────────────────
-const tenantInfoCache = new Map();   // uid  → { dbName, cuit, empresa }
+const tenantInfoCache = new Map();   // uid  → { value, expiresAt }
 const tenantPools     = new Map();   // dbName → Pool
 const tableColCache   = new Map();   // "dbName.table" → [colNames]
 
 async function getTenantInfo(authUser) {
     const uid = typeof authUser === 'string' ? authUser : authUser?.uid;
     const email = typeof authUser === 'string' ? '' : authUser?.email;
-    if (tenantInfoCache.has(uid)) return tenantInfoCache.get(uid);
+    tenantInfoCache.delete(uid);
 
     const accessContext = await getClientAccessContext({ uid, email });
     if (accessContext) {
         assertClientAccess(accessContext);
         const info = {
-            dbName: dbNameFromCuit(accessContext.client.taxId),
+            dbName: OPERATIONAL_DB_NAME,
             cuit: accessContext.client.taxId,
             empresa: accessContext.client.businessName,
             clientId: accessContext.client.id,
+            tenantId: accessContext.client.id,
             licenses: accessContext.effectiveLicenses,
         };
-        tenantInfoCache.set(uid, info);
+        tenantInfoCache.set(uid, { value: info, expiresAt: 0 });
         return info;
     }
 
@@ -786,9 +1254,13 @@ async function getTenantInfo(authUser) {
     const userDoc = await firestoreDb.collection('clientes').doc(uid).get();
     if (!userDoc.exists) throw new Error('Usuario no registrado como cliente');
     const { cuit, empresa } = userDoc.data();
-    const dbName = dbNameFromCuit(cuit);
-    const info = { dbName, cuit, empresa };
-    tenantInfoCache.set(uid, info);
+    const info = {
+        dbName: OPERATIONAL_DB_NAME,
+        cuit,
+        empresa,
+        tenantId: DEFAULT_OPERATIONAL_TENANT_ID,
+    };
+    tenantInfoCache.set(uid, { value: info, expiresAt: 0 });
     return info;
 }
 
@@ -889,7 +1361,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Operación requerida' });
         }
 
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
@@ -899,6 +1371,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             for (const col of validCols) {
                 if (AUTO_COLS.has(col)) continue;
                 if (excludeId && col === 'id') continue;
+                if (col === TENANT_COLUMN) {
+                    out[col] = tenantId;
+                    continue;
+                }
                 if (rec[col] !== undefined && rec[col] !== null) {
                     // Serializar objetos/arrays a JSON string para columnas JSON
                     out[col] = (typeof rec[col] === 'object') ? JSON.stringify(rec[col]) : rec[col];
@@ -924,14 +1400,16 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
             }
-            await pool.query('UPDATE ?? SET ? WHERE id = ?', [table, filtered, numId]);
+            const scope = tenantWhereClause(table, tenantId);
+            await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
             return res.json({ ok: true });
         }
 
         if (operation === 'delete') {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para delete' });
-            await pool.query('DELETE FROM ?? WHERE id = ?', [table, numId]);
+            const scope = tenantWhereClause(table, tenantId);
+            await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}`, [numId, ...scope.params]);
             return res.json({ ok: true });
         }
 
@@ -942,6 +1420,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const filtered = {};
             for (const col of validCols) {
                 if (AUTO_COLS.has(col)) continue;
+                if (col === TENANT_COLUMN) {
+                    filtered[col] = tenantId;
+                    continue;
+                }
                 if (record[col] !== undefined && record[col] !== null) {
                     filtered[col] = (typeof record[col] === 'object') ? JSON.stringify(record[col]) : record[col];
                 }
@@ -953,7 +1435,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const vals    = Object.values(filtered);
             const holders = vals.map(() => '?').join(', ');
             const updates = Object.keys(filtered)
-                .filter(c => c !== 'key' && c !== 'id')
+                .filter(c => c !== 'key' && c !== 'id' && c !== TENANT_COLUMN)
                 .map(c => `\`${c}\` = VALUES(\`${c}\`)`)
                 .join(', ');
             await pool.query(
@@ -980,9 +1462,12 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Key requerida' });
         }
 
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
-        const [rows] = await pool.query('SELECT `key`, value FROM settings WHERE `key` = ? LIMIT 1', [settingKey]);
+        const [rows] = await pool.query(
+            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+            [tenantId, settingKey]
+        );
 
         if (!rows.length) {
             return res.status(404).json({ ok: false, error: 'Setting no encontrada' });
@@ -1012,12 +1497,13 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
             : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'suppliers', 'purchase_items', 'clients', 'prices', 'stock'];
 
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
 
         const payload = {};
         for (const table of tables) {
-            const [rows] = await pool.query(`SELECT * FROM \`${table}\``);
+            const scope = tenantWhereClause(table, tenantId);
+            const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}`, scope.params);
             payload[table] = rows.map(deserializeRow);
         }
 
@@ -1045,14 +1531,15 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         const orderBy = String(req.query.orderBy || 'id').trim();
         const direction = String(req.query.direction || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
 
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         const validCols = await getTableColumns(pool, dbName, table);
         const safeOrderBy = validCols.includes(orderBy) ? orderBy : (validCols.includes('id') ? 'id' : validCols[0]);
+        const scope = tenantWhereClause(table, tenantId);
 
         const [rows] = await pool.query(
-            `SELECT * FROM \`${table}\` ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-            [limit, offset]
+            `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+            [...scope.params, limit, offset]
         );
 
         return res.json({
@@ -1072,11 +1559,11 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 // Devuelve usuarios y permisos en un solo payload para login/seguridad.
 app.get('/api/users', verifyFirebaseToken, async (req, res) => {
     try {
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
 
-        const [usersRows] = await pool.query('SELECT * FROM users ORDER BY id ASC');
-        const [permRows] = await pool.query('SELECT * FROM user_permissions ORDER BY id ASC');
+        const [usersRows] = await pool.query('SELECT * FROM users WHERE tenant_id = ? ORDER BY id ASC', [tenantId]);
+        const [permRows] = await pool.query('SELECT * FROM user_permissions WHERE tenant_id = ? ORDER BY id ASC', [tenantId]);
 
         return res.json({
             ok: true,
@@ -1477,7 +1964,7 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'counterKey requerido' });
         }
 
-        const { dbName } = await getTenantInfo(req.firebaseUser);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         const tenantConn = await pool.getConnection();
 
@@ -1485,21 +1972,21 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
             await tenantConn.beginTransaction();
 
             const [counterRows] = await tenantConn.query(
-                'SELECT `key`, value FROM settings WHERE `key` = ? FOR UPDATE',
-                [counterKey]
+                'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? FOR UPDATE',
+                [tenantId, counterKey]
             );
 
             const currentValue = Number(counterRows[0]?.value || 0);
             const nextValue = currentValue + 1;
 
             await tenantConn.query(
-                'INSERT INTO settings (`key`, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-                [counterKey, String(nextValue)]
+                'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+                [tenantId, counterKey, String(nextValue)]
             );
 
             const [branchRows] = await tenantConn.query(
-                'SELECT value FROM settings WHERE `key` = ? LIMIT 1',
-                [branchKey]
+                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+                [tenantId, branchKey]
             );
 
             const branchCode = Number(branchRows[0]?.value || 1);
@@ -1534,6 +2021,7 @@ app.get('/health', (req, res) => res.json({ ok: true, ts: new Date() }));
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 ensureClientsControlStore()
+    .then(() => ensureOperationalTenantIsolation())
     .then(() => {
         app.listen(PORT, () => {
             console.log(`MeatManager API corriendo en puerto ${PORT}`);

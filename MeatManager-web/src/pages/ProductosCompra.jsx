@@ -9,7 +9,8 @@ import { desktopApi } from '../utils/desktopApi';
 
 const ProductosCompra = () => {
     const navigate = useNavigate();
-    const { isPro } = useLicense();
+    const { hasModule } = useLicense();
+    const hasDespostadaModule = hasModule('despostada');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingItem, setEditingItem] = useState(null);
@@ -313,16 +314,16 @@ const ProductosCompra = () => {
                                         className="neo-input"
                                         value={formData.type}
                                         onChange={e => setFormData({ ...formData, type: e.target.value })}
-                                        disabled={!isPro}
+                                        disabled={!hasDespostadaModule}
                                     >
                                         <option value="directo">Venta Directa / Insumo</option>
-                                        {isPro ? (
+                                        {hasDespostadaModule ? (
                                             <option value="despostada">Animal para Despostada</option>
                                         ) : (
                                             <option value="disabled" disabled>Animal para Despostada (Solo PRO)</option>
                                         )}
                                     </select>
-                                    {!isPro && (
+                                    {!hasDespostadaModule && (
                                         <div
                                             onClick={() => navigate('/config/licencia')}
                                             style={{ fontSize: '0.7rem', color: 'var(--color-primary)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.2rem', marginTop: '0.2rem' }}
@@ -333,7 +334,7 @@ const ProductosCompra = () => {
                                 </div>
                             </div>
 
-                            {formData.type === 'despostada' && isPro && (
+                            {formData.type === 'despostada' && hasDespostadaModule && (
                                 <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
                                     <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
                                     <select
