@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Logistica</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #fee2e2 0%, #fecaca 100%);
+            color: #7f1d1d;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #dc2626; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #dc2626;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #ef4444;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #fef2f2;
+            border-left: 4px solid #ef4444;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #ef4444;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fee2e2;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #fee2e2;
+            color: #dc2626;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📦 Logistica</h1>
+            <p>Gestionar entregas y rutas de pedidos</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Indice</a>
+        </div>
+
+        <div class="section">
+            <h2>Objetivo de Logistica</h2>
+            <p>El modulo de logistica ayuda a organizar pedidos para entrega:</p>
+            <ul>
+                <li>Asignar pedidos a repartidores</li>
+                <li>Ordenar entregas por zona</li>
+                <li>Confirmar entregas realizadas</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Preparar Entregas</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                Ingresa a <span class="highlight">Logistica</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Filtra los pedidos por fecha
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Agrupa pedidos por zona o barrio
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Asigna cada grupo a un repartidor
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Estados de Entrega</h2>
+            <table>
+                <tr>
+                    <th>Estado</th>
+                    <th>Significado</th>
+                </tr>
+                <tr>
+                    <td>Pendiente</td>
+                    <td>Pedido listo para salir</td>
+                </tr>
+                <tr>
+                    <td>En reparto</td>
+                    <td>Pedido en camino</td>
+                </tr>
+                <tr>
+                    <td>Entregado</td>
+                    <td>Cliente recibio el pedido</td>
+                </tr>
+                <tr>
+                    <td>No entregado</td>
+                    <td>Hubo inconveniente o ausencia</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Consejos</h2>
+            <ul>
+                <li>Define zonas de entrega para ordenar rutas</li>
+                <li>Actualiza estados en tiempo real para evitar reclamos</li>
+                <li>Registra observaciones de entrega</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,63 @@
+/* Dashboard Layout - High-Performance Crystal 3D Layout */
+.layout-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    background: #050505; /* Deep deep black */
+    color: #fff;
+    overflow: hidden;
+}
+
+.dashboard-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.main-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: radial-gradient(circle at 50% 0%, rgba(20, 20, 30, 1) 0%, rgba(5, 5, 5, 1) 100%);
+    position: relative;
+    overflow: hidden;
+    height: 100%;
+}
+
+/* Route Animations: Clean Fade Entrance */
+.animate-scatter {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+    transition: opacity 0.5s cubic-bezier(0.2, 0.8, 0.4, 1), 
+                transform 0.5s cubic-bezier(0.2, 0.8, 0.4, 1);
+}
+
+.content-entrance {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+.scatter-active {
+    opacity: 0;
+    transform: scale(1.02);
+}
+
+/* Scrollbar styling for the whole app */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary);
+}

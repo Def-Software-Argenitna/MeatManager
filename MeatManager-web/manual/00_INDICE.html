@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MeatManager PRO - Índice de Manuales</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        
+        header h1 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 2.5em;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1.1em;
+        }
+        
+        .manuals-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 25px;
+            margin-bottom: 40px;
+        }
+        
+        .manual-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            border-left: 5px solid #667eea;
+            cursor: pointer;
+        }
+        
+        .manual-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.2);
+            border-left-color: #764ba2;
+        }
+        
+        .manual-card h3 {
+            color: #667eea;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+        }
+        
+        .manual-card p {
+            color: #666;
+            margin-bottom: 15px;
+            font-size: 0.95em;
+        }
+        
+        .manual-card .icon {
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            text-decoration: none;
+            transition: background 0.3s;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        
+        .btn:hover {
+            background: #764ba2;
+        }
+        
+        .btn-small {
+            padding: 8px 12px;
+            font-size: 0.85em;
+        }
+        
+        .section-title {
+            background: white;
+            padding: 15px 25px;
+            margin-top: 30px;
+            border-left: 5px solid #667eea;
+            font-size: 1.3em;
+            color: #333;
+            font-weight: bold;
+            margin-bottom: 20px;
+            border-radius: 5px;
+        }
+        
+        .quick-tips {
+            background: #f0f7ff;
+            border-left: 5px solid #667eea;
+            padding: 20px;
+            border-radius: 5px;
+            margin-top: 30px;
+            color: #333;
+        }
+        
+        .quick-tips h3 {
+            color: #667eea;
+            margin-bottom: 10px;
+        }
+        
+        .quick-tips ul {
+            list-style: none;
+            padding-left: 0;
+        }
+        
+        .quick-tips li {
+            padding: 5px 0;
+            padding-left: 25px;
+            position: relative;
+        }
+        
+        .quick-tips li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #667eea;
+            font-weight: bold;
+        }
+        
+        footer {
+            background: white;
+            padding: 20px;
+            text-align: center;
+            border-radius: 10px;
+            margin-top: 40px;
+            color: #666;
+        }
+        
+        @media print {
+            body {
+                background: white;
+            }
+            .btn {
+                display: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📚 MeatManager PRO</h1>
+            <p class="subtitle">Índice Completo de Manuales de Usuario</p>
+        </header>
+        
+        <div class="section-title">Gestión de Productos</div>
+        <div class="manuals-grid">
+            <div class="manual-card">
+                <div class="icon">📦</div>
+                <h3>Alta de Producto</h3>
+                <p>Crear nuevos productos con categoría, precio y código PLU para ventas</p>
+                <a href="01_ALTA_PRODUCTO.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🏷️</div>
+                <h3>Gestión de Categorías</h3>
+                <p>Organizar productos por categorías (Carnes, Embutidos, etc.)</p>
+                <a href="02_CATEGORIAS.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📊</div>
+                <h3>Gestión de Stock</h3>
+                <p>Realizar ajustes de inventario, consultar disponibilidad</p>
+                <a href="03_STOCK.html" class="btn btn-small">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="section-title">Compras y Proveedores</div>
+        <div class="manuals-grid">
+            <div class="manual-card">
+                <div class="icon">🤝</div>
+                <h3>Gestión de Proveedores</h3>
+                <p>Registrar y administrar datos de proveedores</p>
+                <a href="04_PROVEEDORES.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📝</div>
+                <h3>Registrar Compras</h3>
+                <p>Cargar compras a proveedores, actualizar stock automáticamente</p>
+                <a href="05_COMPRAS.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📦</div>
+                <h3>Productos de Compra</h3>
+                <p>Catálogo de productos para compras con precios y PLU</p>
+                <a href="06_PRODUCTOS_COMPRA.html" class="btn btn-small">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="section-title">Ventas y Pedidos</div>
+        <div class="manuals-grid">
+            <div class="manual-card">
+                <div class="icon">💰</div>
+                <h3>Realizar Ventas</h3>
+                <p>Procesar ventas con búsqueda manual o código de barras Systel</p>
+                <a href="07_VENTAS.html" class="btn btn-small">Ver Manual</a>
+            </div>
+
+            <div class="manual-card">
+                <div class="icon">⚖️</div>
+                <h3>Balanza Real y Modo Test</h3>
+                <p>Conectar la balanza real, importar productos y usar el modo test</p>
+                <a href="20_BALANZA_MODO_TEST.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📲</div>
+                <h3>Generar Pedidos</h3>
+                <p>Crear pedidos de clientes con entrega</p>
+                <a href="08_PEDIDOS.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">👥</div>
+                <h3>Gestión de Clientes</h3>
+                <p>Registrar y administrar datos de clientes</p>
+                <a href="09_CLIENTES.html" class="btn btn-small">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="section-title">Procesamiento de Carnes</div>
+        <div class="manuals-grid">
+            <div class="manual-card">
+                <div class="icon">🐔</div>
+                <h3>Despostada Pollo</h3>
+                <p>Separar productos y calcular rendimiento de despostada de pollo</p>
+                <a href="10_DESPOSTADA_POLLO.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🐖</div>
+                <h3>Despostada Cerdo</h3>
+                <p>Separar productos y calcular rendimiento de despostada de cerdo</p>
+                <a href="11_DESPOSTADA_CERDO.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🐄</div>
+                <h3>Despostada Vaca</h3>
+                <p>Separar productos y calcular rendimiento de despostada de vaca</p>
+                <a href="12_DESPOSTADA_VACA.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🐟</div>
+                <h3>Despostada Pescado</h3>
+                <p>Separar productos y calcular rendimiento de despostada de pescado</p>
+                <a href="13_DESPOSTADA_PESCADO.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🔍</div>
+                <h3>Otros Items</h3>
+                <p>Gestionar productos especiales y accesorios</p>
+                <a href="14_OTROS_ITEMS.html" class="btn btn-small">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="section-title">Administración</div>
+        <div class="manuals-grid">
+            <div class="manual-card">
+                <div class="icon">💳</div>
+                <h3>Cierre de Caja</h3>
+                <p>Cerrar caja diaria y generar reportes de ventas</p>
+                <a href="15_CIERRE_CAJA.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📈</div>
+                <h3>Informes PRO</h3>
+                <p>Generar reportes detallados de ventas, clientes y rentabilidad</p>
+                <a href="16_INFORMES_PRO.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🏪</div>
+                <h3>Sucursales</h3>
+                <p>Administrar múltiples sucursales de la carnicería</p>
+                <a href="17_SUCURSALES.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">📦</div>
+                <h3>Logística</h3>
+                <p>Gestionar entregas y logística de pedidos</p>
+                <a href="18_LOGISTICA.html" class="btn btn-small">Ver Manual</a>
+            </div>
+            
+            <div class="manual-card">
+                <div class="icon">🔒</div>
+                <h3>Seguridad</h3>
+                <p>Configuración de usuarios y permisos de acceso</p>
+                <a href="19_SEGURIDAD.html" class="btn btn-small">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="section-title">⚖️ Integración QENDRA (Balanza Systel)</div>
+        <div class="manuals-grid">
+            <div class="manual-card" style="border: 2px solid #7c3aed;">
+                <div class="icon">📥</div>
+                <h3>Importar Productos PLU</h3>
+                <p>Traer todos los productos de la balanza QENDRA al stock de MeatManager con un clic</p>
+                <a href="21_INTEGRACION_QENDRA.html#importar" class="btn btn-small" style="background:#7c3aed;">Ver Manual</a>
+            </div>
+            <div class="manual-card" style="border: 2px solid #7c3aed;">
+                <div class="icon">🎫</div>
+                <h3>Visor de Tickets</h3>
+                <p>Ver tickets de la balanza en tiempo real y cargarlos al POS para cobrarlos en caja</p>
+                <a href="21_INTEGRACION_QENDRA.html#visor" class="btn btn-small" style="background:#7c3aed;">Ver Manual</a>
+            </div>
+            <div class="manual-card" style="border: 2px solid #7c3aed;">
+                <div class="icon">🔄</div>
+                <h3>Sync de Ventas QENDRA</h3>
+                <p>Importar historial de ventas de la balanza al registro de MeatManager (últimos 7 días)</p>
+                <a href="21_INTEGRACION_QENDRA.html#sync" class="btn btn-small" style="background:#7c3aed;">Ver Manual</a>
+            </div>
+        </div>
+        
+        <div class="quick-tips">
+            <h3>💡 Consejos Rápidos</h3>
+            <ul>
+                <li><strong>Código de Barras:</strong> Los códigos Systel de las balanzas se leen automáticamente en Ventas</li>
+                <li><strong>Integración QENDRA:</strong> Si tenés balanza Systel, usá el botón 🎫 Tickets en Ventas para cobrar directamente desde la balanza</li>
+                <li><strong>Producto-Stock-Precio:</strong> Crear un producto automáticamente genera entrada de Stock y Precio</li>
+                <li><strong>Búsqueda Rápida:</strong> En todas las páginas puedes buscar por nombre, código PLU o ID</li>
+                <li><strong>Descarga de Datos:</strong> Los reportes pueden exportarse para análisis en Excel</li>
+                <li><strong>Guardado Automático:</strong> Los cambios se guardan automáticamente en la base de datos</li>
+            </ul>
+        </div>
+        
+        <footer>
+            <p><strong>MeatManager PRO v1.0.0</strong> - Sistema de Gestión para Carnicerías</p>
+            <p>Para soporte, consulta la documentación completa incluida en la instalación</p>
+        </footer>
+    </div>
+</body>
+</html>

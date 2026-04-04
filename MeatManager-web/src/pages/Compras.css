@@ -1,0 +1,321 @@
+.compras-container {
+    padding: 1rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.compras-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.compras-actions {
+    display: flex;
+    gap: 1rem;
+}
+
+.neo-button {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    background-color: var(--color-primary);
+    color: var(--color-bg-main);
+    border: none;
+    padding: 0.75rem 1.5rem;
+    border-radius: var(--radius-md);
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.neo-button:hover {
+    background-color: var(--color-primary-dark);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(34, 197, 94, 0.3);
+}
+
+.neo-card {
+    background-color: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+}
+
+.compras-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1.5rem;
+}
+
+.purchase-item-entry-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) 120px 80px 100px 120px 72px;
+    gap: 0.75rem;
+    align-items: end;
+    width: 100%;
+}
+
+.purchase-item-add-button {
+    width: 100%;
+    min-width: 72px;
+    min-height: 46px;
+    padding: 0.75rem;
+    margin-bottom: 0;
+    justify-content: center;
+    justify-self: stretch;
+}
+
+.purchase-mode-indicator {
+    width: 100%;
+    min-height: 46px;
+    display: flex;
+    align-items: center;
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background: rgba(220, 38, 38, 0.08);
+    color: var(--color-text-main);
+    font-weight: 600;
+}
+
+.purchase-views {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.purchase-view-chip {
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-card);
+    color: var(--color-text-primary);
+    border-radius: 999px;
+    padding: 0.6rem 1rem;
+    cursor: pointer;
+    font-weight: 600;
+    transition: all 0.2s ease;
+}
+
+.purchase-view-chip.active {
+    border-color: var(--color-primary);
+    background: rgba(34, 197, 94, 0.12);
+    color: var(--color-primary);
+}
+
+.purchase-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+}
+
+.purchase-summary-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.purchase-summary-card.sale {
+    border-color: rgba(34, 197, 94, 0.35);
+}
+
+.purchase-summary-card.internal {
+    border-color: rgba(245, 158, 11, 0.35);
+}
+
+.purchase-summary-card.mixed {
+    border-color: rgba(59, 130, 246, 0.35);
+}
+
+.purchase-summary-label {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.purchase-summary-value {
+    font-size: 1.5rem;
+    color: var(--color-text-primary);
+}
+
+.purchase-summary-meta {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.purchase-card {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.purchase-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.purchase-supplier {
+    font-weight: 600;
+    font-size: 1.1rem;
+    color: var(--color-text-primary);
+}
+
+.purchase-date {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.purchase-items {
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+}
+
+.purchase-total {
+    margin-top: auto;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 700;
+    color: var(--color-primary);
+    font-size: 1.1rem;
+}
+
+.purchase-kind-badge {
+    border-radius: 999px;
+    padding: 0.2rem 0.65rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    border: 1px solid var(--color-border);
+    background: var(--color-bg-main);
+    color: var(--color-text-primary);
+}
+
+.purchase-kind-badge.venta {
+    border-color: rgba(34, 197, 94, 0.35);
+    color: #4ade80;
+}
+
+.purchase-kind-badge.interno {
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
+}
+
+.purchase-kind-badge.mixta {
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #60a5fa;
+}
+
+.purchase-breakdown {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+}
+
+.purchase-breakdown-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.9rem;
+    color: var(--color-text-secondary);
+}
+
+.purchase-breakdown-row.internal strong {
+    color: #fbbf24;
+}
+
+.purchase-item-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--color-bg-main);
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    border: 1px solid var(--color-border);
+}
+
+.purchase-item-chip.internal {
+    border-color: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.1);
+    color: #fbbf24;
+}
+
+.neo-input {
+    width: 100%;
+    padding: 0.75rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border);
+    background-color: var(--color-bg-main);
+    color: var(--color-text-primary);
+    margin-bottom: 1rem;
+}
+
+.neo-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
+}
+
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0, 0, 0, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    backdrop-filter: blur(4px);
+}
+
+.modal-content {
+    width: 100%;
+    max-width: 500px;
+    animation: modalSlideUp 0.3s ease-out;
+}
+
+@keyframes modalSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@media (max-width: 768px) {
+    .compras-header {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1rem;
+    }
+
+    .purchase-views {
+        gap: 0.5rem;
+    }
+
+    .purchase-view-chip {
+        flex: 1 1 calc(50% - 0.5rem);
+        text-align: center;
+    }
+
+    .purchase-item-entry-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .purchase-item-add-button {
+        margin-left: 0;
+        width: 100%;
+    }
+}

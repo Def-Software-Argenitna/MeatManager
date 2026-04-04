@@ -1,0 +1,208 @@
+.menu-digital-container {
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.pro-grid-layout {
+    display: grid;
+    grid-template-columns: 350px 1fr;
+    gap: 2rem;
+    align-items: start;
+}
+
+/* Phone Mockup Styling */
+.phone-mockup {
+    width: 300px;
+    height: 600px;
+    background: #111;
+    border-radius: 40px;
+    margin: 0 auto;
+    padding: 12px;
+    border: 8px solid #333;
+    position: relative;
+    box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.5);
+}
+
+.phone-screen {
+    width: 100%;
+    height: 100%;
+    background: white;
+    border-radius: 30px;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.whatsapp-header {
+    background: #075E54;
+    color: white;
+    padding: 0.75rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8rem;
+}
+
+.menu-content {
+    flex: 1;
+    padding: 1.5rem;
+    background-image: url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png');
+    /* WA Background */
+    overflow-y: auto;
+}
+
+.shop-name {
+    text-align: center;
+    font-size: 1.25rem;
+    margin-bottom: 0.25rem;
+}
+
+.menu-tagline {
+    text-align: center;
+    font-size: 0.75rem;
+    color: #666;
+    margin-bottom: 1.5rem;
+}
+
+.preview-items {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.preview-item {
+    background: white;
+    padding: 0.75rem;
+    border-radius: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+    border: 1px solid #eee;
+}
+
+.preview-item.is-offer {
+    border-color: #fbbf24;
+    background: #fffbeb;
+}
+
+.item-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.item-name {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.offer-badge {
+    font-size: 0.6rem;
+    color: #b45309;
+    font-weight: bold;
+}
+
+.item-price {
+    font-weight: 700;
+    color: #444;
+}
+
+.whatsapp-footer {
+    background: #25D366;
+    color: white;
+    padding: 1rem;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: bold;
+}
+
+/* Management Styles */
+.menu-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.menu-table th {
+    text-align: left;
+    padding: 1rem;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.menu-table td {
+    padding: 1rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.price-input-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    background: var(--color-bg-main);
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    width: 100px;
+}
+
+.price-input-wrapper input {
+    background: transparent;
+    border: none;
+    width: 100%;
+    font-weight: bold;
+    outline: none;
+}
+
+.offer-toggle {
+    padding: 0.4rem 0.8rem;
+    border-radius: 100px;
+    border: 1px solid var(--color-border);
+    background: transparent;
+    cursor: pointer;
+    font-size: 0.8rem;
+}
+
+.offer-toggle.active {
+    background: #fff7ed;
+    color: #c2410c;
+    border-color: #fb923c;
+}
+
+.delete-btn {
+    background: transparent;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    padding: 0.5rem;
+    border-radius: 50%;
+}
+
+.delete-btn:hover {
+    background: #fee2e2;
+}
+
+.catalog-selection-list {
+    margin-top: 1rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.catalog-selection-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 1rem;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.catalog-selection-item:hover {
+    background: #f8fafc;
+    color: var(--color-primary);
+}
+
+@media (max-width: 900px) {
+    .pro-grid-layout {
+        grid-template-columns: 1fr;
+    }
+}

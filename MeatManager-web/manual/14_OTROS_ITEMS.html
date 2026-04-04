@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Otros Items</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #d8b4fe 0%, #c4b5fd 100%);
+            color: #3b0764;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #7c3aed; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #6d28d9;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #a78bfa;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #f5f3ff;
+            border-left: 4px solid #8b5cf6;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #8b5cf6;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #ede9fe;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #ede9fe;
+            color: #6d28d9;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Otros Items</h1>
+            <p>Gestionar productos especiales y accesorios</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Indice</a>
+        </div>
+
+        <div class="section">
+            <h2>Que son los Otros Items</h2>
+            <p>Son productos que no encajan en los cortes principales, como:</p>
+            <ul>
+                <li>Subproductos (hueso, grasa, cuero)</li>
+                <li>Accesorios (bolsas, bandejas)</li>
+                <li>Productos estacionales o especiales</li>
+                <li>Servicios adicionales (envio, armado)</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Registrar un Item Especial</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                Ingresa a <span class="highlight">Productos de Compra</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Crea el producto con una categoria especial (ej: "Otros")
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Define la unidad (unidad, paquete o kg)
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Asigna precio y PLU si se vende por balanza
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Ejemplos de Otros Items</h2>
+            <table>
+                <tr>
+                    <th>Item</th>
+                    <th>Unidad</th>
+                    <th>Uso</th>
+                </tr>
+                <tr>
+                    <td>Bandeja Plastica</td>
+                    <td>Unidad</td>
+                    <td>Packaging</td>
+                </tr>
+                <tr>
+                    <td>Bolsa Termica</td>
+                    <td>Unidad</td>
+                    <td>Delivery</td>
+                </tr>
+                <tr>
+                    <td>Hueso para Caldo</td>
+                    <td>kg</td>
+                    <td>Subproducto</td>
+                </tr>
+                <tr>
+                    <td>Grasa de Vaca</td>
+                    <td>kg</td>
+                    <td>Subproducto</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Consejos</h2>
+            <ul>
+                <li>Usa una categoria especial para filtrar mas rapido</li>
+                <li>Si un item se vende seguido, dale un PLU</li>
+                <li>Registra costos para analizar rentabilidad</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

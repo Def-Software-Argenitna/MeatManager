@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Despostada de Carnes</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .info {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🔍 Despostada de Carnes</h1>
+            <p>Separar productos y calcular rendimiento de despostada</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué es Despostada?</h2>
+            <p>La despostada es el proceso de separar una pieza entera (pollo, vaca, cerdo, etc.) en sus partes comerciales. Por ejemplo:</p>
+            <ul>
+                <li>🐔 <strong>Pollo Entero</strong> → Pechugas, muslos, contramuslos, alitas, etc.</li>
+                <li>🐄 <strong>Vaca Cuartos</strong> → Asado, lomo, costillas, matambre, etc.</li>
+                <li>🐖 <strong>Cerdo</strong> → Lomo, paleta, costillas, jamón, etc.</li>
+                <li>🐟 <strong>Pescado</strong> → Filetes, cabeza, cola, etc.</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>¿Por Qué es Importante?</h2>
+            <p>Permite:</p>
+            <ul>
+                <li>Calcular el rendimiento de despostada (% de pérdida por hueso/grasa)</li>
+                <li>Conocer el costo real de cada corte</li>
+                <li>Controlar auditoría de pesos</li>
+                <li>Registrar operaciones de taller</li>
+                <li>Generar reportes de eficiencia</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Despostada</h2>
+            <p>Desde el menú lateral, selecciona el tipo de carne:</p>
+            <ul>
+                <li>🐔 <span class="highlight">Despostada Pollo</span></li>
+                <li>🐄 <span class="highlight">Despostada Vaca</span></li>
+                <li>🐖 <span class="highlight">Despostada Cerdo</span></li>
+                <li>🐟 <span class="highlight">Despostada Pescado</span></li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Registrar Despostada Paso a Paso</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en</strong> "+ Nueva Despostada"
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Selecciona el producto original</strong> (ej: "Pollo Entero")
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Ingresa el peso inicial</strong> (ej: 5 kg)
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Para cada corte, ingresa:</strong>
+                <table>
+                    <tr>
+                        <th>Dato</th>
+                        <th>Descripción</th>
+                    </tr>
+                    <tr>
+                        <td>Nombre del corte</td>
+                        <td>Ej: "Pechuga", "Muslo", etc.</td>
+                    </tr>
+                    <tr>
+                        <td>Peso neto</td>
+                        <td>Cuánto pesa ese corte</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>El sistema calcula automáticamente:</strong>
+                <ul>
+                    <li>Peso total de cortes</li>
+                    <li>Pérdida (hueso, grasa, humedad)</li>
+                    <li>Porcentaje de rendimiento</li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">6</span>
+                <strong>Haz clic en</strong> "Guardar Despostada"
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Ejemplo: Despostada de Pollo</h2>
+            <div class="info">
+                ℹ️ <strong>Entrada:</strong> 1 Pollo Entero de 2.5 kg
+            </div>
+            <table>
+                <tr>
+                    <th>Corte</th>
+                    <th>Peso</th>
+                </tr>
+                <tr>
+                    <td>Pechuga</td>
+                    <td>0.8 kg</td>
+                </tr>
+                <tr>
+                    <td>Muslos</td>
+                    <td>0.6 kg</td>
+                </tr>
+                <tr>
+                    <td>Contramuslos</td>
+                    <td>0.5 kg</td>
+                </tr>
+                <tr>
+                    <td>Alitas</td>
+                    <td>0.3 kg</td>
+                </tr>
+                <tr>
+                    <td><strong>Subtotal Cortes</strong></td>
+                    <td><strong>2.2 kg</strong></td>
+                </tr>
+                <tr style="background: #ffe0e0;">
+                    <td><strong>Pérdida (hueso, piel, etc.)</strong></td>
+                    <td><strong>0.3 kg</strong></td>
+                </tr>
+            </table>
+            <p><strong>Rendimiento:</strong> 2.2 / 2.5 = 88% (se pierde 12%)</p>
+        </div>
+        
+        <div class="section">
+            <h2>Rendimientos Típicos</h2>
+            <p>Estos son valores referenciales según tipo de carne:</p>
+            <table>
+                <tr>
+                    <th>Tipo de Carne</th>
+                    <th>Rendimiento Esperado</th>
+                    <th>Pérdida Típica</th>
+                </tr>
+                <tr>
+                    <td>Pollo Entero</td>
+                    <td>85-90%</td>
+                    <td>Hueso, piel, vísceras</td>
+                </tr>
+                <tr>
+                    <td>Vaca</td>
+                    <td>75-80%</td>
+                    <td>Hueso, grasa excesiva</td>
+                </tr>
+                <tr>
+                    <td>Cerdo</td>
+                    <td>80-85%</td>
+                    <td>Hueso, cuero</td>
+                </tr>
+                <tr>
+                    <td>Pescado</td>
+                    <td>70-75%</td>
+                    <td>Cabeza, espina, piel</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Uso de Datos de Despostada</h2>
+            <p>Los datos se usan para:</p>
+            <ol>
+                <li><strong>Auditoría:</strong> Verificar que el peso coincida con teoría</li>
+                <li><strong>Control de Calidad:</strong> Si rendimiento es muy bajo, hay problema</li>
+                <li><strong>Costos:</strong> Calcular costo real de cada corte</li>
+                <li><strong>Reportes:</strong> Análisis de eficiencia de taller</li>
+            </ol>
+        </div>
+        
+        <div class="section">
+            <h2>Consejos</h2>
+            <ul>
+                <li>✓ Registra despostadas el mismo día que se realizan</li>
+                <li>✓ Pesa todo con precisión</li>
+                <li>✓ Si rendimiento es muy bajo, investiga problema</li>
+                <li>✓ Documenta cortes especiales o anormales</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,24 @@
+.neo-card {
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.07);
+  padding: 2rem;
+}
+
+.neo-button {
+  background: #22c55e;
+  color: #fff;
+  border: none;
+  border-radius: 4px;
+  padding: 0.5rem 1.5rem;
+  font-size: 1rem;
+  cursor: pointer;
+  margin-top: 1rem;
+}
+
+select {
+  padding: 0.4rem 1rem;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+  margin-left: 0.5rem;
+}

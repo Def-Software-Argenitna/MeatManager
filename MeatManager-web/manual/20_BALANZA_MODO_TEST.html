@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Balanza Real y Modo Test</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #2ecc71 0%, #27ae60 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #2ecc71; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #2ecc71;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #2ecc71;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #27ae60;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #2ecc71;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #2ecc71;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        ul { margin-left: 20px; }
+        .footer {
+            text-align: center;
+            margin-top: 30px;
+            color: #666;
+            font-size: 0.9em;
+        }
+        @media print { body { background: white; } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚖️ Balanza Real y Modo Test</h1>
+            <p>Conexion correcta, uso en ventas y despostada, y como salir del modo test</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">Inicio</a> / Balanza Real y Modo Test
+        </div>
+
+        <div class="section">
+            <h2>✅ Requisitos basicos</h2>
+            <ul>
+                <li>Balanza Systel Cuora Max conectada por USB.</li>
+                <li>PC con Windows y permisos para seleccionar el puerto COM.</li>
+                <li>MeatManager PRO instalado y abierto.</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>1) Como conectar la balanza real</h2>
+
+            <div class="step">
+                <span class="step-number">1</span>
+                Conecta la balanza por USB y asegurate de que este encendida.
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                En <span class="highlight">Ventas</span> o en cualquier despostada, presiona <span class="highlight">Conectar Balanza</span>.
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Selecciona el puerto (COM) que te muestra Windows y acepta.
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Si la conexion es correcta, veras el estado <span class="highlight">Balanza OK</span>.
+            </div>
+
+            <div class="success">
+                💡 Consejo: si te aparece mas de un COM, proba el que se agrego al conectar la balanza.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>2) Importar productos desde la balanza (Stock e Inventario)</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                Anda a <span class="highlight">Stock e Inventario</span>.
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Presiona <span class="highlight">Importar de Balanza</span>.
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                El sistema traera nombres, PLUs y precios cargados en la balanza.
+            </div>
+            <div class="success">
+                ✅ Esto sirve para sincronizar articulos sin cargarlos a mano.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>3) Que es el Modo Test y para que sirve</h2>
+            <p>El <strong>Modo Test</strong> simula la balanza: genera pesos falsos para poder probar ventas o despostada sin la balanza conectada.</p>
+            <ul>
+                <li>Ideal para capacitacion y pruebas.</li>
+                <li>No requiere conexion USB.</li>
+                <li>Usa pesos aleatorios (no reales).</li>
+            </ul>
+            <div class="warning">
+                ⚠️ Importante: cuando esta activo, la balanza real queda desactivada.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>4) Como activar y salir del Modo Test</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                Presiona <span class="highlight">(Probar) / Modo Test</span>.
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Aparecera un aviso explicando que el modo test desactiva la balanza real. Confirma si queres continuar.
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Cuando esta activo veras un cartel: <span class="highlight">Modo Test activo</span>.
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Para salir, presiona <span class="highlight">Salir de Modo Test</span> y confirma.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>5) Si no toma la balanza real</h2>
+            <ul>
+                <li>Verifica que el <strong>Modo Test</strong> este desactivado.</li>
+                <li>Revisa el cable USB y que la balanza este encendida.</li>
+                <li>Proba otro puerto COM.</li>
+                <li>Cerra y vuelve a abrir MeatManager.</li>
+            </ul>
+        </div>
+
+        <div class="footer">
+            MeatManager PRO - Manual de Balanza y Modo Test
+        </div>
+    </div>
+</body>
+</html>

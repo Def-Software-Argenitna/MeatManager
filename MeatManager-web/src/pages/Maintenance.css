@@ -1,0 +1,195 @@
+.maintenance-container {
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+}
+
+.maintenance-header {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    margin-bottom: 2.5rem;
+}
+
+.maintenance-header h1 {
+    font-size: 2rem;
+    font-weight: 700;
+    margin: 0;
+    background: linear-gradient(135deg, var(--color-text) 0%, var(--color-text-muted) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+}
+
+.maintenance-header p {
+    color: var(--color-text-muted);
+    margin: 0.25rem 0 0 0;
+}
+
+.maintenance-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1.5rem;
+}
+
+.maintenance-card {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    padding: 2rem;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.maintenance-card:hover {
+    transform: translateY(-5px);
+    box-shadow: var(--shadow-xl);
+    border-color: var(--color-primary);
+}
+
+.maintenance-card.danger {
+    border-color: rgba(239, 68, 68, 0.2);
+}
+
+.maintenance-card.danger:hover {
+    border-color: var(--color-danger);
+}
+
+.card-icon {
+    width: 60px;
+    height: 60px;
+    border-radius: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.5rem;
+    color: white;
+}
+
+.card-icon.export {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+}
+
+.card-icon.import {
+    background: linear-gradient(135deg, #8b5cf6 0%, #7c3aed 100%);
+}
+
+.card-icon.sync {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+}
+
+.card-icon.danger {
+    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
+}
+
+.maintenance-card h3 {
+    font-size: 1.25rem;
+    margin-bottom: 1rem;
+    color: var(--color-text);
+}
+
+.maintenance-card p {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    line-height: 1.6;
+    margin-bottom: 2rem;
+    flex: 1;
+}
+
+.btn-maintenance {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    border-radius: var(--radius-md);
+    border: none;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.95rem;
+    color: white;
+}
+
+.btn-maintenance.export {
+    background: #3b82f6;
+}
+
+.btn-maintenance.import {
+    background: #8b5cf6;
+}
+
+.btn-maintenance.sync {
+    background: #10b981;
+}
+
+.btn-maintenance.danger {
+    background: #ef4444;
+}
+
+.btn-maintenance:hover:not(:disabled) {
+    filter: brightness(1.1);
+    transform: scale(1.02);
+}
+
+.btn-maintenance:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.maintenance-toast {
+    position: fixed;
+    bottom: 2rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 1rem 1.5rem;
+    border-radius: var(--radius-lg);
+    background: var(--color-bg-card);
+    box-shadow: var(--shadow-2xl);
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    z-index: 2000;
+    min-width: 320px;
+    animation: slideUp 0.3s ease-out;
+    border: 1px solid var(--color-border);
+}
+
+.maintenance-toast.success {
+    border-left: 4px solid #10b981;
+}
+
+.maintenance-toast.error {
+    border-left: 4px solid #ef4444;
+}
+
+.maintenance-toast button {
+    margin-left: auto;
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 1.5rem;
+}
+
+.text-danger {
+    color: #ef4444;
+}
+
+@keyframes slideUp {
+    from {
+        transform: translate(-50%, 20px);
+        opacity: 0;
+    }
+
+    to {
+        transform: translate(-50%, 0);
+        opacity: 1;
+    }
+}

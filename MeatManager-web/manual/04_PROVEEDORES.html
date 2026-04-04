@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Gestión de Proveedores</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .breadcrumb a:hover { text-decoration: underline; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        tr:hover { background: #f9f9f9; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🤝 Gestión de Proveedores</h1>
+            <p>Registrar y administrar datos de proveedores</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué es un Proveedor?</h2>
+            <p>Un proveedor es una empresa o persona que te suministra productos. La gestión de proveedores permite:</p>
+            <ul>
+                <li>Registrar contactos y datos de entrega</li>
+                <li>Guardar condiciones de pago y horarios</li>
+                <li>Historial de compras por proveedor</li>
+                <li>Generar órdenes de compra eficientes</li>
+                <li>Análisis de costos por proveedor</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Proveedores</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca la opción <span class="highlight">Proveedores</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá una tabla</strong> con todos tus proveedores registrados
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Crear un Nuevo Proveedor</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en el botón</strong> "+ Nuevo Proveedor"
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Completa los datos del proveedor:</strong>
+                <table>
+                    <tr>
+                        <th>Campo</th>
+                        <th>Descripción</th>
+                        <th>Requerido</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Nombre</strong></td>
+                        <td>Razón social o nombre comercial</td>
+                        <td>✓ Sí</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CUIT/CUIL</strong></td>
+                        <td>Número de identificación fiscal</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Contacto</strong></td>
+                        <td>Nombre de persona de contacto</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Teléfono</strong></td>
+                        <td>Número de contacto principal</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Email</strong></td>
+                        <td>Correo electrónico del proveedor</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dirección</strong></td>
+                        <td>Domicilio del proveedor</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Localidad</strong></td>
+                        <td>Ciudad o localidad</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Condiciones de Pago</strong></td>
+                        <td>Ej: Contado, 30 días, etc.</td>
+                        <td>Recomendado</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Haz clic en</strong> <span class="highlight">Guardar</span>
+            </div>
+            <div class="success">✓ El proveedor se creará automáticamente</div>
+        </div>
+        
+        <div class="section">
+            <h2>Editar Datos de un Proveedor</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Busca el proveedor</strong> en la tabla
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en el botón</strong> "Editar" o en la fila
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Modifica los datos</strong> que necesites cambiar
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Haz clic en</strong> <span class="highlight">Guardar</span>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Eliminar un Proveedor</h2>
+            <div class="warning">
+                ⚠️ <strong>Advertencia:</strong> Solo se pueden eliminar proveedores que NO tengan compras registradas. Si intentas eliminar un proveedor con historial de compras, será rechazada.
+            </div>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Busca el proveedor</strong> que deseas eliminar
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Verifica que no tenga compras</strong> asociadas
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Haz clic en el botón</strong> "Eliminar" o el icono de papelera
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Confirma la eliminación</strong>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Búsqueda de Proveedores</h2>
+            <p>Use la barra de búsqueda para encontrar rápidamente un proveedor:</p>
+            <ul>
+                <li>Escribe el nombre del proveedor</li>
+                <li>O el CUIT/CUIL</li>
+                <li>O la localidad</li>
+                <li>El sistema filtrará automáticamente</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Relación con Compras</h2>
+            <p>Los proveedores se utilizan cuando registras una compra:</p>
+            <ol>
+                <li>Abre <strong>Compras</strong> desde el menú</li>
+                <li>Al crear una nueva compra, debes seleccionar un proveedor</li>
+                <li>El sistema guardará el historial de compras por proveedor</li>
+                <li>Puedes generar reportes filtrando por proveedor</li>
+            </ol>
+        </div>
+        
+        <div class="section">
+            <h2>Información Importante para Completar</h2>
+            <p>Para que la gestión de proveedores sea efectiva, completa:</p>
+            <table>
+                <tr>
+                    <th>Información</th>
+                    <th>Por Qué es Importante</th>
+                </tr>
+                <tr>
+                    <td><strong>Teléfono y Email</strong></td>
+                    <td>Para contactar rápidamente ante cambios o problemas</td>
+                </tr>
+                <tr>
+                    <td><strong>Condiciones de Pago</strong></td>
+                    <td>Para planificar flujo de caja y pagos</td>
+                </tr>
+                <tr>
+                    <td><strong>Persona de Contacto</strong></td>
+                    <td>Para comunicaciones personalizadas</td>
+                </tr>
+                <tr>
+                    <td><strong>CUIT/CUIL</strong></td>
+                    <td>Para emisión de facturas y documentación fiscal</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Próximos Pasos</h2>
+            <ol>
+                <li>Crea todos tus proveedores principales</li>
+                <li>Lee el manual de <a href="05_COMPRAS.html">Registrar Compras</a></li>
+                <li>Comienza a registrar compras de proveedores</li>
+                <li>Monitorea precios y condiciones en reportes</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html>

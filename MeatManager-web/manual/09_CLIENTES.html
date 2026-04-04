@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Gestión de Clientes</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        tr:hover { background: #f9f9f9; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>👥 Gestión de Clientes</h1>
+            <p>Registrar y administrar datos de clientes</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Por Qué Registrar Clientes?</h2>
+            <p>La gestión de clientes permite:</p>
+            <ul>
+                <li>Conocer quién compra y cuánto gasta</li>
+                <li>Ofrecer promociones personalizadas</li>
+                <li>Gestionar créditos y deudas</li>
+                <li>Generar reportes por cliente</li>
+                <li>Mejorar el servicio y retención</li>
+                <li>Crear perfiles para entregas a domicilio</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Clientes</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca la opción <span class="highlight">Clientes</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá una tabla</strong> con todos tus clientes registrados
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Crear un Nuevo Cliente</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en el botón</strong> "+ Nuevo Cliente"
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Completa los datos:</strong>
+                <table>
+                    <tr>
+                        <th>Campo</th>
+                        <th>Descripción</th>
+                        <th>Requerido</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Nombre</strong></td>
+                        <td>Nombre completo o razón social</td>
+                        <td>✓</td>
+                    </tr>
+                    <tr>
+                        <td><strong>CUIT/CUIL/DNI</strong></td>
+                        <td>Identificación fiscal o personal</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Email</strong></td>
+                        <td>Correo electrónico del cliente</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Teléfono</strong></td>
+                        <td>Número de contacto principal</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dirección</strong></td>
+                        <td>Dirección completa</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Localidad</strong></td>
+                        <td>Ciudad o zona</td>
+                        <td>Recomendado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Condición IVA</strong></td>
+                        <td>Responsable Inscripto, Consumidor Final, etc.</td>
+                        <td>Recomendado</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Haz clic en</strong> <span class="highlight">Guardar</span>
+            </div>
+            <div class="success">✓ El cliente se creará automáticamente</div>
+        </div>
+        
+        <div class="section">
+            <h2>Editar Datos de un Cliente</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Busca el cliente</strong> en la tabla
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en el botón</strong> "Editar" o en la fila
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Modifica los datos</strong> que necesites cambiar
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Haz clic en</strong> <span class="highlight">Guardar</span>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Búsqueda de Clientes</h2>
+            <p>Usa la barra de búsqueda para encontrar clientes rápidamente:</p>
+            <ul>
+                <li>Escribe el nombre del cliente</li>
+                <li>O el CUIT/CUIL/DNI</li>
+                <li>O el teléfono</li>
+                <li>El sistema filtrará en tiempo real</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Historial de Compras por Cliente</h2>
+            <p>Desde la pantalla de clientes, puedes:</p>
+            <ol>
+                <li>Seleccionar un cliente</li>
+                <li>Ver "Historial de Ventas"</li>
+                <li>Consultar montos gastados</li>
+                <li>Ver fechas de últimas compras</li>
+                <li>Identificar clientes VIP o inactivos</li>
+            </ol>
+        </div>
+        
+        <div class="section">
+            <h2>Eliminar un Cliente</h2>
+            <p>Solo se pueden eliminar clientes sin historial de compras.</p>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Busca el cliente</strong> que deseas eliminar
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Verifica que no tenga compras</strong> registradas
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Haz clic en</strong> "Eliminar"
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Confirma la eliminación</strong>
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Tipos de Clientes</h2>
+            <table>
+                <tr>
+                    <th>Tipo</th>
+                    <th>Descripción</th>
+                    <th>Datos Importantes</th>
+                </tr>
+                <tr>
+                    <td><strong>Consumidor Final</strong></td>
+                    <td>Comprador ocasional o regular</td>
+                    <td>Nombre, teléfono (para referencias)</td>
+                </tr>
+                <tr>
+                    <td><strong>Negocio/Restaurante</strong></td>
+                    <td>Cliente comercial</td>
+                    <td>CUIT, razón social, contacto, dirección, cond. IVA</td>
+                </tr>
+                <tr>
+                    <td><strong>Delivery/Plataformas</strong></td>
+                    <td>Clientes de aplicaciones</td>
+                    <td>Dirección para entrega, teléfono de contacto</td>
+                </tr>
+                <tr>
+                    <td><strong>Multitienda</strong></td>
+                    <td>Cadenas o reventa</td>
+                    <td>CUIT, múltiples direcciones, términos de pago</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Próximos Pasos</h2>
+            <ol>
+                <li>Crea tus primeros clientes principales</li>
+                <li>Lee el manual de <a href="08_PEDIDOS.html">Generar Pedidos</a></li>
+                <li>Registra ventas asociando clientes</li>
+                <li>Consulta reportes por cliente en Informes PRO</li>
+            </ol>
+        </div>
+    </div>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Sucursales</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #d1fae5 0%, #a7f3d0 100%);
+            color: #064e3b;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #059669; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #059669;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #10b981;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #ecfdf5;
+            border-left: 4px solid #10b981;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #10b981;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #ecfdf5;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #ecfdf5;
+            color: #059669;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🏪 Sucursales</h1>
+            <p>Administrar multiples sucursales del negocio</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Indice</a>
+        </div>
+
+        <div class="section">
+            <h2>Que es una Sucursal</h2>
+            <p>Una sucursal es una ubicacion fisica distinta de la carniceria. Permite:</p>
+            <ul>
+                <li>Separar ventas por local</li>
+                <li>Controlar stock y compras por sucursal</li>
+                <li>Generar reportes comparativos</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Crear una Nueva Sucursal</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                En el menu lateral, entra a <span class="highlight">Sucursales</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Haz clic en <strong>+ Nueva Sucursal</strong>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Completa los datos basicos (nombre, direccion, telefono)
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Guarda la sucursal
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Asignar Operaciones por Sucursal</h2>
+            <table>
+                <tr>
+                    <th>Operacion</th>
+                    <th>Uso</th>
+                </tr>
+                <tr>
+                    <td>Ventas</td>
+                    <td>Registrar ventas en la sucursal correspondiente</td>
+                </tr>
+                <tr>
+                    <td>Compras</td>
+                    <td>Asignar compras al local para stock correcto</td>
+                </tr>
+                <tr>
+                    <td>Stock</td>
+                    <td>Ver inventario por sucursal</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Consejos</h2>
+            <ul>
+                <li>Define una sucursal principal para consolidar reportes</li>
+                <li>Usa nombres claros ("Centro", "Barrio Norte")</li>
+                <li>Revisa reportes por sucursal semanalmente</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
