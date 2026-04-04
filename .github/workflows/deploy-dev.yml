@@ -58,11 +58,10 @@ jobs:
           cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
           cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
           cp deploy/nginx/meatmanager.demo.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.demo.def-software.com.conf"
-          cat > "${DEPLOY_PATH}/.env" <<EOF
-            GHCR_NAMESPACE=${GHCR_NAMESPACE}
-            MAIN_DOMAIN=${MAIN_DOMAIN}
-            DEMO_DOMAIN=${DEMO_DOMAIN}
-            EOF
+          printf "GHCR_NAMESPACE=%s\nMAIN_DOMAIN=%s\nDEMO_DOMAIN=%s\n" \
+            "${GHCR_NAMESPACE}" \
+            "${MAIN_DOMAIN}" \
+            "${DEMO_DOMAIN}" > "${DEPLOY_PATH}/.env"
           printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
           printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
           printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
