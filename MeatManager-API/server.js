@@ -2192,8 +2192,12 @@ app.get('/health', (req, res) => res.json({
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 ensureClientsControlStore()
-    .then(() => ensureOperationalTenantIsolation())
+    .then(() => {
+        console.log('[BOOT] Clients control store OK');
+        return ensureOperationalTenantIsolation();
+    })
     .then(async () => {
+        console.log('[BOOT] Operational tenant isolation OK');
         if (process.env.REDIS_HOST) {
             await redisClient.connect();
             console.log(`[REDIS] Conectado a ${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`);
@@ -2207,6 +2211,6 @@ ensureClientsControlStore()
         });
     })
     .catch((err) => {
-        console.error('[AUTH STORE INIT ERROR]', err.message);
+        console.error('[AUTH STORE INIT ERROR]', err?.stack || err?.message || err);
         process.exit(1);
     });
