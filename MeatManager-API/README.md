@@ -19,10 +19,12 @@ npm run dev
 ## Variables de entorno (.env)
 
 ```
-DB_HOST=localhost
+DB_HOST=35.225.156.199
 DB_PORT=3306
 DB_USER=root
 DB_PASS=tu_password
+MEATMANAGER_DB_NAME=meatmanager
+OPERATIONAL_DB_NAME=meatmanager
 FIREBASE_SERVICE_ACCOUNT=./firebase-service-account.json
 PORT=3001
 ```
@@ -38,8 +40,9 @@ PORT=3001
 ## Arquitectura actual
 
 - Login: Firebase Auth
+- Registro multi-tenant central: MySQL `meatmanager`
 - Licencias, usuarios y permisos: MySQL `GestionClientes`
-- Datos operativos: MySQL por tenant
+- Datos operativos: MySQL `meatmanager`
 
 ## Endpoints
 
@@ -50,7 +53,8 @@ Respuesta:
 ```json
 {
   "ok": true,
-  "dbName": "mm_20123456789",
+  "tenantId": 1,
+  "dbName": "meatmanager",
   "empresa": "Carnicería El Gaucho",
   "cuit": "20123456789",
   "isNew": false
@@ -69,3 +73,4 @@ Respuesta:
 3. Guardar `firebaseUid` de vuelta en MySQL
 4. Al login, validar Firebase token
 5. Resolver acceso real por estado de cliente + licencias + permisos desde MySQL
+6. Resolver el tenant operativo compartido desde `meatmanager`

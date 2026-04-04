@@ -41,7 +41,7 @@ import './Sidebar.css';
 const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isPro } = useLicense();
+  const { isPro, hasModule } = useLicense();
   const { currentUser, hasAccess, logout } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -110,15 +110,15 @@ const Sidebar = ({ isCollapsed }) => {
   const commercialItems = [
     { title: 'Clientes', path: '/clientes', icon: Users },
     { title: 'Pedidos', path: '/pedidos', icon: ShoppingBag },
-    { title: 'Logística', path: '/logistica', icon: MapPin, pro: true },
+    { title: 'Logística', path: '/logistica', icon: MapPin, module: 'logistica' },
     { title: 'Sucursales', path: '/sucursales', icon: ArrowLeftRight },
-    { title: 'Menú Digital', path: '/menu-digital', icon: Smartphone, pro: true },
+    { title: 'Menú Digital', path: '/menu-digital', icon: Smartphone, module: 'menu-digital' },
   ];
 
   const productionItems = [
     { title: 'Pre-elaborados', path: '/alimentos', icon: UtensilsCrossed },
     { title: 'Otros Items', path: '/otros', icon: Grid },
-    { title: 'Rendimiento PRO', path: '/informes-pro', icon: BarChart3, pro: true },
+    { title: 'Rendimiento PRO', path: '/informes-pro', icon: BarChart3, module: 'informes-pro' },
   ];
 
   const configItems = [
@@ -134,18 +134,20 @@ const Sidebar = ({ isCollapsed }) => {
   ];
 
   const despostadaItems = [
-    { title: 'Vaca', path: '/despostada/vaca', icon: Beef },
-    { title: 'Cerdo', path: '/despostada/cerdo', icon: Beef },
-    { title: 'Pollo', path: '/despostada/pollo', icon: Egg },
-    { title: 'Pescado', path: '/despostada/pescado', icon: Fish },
+    { title: 'Vaca', path: '/despostada/vaca', icon: Beef, module: 'despostada' },
+    { title: 'Cerdo', path: '/despostada/cerdo', icon: Beef, module: 'despostada' },
+    { title: 'Pollo', path: '/despostada/pollo', icon: Egg, module: 'despostada' },
+    { title: 'Pescado', path: '/despostada/pescado', icon: Fish, module: 'despostada' },
   ];
+
+  const hasModuleAccess = (item) => !item.module || hasModule(item.module);
 
   const renderNavItem = (item, options = {}) => (
     <button
       key={item.path}
-      className={`nav-item ${isActive(item.path) ? 'active' : ''} ${item.pro && !isPro ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
+      className={`nav-item ${isActive(item.path) ? 'active' : ''} ${item.module && !hasModuleAccess(item) ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
       onClick={() => {
-        if (item.pro && !isPro) {
+        if (item.module && !hasModuleAccess(item)) {
           navigate('/config/licencia');
         } else {
           navigate(item.path);
@@ -157,7 +159,7 @@ const Sidebar = ({ isCollapsed }) => {
         {item.title === 'Sucursales' && branchNotif > 0 && (
           <div className="nav-badge animate-pulse">{branchNotif}</div>
         )}
-        {item.pro && (
+        {item.module && (
           <Crown
             size={isCollapsed ? 12 : 10}
             style={{
@@ -171,14 +173,14 @@ const Sidebar = ({ isCollapsed }) => {
         )}
       </div>
       {!isCollapsed && <span>{item.title}</span>}
-      {item.pro && !isCollapsed && !options.compact && <Crown size={12} style={{ marginLeft: 'auto', color: 'gold' }} />}
+      {item.module && !isCollapsed && !options.compact && <Crown size={12} style={{ marginLeft: 'auto', color: 'gold' }} />}
     </button>
   );
 
   const renderDespostadaBlock = () => {
     const hasVisibleItems = despostadaItems.some((item) => hasAccess(item.path));
 
-    if (!isPro) {
+    if (!hasModule('despostada')) {
       return (
         <button
           className="nav-item locked"

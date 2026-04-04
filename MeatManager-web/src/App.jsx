@@ -2,11 +2,13 @@ import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { UserProvider, useUser } from './context/UserContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
+import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
 import CloudSyncManager from './components/CloudSyncManager';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
+const HistorialVentas = lazy(() => import('./pages/HistorialVentas'));
 const DespostadaVaca = lazy(() => import('./pages/DespostadaVaca'));
 const DespostadaCerdo = lazy(() => import('./pages/DespostadaCerdo'));
 const DespostadaPollo = lazy(() => import('./pages/DespostadaPollo'));
@@ -82,46 +84,49 @@ function App() {
   return (
     <TenantProvider>
       <UserProvider>
-        <Routes>
-          <Route path="/login" element={lazyElement(Login)} />
+        <LicenseProvider>
+          <Routes>
+            <Route path="/login" element={lazyElement(Login)} />
 
-          <Route element={<RequireAuth />}>
-            <Route path="/" element={<DashboardLayout />}>
-              <Route index element={lazyElement(Dashboard)} />
-              <Route path="ventas" element={lazyElement(Ventas)} />
-              <Route path="cierre-caja" element={lazyElement(CierreCaja)} />
-              <Route path="compras" element={lazyElement(Compras)} />
-              <Route path="stock" element={lazyElement(Stock)} />
-              <Route path="clientes" element={lazyElement(Clientes)} />
-              <Route path="config/categorias" element={lazyElement(Categorias)} />
-              <Route path="config/productos-compra" element={lazyElement(ProductosCompra)} />
-              <Route path="config/proveedores" element={lazyElement(Proveedores)} />
-              <Route path="config/pagos" element={lazyElement(ConfiguracionPagos)} />
-              <Route path="config/licencia" element={lazyElement(Licencia)} />
-              <Route path="config/mantenimiento" element={lazyElement(Maintenance)} />
-              <Route path="config/seguridad" element={lazyElement(Security)} />
-              <Route path="informes-pro" element={lazyElement(InformesPro)} />
-              <Route path="pedidos" element={lazyElement(Pedidos)} />
-              <Route path="logistica" element={lazyElement(Logistica)} />
-              <Route path="admin-pablo-control-master" element={lazyElement(AdminPanel)} />
-              <Route path="reparto" element={lazyElement(DeliveryPortal)} />
-              <Route path="menu-digital" element={lazyElement(MenuDigital)} />
-              <Route path="sucursales" element={lazyElement(Sucursales)} />
-              <Route path="catalogo" element={lazyElement(CustomerPortal)} />
-              <Route path="manual" element={lazyElement(Manual)} />
-              <Route path="inicio" element={<Navigate to="/" replace />} />
-              <Route path="despostada/vaca" element={lazyElement(DespostadaVaca)} />
-              <Route path="despostada/cerdo" element={lazyElement(DespostadaCerdo)} />
-              <Route path="despostada/pollo" element={lazyElement(DespostadaPollo)} />
-              <Route path="despostada/pescado" element={lazyElement(DespostadaPescado)} />
-              <Route path="alimentos" element={lazyElement(Alimentos)} />
-              <Route path="otros" element={lazyElement(OtrosItems)} />
-              <Route path="config/precios" element={lazyElement(ConfiguracionPrecio)} />
-              <Route path="config/precio" element={lazyElement(ConfiguracionPrecio)} />
+            <Route element={<RequireAuth />}>
+              <Route path="/" element={<DashboardLayout />}>
+                <Route index element={lazyElement(Dashboard)} />
+                <Route path="ventas" element={lazyElement(Ventas)} />
+                <Route path="ventas/historial" element={lazyElement(HistorialVentas)} />
+                <Route path="cierre-caja" element={lazyElement(CierreCaja)} />
+                <Route path="compras" element={lazyElement(Compras)} />
+                <Route path="stock" element={lazyElement(Stock)} />
+                <Route path="clientes" element={lazyElement(Clientes)} />
+                <Route path="config/categorias" element={lazyElement(Categorias)} />
+                <Route path="config/productos-compra" element={lazyElement(ProductosCompra)} />
+                <Route path="config/proveedores" element={lazyElement(Proveedores)} />
+                <Route path="config/pagos" element={lazyElement(ConfiguracionPagos)} />
+                <Route path="config/licencia" element={lazyElement(Licencia)} />
+                <Route path="config/mantenimiento" element={lazyElement(Maintenance)} />
+                <Route path="config/seguridad" element={lazyElement(Security)} />
+                <Route path="informes-pro" element={lazyElement(InformesPro)} />
+                <Route path="pedidos" element={lazyElement(Pedidos)} />
+                <Route path="logistica" element={lazyElement(Logistica)} />
+                <Route path="admin-pablo-control-master" element={lazyElement(AdminPanel)} />
+                <Route path="reparto" element={lazyElement(DeliveryPortal)} />
+                <Route path="menu-digital" element={lazyElement(MenuDigital)} />
+                <Route path="sucursales" element={lazyElement(Sucursales)} />
+                <Route path="catalogo" element={lazyElement(CustomerPortal)} />
+                <Route path="manual" element={lazyElement(Manual)} />
+                <Route path="inicio" element={<Navigate to="/" replace />} />
+                <Route path="despostada/vaca" element={lazyElement(DespostadaVaca)} />
+                <Route path="despostada/cerdo" element={lazyElement(DespostadaCerdo)} />
+                <Route path="despostada/pollo" element={lazyElement(DespostadaPollo)} />
+                <Route path="despostada/pescado" element={lazyElement(DespostadaPescado)} />
+                <Route path="alimentos" element={lazyElement(Alimentos)} />
+                <Route path="otros" element={lazyElement(OtrosItems)} />
+                <Route path="config/precios" element={lazyElement(ConfiguracionPrecio)} />
+                <Route path="config/precio" element={lazyElement(ConfiguracionPrecio)} />
+              </Route>
             </Route>
-          </Route>
-        </Routes>
-        <CloudSyncManager />
+          </Routes>
+          <CloudSyncManager />
+        </LicenseProvider>
       </UserProvider>
     </TenantProvider>
   );

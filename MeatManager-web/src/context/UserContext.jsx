@@ -14,6 +14,7 @@ import {
 export const ALL_ROUTES = [
     { path: '/',                        label: 'Dashboard',         group: 'Principal' },
     { path: '/ventas',                  label: 'Ventas',            group: 'Principal' },
+    { path: '/ventas/historial',        label: 'Historial Ventas',  group: 'Principal' },
     { path: '/cierre-caja',             label: 'Cierre de Caja',    group: 'Principal' },
     { path: '/compras',                 label: 'Compras',           group: 'Principal' },
     { path: '/stock',                   label: 'Stock',             group: 'Principal' },
@@ -43,24 +44,38 @@ const ALL_PATHS = ALL_ROUTES.map(r => r.path);
 
 const UserContext = createContext(null);
 
+const normalizeToken = (value) => String(value || '').trim().toLowerCase();
+
+const hasSuperUserLicense = (licenses) => {
+    const list = Array.isArray(licenses) ? licenses : [];
+    return list.some((license) => (
+        ['superuser', 'su'].includes(normalizeToken(license?.internalCode)) ||
+        normalizeToken(license?.commercialName) === 'superuser' ||
+        normalizeToken(license?.category) === 'superuser'
+    ));
+};
+
 const restoreSession = () => {
     try {
         const u = sessionStorage.getItem('mm_user');
         const p = sessionStorage.getItem('mm_perms');
+        const a = sessionStorage.getItem('mm_access_profile');
         return {
             user: u ? JSON.parse(u) : null,
             perms: p ? JSON.parse(p) : [],
+            accessProfile: a ? JSON.parse(a) : null,
         };
     } catch {
-        return { user: null, perms: [] };
+        return { user: null, perms: [], accessProfile: null };
     }
 };
 
 export const UserProvider = ({ children }) => {
     const { tenant } = useTenant();
-    const { user: savedUser, perms: savedPerms } = restoreSession();
+    const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
+    const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
 
@@ -80,14 +95,27 @@ export const UserProvider = ({ children }) => {
                     };
                     setCurrentUser(ownerSession);
                     setUserPerms(ALL_PATHS);
+                    setAccessProfile({
+                        ...ownerSession,
+                        active: 1,
+                        perms: ALL_PATHS,
+                        licenses: [],
+                    });
                     sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
                     sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
+                    sessionStorage.setItem('mm_access_profile', JSON.stringify({
+                        ...ownerSession,
+                        active: 1,
+                        perms: ALL_PATHS,
+                        licenses: [],
+                    }));
                     return { ok: true };
                 }
                 return { ok: false, error: 'Usuario inactivo o no encontrado' };
             }
             if (!userData.active) return { ok: false, error: 'Usuario inactivo o no encontrado' };
-            const perms = userData.role === 'admin' ? ALL_PATHS : (userData.perms || []);
+            const superUser = hasSuperUserLicense(userData.licenses);
+            const perms = (userData.role === 'admin' || superUser) ? ALL_PATHS : (userData.perms || []);
             const sessionUser = {
                 id: userData.id || userData.uid || userData.email,
                 uid: userData.uid || null,
@@ -97,8 +125,10 @@ export const UserProvider = ({ children }) => {
             };
             setCurrentUser(sessionUser);
             setUserPerms(perms);
+            setAccessProfile(userData);
             sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
             sessionStorage.setItem('mm_perms', JSON.stringify(perms));
+            sessionStorage.setItem('mm_access_profile', JSON.stringify(userData));
             return { ok: true };
         } catch (error) {
             if (tenant?.email && email === tenant.email) {
@@ -111,8 +141,20 @@ export const UserProvider = ({ children }) => {
                 };
                 setCurrentUser(ownerSession);
                 setUserPerms(ALL_PATHS);
+                setAccessProfile({
+                    ...ownerSession,
+                    active: 1,
+                    perms: ALL_PATHS,
+                    licenses: [],
+                });
                 sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
                 sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
+                sessionStorage.setItem('mm_access_profile', JSON.stringify({
+                    ...ownerSession,
+                    active: 1,
+                    perms: ALL_PATHS,
+                    licenses: [],
+                }));
                 return { ok: true };
             }
             return { ok: false, error: error?.message || 'Usuario inactivo o no encontrado' };
@@ -124,8 +166,10 @@ export const UserProvider = ({ children }) => {
     const logout = useCallback(() => {
         setCurrentUser(null);
         setUserPerms([]);
+        setAccessProfile(null);
         sessionStorage.removeItem('mm_user');
         sessionStorage.removeItem('mm_perms');
+        sessionStorage.removeItem('mm_access_profile');
     }, []);
 
     useEffect(() => {
@@ -143,6 +187,7 @@ export const UserProvider = ({ children }) => {
                 if (!result.ok && !cancelled) {
                     setCurrentUser(null);
                     setUserPerms([]);
+                    setAccessProfile(null);
                 }
             } finally {
                 if (!cancelled) {
@@ -162,6 +207,7 @@ export const UserProvider = ({ children }) => {
     // Admin always true; employee checks permission list
     const hasAccess = (path) => {
         if (!currentUser) return false;
+        if (hasSuperUserLicense(accessProfile?.licenses)) return true;
         if (currentUser.role === 'admin') return true;
         return userPerms.includes(path);
     };
@@ -215,6 +261,7 @@ export const UserProvider = ({ children }) => {
     return (
         <UserContext.Provider value={{
             currentUser,
+            accessProfile,
             login,
             logout,
             hasAccess,

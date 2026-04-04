@@ -4,6 +4,7 @@ import { db } from '../db';
 import { useLicense } from '../context/LicenseContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { Save, RotateCcw, Check, ShieldCheck, TrendingUp, DollarSign } from 'lucide-react';
+import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import './DespostadaCerdo.css';
 
 // Detailed cuts mapping for pork
@@ -46,9 +47,10 @@ const DespostadaCerdo = () => {
     const [selectedLotId, setSelectedLotId] = useState(null);
     const [selectedLotSupplier, setSelectedLotSupplier] = useState('');
     const [isSessionStarted, setIsSessionStarted] = useState(false);
-    const [, setCostPerKg] = useState(0); // For PRO mode
+    const [costPerKg, setCostPerKg] = useState(0); // For PRO mode
 
-    const { isPro } = useLicense();
+    const { hasModule } = useLicense();
+    const hasDespostadaModule = hasModule('despostada');
 
     // DB Data
     const availableLots = useLiveQuery(() =>
@@ -82,7 +84,7 @@ const DespostadaCerdo = () => {
         setInitialWeight(lot.weight);
 
         // PRO: Attempt to find the cost per kg from the original purchase
-        if (isPro && lot.purchase_id) {
+        if (hasDespostadaModule && lot.purchase_id) {
             const purchase = await db.compras.get(lot.purchase_id);
             if (purchase && purchase.items_detail) {
                 // Find the item that generated this lot
@@ -104,16 +106,16 @@ const DespostadaCerdo = () => {
             if (selectedLotId) {
                 await db.animal_lots.update(selectedLotId, { status: 'despostado' });
             }
-            // Optional: Save to despostada_logs
-            await db.despostada_logs.add({
+            const selectedLot = availableLots?.find((lot) => lot.id === selectedLotId) || null;
+            await db.despostada_logs.add(buildDespostadaLogPayload({
                 type: 'cerdo',
-                date: new Date(),
                 supplier: selectedLotSupplier,
-                total_weight: initialWeight,
-                yield_percentage: parseFloat(yieldPercentage),
-                lot_id: selectedLotId,
-                synced: 0
-            });
+                initialWeight,
+                yieldPercentage,
+                cuts: logs,
+                selectedLot,
+                costPerKg
+            }));
 
             // Reset
             setIsSessionStarted(false);
@@ -175,7 +177,9 @@ const DespostadaCerdo = () => {
 
         const newLog = {
             cutId: selectedCutId,
+            cutNumber: cutInfo.number,
             cutName: cutInfo.name,
+            cutCategory: cutInfo.category,
             weight: weightVal,
             timestamp: new Date()
         };

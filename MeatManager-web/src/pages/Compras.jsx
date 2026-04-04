@@ -24,7 +24,8 @@ const getPurchaseBreakdown = (compra) => {
 };
 
 const Compras = () => {
-    const { isPro } = useLicense();
+    const { hasModule } = useLicense();
+    const hasDespostadaModule = hasModule('despostada');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [destinationFilter, setDestinationFilter] = useState('all');
@@ -249,12 +250,10 @@ const Compras = () => {
                     });
                 }
 
-                if (item.destination === 'interno') {
-                    continue;
-                }
-
                 // IF FOR DESPOSTADA -> CREATE ANIMAL_LOTS (ONLY IF PRO)
-                if (item.type === 'despostada' && isPro) {
+                // This must happen regardless of sale/internal destination, otherwise
+                // media res purchases for internal processing never reach Despostada.
+                if (item.type === 'despostada' && hasDespostadaModule) {
                     // Logic: If unit is 'un' (units), we create one lot per unit.
                     // If unit is 'kg' (weight), we create ONE lot with the total weight.
 
@@ -271,18 +270,24 @@ const Compras = () => {
                             status: 'disponible'
                         });
                     }
-                } else {
-                    // IF DIRECT SALE -> UPDATE STOCK
-                    await db.stock.add({
-                        name: item.name,
-                        type: item.species || 'vaca',
-                        quantity: item.unit === 'kg' ? (parseFloat(item.weight) || parseFloat(item.quantity)) : parseFloat(item.quantity),
-                        unit: item.unit,
-                        updated_at: new Date(),
-                        synced: 0,
-                        reference: `compra_${purchaseId}`
-                    });
+
+                    continue;
                 }
+
+                if (item.destination === 'interno') {
+                    continue;
+                }
+
+                // IF DIRECT SALE -> UPDATE STOCK
+                await db.stock.add({
+                    name: item.name,
+                    type: item.species || 'vaca',
+                    quantity: item.unit === 'kg' ? (parseFloat(item.weight) || parseFloat(item.quantity)) : parseFloat(item.quantity),
+                    unit: item.unit,
+                    updated_at: new Date(),
+                    synced: 0,
+                    reference: `compra_${purchaseId}`
+                });
             }
 
             setIsModalOpen(false);
@@ -627,17 +632,41 @@ const Compras = () => {
                                                 {suggestions.map(s => (
                                                     <div
                                                         key={s.id}
-                                                        style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)' }}
+                                                        style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
                                                         onMouseDown={() => selectSuggestion(s)}
                                                     >
-                                                        <div style={{ fontWeight: 'bold' }}>{s.name}</div>
-                                                        <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                                                            {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                                        <div>
+                                                            <div style={{ fontWeight: 'bold' }}>{s.name}</div>
+                                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                                                {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                                            </div>
                                                         </div>
+                                                        {s.type === 'despostada' && hasDespostadaModule && (
+                                                            <span style={{ background: 'rgba(234, 179, 8, 0.12)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                                                Despostada
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
+                                    </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Tratamiento</label>
+                                        <select
+                                            className="neo-input"
+                                            style={{ marginBottom: 0 }}
+                                            value={currentItem.type}
+                                            onChange={(e) => setCurrentItem({ ...currentItem, type: e.target.value })}
+                                        >
+                                            <option value="directo">Stock directo / insumo</option>
+                                            {hasDespostadaModule ? (
+                                                <option value="despostada">Animal para despostada</option>
+                                            ) : (
+                                                <option value="directo" disabled>Animal para despostada (requiere licencia)</option>
+                                            )}
+                                        </select>
                                     </div>
 
                                     {isMixedPurchase ? (
@@ -661,6 +690,21 @@ const Compras = () => {
                                             </div>
                                         </div>
                                     )}
+
+                                    <div style={{ opacity: currentItem.type === 'despostada' && hasDespostadaModule ? 1 : 0.45, pointerEvents: currentItem.type === 'despostada' && hasDespostadaModule ? 'auto' : 'none' }}>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Especie</label>
+                                        <select
+                                            className="neo-input"
+                                            style={{ marginBottom: 0 }}
+                                            value={currentItem.species}
+                                            onChange={(e) => setCurrentItem({ ...currentItem, species: e.target.value })}
+                                        >
+                                            <option value="vaca">Vaca / Ternera</option>
+                                            <option value="cerdo">Cerdo</option>
+                                            <option value="pollo">Pollo / Ave</option>
+                                            <option value="pescado">Pescado</option>
+                                        </select>
+                                    </div>
 
                                     {/* 2. QUANTITY (Units) */}
                                     <div>
@@ -746,14 +790,14 @@ const Compras = () => {
                                                 <tr key={item.id} style={{ borderTop: '1px solid var(--color-border)' }}>
                                                     <td style={{ padding: '0.75rem' }}>
                                                         <div style={{ fontWeight: '500' }}>{item.name}</div>
-                                                        {item.destination !== 'interno' && item.type === 'despostada' && isPro && (
+                                                        {item.type === 'despostada' && hasDespostadaModule && (
                                                             <div style={{ fontSize: '0.7rem', color: 'var(--color-primary)', fontWeight: 'bold', textTransform: 'uppercase' }}>
                                                                 ✨ Generará lote trazable ({item.species})
                                                             </div>
                                                         )}
                                                         {item.destination === 'interno' && (
                                                             <div style={{ fontSize: '0.7rem', color: '#f59e0b', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                                                                No ingresa al stock de venta
+                                                                No ingresa al stock de venta directa
                                                             </div>
                                                         )}
                                                     </td>

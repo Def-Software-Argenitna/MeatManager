@@ -1,25 +1,155 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, initializeSettings } from '../db';
 import { BRAND_CONFIG } from '../brandConfig';
-import { fdb } from '../firebase';
-import { doc, onSnapshot, setDoc, getDoc } from 'firebase/firestore';
 import { desktopApi } from '../utils/desktopApi';
+import { useUser } from './UserContext';
 
 const LicenseContext = createContext();
 const DEFAULT_SUPPORT = BRAND_CONFIG.support_whatsapp;
 
-const verifyIntegrity = (key, instId, salt) => {
-    if (!key || !instId || !salt) return false;
-    let str = instId + salt;
-    let hash = 0;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash |= 0;
+const BASE_MODULES = ['dashboard', 'ventas', 'stock', 'compras', 'clientes', 'billing'];
+const PREMIUM_MODULES = ['despostada', 'informes-pro', 'logistica', 'menu-digital', 'costos-reales', 'proveedores-pro'];
+const ALL_MODULES = [...new Set([...BASE_MODULES, ...PREMIUM_MODULES])];
+
+const FEATURE_ALIASES = {
+    dashboard: 'dashboard',
+    clients: 'clientes',
+    billing: 'billing',
+    sales: 'ventas',
+    ventas: 'ventas',
+    stock: 'stock',
+    compras: 'compras',
+    purchases: 'compras',
+    despostada: 'despostada',
+    trazabilidad: 'despostada',
+    traceability: 'despostada',
+    lots: 'despostada',
+    lotes: 'despostada',
+    rendimiento: 'informes-pro',
+    rinde: 'informes-pro',
+    analytics: 'informes-pro',
+    informes: 'informes-pro',
+    'informes-pro': 'informes-pro',
+    logistics: 'logistica',
+    logistica: 'logistica',
+    delivery: 'logistica',
+    deliveries: 'logistica',
+    envios: 'logistica',
+    shipping: 'logistica',
+    menu: 'menu-digital',
+    'menu-digital': 'menu-digital',
+    menu_digital: 'menu-digital',
+    webpage: 'menu-digital',
+    website: 'menu-digital',
+    costs: 'costos-reales',
+    costos: 'costos-reales',
+    'costos-reales': 'costos-reales',
+    proveedores: 'proveedores-pro',
+    suppliers: 'proveedores-pro',
+};
+
+const normalizeToken = (value) => String(value || '').trim().toLowerCase();
+
+const isBaseLicense = (license) => {
+    const code = normalizeToken(license?.internalCode);
+    const category = normalizeToken(license?.category);
+    return code === 'base_mm' || category === 'base_webapp';
+};
+
+const isSuperUserLicense = (license) => {
+    const code = normalizeToken(license?.internalCode);
+    const name = normalizeToken(license?.commercialName);
+    const category = normalizeToken(license?.category);
+    return ['superuser', 'su'].includes(code) || name === 'superuser' || category === 'superuser';
+};
+
+const extractFeatureTokens = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.flatMap(extractFeatureTokens);
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+        try {
+            return extractFeatureTokens(JSON.parse(trimmed));
+        } catch {
+            return trimmed.includes(',') ? trimmed.split(',').flatMap(extractFeatureTokens) : [trimmed];
+        }
     }
-    const hex = Math.abs(hash).toString(16).toUpperCase().padStart(8, '0');
-    const expected = `MM-PRO-${hex.slice(0, 4)}-${hex.slice(4, 8)}`;
-    return key === expected;
+    if (typeof value === 'object') {
+        return Object.entries(value)
+            .filter(([, enabled]) => Boolean(enabled))
+            .map(([key]) => key);
+    }
+    return [];
+};
+
+const buildLicenseCapabilities = (licenses) => {
+    const normalizedLicenses = Array.isArray(licenses) ? licenses : [];
+    const rawFlags = new Set();
+    const modules = new Set(BASE_MODULES);
+    let hasSuperUser = false;
+
+    for (const license of normalizedLicenses) {
+        for (const token of extractFeatureTokens(license?.featureFlags)) {
+            rawFlags.add(normalizeToken(token));
+        }
+
+        const code = normalizeToken(license?.internalCode);
+        const name = normalizeToken(license?.commercialName);
+        const category = normalizeToken(license?.category);
+
+        if (isSuperUserLicense(license)) {
+            hasSuperUser = true;
+        }
+
+        if (code === 'base_mm' || category === 'base_webapp') {
+            BASE_MODULES.forEach((moduleKey) => modules.add(moduleKey));
+        }
+
+        if (code === 'man_webpage') {
+            modules.add('menu-digital');
+        }
+    }
+
+    for (const token of rawFlags) {
+        const alias = FEATURE_ALIASES[token];
+        if (alias) modules.add(alias);
+    }
+
+    if (hasSuperUser) {
+        ALL_MODULES.forEach((moduleKey) => modules.add(moduleKey));
+        rawFlags.add('superuser');
+    }
+
+    return {
+        modules: Array.from(modules).sort(),
+        featureFlags: Array.from(rawFlags).sort(),
+        isPro: hasSuperUser || PREMIUM_MODULES.some((moduleKey) => modules.has(moduleKey)),
+        isSuperUser: hasSuperUser,
+    };
+};
+
+const normalizeVisibleLicenses = (licenses) => {
+    const normalizedLicenses = Array.isArray(licenses) ? [...licenses] : [];
+    const hasSuperUser = normalizedLicenses.some(isSuperUserLicense);
+    const hasBase = normalizedLicenses.some(isBaseLicense);
+
+    if (hasSuperUser && !hasBase) {
+        normalizedLicenses.unshift({
+            clientLicenseId: 'implicit-base-mm',
+            licenseId: 'implicit-base-mm',
+            commercialName: 'Licencia MeatManager',
+            internalCode: 'BASE_MM',
+            category: 'base_webapp',
+            billingScope: 'implicit',
+            appliesToWebapp: true,
+            featureFlags: ['dashboard', 'clients', 'billing'],
+            implicit: true,
+        });
+    }
+
+    return normalizedLicenses;
 };
 
 const syncRemoteBranding = async () => {
@@ -33,19 +163,19 @@ const syncRemoteBranding = async () => {
             }
         }
     } catch {
-        console.log("Offline mode: Using local brand config.");
+        console.log('Offline mode: Using local brand config.');
     }
 };
 
 export const LicenseProvider = ({ children }) => {
-    const [licenseMode, setLicenseMode] = useState('light');
+    const { accessProfile } = useUser();
     const [installationId, setInstallationId] = useState('');
-    const [machineId, setMachineId] = useState('');   // hardware fingerprint real
-    const [isBlocked, setIsBlocked] = useState(false); // licencia válida pero en PC no autorizada
-
+    const [machineId, setMachineId] = useState('');
     const settings = useLiveQuery(() => db.settings.toArray());
+    const licenses = useMemo(() => normalizeVisibleLicenses(accessProfile?.licenses || []), [accessProfile]);
+    const capabilities = useMemo(() => buildLicenseCapabilities(licenses), [licenses]);
+    const licenseMode = capabilities.isPro ? 'pro' : 'base';
 
-    // 1. Init: obtener hardware fingerprint desde Electron
     useEffect(() => {
         const init = async () => {
             await initializeSettings();
@@ -54,129 +184,40 @@ export const LicenseProvider = ({ children }) => {
             try {
                 const hwid = await desktopApi.getMachineId();
                 if (hwid) setMachineId(hwid);
-            } catch (e) {
-                console.warn('No se pudo obtener machineId:', e);
+            } catch (error) {
+                console.warn('No se pudo obtener machineId:', error);
             }
         };
         init();
     }, []);
 
-    // 2. Cloud license listener — se activa cuando tenemos installationId
-    useEffect(() => {
-        if (!installationId) return;
-
-        // Auto-registrar este equipo en Firebase (para que Pablo lo vea)
-        const registerDevice = async () => {
-            try {
-                const regRef = doc(fdb, "registrations", installationId);
-                const snap = await getDoc(regRef);
-                if (!snap.exists()) {
-                    await setDoc(regRef, {
-                        installationId,
-                        machineId: machineId || 'unknown',
-                        registeredAt: new Date().toISOString(),
-                        brand: BRAND_CONFIG.brand_name,
-                        status: 'pending'
-                    });
-                } else if (machineId && !snap.data().machineId) {
-                    // Actualizar con machineId si faltaba
-                    await setDoc(regRef, { machineId }, { merge: true });
-                }
-            } catch {
-                console.log("Offline or Config not ready: Registration skipped.");
-            }
-        };
-        registerDevice();
-
-        // Escuchar cambios en la licencia cloud
-        const unsub = onSnapshot(doc(fdb, "licenses", installationId), async (docSnap) => {
-            if (docSnap.exists()) {
-                const cloudData = docSnap.data();
-
-                // ── VERIFICACIÓN DE HARDWARE ─────────────────────────────
-                // Si la licencia tiene un machineId registrado y no coincide
-                // con el hardware actual → bloquear (PC no autorizada)
-                if (machineId && cloudData.machineId && cloudData.machineId !== machineId) {
-                    setIsBlocked(true);
-                    setLicenseMode('light');
-                    await db.settings.put({ key: 'license_mode', value: 'light' });
-                    return;
-                }
-                // ────────────────────────────────────────────────────────
-
-                setIsBlocked(false);
-                if (cloudData.status === 'pro') {
-                    setLicenseMode('pro');
-                    await db.settings.put({ key: 'license_mode', value: 'pro' });
-                } else {
-                    setLicenseMode('light');
-                    await db.settings.put({ key: 'license_mode', value: 'light' });
-                }
-            }
-        });
-
-        return () => unsub();
-    }, [installationId, machineId]);
-
-    const currentSupportNumber = settings?.find(s => s.key === 'remote_support_whatsapp')?.value || DEFAULT_SUPPORT;
-
-    const isPro = licenseMode === 'pro';
-
-    const activatePro = async (key) => {
-        const isValidLocal = verifyIntegrity(key, installationId, BRAND_CONFIG.license_salt);
-
-        if (isValidLocal) {
-            await db.settings.put({ key: 'license_mode', value: 'pro' });
-            await db.settings.put({ key: 'license_key', value: key });
-
-            try {
-                // Guardar machineId en Firebase → bloquea la licencia a este hardware
-                await setDoc(doc(fdb, "licenses", installationId), {
-                    key,
-                    status: 'pro',
-                    machineId: machineId || null,
-                    activatedAt: new Date().toISOString()
-                });
-            } catch {
-                console.warn("Cloud sync failed, using local activation for now.");
-            }
-
-            setIsBlocked(false);
-            return true;
-        }
-        return false;
-    };
-
-    async function deactivatePro() {
-        await db.settings.put({ key: 'license_mode', value: 'light' });
-    }
-
     useEffect(() => {
         if (!settings) return;
-
-        const mode = settings.find(s => s.key === 'license_mode');
-        const instId = settings.find(s => s.key === 'installation_id');
-        const storedKey = settings.find(s => s.key === 'license_key');
-
+        const instId = settings.find((setting) => setting.key === 'installation_id');
         if (instId) setInstallationId(instId.value);
-
-        if (mode?.value === 'pro' && storedKey?.value) {
-            const syncLocalLicense = async () => {
-                const isValid = verifyIntegrity(storedKey.value, instId?.value, BRAND_CONFIG.license_salt);
-                if (isValid) {
-                    setLicenseMode('pro');
-                } else {
-                    await deactivatePro();
-                }
-            };
-            syncLocalLicense();
-        }
     }, [settings]);
+
+    useEffect(() => {
+        db.settings.put({ key: 'license_mode', value: licenseMode }).catch(() => {});
+        db.settings.put({ key: 'isPro', value: capabilities.isPro }).catch(() => {});
+    }, [licenseMode, capabilities.isPro]);
+
+    const currentSupportNumber = settings?.find((setting) => setting.key === 'remote_support_whatsapp')?.value || DEFAULT_SUPPORT;
+    const hasModule = (moduleKey) => capabilities.isSuperUser || capabilities.modules.includes(moduleKey);
 
     return (
         <LicenseContext.Provider value={{
-            licenseMode, isPro, installationId, machineId, isBlocked,
-            activatePro, deactivatePro, supportNumber: currentSupportNumber
+            licenseMode,
+            isPro: capabilities.isPro,
+            installationId,
+            machineId,
+            isBlocked: false,
+            supportNumber: currentSupportNumber,
+            licenses,
+            featureFlags: capabilities.featureFlags,
+            modules: capabilities.modules,
+            isSuperUser: capabilities.isSuperUser,
+            hasModule,
         }}>
             {children}
         </LicenseContext.Provider>
