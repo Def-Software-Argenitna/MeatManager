@@ -27,6 +27,12 @@ const OUTFLOW_CATEGORIES = [
     'Otros'
 ];
 
+const WITHDRAWAL_CATEGORIES = new Set([
+    'Retiro de caja',
+    'Retiro Socios',
+    'Inter-Sucursal',
+]);
+
 const INFLOW_CATEGORIES = [
     'Cobro Pendientes',
     'Inyección de Capital',
@@ -96,6 +102,7 @@ const CierreCaja = () => {
     const [movementDesc, setMovementDesc] = useState('');
     const [movementPaymentMethod, setMovementPaymentMethod] = useState('Efectivo');
     const [openingDraft, setOpeningDraft] = useState({});
+    const [countedCash, setCountedCash] = useState('');
     const [feedback, setFeedback] = useState(null);
 
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
@@ -195,6 +202,14 @@ const CierreCaja = () => {
         return isCurrentAccount(sale.payment_method) ? sum + toNumber(sale.total) : sum;
     }, 0);
 
+    const withdrawalsTotal = manualMovements
+        .filter((movement) => movement.type !== 'ingreso' && WITHDRAWAL_CATEGORIES.has(movement.category))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+
+    const expensesOnlyTotal = manualMovements
+        .filter((movement) => movement.type !== 'ingreso' && !WITHDRAWAL_CATEGORIES.has(movement.category))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
@@ -241,6 +256,16 @@ const CierreCaja = () => {
     const cashInDrawer = methodCards
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
+
+    const countedCashValue = parseFloat(countedCash) || 0;
+    const cashDifference = countedCash ? countedCashValue - cashInDrawer : 0;
+    const cashDifferenceState = !countedCash
+        ? 'neutral'
+        : Math.abs(cashDifference) < 0.01
+            ? 'match'
+            : cashDifference > 0
+                ? 'surplus'
+                : 'shortage';
 
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
@@ -344,7 +369,7 @@ const CierreCaja = () => {
                     <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box expense">
-                    <span className="label">Retiros / gastos del día</span>
+                    <span className="label">Retiros y gastos del día</span>
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
@@ -409,8 +434,45 @@ const CierreCaja = () => {
                             <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
-                            <span className="label">Retiros y gastos</span>
-                            <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                            <span className="label">Retiros</span>
+                            <span className="val">-${withdrawalsTotal.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="stat-box expense">
+                            <span className="label">Gastos</span>
+                            <span className="val">-${expensesOnlyTotal.toLocaleString('es-AR')}</span>
+                        </div>
+                    </div>
+
+                    <div className="cash-reconciliation-card">
+                        <div className="cash-reconciliation-header">
+                            <h3>Arqueo de efectivo</h3>
+                            <span>Compará lo contado con lo teórico del sistema</span>
+                        </div>
+                        <div className="cash-reconciliation-grid">
+                            <div className="reconciliation-box">
+                                <span className="label">Efectivo teórico</span>
+                                <strong>${cashInDrawer.toLocaleString('es-AR')}</strong>
+                            </div>
+                            <label className="reconciliation-box reconciliation-input-box">
+                                <span className="label">Efectivo contado</span>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={countedCash}
+                                    onChange={(e) => setCountedCash(e.target.value)}
+                                    placeholder="0.00"
+                                    className="neo-input"
+                                />
+                            </label>
+                            <div className={`reconciliation-box difference ${cashDifferenceState}`}>
+                                <span className="label">Diferencia</span>
+                                <strong>
+                                    {countedCash
+                                        ? `${cashDifference > 0 ? '+' : ''}$${cashDifference.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        : 'Esperando arqueo'}
+                                </strong>
+                            </div>
                         </div>
                     </div>
 
@@ -458,7 +520,7 @@ const CierreCaja = () => {
                         )}
 
                         <div className="section-header section-header-secondary">
-                            <h3>Retiros e ingresos manuales</h3>
+                            <h3>Movimientos manuales</h3>
                             <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
                             </button>
@@ -548,7 +610,10 @@ const CierreCaja = () => {
                                 <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
                             {manualMovements.map((movement) => (
-                                <div key={movement.id} className={`movement-item ${movement.type}`}>
+                                <div
+                                    key={movement.id}
+                                    className={`movement-item ${movement.type} ${WITHDRAWAL_CATEGORIES.has(movement.category) ? 'withdrawal' : movement.type !== 'ingreso' ? 'expense' : ''}`}
+                                >
                                     <div className="m-info">
                                         <span className="m-cat">{movement.category}</span>
                                         <span className="m-desc">
