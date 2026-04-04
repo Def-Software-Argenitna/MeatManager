@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       REGISTRY: ghcr.io
       IMAGE_OWNER: ${{ github.repository_owner }}
@@ -21,8 +21,6 @@ jobs:
       - name: Lowercase owner
         id: owner
         run: echo "value=${IMAGE_OWNER,,}" >> "$GITHUB_OUTPUT"
-
-      - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
         with:
@@ -46,43 +44,30 @@ jobs:
           push: true
           tags: ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:main
 
-      - name: Upload deploy files
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          source: "deploy/*"
-          target: ${{ secrets.DEPLOY_PATH }}
-          strip_components: 1
-
-      - name: Deploy main stack
-        uses: appleboy/ssh-action@v1.0.3
+      - name: Deploy main stack on self-hosted runner
         env:
           GHCR_NAMESPACE: ghcr.io/${{ steps.owner.outputs.value }}
           MAIN_DOMAIN: meatmanager.def-software.com
           DEMO_DOMAIN: meatmanager.demo.def-software.com
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           API_MAIN_ENV: ${{ secrets.API_MAIN_ENV }}
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-        with:
-          host: ${{ secrets.SERVER_HOST }}
-          username: ${{ secrets.SERVER_USER }}
-          key: ${{ secrets.SERVER_SSH_KEY }}
-          port: ${{ secrets.SERVER_PORT || 22 }}
-          envs: GHCR_NAMESPACE,MAIN_DOMAIN,DEMO_DOMAIN,API_MAIN_ENV,API_DEV_ENV,FIREBASE_SERVICE_ACCOUNT_JSON
-          script: |
-            mkdir -p "${{ secrets.DEPLOY_PATH }}/env" "${{ secrets.DEPLOY_PATH }}/secrets"
-            cat > "${{ secrets.DEPLOY_PATH }}/.env" <<EOF
+        run: |
+          mkdir -p "${DEPLOY_PATH}/env" "${DEPLOY_PATH}/secrets" "${DEPLOY_PATH}/nginx"
+          cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
+          cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
+          cp deploy/nginx/meatmanager.demo.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.demo.def-software.com.conf"
+          cat > "${DEPLOY_PATH}/.env" <<EOF
             GHCR_NAMESPACE=${GHCR_NAMESPACE}
             MAIN_DOMAIN=${MAIN_DOMAIN}
             DEMO_DOMAIN=${DEMO_DOMAIN}
             EOF
-            printf "%s" "${API_MAIN_ENV}" > "${{ secrets.DEPLOY_PATH }}/env/api-main.env"
-            printf "%s" "${API_DEV_ENV}" > "${{ secrets.DEPLOY_PATH }}/env/api-dev.env"
-            printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${{ secrets.DEPLOY_PATH }}/secrets/firebase-service-account.json"
+          printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
+          printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
+          printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
+          chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
+          cd "${DEPLOY_PATH}"
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-            cd "${{ secrets.DEPLOY_PATH }}"
-            docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main caddy
-            docker compose -f docker-compose.cloud.yml --env-file .env up -d web-main api-main caddy
+          docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main
+          docker compose -f docker-compose.cloud.yml --env-file .env up -d web-main api-main

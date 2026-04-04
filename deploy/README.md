@@ -11,6 +11,7 @@ Este esquema publica dos stacks en el mismo servidor:
 - DNS apuntando ambos dominios al servidor
 - acceso del servidor a `ghcr.io`
 - `nginx` del host ya funcionando como reverse proxy principal
+- runner `self-hosted` de GitHub Actions ya instalado y funcionando en el servidor
 
 ## Archivos necesarios en el servidor
 
@@ -70,3 +71,14 @@ Usá estas configs de referencia en el nginx del host:
 
 - [meatmanager.def-software.com.conf](/Users/rodrigocortes/Documents/GitHub/MeatManager/deploy/nginx/meatmanager.def-software.com.conf)
 - [meatmanager.demo.def-software.com.conf](/Users/rodrigocortes/Documents/GitHub/MeatManager/deploy/nginx/meatmanager.demo.def-software.com.conf)
+
+## Secrets necesarios en GitHub
+
+Con runner self-hosted ya no hacen falta secrets de SSH.
+
+Solo necesitás:
+
+- `DEPLOY_PATH`
+- `API_MAIN_ENV`
+- `API_DEV_ENV`
+- `FIREBASE_SERVICE_ACCOUNT_JSON`
