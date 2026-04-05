@@ -71,6 +71,8 @@ const restoreSession = () => {
     }
 };
 
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export const UserProvider = ({ children }) => {
     const { tenant, loading: loadingTenant } = useTenant();
     const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
@@ -123,20 +125,37 @@ export const UserProvider = ({ children }) => {
         return { ok: true };
     }, [tenant]);
 
+    const resolveRemoteUserProfile = useCallback(async () => {
+        const maxAttempts = 4;
+
+        for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+            try {
+                if (auth.currentUser) {
+                    await auth.currentUser.getIdToken(attempt > 0);
+                }
+
+                const payload = await fetchCurrentFirebaseUser();
+                if (payload?.user) {
+                    return payload.user;
+                }
+            } catch (error) {
+                if (attempt === maxAttempts - 1) {
+                    throw error;
+                }
+            }
+
+            await delay(250 * (attempt + 1));
+        }
+
+        return null;
+    }, []);
+
     const login = useCallback(async ({ uid, email }) => {
         setLoadingUser(true);
         try {
-            let payload = await fetchCurrentFirebaseUser();
-            const userData = payload?.user || null;
+            const userData = await resolveRemoteUserProfile();
             if (!userData) {
                 if (tenant?.email && email === tenant.email) {
-                    if (auth.currentUser) {
-                        await auth.currentUser.getIdToken(true);
-                        payload = await fetchCurrentFirebaseUser().catch(() => null);
-                        if (payload?.user) {
-                            return applyResolvedUser(payload.user);
-                        }
-                    }
                     return applyOwnerFallback({ uid, email });
                 }
                 return { ok: false, error: 'Usuario inactivo o no encontrado' };
@@ -145,12 +164,13 @@ export const UserProvider = ({ children }) => {
             return applyResolvedUser(userData);
         } catch (error) {
             if (tenant?.email && email === tenant.email) {
-                if (auth.currentUser) {
-                    await auth.currentUser.getIdToken(true).catch(() => null);
-                    const retryPayload = await fetchCurrentFirebaseUser().catch(() => null);
-                    if (retryPayload?.user) {
-                        return applyResolvedUser(retryPayload.user);
+                try {
+                    const retryUser = await resolveRemoteUserProfile();
+                    if (retryUser) {
+                        return applyResolvedUser(retryUser);
                     }
+                } catch {
+                    // Fall back to the local owner session only after exhausting authenticated retries.
                 }
                 return applyOwnerFallback({ uid, email });
             }
@@ -158,7 +178,7 @@ export const UserProvider = ({ children }) => {
         } finally {
             setLoadingUser(false);
         }
-    }, [applyOwnerFallback, applyResolvedUser, tenant]);
+    }, [applyOwnerFallback, applyResolvedUser, resolveRemoteUserProfile, tenant]);
 
     const logout = useCallback(() => {
         setCurrentUser(null);
@@ -225,12 +245,8 @@ export const UserProvider = ({ children }) => {
         let cancelled = false;
 
         const recoverProfile = async () => {
-            if (!auth.currentUser) return;
-
             try {
-                await auth.currentUser.getIdToken(true);
-                const payload = await fetchCurrentFirebaseUser();
-                const remoteUser = payload?.user || null;
+                const remoteUser = await resolveRemoteUserProfile();
 
                 if (!cancelled && remoteUser && Array.isArray(remoteUser.licenses) && remoteUser.licenses.length > 0) {
                     applyResolvedUser(remoteUser);
@@ -245,7 +261,7 @@ export const UserProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, [accessProfile?.licenses, applyResolvedUser, currentUser?.email, currentUser?.role, loadingUser, tenant?.email, tenant?.uid]);
+    }, [accessProfile?.licenses, applyResolvedUser, currentUser?.email, currentUser?.role, loadingUser, resolveRemoteUserProfile, tenant?.email, tenant?.uid]);
 
 
     // Admin always true; employee checks permission list
