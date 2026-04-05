@@ -1972,6 +1972,7 @@ function getTenantPool(dbName) {
 }
 
 async function createDeliveryTrackingEvent(pool, tenantId, payload = {}) {
+    const actorUserId = Number(payload.actorUserId);
     await pool.query(
         `INSERT INTO delivery_tracking_events
             (\`${TENANT_COLUMN}\`, order_id, event_type, status, driver_name, driver_uid, driver_email, latitude, longitude, accuracy, speed, heading, payload_json, actor_user_id, actor_firebase_uid, actor_email)
@@ -1990,7 +1991,7 @@ async function createDeliveryTrackingEvent(pool, tenantId, payload = {}) {
             payload.speed ?? null,
             payload.heading ?? null,
             payload.payloadJson ? JSON.stringify(payload.payloadJson) : null,
-            payload.actorUserId ?? null,
+            Number.isFinite(actorUserId) ? actorUserId : null,
             payload.actorFirebaseUid || null,
             payload.actorEmail || null,
         ]
