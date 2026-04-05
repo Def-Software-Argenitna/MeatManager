@@ -1901,6 +1901,7 @@ app.post('/api/provision', verifyFirebaseToken, handleProvision);
 const tenantInfoCache = new Map();   // uid  → { value, expiresAt }
 const tenantPools     = new Map();   // dbName → Pool
 const tableColCache   = new Map();   // "dbName.table" → [colNames]
+const tableDescCache  = new Map();   // "dbName.table" → Map(colName, sqlType)
 
 async function getTenantInfo(authUser) {
     const uid = typeof authUser === 'string' ? authUser : authUser?.uid;
@@ -2333,6 +2334,15 @@ async function getTableColumns(pool, dbName, table) {
     return cols;
 }
 
+async function getTableDescribe(pool, dbName, table) {
+    const key = `${dbName}.${table}`;
+    if (tableDescCache.has(key)) return tableDescCache.get(key);
+    const [rows] = await pool.query('DESCRIBE ??', [table]);
+    const desc = new Map(rows.map((row) => [row.Field, String(row.Type || '').toLowerCase()]));
+    tableDescCache.set(key, desc);
+    return desc;
+}
+
 // Tablas permitidas (whitelist contra inyección de nombres de tabla)
 const ALLOWED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
@@ -2367,6 +2377,58 @@ function deserializeRow(row) {
     return out;
 }
 
+function isDateLikeColumn(columnType) {
+    return columnType.includes('datetime') || columnType.includes('timestamp') || columnType === 'date' || columnType.startsWith('date(');
+}
+
+function pad2(value) {
+    return String(value).padStart(2, '0');
+}
+
+function formatMySqlDateValue(date, columnType) {
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+
+    const year = date.getFullYear();
+    const month = pad2(date.getMonth() + 1);
+    const day = pad2(date.getDate());
+
+    if (columnType === 'date' || columnType.startsWith('date(')) {
+        return `${year}-${month}-${day}`;
+    }
+
+    const hours = pad2(date.getHours());
+    const minutes = pad2(date.getMinutes());
+    const seconds = pad2(date.getSeconds());
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function normalizeColumnValue(value, columnType) {
+    if (value == null) return value;
+
+    if (isDateLikeColumn(columnType)) {
+        if (value instanceof Date) {
+            return formatMySqlDateValue(value, columnType);
+        }
+
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (!trimmed) return trimmed;
+
+            if (trimmed.includes('T') || trimmed.endsWith('Z')) {
+                const parsed = new Date(trimmed);
+                const formatted = formatMySqlDateValue(parsed, columnType);
+                if (formatted) return formatted;
+            }
+        }
+    }
+
+    if (typeof value === 'object') {
+        return JSON.stringify(value);
+    }
+
+    return value;
+}
+
 // ── RUTA: POST /api/data ───────────────────────────────────────────────────
 // Recibe { table, operation, record, id } y replica la operación en MySQL
 // operations: insert | update | delete | upsert
@@ -2383,6 +2445,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const tableDesc = await getTableDescribe(pool, dbName, table);
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
@@ -2396,8 +2459,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     continue;
                 }
                 if (rec[col] !== undefined && rec[col] !== null) {
-                    // Serializar objetos/arrays a JSON string para columnas JSON
-                    out[col] = (typeof rec[col] === 'object') ? JSON.stringify(rec[col]) : rec[col];
+                    out[col] = normalizeColumnValue(rec[col], tableDesc.get(col) || '');
                 }
             }
             return out;
@@ -2445,7 +2507,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     continue;
                 }
                 if (record[col] !== undefined && record[col] !== null) {
-                    filtered[col] = (typeof record[col] === 'object') ? JSON.stringify(record[col]) : record[col];
+                    filtered[col] = normalizeColumnValue(record[col], tableDesc.get(col) || '');
                 }
             }
             if (Object.keys(filtered).length === 0) {
@@ -2490,13 +2552,19 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
         );
 
         if (!rows.length) {
-            return res.status(404).json({ ok: false, error: 'Setting no encontrada' });
+            return res.json({
+                ok: true,
+                key: settingKey,
+                value: null,
+                found: false,
+            });
         }
 
         return res.json({
             ok: true,
             key: rows[0].key,
             value: rows[0].value ?? null,
+            found: true,
         });
     } catch (err) {
         console.error('[SETTINGS ERROR]', err.message);
