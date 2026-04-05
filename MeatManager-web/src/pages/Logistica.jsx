@@ -140,6 +140,25 @@ const normalizeOrderForLogistics = (pedido) => ({
     items_preview: formatOrderItems(pedido),
 });
 
+const normalizeLiveDriver = (driver) => {
+    const lastSeenRaw = driver?.time
+        ?? driver?.updatedAt
+        ?? driver?.updated_at
+        ?? driver?.timestamp
+        ?? driver?.lastSeen
+        ?? driver?.last_seen
+        ?? null;
+
+    return {
+        ...driver,
+        repartidor: String(driver?.repartidor || driver?.name || driver?.email || 'Repartidor'),
+        lat: toNumber(driver?.lat),
+        lng: toNumber(driver?.lng),
+        activeOrders: toNumber(driver?.activeOrders),
+        lastSeenRaw,
+    };
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -255,7 +274,9 @@ const Logistica = () => {
             try {
                 const payload = await fetchLiveDrivers();
                 if (!cancelled) {
-                    setDriversLocations(Array.isArray(payload?.drivers) ? payload.drivers : []);
+                    setDriversLocations(
+                        (Array.isArray(payload?.drivers) ? payload.drivers : []).map(normalizeLiveDriver)
+                    );
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -628,7 +649,7 @@ const Logistica = () => {
                             <Marker key={loc.firebaseUid || loc.email || loc.repartidor} position={[loc.lat, loc.lng]} icon={truckIcon}>
                                 <Popup>
                                     <strong>Repartidor: {loc.repartidor}</strong><br />
-                                    Última vez: {formatDriverLastSeen(loc.time || loc.updatedAt || loc.timestamp)}
+                                    Última vez: {formatDriverLastSeen(loc.lastSeenRaw)}
                                 </Popup>
                             </Marker>
                         ))}
@@ -808,7 +829,7 @@ const Logistica = () => {
                                         >
                                             <div>
                                                 <strong>{driver.repartidor || 'Repartidor'}</strong>
-                                                <span>{formatDriverLastSeen(driver.time || driver.updatedAt || driver.timestamp)}</span>
+                                                <span>{formatDriverLastSeen(driver.lastSeenRaw)}</span>
                                             </div>
                                             <div className={`comp-pill ${driver.activeOrders ? 'ok' : 'missing'}`}>
                                                 {driver.activeOrders ? `${driver.activeOrders} pedidos` : 'Sin pedidos'}
