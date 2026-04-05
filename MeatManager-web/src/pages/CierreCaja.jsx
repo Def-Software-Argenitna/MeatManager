@@ -13,6 +13,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { desktopApi } from '../utils/desktopApi';
+import { requestCashWithdrawalAuthorization, verifyCashWithdrawalAuthorization } from '../utils/apiClient';
 import './CierreCaja.css';
 
 const OUTFLOW_CATEGORIES = [
@@ -109,6 +110,10 @@ const CierreCaja = () => {
     const [countedCash, setCountedCash] = useState('');
     const [closureNotes, setClosureNotes] = useState('');
     const [closingDay, setClosingDay] = useState(false);
+    const [requestingWithdrawalCode, setRequestingWithdrawalCode] = useState(false);
+    const [verifyingWithdrawalCode, setVerifyingWithdrawalCode] = useState(false);
+    const [withdrawalAuthorization, setWithdrawalAuthorization] = useState(null);
+    const [withdrawalCodeInput, setWithdrawalCodeInput] = useState('');
     const [feedback, setFeedback] = useState(null);
 
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
@@ -310,6 +315,16 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + toNumber(previousCloseByMethod[method.name]), 0);
     const reportFolderPath = reportFolderSetting?.value || '';
+    const isPartnerWithdrawal = movementType === 'retiro' && movementCategory === 'Retiro Socios';
+    const withdrawalPayloadKey = `${movementType}|${movementCategory}|${Number(movementAmount || 0).toFixed(2)}|${movementPaymentMethod}|${movementDesc.trim()}`;
+
+    useEffect(() => {
+        if (!withdrawalAuthorization) return;
+        if (withdrawalAuthorization.payloadKey !== withdrawalPayloadKey) {
+            setWithdrawalAuthorization(null);
+            setWithdrawalCodeInput('');
+        }
+    }, [withdrawalPayloadKey, withdrawalAuthorization]);
 
     useEffect(() => {
         if (openingMovements.length > 0) return;
@@ -395,6 +410,13 @@ const CierreCaja = () => {
             return;
         }
 
+        if (isPartnerWithdrawal) {
+            if (!withdrawalAuthorization?.verified) {
+                setFeedback({ type: 'warning', text: 'Antes de guardar el retiro de socios tenés que solicitar y validar el código enviado por mail.' });
+                return;
+            }
+        }
+
         await db.caja_movimientos.add({
             type: movementType,
             amount: parseFloat(movementAmount),
@@ -402,14 +424,82 @@ const CierreCaja = () => {
             description: movementDesc,
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
+            authorization_id: withdrawalAuthorization?.authorizationId || null,
+            authorization_verified: withdrawalAuthorization?.verified ? 1 : 0,
+            authorized_recipient_email: withdrawalAuthorization?.recipient || null,
             date: new Date(),
             synced: 0,
         });
 
         setMovementAmount('');
         setMovementDesc('');
+        setWithdrawalAuthorization(null);
+        setWithdrawalCodeInput('');
         setShowMovementForm(false);
         setFeedback({ type: 'success', text: 'Movimiento de caja guardado correctamente.' });
+    };
+
+    const handleRequestWithdrawalCode = async () => {
+        if (!movementAmount || parseFloat(movementAmount) <= 0) {
+            setFeedback({ type: 'warning', text: 'Ingresá primero el monto del retiro societario.' });
+            return;
+        }
+
+        setRequestingWithdrawalCode(true);
+        try {
+            const response = await requestCashWithdrawalAuthorization({
+                amount: parseFloat(movementAmount),
+                paymentMethod: movementPaymentMethod,
+                category: movementCategory,
+                description: movementDesc,
+            });
+            setWithdrawalAuthorization({
+                authorizationId: response.authorizationId,
+                expiresAt: response.expiresAt,
+                recipient: response.recipient,
+                payloadKey: withdrawalPayloadKey,
+                verified: false,
+            });
+            setWithdrawalCodeInput('');
+            setFeedback({ type: 'success', text: `Código enviado a ${response.recipient}. Ingresalo para autorizar el retiro.` });
+        } catch (error) {
+            setFeedback({ type: 'error', text: error.message });
+        } finally {
+            setRequestingWithdrawalCode(false);
+        }
+    };
+
+    const handleVerifyWithdrawalCode = async () => {
+        if (!withdrawalAuthorization?.authorizationId) {
+            setFeedback({ type: 'warning', text: 'Primero solicitá el código de autorización.' });
+            return;
+        }
+
+        if (!withdrawalCodeInput.trim()) {
+            setFeedback({ type: 'warning', text: 'Ingresá el código que llegó por mail.' });
+            return;
+        }
+
+        setVerifyingWithdrawalCode(true);
+        try {
+            const response = await verifyCashWithdrawalAuthorization({
+                authorizationId: withdrawalAuthorization.authorizationId,
+                code: withdrawalCodeInput.trim(),
+                amount: parseFloat(movementAmount),
+                paymentMethod: movementPaymentMethod,
+                category: movementCategory,
+            });
+            setWithdrawalAuthorization((prev) => ({
+                ...prev,
+                verified: true,
+                recipient: response.recipient || prev?.recipient || null,
+            }));
+            setFeedback({ type: 'success', text: 'Retiro societario autorizado correctamente.' });
+        } catch (error) {
+            setFeedback({ type: 'error', text: error.message });
+        } finally {
+            setVerifyingWithdrawalCode(false);
+        }
     };
 
     const handleDeleteMovement = async (movementId) => {
@@ -920,6 +1010,49 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
+
+                                {isPartnerWithdrawal && (
+                                    <div className="cash-authorization-box">
+                                        <div className="cash-authorization-copy">
+                                            <strong>Autorización requerida</strong>
+                                            <span>
+                                                El retiro de socios envía un código temporal por mail y no se puede guardar hasta validarlo.
+                                            </span>
+                                            {withdrawalAuthorization?.recipient && (
+                                                <small>
+                                                    Destino: {withdrawalAuthorization.recipient}
+                                                    {withdrawalAuthorization.expiresAt ? ` · vence ${new Date(withdrawalAuthorization.expiresAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+                                                </small>
+                                            )}
+                                        </div>
+                                        <div className="cash-authorization-actions">
+                                            <button
+                                                type="button"
+                                                className="cierre-secondary-btn"
+                                                onClick={handleRequestWithdrawalCode}
+                                                disabled={requestingWithdrawalCode}
+                                            >
+                                                {requestingWithdrawalCode ? 'Enviando...' : withdrawalAuthorization?.authorizationId ? 'Reenviar código' : 'Enviar código por mail'}
+                                            </button>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                value={withdrawalCodeInput}
+                                                onChange={(e) => setWithdrawalCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                                placeholder="Código"
+                                                maxLength={6}
+                                            />
+                                            <button
+                                                type="button"
+                                                className="cierre-secondary-btn"
+                                                onClick={handleVerifyWithdrawalCode}
+                                                disabled={verifyingWithdrawalCode || !withdrawalAuthorization?.authorizationId}
+                                            >
+                                                {verifyingWithdrawalCode ? 'Validando...' : withdrawalAuthorization?.verified ? 'Código validado' : 'Validar código'}
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                                 <button type="submit" className="save-btn">
                                     <Save size={16} /> Guardar movimiento
                                 </button>

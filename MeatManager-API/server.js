@@ -9,6 +9,8 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 const { createClient } = require('redis');
 
 // ── Firebase Admin init ────────────────────────────────────────────────────
@@ -69,6 +71,12 @@ const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NA
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
+const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
+const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.SMTP_SECURE || '').trim().toLowerCase()
+);
+
+let smtpTransport = null;
 
 const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.REDIS_TLS || '').trim().toLowerCase()
@@ -92,6 +100,109 @@ const redisClient = createClient({
 redisClient.on('error', (error) => {
     console.error('[REDIS ERROR]', error.message);
 });
+
+function hasSmtpConfig() {
+    return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_FROM);
+}
+
+function getSmtpTransport() {
+    if (!hasSmtpConfig()) return null;
+    if (smtpTransport) return smtpTransport;
+    smtpTransport = nodemailer.createTransport({
+        host: process.env.SMTP_HOST,
+        port: Number(process.env.SMTP_PORT || 587),
+        secure: smtpSecure,
+        auth: process.env.SMTP_USER
+            ? {
+                user: process.env.SMTP_USER,
+                pass: process.env.SMTP_PASS || '',
+            }
+            : undefined,
+    });
+    return smtpTransport;
+}
+
+function generateNumericCode(length = 6) {
+    const min = 10 ** (length - 1);
+    const max = (10 ** length) - 1;
+    return String(Math.floor(min + (Math.random() * (max - min + 1))));
+}
+
+function hashSensitiveCode(code) {
+    return crypto.createHash('sha256').update(String(code || '')).digest('hex');
+}
+
+function maskEmailAddress(email) {
+    const normalized = String(email || '').trim();
+    if (!normalized.includes('@')) return normalized;
+    const [name, domain] = normalized.split('@');
+    if (!name) return `***@${domain}`;
+    if (name.length <= 2) return `${name[0] || '*'}***@${domain}`;
+    return `${name.slice(0, 2)}***@${domain}`;
+}
+
+async function sendCashWithdrawalAuthorizationEmail({
+    recipientEmail,
+    code,
+    amount,
+    paymentMethod,
+    description,
+    requestedBy,
+    businessName,
+    expiresAt,
+}) {
+    const transport = getSmtpTransport();
+    if (!transport) {
+        throw new Error('SMTP no configurado en la API');
+    }
+
+    const formattedAmount = Number(amount || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const subject = `Codigo de autorizacion para retiro de socios - ${businessName || 'MeatManager'}`;
+    const text = [
+        `Se solicito un retiro de socios en caja.`,
+        '',
+        `Empresa: ${businessName || 'MeatManager'}`,
+        `Solicitado por: ${requestedBy || 'Usuario web'}`,
+        `Monto: $${formattedAmount}`,
+        `Medio: ${paymentMethod || 'Efectivo'}`,
+        `Concepto: ${description || 'Sin detalle'}`,
+        `Codigo: ${code}`,
+        `Vence: ${new Date(expiresAt).toLocaleString('es-AR')}`,
+        '',
+        'Si no reconoces esta solicitud, ignora este mensaje.',
+    ].join('\n');
+
+    const html = `
+        <div style="font-family:Arial,sans-serif;background:#0f1117;color:#f5f5f5;padding:24px;">
+            <div style="max-width:640px;margin:0 auto;background:#171922;border:1px solid #2a2f3a;border-radius:16px;padding:24px;">
+                <h2 style="margin:0 0 12px;color:#f97316;">Autorizacion de retiro societario</h2>
+                <p style="margin:0 0 16px;color:#cbd5e1;">Se solicito un retiro de socios desde caja.</p>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Empresa</td><td style="padding:6px 0;text-align:right;">${businessName || 'MeatManager'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Solicitado por</td><td style="padding:6px 0;text-align:right;">${requestedBy || 'Usuario web'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Monto</td><td style="padding:6px 0;text-align:right;">$${formattedAmount}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Medio</td><td style="padding:6px 0;text-align:right;">${paymentMethod || 'Efectivo'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Concepto</td><td style="padding:6px 0;text-align:right;">${description || 'Sin detalle'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Vence</td><td style="padding:6px 0;text-align:right;">${new Date(expiresAt).toLocaleString('es-AR')}</td></tr>
+                </table>
+                <div style="text-align:center;margin:24px 0;">
+                    <div style="display:inline-block;padding:14px 22px;border-radius:14px;background:#f97316;color:#111827;font-size:30px;font-weight:800;letter-spacing:8px;">
+                        ${code}
+                    </div>
+                </div>
+                <p style="margin:0;color:#94a3b8;font-size:13px;">Si no reconoces esta solicitud, ignora este mensaje.</p>
+            </div>
+        </div>
+    `;
+
+    await transport.sendMail({
+        from: process.env.SMTP_FROM,
+        to: recipientEmail,
+        subject,
+        text,
+        html,
+    });
+}
 
 function getRedisDriverLocationKey(tenantId, firebaseUid) {
     return `mm:delivery:location:${tenantId}:${firebaseUid}`;
@@ -258,6 +369,14 @@ async function hasColumn(conn, dbName, tableName, columnName) {
         [dbName, tableName, columnName]
     );
     return rows.length > 0;
+}
+
+async function ensureColumn(conn, tableName, columnName, definitionSql) {
+    if (await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, columnName)) return;
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+         ADD COLUMN ${definitionSql}`
+    );
 }
 
 async function getPrimaryKeyColumns(conn, dbName, tableName) {
@@ -507,6 +626,14 @@ async function ensureOperationalTenantIsolation() {
             for (const sql of getSchemaTables()) {
                 await conn.query(sql);
             }
+
+            await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
+            await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
+            await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
+            await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
+            await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL AFTER `payment_method_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0 AFTER `authorization_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL AFTER `authorization_verified`');
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
@@ -1217,11 +1344,34 @@ function getSchemaTables() {
             client_id       INT,
             payment_method  VARCHAR(100),
             payment_method_id INT,
+            authorization_id BIGINT,
+            authorization_verified TINYINT(1) DEFAULT 0,
+            authorized_recipient_email VARCHAR(150),
             receipt_number  INT,
             receipt_code    VARCHAR(32),
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`)
+        )`,
+        `CREATE TABLE IF NOT EXISTS cash_withdrawal_authorizations (
+            id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            authorization_type  VARCHAR(50) NOT NULL,
+            requested_amount    DECIMAL(12,2) NOT NULL DEFAULT 0,
+            payment_method      VARCHAR(100),
+            category            VARCHAR(100),
+            description         VARCHAR(255),
+            recipient_email     VARCHAR(150),
+            requested_by_user_id BIGINT,
+            requested_by_email  VARCHAR(150),
+            code_hash           CHAR(64) NOT NULL,
+            status              VARCHAR(20) NOT NULL DEFAULT 'pending',
+            expires_at          DATETIME NOT NULL,
+            used_at             DATETIME NULL,
+            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_cash_withdrawal_authorizations_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_cash_withdrawal_authorizations_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_cash_withdrawal_authorizations_status (\`${TENANT_COLUMN}\`, status, expires_at)
         )`,
         `CREATE TABLE IF NOT EXISTS deleted_sales_history (
             id                      INT AUTO_INCREMENT PRIMARY KEY,
@@ -1409,6 +1559,175 @@ function getTenantPool(dbName) {
     });
     tenantPools.set(dbName, pool);
     return pool;
+}
+
+async function createCashWithdrawalAuthorization({
+    tenantInfo,
+    accessContext,
+    amount,
+    paymentMethod,
+    category,
+    description,
+}) {
+    const recipientEmail = String(
+        accessContext?.client?.billingEmail
+        || accessContext?.user?.email
+        || ''
+    ).trim().toLowerCase();
+
+    if (!recipientEmail) {
+        const error = new Error('El cliente no tiene email de autorizacion configurado');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!hasSmtpConfig()) {
+        const error = new Error('La API no tiene SMTP configurado para enviar autorizaciones');
+        error.statusCode = 500;
+        throw error;
+    }
+
+    const code = generateNumericCode(6);
+    const codeHash = hashSensitiveCode(code);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + (CASH_WITHDRAWAL_CODE_TTL_MINUTES * 60 * 1000));
+    const pool = getTenantPool(tenantInfo.dbName);
+
+    await pool.query(
+        `UPDATE cash_withdrawal_authorizations
+            SET status = 'cancelled'
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND authorization_type = 'partner_withdrawal'
+            AND status = 'pending'
+            AND requested_by_user_id = ?`,
+        [tenantInfo.tenantId, accessContext.user.id]
+    );
+
+    const [result] = await pool.query(
+        `INSERT INTO cash_withdrawal_authorizations
+            (\`${TENANT_COLUMN}\`, authorization_type, requested_amount, payment_method, category, description, recipient_email, requested_by_user_id, requested_by_email, code_hash, status, expires_at)
+         VALUES (?, 'partner_withdrawal', ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        [
+            tenantInfo.tenantId,
+            Number(amount) || 0,
+            paymentMethod || null,
+            category || null,
+            description || null,
+            recipientEmail,
+            accessContext.user.id || null,
+            accessContext.user.email || null,
+            codeHash,
+            expiresAt,
+        ]
+    );
+
+    try {
+        await sendCashWithdrawalAuthorizationEmail({
+            recipientEmail,
+            code,
+            amount,
+            paymentMethod,
+            description,
+            requestedBy: [accessContext.user?.name, accessContext.user?.lastname].filter(Boolean).join(' ') || accessContext.user?.email || 'Usuario',
+            businessName: accessContext.client?.businessName,
+            expiresAt,
+        });
+    } catch (error) {
+        await pool.query(
+            `UPDATE cash_withdrawal_authorizations
+                SET status = 'cancelled'
+              WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+            [tenantInfo.tenantId, result.insertId]
+        );
+        throw error;
+    }
+
+    return {
+        authorizationId: result.insertId,
+        expiresAt: expiresAt.toISOString(),
+        recipientEmail,
+    };
+}
+
+async function verifyCashWithdrawalAuthorization({
+    tenantInfo,
+    authorizationId,
+    code,
+    amount,
+    paymentMethod,
+    category,
+}) {
+    const pool = getTenantPool(tenantInfo.dbName);
+    const [rows] = await pool.query(
+        `SELECT *
+           FROM cash_withdrawal_authorizations
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND id = ?
+          LIMIT 1`,
+        [tenantInfo.tenantId, authorizationId]
+    );
+
+    const record = rows[0];
+    if (!record) {
+        const error = new Error('No se encontro la autorizacion solicitada');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (String(record.status) !== 'pending') {
+        const error = new Error('La autorizacion ya no esta disponible');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (new Date(record.expires_at).getTime() < Date.now()) {
+        await pool.query(
+            `UPDATE cash_withdrawal_authorizations
+                SET status = 'expired'
+              WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+            [tenantInfo.tenantId, authorizationId]
+        );
+        const error = new Error('El codigo ya vencio');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (hashSensitiveCode(code) !== record.code_hash) {
+        const error = new Error('Codigo incorrecto');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (Number(record.requested_amount || 0) !== Number(amount || 0)) {
+        const error = new Error('El importe cambio despues de solicitar el codigo');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (String(record.payment_method || '') !== String(paymentMethod || '')) {
+        const error = new Error('El medio de pago cambio despues de solicitar el codigo');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (String(record.category || '') !== String(category || '')) {
+        const error = new Error('La categoria cambio despues de solicitar el codigo');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    await pool.query(
+        `UPDATE cash_withdrawal_authorizations
+            SET status = 'used', used_at = NOW()
+          WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+        [tenantInfo.tenantId, authorizationId]
+    );
+
+    return {
+        authorizationId: record.id,
+        recipientEmail: record.recipient_email,
+        usedAt: new Date().toISOString(),
+    };
 }
 
 async function getTableColumns(pool, dbName, table) {
@@ -2119,6 +2438,84 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ error: 'Error generando correlativo: ' + err.message });
     } finally {
         conn.release();
+    }
+});
+
+// ── RUTA: POST /api/cash/withdrawals/request-authorization ────────────────
+app.post('/api/cash/withdrawals/request-authorization', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { amount, paymentMethod, category, description } = req.body || {};
+        if (Number(amount || 0) <= 0) {
+            return res.status(400).json({ error: 'Monto invalido para solicitar autorizacion' });
+        }
+
+        if (String(category || '').trim() !== 'Retiro Socios') {
+            return res.status(400).json({ error: 'Solo los retiros societarios requieren esta autorizacion' });
+        }
+
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+
+        const result = await createCashWithdrawalAuthorization({
+            tenantInfo,
+            accessContext,
+            amount,
+            paymentMethod,
+            category,
+            description,
+        });
+
+        return res.json({
+            ok: true,
+            authorizationId: result.authorizationId,
+            expiresAt: result.expiresAt,
+            recipient: maskEmailAddress(result.recipientEmail),
+        });
+    } catch (err) {
+        console.error('[CASH AUTH REQUEST ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo enviar el codigo de autorizacion' });
+    }
+});
+
+// ── RUTA: POST /api/cash/withdrawals/verify-authorization ────────────────
+app.post('/api/cash/withdrawals/verify-authorization', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { authorizationId, code, amount, paymentMethod, category } = req.body || {};
+        if (!authorizationId || !code) {
+            return res.status(400).json({ error: 'Faltan datos para validar la autorizacion' });
+        }
+
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+
+        const result = await verifyCashWithdrawalAuthorization({
+            tenantInfo,
+            authorizationId: Number(authorizationId),
+            code: String(code || '').trim(),
+            amount,
+            paymentMethod,
+            category,
+        });
+
+        return res.json({
+            ok: true,
+            authorizationId: result.authorizationId,
+            recipient: maskEmailAddress(result.recipientEmail),
+            usedAt: result.usedAt,
+        });
+    } catch (err) {
+        console.error('[CASH AUTH VERIFY ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo validar el codigo' });
     }
 });
 

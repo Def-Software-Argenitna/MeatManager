@@ -184,3 +184,31 @@ export const getNextRemoteReceiptData = async (counterKey, branchKey = 'branch_c
 
     return res.json();
 };
+
+export const requestCashWithdrawalAuthorization = async (payload) => {
+    const res = await apiFetch('/api/cash/withdrawals/request-authorization', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo enviar el codigo de autorizacion');
+    }
+
+    return res.json();
+};
+
+export const verifyCashWithdrawalAuthorization = async (payload) => {
+    const res = await apiFetch('/api/cash/withdrawals/verify-authorization', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo validar el codigo de autorizacion');
+    }
+
+    return res.json();
+};
