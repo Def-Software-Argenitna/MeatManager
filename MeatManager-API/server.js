@@ -350,7 +350,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ]);
 
@@ -358,9 +358,150 @@ const TENANT_ID_TABLES = [
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
+
+const DELIVERY_STATUS_MAP = {
+    pending: 'pending',
+    ready: 'assigned',
+    assigned: 'assigned',
+    on_route: 'on_route',
+    in_route: 'on_route',
+    en_reparto: 'on_route',
+    arrived: 'arrived',
+    delivered: 'delivered',
+    failed: 'failed',
+    cancelled: 'cancelled',
+};
+
+const ACTIVE_DELIVERY_STATUSES = ['assigned', 'on_route', 'arrived'];
+
+function normalizeDeliveryStatus(value) {
+    return DELIVERY_STATUS_MAP[String(value || '').trim().toLowerCase()] || 'pending';
+}
+
+function parseLicenseTokens(value) {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.flatMap(parseLicenseTokens);
+    if (typeof value === 'string') {
+        const trimmed = value.trim();
+        if (!trimmed) return [];
+        try {
+            return parseLicenseTokens(JSON.parse(trimmed));
+        } catch {
+            return trimmed.includes(',') ? trimmed.split(',').flatMap(parseLicenseTokens) : [trimmed];
+        }
+    }
+    if (typeof value === 'object') {
+        return Object.entries(value)
+            .filter(([, enabled]) => Boolean(enabled))
+            .map(([key]) => key);
+    }
+    return [];
+}
+
+function hasSuperLicense(licenses = []) {
+    return licenses.some((license) => (
+        ['superuser', 'su'].includes(normalizeLicenseToken(license?.internalCode))
+        || normalizeLicenseToken(license?.commercialName) === 'superuser'
+        || normalizeLicenseToken(license?.category) === 'superuser'
+    ));
+}
+
+function hasLogisticsAccess(accessContext) {
+    if (!accessContext?.user) return false;
+    if (accessContext.user.role === 'admin') return true;
+    if (hasSuperLicense(accessContext.effectiveLicenses || [])) return true;
+
+    const tokens = new Set();
+    for (const license of accessContext.effectiveLicenses || []) {
+        for (const token of parseLicenseTokens(license?.featureFlags)) {
+            tokens.add(normalizeLicenseToken(token));
+        }
+    }
+
+    return ['logistica', 'logistics', 'delivery', 'deliveries', 'envios', 'shipping'].some((token) => tokens.has(token));
+}
+
+function assertLogisticsAccess(accessContext) {
+    if (!hasLogisticsAccess(accessContext)) {
+        const error = new Error('El usuario no tiene acceso al módulo Logística');
+        error.statusCode = 403;
+        throw error;
+    }
+}
+
+function safeJsonParse(value, fallback = null) {
+    if (value == null || value === '') return fallback;
+    if (typeof value === 'object') return value;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return fallback;
+    }
+}
+
+function getAccessDisplayName(user = {}) {
+    const fullName = [user.name, user.lastname]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join(' ');
+    return fullName || user.email || 'Repartidor';
+}
+
+function buildDriverIdentity(accessContext) {
+    const displayName = getAccessDisplayName(accessContext?.user);
+    return {
+        userId: accessContext?.user?.id ?? null,
+        firebaseUid: accessContext?.user?.firebaseUid || null,
+        email: normalizeEmail(accessContext?.user?.email || ''),
+        name: displayName,
+        role: accessContext?.user?.role || 'employee',
+    };
+}
+
+function mapDeliveryOrder(row) {
+    const status = normalizeDeliveryStatus(row.status);
+    return {
+        id: row.id,
+        customerId: row.customer_id,
+        customerName: row.customer_name,
+        items: safeJsonParse(row.items, []),
+        total: row.total == null ? 0 : Number(row.total),
+        status,
+        rawStatus: row.status,
+        deliveryDate: row.delivery_date,
+        deliveryType: row.delivery_type,
+        address: row.address,
+        latitude: row.latitude == null ? null : Number(row.latitude),
+        longitude: row.longitude == null ? null : Number(row.longitude),
+        source: row.source,
+        createdAt: row.created_at,
+        assignedAt: row.assigned_at,
+        statusUpdatedAt: row.status_updated_at,
+        driver: {
+            name: row.repartidor || null,
+            firebaseUid: row.assigned_driver_uid || null,
+            email: row.assigned_driver_email || null,
+        },
+    };
+}
+
+function orderBelongsToDriver(row, driverIdentity) {
+    const orderUid = String(row.assigned_driver_uid || '').trim();
+    const orderEmail = normalizeEmail(row.assigned_driver_email || '');
+    const orderName = String(row.repartidor || '').trim().toLowerCase();
+    const driverUid = String(driverIdentity?.firebaseUid || '').trim();
+    const driverEmail = normalizeEmail(driverIdentity?.email || '');
+    const driverName = String(driverIdentity?.name || '').trim().toLowerCase();
+
+    return (
+        (orderUid && driverUid && orderUid === driverUid)
+        || (orderEmail && driverEmail && orderEmail === driverEmail)
+        || (orderName && driverName && orderName === driverName)
+    );
+}
 
 const TABLES_WITH_NUMERIC_ID = [
     'payment_methods', 'categories', 'suppliers', 'purchase_items', 'stock',
@@ -651,6 +792,10 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'pedidos', 'latitude', '`latitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'pedidos', 'longitude', '`longitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'pedidos', 'geocoded_at', '`geocoded_at` DATETIME NULL');
+            await ensureColumn(conn, 'pedidos', 'assigned_driver_uid', '`assigned_driver_uid` VARCHAR(191) NULL');
+            await ensureColumn(conn, 'pedidos', 'assigned_driver_email', '`assigned_driver_email` VARCHAR(150) NULL');
+            await ensureColumn(conn, 'pedidos', 'assigned_at', '`assigned_at` DATETIME NULL');
+            await ensureColumn(conn, 'pedidos', 'status_updated_at', '`status_updated_at` DATETIME NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
@@ -1424,6 +1569,10 @@ function getSchemaTables() {
             longitude       DECIMAL(10,7),
             geocoded_at     DATETIME,
             repartidor      VARCHAR(100),
+            assigned_driver_uid VARCHAR(191),
+            assigned_driver_email VARCHAR(150),
+            assigned_at     DATETIME,
+            status_updated_at DATETIME,
             source          VARCHAR(50),
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             sync_cloud      TINYINT(1) DEFAULT 0,
@@ -1475,6 +1624,30 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`)
+        )`,
+        `CREATE TABLE IF NOT EXISTS delivery_tracking_events (
+            id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            order_id            INT NULL,
+            event_type          VARCHAR(50) NOT NULL,
+            status              VARCHAR(50) NULL,
+            driver_name         VARCHAR(150) NULL,
+            driver_uid          VARCHAR(191) NULL,
+            driver_email        VARCHAR(150) NULL,
+            latitude            DECIMAL(10,7) NULL,
+            longitude           DECIMAL(10,7) NULL,
+            accuracy            DECIMAL(10,2) NULL,
+            speed               DECIMAL(10,2) NULL,
+            heading             DECIMAL(10,2) NULL,
+            payload_json        JSON NULL,
+            actor_user_id       BIGINT NULL,
+            actor_firebase_uid  VARCHAR(191) NULL,
+            actor_email         VARCHAR(150) NULL,
+            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_delivery_tracking_events_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_delivery_tracking_events_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_delivery_tracking_events_order (\`${TENANT_COLUMN}\`, order_id, created_at),
+            INDEX idx_delivery_tracking_events_driver (\`${TENANT_COLUMN}\`, driver_uid, created_at)
         )`,
         `CREATE TABLE IF NOT EXISTS cash_withdrawal_authorizations (
             id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -1682,6 +1855,183 @@ function getTenantPool(dbName) {
     });
     tenantPools.set(dbName, pool);
     return pool;
+}
+
+async function createDeliveryTrackingEvent(pool, tenantId, payload = {}) {
+    await pool.query(
+        `INSERT INTO delivery_tracking_events
+            (\`${TENANT_COLUMN}\`, order_id, event_type, status, driver_name, driver_uid, driver_email, latitude, longitude, accuracy, speed, heading, payload_json, actor_user_id, actor_firebase_uid, actor_email)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            tenantId,
+            payload.orderId ?? null,
+            payload.eventType || 'update',
+            payload.status || null,
+            payload.driverName || null,
+            payload.driverUid || null,
+            payload.driverEmail || null,
+            payload.latitude ?? null,
+            payload.longitude ?? null,
+            payload.accuracy ?? null,
+            payload.speed ?? null,
+            payload.heading ?? null,
+            payload.payloadJson ? JSON.stringify(payload.payloadJson) : null,
+            payload.actorUserId ?? null,
+            payload.actorFirebaseUid || null,
+            payload.actorEmail || null,
+        ]
+    );
+}
+
+async function fetchDeliveryOrderById(pool, tenantId, orderId) {
+    const [rows] = await pool.query(
+        `SELECT *
+           FROM pedidos
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND id = ?
+            AND delivery_type = 'delivery'
+          LIMIT 1`,
+        [tenantId, orderId]
+    );
+    return rows[0] || null;
+}
+
+async function listDeliveryOrders(pool, tenantId, filters = {}) {
+    const where = ['`tenant_id` = ?', 'delivery_type = ?'];
+    const params = [tenantId, 'delivery'];
+
+    if (filters.status) {
+        const statuses = []
+            .concat(filters.status)
+            .map((value) => normalizeDeliveryStatus(value))
+            .filter(Boolean);
+        if (statuses.length) {
+            where.push(`status IN (${statuses.map(() => '?').join(', ')})`);
+            params.push(...statuses);
+        }
+    }
+
+    if (filters.driverIdentity) {
+        const driverIdentity = filters.driverIdentity;
+        const clauses = [];
+        if (driverIdentity.firebaseUid) {
+            clauses.push('assigned_driver_uid = ?');
+            params.push(driverIdentity.firebaseUid);
+        }
+        if (driverIdentity.email) {
+            clauses.push('LOWER(assigned_driver_email) = ?');
+            params.push(driverIdentity.email);
+        }
+        if (driverIdentity.name) {
+            clauses.push('LOWER(repartidor) = ?');
+            params.push(driverIdentity.name.toLowerCase());
+        }
+        if (clauses.length) {
+            where.push(`(${clauses.join(' OR ')})`);
+        }
+    }
+
+    const limit = Number.isFinite(Number(filters.limit)) ? Math.min(Math.max(Number(filters.limit), 1), 200) : 100;
+    const [rows] = await pool.query(
+        `SELECT *
+           FROM pedidos
+          WHERE ${where.join(' AND ')}
+          ORDER BY COALESCE(delivery_date, created_at) DESC, id DESC
+          LIMIT ?`,
+        [...params, limit]
+    );
+    return rows.map(mapDeliveryOrder);
+}
+
+async function assignDeliveryOrder(pool, tenantId, orderId, driverIdentity, nextStatus = 'assigned') {
+    const normalizedStatus = normalizeDeliveryStatus(nextStatus);
+    await pool.query(
+        `UPDATE pedidos
+            SET repartidor = ?,
+                assigned_driver_uid = ?,
+                assigned_driver_email = ?,
+                assigned_at = CURRENT_TIMESTAMP,
+                status = ?,
+                status_updated_at = CURRENT_TIMESTAMP
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND id = ?
+            AND delivery_type = 'delivery'`,
+        [
+            driverIdentity.name || null,
+            driverIdentity.firebaseUid || null,
+            driverIdentity.email || null,
+            normalizedStatus,
+            tenantId,
+            orderId,
+        ]
+    );
+}
+
+async function updateDeliveryOrderStatus(pool, tenantId, orderId, status, driverIdentity = null) {
+    const normalizedStatus = normalizeDeliveryStatus(status);
+    const order = await fetchDeliveryOrderById(pool, tenantId, orderId);
+    if (!order) {
+        const error = new Error('Pedido de delivery no encontrado');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (driverIdentity && driverIdentity.role !== 'admin' && !orderBelongsToDriver(order, driverIdentity)) {
+        const error = new Error('El pedido no está asignado a este repartidor');
+        error.statusCode = 403;
+        throw error;
+    }
+
+    const nextDriverName = order.repartidor || driverIdentity?.name || null;
+    const nextDriverUid = order.assigned_driver_uid || driverIdentity?.firebaseUid || null;
+    const nextDriverEmail = order.assigned_driver_email || driverIdentity?.email || null;
+
+    await pool.query(
+        `UPDATE pedidos
+            SET status = ?,
+                repartidor = ?,
+                assigned_driver_uid = ?,
+                assigned_driver_email = ?,
+                status_updated_at = CURRENT_TIMESTAMP
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND id = ?`,
+        [
+            normalizedStatus,
+            nextDriverName,
+            nextDriverUid,
+            nextDriverEmail,
+            tenantId,
+            orderId,
+        ]
+    );
+
+    return fetchDeliveryOrderById(pool, tenantId, orderId);
+}
+
+async function buildLiveDriversSummary(pool, tenantId, locations) {
+    const [rows] = await pool.query(
+        `SELECT assigned_driver_uid, assigned_driver_email, repartidor, status, COUNT(*) AS activeOrders
+           FROM pedidos
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND delivery_type = 'delivery'
+            AND status IN (${ACTIVE_DELIVERY_STATUSES.map(() => '?').join(', ')})
+          GROUP BY assigned_driver_uid, assigned_driver_email, repartidor, status`,
+        [tenantId, ...ACTIVE_DELIVERY_STATUSES]
+    );
+
+    return locations.map((location) => {
+        const match = rows.find((row) => (
+            (row.assigned_driver_uid && row.assigned_driver_uid === location.firebaseUid)
+            || (normalizeEmail(row.assigned_driver_email || '') && normalizeEmail(row.assigned_driver_email || '') === normalizeEmail(location.email || ''))
+            || (String(row.repartidor || '').trim().toLowerCase() && String(row.repartidor || '').trim().toLowerCase() === String(location.repartidor || '').trim().toLowerCase())
+        ));
+
+        return {
+            ...location,
+            activeOrders: match ? Number(match.activeOrders || 0) : 0,
+            activeStatus: match ? normalizeDeliveryStatus(match.status) : null,
+        };
+    });
 }
 
 async function createCashWithdrawalAuthorization({
@@ -2643,16 +2993,210 @@ app.post('/api/cash/withdrawals/verify-authorization', verifyFirebaseToken, asyn
     }
 });
 
-// ── RUTA: POST /api/delivery/location ─────────────────────────────────────
-app.post('/api/delivery/location', verifyFirebaseTokenWithClient, async (req, res) => {
+// ── RUTA: GET /api/delivery/me ────────────────────────────────────────────
+app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
     try {
-        const tenantId = Number(req.clientAccess?.clientId || req.clientAccess?.id || DEFAULT_OPERATIONAL_TENANT_ID);
-        const firebaseUid = String(req.firebaseUser?.uid || '').trim();
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        const driverIdentity = buildDriverIdentity(accessContext);
+
+        return res.json({
+            ok: true,
+            profile: {
+                id: accessContext.user.id,
+                firebaseUid: accessContext.user.firebaseUid,
+                email: accessContext.user.email,
+                name: driverIdentity.name,
+                role: accessContext.user.role,
+                clientId: accessContext.client.id,
+                branchId: accessContext.user.branchId ?? null,
+                logisticsEnabled: true,
+                licenses: accessContext.effectiveLicenses,
+            },
+        });
+    } catch (err) {
+        console.error('[DELIVERY ME ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo resolver el perfil de delivery' });
+    }
+});
+
+// ── RUTA: GET /api/delivery/orders ────────────────────────────────────────
+app.get('/api/delivery/orders', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(tenantInfo.dbName);
+        const driverIdentity = buildDriverIdentity(accessContext);
+        const scope = String(req.query.scope || '').trim().toLowerCase();
+        const status = req.query.status ? String(req.query.status).split(',') : null;
+
+        const rows = await listDeliveryOrders(pool, tenantInfo.tenantId, {
+            limit: req.query.limit,
+            status,
+            driverIdentity: accessContext.user.role === 'admin' && scope === 'all' ? null : driverIdentity,
+        });
+
+        return res.json({
+            ok: true,
+            count: rows.length,
+            scope: accessContext.user.role === 'admin' && scope === 'all' ? 'all' : 'assigned',
+            orders: rows,
+        });
+    } catch (err) {
+        console.error('[DELIVERY ORDERS ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los pedidos de delivery' });
+    }
+});
+
+// ── RUTA: POST /api/logistics/orders/:id/assign ───────────────────────────
+app.post('/api/logistics/orders/:id/assign', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        if (accessContext.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Solo un administrador puede asignar repartos' });
+        }
+
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(tenantInfo.dbName);
+        const orderId = Number(req.params.id);
+        const driverIdentity = {
+            userId: req.body?.driverUserId ?? null,
+            firebaseUid: String(req.body?.driverFirebaseUid || '').trim() || null,
+            email: normalizeEmail(req.body?.driverEmail || ''),
+            name: String(req.body?.driverName || '').trim() || null,
+            role: 'employee',
+        };
+
+        if (!Number.isFinite(orderId)) {
+            return res.status(400).json({ error: 'Pedido inválido' });
+        }
+        if (!driverIdentity.name && !driverIdentity.firebaseUid && !driverIdentity.email) {
+            return res.status(400).json({ error: 'Falta el repartidor a asignar' });
+        }
+
+        await assignDeliveryOrder(pool, tenantInfo.tenantId, orderId, driverIdentity, req.body?.status || 'assigned');
+        await createDeliveryTrackingEvent(pool, tenantInfo.tenantId, {
+            orderId,
+            eventType: 'assigned',
+            status: normalizeDeliveryStatus(req.body?.status || 'assigned'),
+            driverName: driverIdentity.name,
+            driverUid: driverIdentity.firebaseUid,
+            driverEmail: driverIdentity.email || null,
+            actorUserId: accessContext.user.id,
+            actorFirebaseUid: accessContext.user.firebaseUid || null,
+            actorEmail: accessContext.user.email || null,
+            payloadJson: req.body || {},
+        });
+
+        const order = await fetchDeliveryOrderById(pool, tenantInfo.tenantId, orderId);
+        return res.json({
+            ok: true,
+            order: mapDeliveryOrder(order),
+        });
+    } catch (err) {
+        console.error('[DELIVERY ASSIGN ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo asignar el reparto' });
+    }
+});
+
+// ── RUTA: POST /api/delivery/orders/:id/status ────────────────────────────
+app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(tenantInfo.dbName);
+        const orderId = Number(req.params.id);
+        const status = normalizeDeliveryStatus(req.body?.status);
+        const driverIdentity = buildDriverIdentity(accessContext);
+        const lat = req.body?.lat == null ? null : Number(req.body.lat);
+        const lng = req.body?.lng == null ? null : Number(req.body.lng);
+        const accuracy = req.body?.accuracy == null ? null : Number(req.body.accuracy);
+        const speed = req.body?.speed == null ? null : Number(req.body.speed);
+        const heading = req.body?.heading == null ? null : Number(req.body.heading);
+
+        if (!Number.isFinite(orderId)) {
+            return res.status(400).json({ error: 'Pedido inválido' });
+        }
+        if (!status) {
+            return res.status(400).json({ error: 'Estado inválido' });
+        }
+
+        const updatedOrder = await updateDeliveryOrderStatus(pool, tenantInfo.tenantId, orderId, status, driverIdentity);
+        await createDeliveryTrackingEvent(pool, tenantInfo.tenantId, {
+            orderId,
+            eventType: 'status_changed',
+            status,
+            driverName: updatedOrder.repartidor || driverIdentity.name,
+            driverUid: updatedOrder.assigned_driver_uid || driverIdentity.firebaseUid,
+            driverEmail: updatedOrder.assigned_driver_email || driverIdentity.email || null,
+            latitude: Number.isFinite(lat) ? lat : null,
+            longitude: Number.isFinite(lng) ? lng : null,
+            accuracy: Number.isFinite(accuracy) ? accuracy : null,
+            speed: Number.isFinite(speed) ? speed : null,
+            heading: Number.isFinite(heading) ? heading : null,
+            actorUserId: accessContext.user.id,
+            actorFirebaseUid: accessContext.user.firebaseUid || null,
+            actorEmail: accessContext.user.email || null,
+            payloadJson: req.body || {},
+        });
+
+        return res.json({
+            ok: true,
+            order: mapDeliveryOrder(updatedOrder),
+        });
+    } catch (err) {
+        console.error('[DELIVERY STATUS ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo actualizar el estado del reparto' });
+    }
+});
+
+// ── RUTA: POST /api/delivery/location ─────────────────────────────────────
+app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const tenantId = Number(tenantInfo.tenantId || accessContext.client?.id || DEFAULT_OPERATIONAL_TENANT_ID);
+        const firebaseUid = String(accessContext.user?.firebaseUid || req.firebaseUser?.uid || '').trim();
         const lat = Number(req.body?.lat);
         const lng = Number(req.body?.lng);
         const accuracy = req.body?.accuracy == null ? null : Number(req.body.accuracy);
         const speed = req.body?.speed == null ? null : Number(req.body.speed);
         const heading = req.body?.heading == null ? null : Number(req.body.heading);
+        const orderId = req.body?.orderId == null ? null : Number(req.body.orderId);
+        const status = req.body?.status ? normalizeDeliveryStatus(req.body.status) : null;
 
         if (!firebaseUid) {
             return res.status(400).json({ error: 'Usuario Firebase inválido' });
@@ -2670,9 +3214,30 @@ app.post('/api/delivery/location', verifyFirebaseTokenWithClient, async (req, re
                 accuracy: Number.isFinite(accuracy) ? accuracy : null,
                 speed: Number.isFinite(speed) ? speed : null,
                 heading: Number.isFinite(heading) ? heading : null,
-                repartidor: req.clientAccess?.name || req.clientAccess?.empresa || req.firebaseUser?.email || firebaseUid,
+                repartidor: getAccessDisplayName(accessContext.user),
                 email: req.firebaseUser?.email || null,
+                orderId: Number.isFinite(orderId) ? orderId : null,
+                status,
             },
+        });
+
+        const pool = getTenantPool(tenantInfo.dbName);
+        await createDeliveryTrackingEvent(pool, tenantId, {
+            orderId: Number.isFinite(orderId) ? orderId : null,
+            eventType: 'location_ping',
+            status,
+            driverName: getAccessDisplayName(accessContext.user),
+            driverUid: firebaseUid,
+            driverEmail: normalizeEmail(req.firebaseUser?.email || ''),
+            latitude: lat,
+            longitude: lng,
+            accuracy: Number.isFinite(accuracy) ? accuracy : null,
+            speed: Number.isFinite(speed) ? speed : null,
+            heading: Number.isFinite(heading) ? heading : null,
+            actorUserId: accessContext.user.id,
+            actorFirebaseUid: firebaseUid,
+            actorEmail: req.firebaseUser?.email || null,
+            payloadJson: req.body || {},
         });
 
         return res.json({
@@ -2687,9 +3252,15 @@ app.post('/api/delivery/location', verifyFirebaseTokenWithClient, async (req, re
 });
 
 // ── RUTA: GET /api/delivery/locations ─────────────────────────────────────
-app.get('/api/delivery/locations', verifyFirebaseTokenWithClient, async (req, res) => {
+app.get('/api/delivery/locations', verifyFirebaseToken, async (req, res) => {
     try {
-        const tenantId = Number(req.clientAccess?.clientId || req.clientAccess?.id || DEFAULT_OPERATIONAL_TENANT_ID);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+        const tenantId = Number(accessContext.client?.id || DEFAULT_OPERATIONAL_TENANT_ID);
         const locations = await getActiveDriverLocations(tenantId);
         return res.json({
             ok: true,
@@ -2700,6 +3271,34 @@ app.get('/api/delivery/locations', verifyFirebaseTokenWithClient, async (req, re
     } catch (err) {
         console.error('[DELIVERY LOCATION READ ERROR]', err.message);
         return res.status(500).json({ error: 'No se pudo leer ubicaciones desde Redis' });
+    }
+});
+
+// ── RUTA: GET /api/logistics/drivers/live ─────────────────────────────────
+app.get('/api/logistics/drivers/live', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(tenantInfo.dbName);
+        const locations = await getActiveDriverLocations(tenantInfo.tenantId);
+        const drivers = await buildLiveDriversSummary(pool, tenantInfo.tenantId, locations);
+
+        return res.json({
+            ok: true,
+            ttlSeconds: REDIS_TRACKING_TTL_SECONDS,
+            count: drivers.length,
+            drivers,
+        });
+    } catch (err) {
+        console.error('[LIVE DRIVERS ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo leer el mapa en tiempo real' });
     }
 });
 
