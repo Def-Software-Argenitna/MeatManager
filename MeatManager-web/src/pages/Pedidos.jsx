@@ -121,8 +121,10 @@ const Pedidos = () => {
             setAddressSuggestions([]);
             return;
         }
+        const streetQuery = [newPedido.street].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+        const localityReady = Boolean(String(newPedido.city || '').trim() || String(newPedido.zip_code || '').trim());
         const query = [newPedido.street, newPedido.city, newPedido.zip_code].map((value) => String(value || '').trim()).filter(Boolean).join(', ');
-        if (query.length < 5) {
+        if (streetQuery.length < 5 || !localityReady || query.length < 5) {
             setAddressSuggestions([]);
             return;
         }

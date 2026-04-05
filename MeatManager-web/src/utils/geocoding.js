@@ -1,4 +1,5 @@
 const COUNTRY_SUFFIX = 'Argentina';
+const DEFAULT_REGION_SUFFIX = 'Buenos Aires, Argentina';
 const geocodeInFlight = new Map();
 const suggestInFlight = new Map();
 const GOOGLE_MAPS_API_KEY = String(import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
@@ -32,6 +33,20 @@ const parseCoordinate = (value) => {
     return Number.isFinite(numeric) ? numeric : null;
 };
 
+const isArgentinaCountryCode = (value) => String(value || '').trim().toLowerCase() === 'ar';
+const hasExplicitRegionHint = (rawAddress) => {
+    const normalized = String(rawAddress || '').toLowerCase();
+    return /\b(caba|capital federal|buenos aires|provincia|argentina)\b/.test(normalized) || /\b\d{4,8}\b/.test(normalized);
+};
+
+const buildScopedAddress = (rawAddress) => {
+    const address = normalizeAddressParts(rawAddress);
+    if (!address) return '';
+    return hasExplicitRegionHint(address)
+        ? normalizeAddressParts(address, COUNTRY_SUFFIX)
+        : normalizeAddressParts(address, DEFAULT_REGION_SUFFIX);
+};
+
 export const getStoredCoordinates = (record) => {
     const latitude = parseCoordinate(record?.latitude ?? record?.lat);
     const longitude = parseCoordinate(record?.longitude ?? record?.lng);
@@ -40,7 +55,7 @@ export const getStoredCoordinates = (record) => {
 };
 
 export const geocodeAddress = async (rawAddress) => {
-    const address = normalizeAddressParts(rawAddress, COUNTRY_SUFFIX);
+    const address = buildScopedAddress(rawAddress);
     if (!address) return null;
 
     const cacheKey = address.toLowerCase();
@@ -67,7 +82,12 @@ export const geocodeAddress = async (rawAddress) => {
                 return null;
             }
 
-            const best = payload.results[0];
+            const best = payload.results.find((result) =>
+                (result.address_components || []).some((component) =>
+                    component.types.includes('country') && isArgentinaCountryCode(component.short_name)
+                )
+            ) || null;
+            if (!best) return null;
             const latitude = parseCoordinate(best.geometry?.location?.lat);
             const longitude = parseCoordinate(best.geometry?.location?.lng);
             if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
@@ -104,7 +124,8 @@ export const geocodeAddress = async (rawAddress) => {
         const rows = await response.json();
         if (!Array.isArray(rows) || rows.length === 0) return null;
 
-        const best = rows[0];
+        const best = rows.find((row) => isArgentinaCountryCode(row.address?.country_code)) || null;
+        if (!best) return null;
         const latitude = parseCoordinate(best.lat);
         const longitude = parseCoordinate(best.lon);
         if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
@@ -129,7 +150,7 @@ export const geocodeAddress = async (rawAddress) => {
 };
 
 export const searchAddressSuggestions = async (rawAddress) => {
-    const address = normalizeAddressParts(rawAddress, COUNTRY_SUFFIX);
+    const address = buildScopedAddress(rawAddress);
     if (!address || address.length < 5) return [];
 
     const cacheKey = `suggest:${address.toLowerCase()}`;
@@ -177,6 +198,8 @@ export const searchAddressSuggestions = async (rawAddress) => {
                     if (detailPayload.status !== 'OK' || !detailPayload.result) return null;
 
                     const components = detailPayload.result.address_components || [];
+                    const countryCode = components.find((component) => component.types.includes('country'))?.short_name || '';
+                    if (!isArgentinaCountryCode(countryCode)) return null;
                     const findComponent = (...types) =>
                         components.find((component) => types.every((type) => component.types.includes(type)))?.long_name || '';
 
@@ -230,7 +253,11 @@ export const searchAddressSuggestions = async (rawAddress) => {
             zip_code: row.address?.postcode || '',
             street: normalizeAddressParts(row.address?.road, row.address?.house_number),
             raw: row,
-        })).filter((row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+        })).filter((row) =>
+            Number.isFinite(row.latitude) &&
+            Number.isFinite(row.longitude) &&
+            isArgentinaCountryCode(row.raw?.address?.country_code)
+        );
     })();
 
     suggestInFlight.set(cacheKey, request);

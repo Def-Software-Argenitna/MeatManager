@@ -268,8 +268,10 @@ const Clientes = () => {
     }, [historyMonth]);
 
     useEffect(() => {
+        const streetQuery = [newClient.street, newClient.street_number].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+        const localityReady = Boolean(String(newClient.city || '').trim() || String(newClient.zip_code || '').trim());
         const query = buildClientAddress(newClient);
-        if (query.length < 8) {
+        if (streetQuery.length < 5 || !localityReady || query.length < 8) {
             setAddressSuggestions([]);
             setLoadingSuggestions(false);
             return;
