@@ -21,6 +21,15 @@ type Props = {
 export function OrderCard({ order }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const statusColors = getOrderStatusColors(order.status);
+  const paymentLabel = order.paid === true
+    ? 'Pago confirmado'
+    : order.payment_status
+      ? String(order.payment_status)
+      : order.amount_due && order.amount_due > 0
+        ? `Cobrar ${order.amount_due.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}`
+        : order.payment_method
+          ? `Medio: ${order.payment_method}`
+          : 'Cobro no informado';
 
   const openMaps = async () => {
     const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address)}`;
@@ -69,6 +78,12 @@ export function OrderCard({ order }: Props) {
       </View>
 
       <Text style={styles.customerName}>{order.customer_name}</Text>
+
+      <View style={styles.paymentBox}>
+        <Text style={styles.paymentLabel}>Cobro</Text>
+        <Text style={styles.paymentValue}>{paymentLabel}</Text>
+      </View>
+
       <Text style={styles.addressLabel}>Direccion</Text>
       <Text style={styles.addressText}>{order.address || 'Sin direccion cargada'}</Text>
 
@@ -89,15 +104,18 @@ export function OrderCard({ order }: Props) {
       <Pressable
         style={({ pressed }) => [
           styles.primaryButton,
+          order.status === 'delivered' && styles.primaryButtonDisabled,
           (pressed || isSubmitting) && styles.primaryButtonPressed,
         ]}
-        disabled={isSubmitting}
+        disabled={isSubmitting || order.status === 'delivered'}
         onPress={confirmDelivery}
       >
         {isSubmitting ? (
           <ActivityIndicator color={theme.colors.white} />
         ) : (
-          <Text style={styles.primaryButtonText}>Marcar como entregado</Text>
+          <Text style={styles.primaryButtonText}>
+            {order.status === 'delivered' ? 'Pedido entregado' : 'Marcar como entregado'}
+          </Text>
         )}
       </Pressable>
     </View>
@@ -136,6 +154,25 @@ const styles = StyleSheet.create({
   customerName: {
     fontSize: 22,
     fontWeight: '800',
+    color: theme.colors.text,
+  },
+  paymentBox: {
+    backgroundColor: theme.colors.successSoft,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    gap: 6,
+  },
+  paymentLabel: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: theme.colors.success,
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  paymentValue: {
+    fontSize: 15,
+    lineHeight: 21,
+    fontWeight: '700',
     color: theme.colors.text,
   },
   addressLabel: {
@@ -196,6 +233,9 @@ const styles = StyleSheet.create({
   },
   primaryButtonPressed: {
     opacity: 0.8,
+  },
+  primaryButtonDisabled: {
+    backgroundColor: theme.colors.muted,
   },
   primaryButtonText: {
     color: theme.colors.white,

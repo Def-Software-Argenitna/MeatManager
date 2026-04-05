@@ -12,6 +12,10 @@ export type DeliveryOrder = {
   total?: number;
   updated_at?: string;
   delivered_at?: string;
+  payment_method?: string;
+  payment_status?: string;
+  paid?: boolean;
+  amount_due?: number;
 };
 
 export type DriverLocation = {
