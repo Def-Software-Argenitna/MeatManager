@@ -6,6 +6,11 @@ import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaVaca.css';
 
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
 // Detailed cuts mapping based on the provided diagram
 const COW_MAP = [
     // --- CUARTO DELANTERO (LEFT SIDE) ---
@@ -80,9 +85,9 @@ const DespostadaVaca = () => {
     const [logs, setLogs] = useState([]);
 
     // Calculated
-    const processedWeight = logs.reduce((acc, log) => acc + log.weight, 0);
+    const processedWeight = logs.reduce((acc, log) => acc + toNumber(log.weight), 0);
     const yieldPercentage = isSessionStarted && initialWeight > 0
-        ? ((processedWeight / initialWeight) * 100).toFixed(1)
+        ? ((toNumber(processedWeight) / toNumber(initialWeight)) * 100).toFixed(1)
         : 0;
 
     const startSession = async () => {
@@ -307,7 +312,7 @@ const DespostadaVaca = () => {
                             <div className="yield-fill" style={{ width: `${Math.min(yieldPercentage, 100)}%`, backgroundColor: yieldPercentage > 70 ? '#22c55e' : 'var(--color-primary)' }}></div>
                         </div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
-                            Procesado: {processedWeight.toFixed(2)} kg
+                            Procesado: {toNumber(processedWeight).toFixed(2)} kg
                         </div>
                     </div>
                 )}
@@ -521,7 +526,7 @@ const DespostadaVaca = () => {
                                         <span style={{ fontWeight: '500' }}>{log.cutName}</span>
                                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                     </div>
-                                    <span style={{ fontWeight: '700', color: 'var(--color-text-main)' }}>{log.weight.toFixed(3)} kg</span>
+                                    <span style={{ fontWeight: '700', color: 'var(--color-text-main)' }}>{toNumber(log.weight).toFixed(3)} kg</span>
                                 </div>
                             ))}
                         </div>

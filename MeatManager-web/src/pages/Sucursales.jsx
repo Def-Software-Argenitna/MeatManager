@@ -29,6 +29,10 @@ import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } fr
 import './Sucursales.css';
 
 const normalizeBranchCode = (value) => String(value ?? '').replace(/\D/g, '').slice(0, 4).padStart(4, '0');
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const normalizeBranchEntry = (entry, fallbackIndex = 0) => {
     if (entry && typeof entry === 'object') {
@@ -1039,16 +1043,16 @@ const Sucursales = () => {
                                     {Array.from(new Set(globalStockData.flatMap(b => b.stock.map(i => i.name)))).sort().map(productName => {
                                         const total = globalStockData.reduce((acc, b) => {
                                             const item = b.stock.find(i => i.name === productName);
-                                            return acc + (item ? item.quantity : 0);
+                                            return acc + (item ? toNumber(item.quantity) : 0);
                                         }, 0);
                                         return (
                                             <tr key={productName}>
                                                 <td><strong>{productName}</strong></td>
                                                 {globalStockData.map((b, idx) => {
                                                     const item = b.stock.find(i => i.name === productName);
-                                                    return <td key={idx}>{item ? `${item.quantity.toFixed(1)} kg` : '-'}</td>;
+                                                    return <td key={idx}>{item ? `${toNumber(item.quantity).toFixed(1)} kg` : '-'}</td>;
                                                 })}
-                                                <td className="total-col"><strong>{total.toFixed(1)} kg</strong></td>
+                                                <td className="total-col"><strong>{toNumber(total).toFixed(1)} kg</strong></td>
                                             </tr>
                                         );
                                     })}

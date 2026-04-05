@@ -82,6 +82,7 @@ const getMovementPaymentMethod = (movement) => {
     const match = String(movement.description || '').match(/\(([^()]+)\)\s*$/);
     return cleanValue(match?.[1]);
 };
+const toNumber = (value) => Number(value) || 0;
 
 const Clientes = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -527,7 +528,7 @@ const Clientes = () => {
                             <div style={{ marginTop: '1rem' }}>
                                 <div className="balance-label">Estado de Cuenta</div>
                                 <div className={`client-balance ${clientBalance < 0 ? 'negative' : (clientBalance > 0 ? 'positive' : '')}`}>
-                                    {clientBalance < 0 ? '-' : ''}${Math.abs(clientBalance).toLocaleString()}
+                                    {clientBalance < 0 ? '-' : ''}${Math.abs(toNumber(clientBalance)).toLocaleString()}
                                 </div>
                                 <div style={{ fontSize: '0.8rem', color: clientBalance < 0 ? '#ef4444' : 'var(--color-text-muted)' }}>
                                     {!accountEnabled ? 'Cuenta corriente desactivada' : (clientBalance < 0 ? 'Debe al local' : (clientBalance > 0 ? 'Saldo a favor' : 'Al dia'))}
@@ -804,7 +805,7 @@ const Clientes = () => {
                         }}>
                             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Saldo actual</span>
                             <span style={{ fontSize: '1.4rem', fontWeight: '800', color: effectiveHistoryBalance < 0 ? '#ef4444' : '#22c55e' }}>
-                                {effectiveHistoryBalance < 0 ? '-' : ''}${Math.abs(effectiveHistoryBalance).toLocaleString()}
+                                {effectiveHistoryBalance < 0 ? '-' : ''}${Math.abs(toNumber(effectiveHistoryBalance)).toLocaleString()}
                             </span>
                         </div>
 
@@ -894,7 +895,7 @@ const Clientes = () => {
                                     Debe del mes ({clientLedger.rows.length} movimiento{clientLedger.rows.length !== 1 ? 's' : ''})
                                 </span>
                                 <span style={{ fontWeight: '800', color: '#ef4444', fontSize: '1.1rem' }}>
-                                    ${clientLedger.salesTotal.toLocaleString()}
+                                    ${toNumber(clientLedger.salesTotal).toLocaleString()}
                                 </span>
                             </div>
                         )}
@@ -904,15 +905,15 @@ const Clientes = () => {
                                 <div className="clients-history-summary">
                                     <div className="clients-history-summary-item">
                                         <span>Saldo anterior</span>
-                                        <strong>{clientLedger.openingBalance.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.openingBalance).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item">
                                         <span>Debe</span>
-                                        <strong>{clientLedger.salesTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.salesTotal).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item positive">
                                         <span>Haber</span>
-                                        <strong>{clientLedger.paymentTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.paymentTotal).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                 </div>
                             )}
@@ -945,9 +946,9 @@ const Clientes = () => {
                                                     >
                                                         <td>{row.fecha.toLocaleDateString('es-AR')}</td>
                                                         <td>{row.comprobante}</td>
-                                                        <td>{row.debe ? row.debe.toLocaleString('es-AR') : ''}</td>
-                                                        <td>{row.haber ? row.haber.toLocaleString('es-AR') : ''}</td>
-                                                        <td>{row.saldo.toLocaleString('es-AR')}</td>
+                                                        <td>{row.debe ? toNumber(row.debe).toLocaleString('es-AR') : ''}</td>
+                                                        <td>{row.haber ? toNumber(row.haber).toLocaleString('es-AR') : ''}</td>
+                                                        <td>{toNumber(row.saldo).toLocaleString('es-AR')}</td>
                                                     </tr>
                                                     {expandedLedgerRowId === row.id && row.items?.length > 0 && (
                                                         <tr className="clients-history-row-detail">
@@ -957,7 +958,7 @@ const Clientes = () => {
                                                                         <div key={item.id} className="clients-history-item-line">
                                                                             <span>{item.product_name}</span>
                                                                             <span>
-                                                                                {item.quantity} x ${Number(item.price || 0).toLocaleString('es-AR')} = ${Number(item.subtotal || 0).toLocaleString('es-AR')}
+                                                                                {toNumber(item.quantity)} x ${toNumber(item.price).toLocaleString('es-AR')} = ${toNumber(item.subtotal).toLocaleString('es-AR')}
                                                                             </span>
                                                                         </div>
                                                                     ))}

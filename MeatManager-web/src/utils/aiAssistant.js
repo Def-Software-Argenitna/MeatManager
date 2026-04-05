@@ -2,6 +2,10 @@ import axios from 'axios';
 import { fetchTable, saveTableRecord } from './apiClient';
 
 const OLLAMA_URL = 'http://localhost:11434/api/chat';
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 /**
  * Gather context data for the AI to analyze.
@@ -34,14 +38,14 @@ const getAppContext = async () => {
         if (!stockBalanceMap[item.name]) {
             stockBalanceMap[item.name] = { name: item.name, quantity: 0, type: item.type };
         }
-        stockBalanceMap[item.name].quantity += item.quantity;
+        stockBalanceMap[item.name].quantity += toNumber(item.quantity);
     });
 
     const stockBalances = Object.values(stockBalanceMap);
 
     // Stats for AI
-    const lowStock = stockBalances.filter(i => i.quantity < 10).map(i => `${i.name} (${i.quantity.toFixed(1)}kg)`);
-    const topStock = [...stockBalances].sort((a, b) => b.quantity - a.quantity).slice(0, 5).map(i => `${i.name} (${i.quantity.toFixed(1)}kg)`);
+    const lowStock = stockBalances.filter(i => i.quantity < 10).map(i => `${i.name} (${toNumber(i.quantity).toFixed(1)}kg)`);
+    const topStock = [...stockBalances].sort((a, b) => toNumber(b.quantity) - toNumber(a.quantity)).slice(0, 5).map(i => `${i.name} (${toNumber(i.quantity).toFixed(1)}kg)`);
 
     // Recent logs
     const recentLogs = Array.isArray(recentLogsRows) ? recentLogsRows : [];
@@ -56,7 +60,7 @@ const getAppContext = async () => {
         },
         inventory_details: {
             critical_stock_low: lowStock,
-            available_stock_overview: stockBalances.map(i => ({ producto: i.name, cantidad: i.quantity.toFixed(1) })),
+            available_stock_overview: stockBalances.map(i => ({ producto: i.name, cantidad: toNumber(i.quantity).toFixed(1) })),
             top_stock_items: topStock
         },
         system_health: {

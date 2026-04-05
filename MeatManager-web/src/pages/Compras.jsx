@@ -612,17 +612,17 @@ const Compras = () => {
             <div className="purchase-summary-grid">
                 <div className="neo-card purchase-summary-card">
                     <span className="purchase-summary-label">Total general</span>
-                    <strong className="purchase-summary-value">${purchasesSummary.total.toLocaleString()}</strong>
+                    <strong className="purchase-summary-value">${Number(purchasesSummary.total || 0).toLocaleString()}</strong>
                     <span className="purchase-summary-meta">{filteredCompras?.length || 0} movimientos</span>
                 </div>
                 <div className="neo-card purchase-summary-card sale">
                     <span className="purchase-summary-label">Compras para vender</span>
-                    <strong className="purchase-summary-value">${purchasesSummary.sale.toLocaleString()}</strong>
+                    <strong className="purchase-summary-value">${Number(purchasesSummary.sale || 0).toLocaleString()}</strong>
                     <span className="purchase-summary-meta">Impacta en stock de venta</span>
                 </div>
                 <div className="neo-card purchase-summary-card internal">
                     <span className="purchase-summary-label">Compras de uso interno</span>
-                    <strong className="purchase-summary-value">${purchasesSummary.internal.toLocaleString()}</strong>
+                    <strong className="purchase-summary-value">${Number(purchasesSummary.internal || 0).toLocaleString()}</strong>
                     <span className="purchase-summary-meta">Gasto interno separado</span>
                 </div>
                 <div className="neo-card purchase-summary-card mixed">
@@ -678,16 +678,16 @@ const Compras = () => {
                         </div>
                         <div className="purchase-total">
                             <span>Total Factura:</span>
-                            <span>${breakdown.total.toLocaleString()}</span>
+                            <span>${Number(breakdown.total || 0).toLocaleString()}</span>
                         </div>
                         <div className="purchase-breakdown">
                             <div className="purchase-breakdown-row">
                                 <span>Para vender</span>
-                                <strong>${breakdown.sale.toLocaleString()}</strong>
+                                <strong>${Number(breakdown.sale || 0).toLocaleString()}</strong>
                             </div>
                             <div className="purchase-breakdown-row internal">
                                 <span>Uso interno</span>
-                                <strong>${breakdown.internal.toLocaleString()}</strong>
+                                <strong>${Number(breakdown.internal || 0).toLocaleString()}</strong>
                             </div>
                         </div>
                     </div>
@@ -991,7 +991,7 @@ const Compras = () => {
                                                         </span>
                                                     </td>
                                                     <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>
-                                                        ${item.subtotal.toLocaleString()}
+                                                        ${Number(item.subtotal || 0).toLocaleString()}
                                                     </td>
                                                     <td style={{ padding: '0.75rem' }}>
                                                         <button
@@ -1012,7 +1012,7 @@ const Compras = () => {
                                             <tr>
                                                 <td colSpan="6" style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold' }}>TOTAL CALCULADO:</td>
                                                 <td colSpan="2" style={{ padding: '0.75rem', fontWeight: 'bold', fontSize: '1.1rem', color: 'var(--color-primary)' }}>
-                                                    ${newPurchase.total.toLocaleString()}
+                                                    ${Number(newPurchase.total || 0).toLocaleString()}
                                                 </td>
                                             </tr>
                                         </tfoot>

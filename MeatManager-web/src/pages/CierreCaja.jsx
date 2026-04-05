@@ -815,19 +815,19 @@ const CierreCaja = () => {
             <div className="cash-overview-grid">
                 <div className="stat-box result">
                     <span className="label">Efectivo acumulado en caja</span>
-                    <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="val">${toNumber(cashInDrawer).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
-                    <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
+                    <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box expense">
                     <span className="label">Retiros y gastos del día</span>
-                    <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                    <span className="val">-${toNumber(totalExpenses).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
-                    <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
+                    <span className="val">${toNumber(currentAccountSales).toLocaleString('es-AR')}</span>
                 </div>
             </div>
 
@@ -848,15 +848,15 @@ const CierreCaja = () => {
                                         <div className="method-balance-text">
                                             <span className="method-name">{item.name}</span>
                                             <div className="method-breakdown">
-                                                <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
-                                                <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
-                                                <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
+                                                <span>Apertura: ${toNumber(item.opening).toLocaleString('es-AR')}</span>
+                                                <span>Ventas hoy: ${toNumber(item.sales).toLocaleString('es-AR')}</span>
+                                                <span>Mov. manuales: {(toNumber(item.manualNet) >= 0 ? '+' : '-')}${Math.abs(toNumber(item.manualNet)).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
                                     </div>
                                     <div className="method-balance-total">
                                         <Icon size={16} />
-                                        <span>${item.accumulated.toLocaleString('es-AR')}</span>
+                                        <span>${toNumber(item.accumulated).toLocaleString('es-AR')}</span>
                                     </div>
                                 </div>
                             );
@@ -866,7 +866,7 @@ const CierreCaja = () => {
                     <div className="card-footer">
                         <div className="total-row">
                             <span>Ventas brutas del día</span>
-                            <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
+                            <span className="total-val">${toNumber(totalSales).toLocaleString('es-AR')}</span>
                         </div>
                     </div>
                 </div>
@@ -880,11 +880,11 @@ const CierreCaja = () => {
                     <div className="cash-stats">
                         <div className="stat-box">
                             <span className="label">Cierre anterior</span>
-                            <span className="val">${previousCloseTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">${toNumber(previousCloseTotal).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box">
                             <span className="label">Efectivo cierre anterior</span>
-                            <span className="val">${previousCashClose.toLocaleString('es-AR')}</span>
+                            <span className="val">${toNumber(previousCashClose).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box">
                             <span className="label">Apertura registrada</span>
@@ -892,15 +892,15 @@ const CierreCaja = () => {
                         </div>
                         <div className="stat-box income">
                             <span className="label">Ingresos extra</span>
-                            <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
+                            <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
                             <span className="label">Retiros</span>
-                            <span className="val">-${withdrawalsTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">-${toNumber(withdrawalsTotal).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
                             <span className="label">Gastos</span>
-                            <span className="val">-${expensesOnlyTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">-${toNumber(expensesOnlyTotal).toLocaleString('es-AR')}</span>
                         </div>
                     </div>
 
@@ -912,7 +912,7 @@ const CierreCaja = () => {
                         <div className="cash-reconciliation-grid">
                             <div className="reconciliation-box">
                                 <span className="label">Efectivo teórico</span>
-                                <strong>${cashInDrawer.toLocaleString('es-AR')}</strong>
+                                <strong>${toNumber(cashInDrawer).toLocaleString('es-AR')}</strong>
                             </div>
                             <label className="reconciliation-box reconciliation-input-box">
                                 <span className="label">Efectivo contado</span>
@@ -930,7 +930,7 @@ const CierreCaja = () => {
                                 <span className="label">Diferencia</span>
                                 <strong>
                                     {countedCash
-                                        ? `${cashDifference > 0 ? '+' : ''}$${cashDifference.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        ? `${cashDifference > 0 ? '+' : ''}$${toNumber(cashDifference).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                         : 'Esperando arqueo'}
                                 </strong>
                             </div>
@@ -956,7 +956,7 @@ const CierreCaja = () => {
                                 {methodCards.map((item) => (
                                     <div key={item.name} className="opening-chip">
                                         <span>{item.name}</span>
-                                        <strong>${item.opening.toLocaleString('es-AR')}</strong>
+                                        <strong>${toNumber(item.opening).toLocaleString('es-AR')}</strong>
                                     </div>
                                 ))}
                             </div>

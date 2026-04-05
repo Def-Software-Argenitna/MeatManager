@@ -29,6 +29,7 @@ const toNumber = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
 };
+const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
@@ -531,9 +532,9 @@ const Ventas = () => {
                     `).join('')}
                 </div>
                 <div class="total-area">
-                    <div class="item"><span>SUBTOTAL</span><span>$${saleData.subtotal.toLocaleString()}</span></div>
-                    ${saleData.adjustment !== 0 ? `<div class="item"><span>ADJ.</span><span>$${saleData.adjustment.toLocaleString()}</span></div>` : ''}
-                    <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${saleData.total.toLocaleString()}</span></div>
+                    <div class="item"><span>SUBTOTAL</span><span>$${formatNumericLocale(saleData.subtotal)}</span></div>
+                    ${toNumber(saleData.adjustment) !== 0 ? `<div class="item"><span>ADJ.</span><span>$${formatNumericLocale(saleData.adjustment)}</span></div>` : ''}
+                    <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${formatNumericLocale(saleData.total)}</span></div>
                 </div>
                 <div class="center footer">
                     ¡Gracias por su compra!<br>
@@ -1655,8 +1656,8 @@ const Ventas = () => {
                                 style={{ position: 'relative', overflow: 'visible' }}
                             >
                                 <div className="product-name">{product.name}</div>
-                                {product.price > 0 ? (
-                                    <div className="product-price">${formatPrice(product.price, priceFormat)}</div>
+                                {toNumber(product.price) > 0 ? (
+                                    <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
                                 ) : (
                                     <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
                                 )}
@@ -1667,7 +1668,7 @@ const Ventas = () => {
 
                                 <button
                                     className="price-tag-btn"
-                                    onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(product.price || ''); setNewPlu(product.plu || ''); }}
+                                    onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
                                     style={{
                                         position: 'absolute', top: '8px', right: '8px',
                                         background: 'transparent', border: 'none', 
@@ -1701,7 +1702,7 @@ const Ventas = () => {
                                 <span className="item-name">{item.name}</span>
                                 <div className="item-detail">
                                     <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
-                                    <span>× ${formatPrice(item.price, priceFormat)}</span>
+                                    <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
                                     <button
@@ -1715,7 +1716,7 @@ const Ventas = () => {
                                         type="number"
                                         min={item.unit === 'kg' ? '0.001' : '1'}
                                         step={item.unit === 'kg' ? '0.001' : '1'}
-                                        value={item.quantity}
+                                        value={toNumber(item.quantity)}
                                         onChange={(e) => manualQuantity(item.id, e.target.value)}
                                         style={{
                                             width: item.unit === 'kg' ? '88px' : '70px',
@@ -2007,14 +2008,14 @@ const Ventas = () => {
                         <div style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>Subtotal:</span>
-                                <span>${cartTotal.toLocaleString()}</span>
+                                <span>${formatNumericLocale(cartTotal)}</span>
                             </div>
 
                             {!isSplitPayment && cartAdjustment !== 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                     <span style={{ color: 'var(--color-text-muted)' }}>Recargo/Descuento:</span>
                                     <span style={{ color: cartAdjustment > 0 ? '#ef4444' : '#22c55e' }}>
-                                        {cartAdjustment > 0 ? '+' : ''}${cartAdjustment.toLocaleString()}
+                                        {cartAdjustment > 0 ? '+' : ''}${formatNumericLocale(cartAdjustment)}
                                     </span>
                                 </div>
                             )}
@@ -2023,19 +2024,19 @@ const Ventas = () => {
                                 <>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                         <span style={{ color: 'var(--color-text-muted)' }}>Subtotal cubierto:</span>
-                                        <span>${splitPaymentSummary.coveredSubtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        <span>${formatNumericLocale(splitPaymentSummary.coveredSubtotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                         <span style={{ color: 'var(--color-text-muted)' }}>Pendiente de cubrir:</span>
                                         <span style={{ color: splitPaymentSummary.pendingSubtotal > 0.009 ? '#ef4444' : '#22c55e' }}>
-                                            ${splitPaymentSummary.pendingSubtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            ${formatNumericLocale(splitPaymentSummary.pendingSubtotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </span>
                                     </div>
                                     {splitPaymentSummary.totalAdjustment !== 0 && (
                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                             <span style={{ color: 'var(--color-text-muted)' }}>Recargo/Descuento combinado:</span>
                                             <span style={{ color: splitPaymentSummary.totalAdjustment > 0 ? '#ef4444' : '#22c55e' }}>
-                                                {splitPaymentSummary.totalAdjustment > 0 ? '+' : ''}${splitPaymentSummary.totalAdjustment.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                {splitPaymentSummary.totalAdjustment > 0 ? '+' : ''}${formatNumericLocale(splitPaymentSummary.totalAdjustment, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                     )}
@@ -2046,8 +2047,8 @@ const Ventas = () => {
                                 <span style={{ fontWeight: 'bold' }}>{isSplitPayment ? 'TOTAL COBRADO:' : 'TOTAL A PAGAR:'}</span>
                                 <span style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-primary)' }}>
                                     ${isSplitPayment
-                                        ? splitPaymentSummary.chargedTotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                        : finalTotal.toLocaleString()}
+                                        ? formatNumericLocale(splitPaymentSummary.chargedTotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                        : formatNumericLocale(finalTotal)}
                                 </span>
                             </div>
                         </div>
@@ -2179,10 +2180,10 @@ const Ventas = () => {
                                                 </div>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
                                                     <span style={{ color: 'var(--color-text-muted)' }}>
-                                                        Base cubierta: ${((rowSummary?.baseAmount) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        Base cubierta: ${toNumber(rowSummary?.baseAmount).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                     <span style={{ color: (rowMethod?.percentage || 0) >= 0 ? '#ef4444' : '#22c55e' }}>
-                                                        Ajuste: {((rowSummary?.adjustment || 0) > 0 ? '+' : '')}${((rowSummary?.adjustment) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        Ajuste: {(toNumber(rowSummary?.adjustment) > 0 ? '+' : '')}${toNumber(rowSummary?.adjustment).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                 </div>
                                             </div>
@@ -2258,12 +2259,12 @@ const Ventas = () => {
                                                 : parseFloat(cashReceived) >= finalTotal ? '#22c55e' : '#666'
                                         }}>
                                             ${isSplitPayment
-                                                ? splitPaymentSummary.cashCharged.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                : parseFloat(cashReceived) >= finalTotal ? (parseFloat(cashReceived) - finalTotal).toLocaleString() : '0'}
+                                                ? formatNumericLocale(splitPaymentSummary.cashCharged, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                : parseFloat(cashReceived) >= finalTotal ? formatNumericLocale(parseFloat(cashReceived) - finalTotal) : '0'}
                                         </div>
                                         {isSplitPayment && (
                                             <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: splitPaymentSummary.cashReceivedValue >= splitPaymentSummary.cashCharged ? '#22c55e' : 'var(--color-text-muted)' }}>
-                                                Vuelto: ${splitPaymentSummary.cashChange.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                Vuelto: ${formatNumericLocale(splitPaymentSummary.cashChange, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </div>
                                         )}
                                     </div>
@@ -2898,7 +2899,7 @@ const Ventas = () => {
                                     )}
                                 </div>
                                 <span style={{ fontWeight: '800', color: '#22c55e', fontSize: '1rem', whiteSpace: 'nowrap' }}>
-                                    ${s.total.toLocaleString('es-AR')}
+                                    ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
                                     <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -3006,10 +3007,10 @@ const Ventas = () => {
 
                                     {/* Peso y precio */}
                                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                        <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{item.weight.toFixed(3)} kg</div>
+                                        <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{toNumber(item.weight).toFixed(3)} kg</div>
                                         {item.priceRecord && (
                                             <div style={{ fontSize: '0.78rem', color: '#22c55e' }}>
-                                                ${((item.priceRecord.price || 0) * item.weight).toLocaleString('es-AR')}
+                                                ${(toNumber(item.priceRecord?.price) * toNumber(item.weight)).toLocaleString('es-AR')}
                                             </div>
                                         )}
                                     </div>

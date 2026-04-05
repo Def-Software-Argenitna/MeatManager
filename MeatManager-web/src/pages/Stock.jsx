@@ -639,7 +639,7 @@ const Stock = () => {
                     </div>
                     <div className="stat-info">
                         <div className="stat-label">Peso Total</div>
-                        <div className="stat-value">{totalWeight.toFixed(2)} <span className="stat-unit">kg</span></div>
+                        <div className="stat-value">{Number(totalWeight || 0).toFixed(2)} <span className="stat-unit">kg</span></div>
                     </div>
                 </div>
 
@@ -649,7 +649,7 @@ const Stock = () => {
                     </div>
                     <div className="stat-info">
                         <div className="stat-label">Unidades</div>
-                        <div className="stat-value">{totalUnits.toFixed(0)} <span className="stat-unit">un</span></div>
+                        <div className="stat-value">{Number(totalUnits || 0).toFixed(0)} <span className="stat-unit">un</span></div>
                     </div>
                 </div>
             </div>
@@ -731,7 +731,7 @@ const Stock = () => {
                                                                 </span>
                                                             ) : (
                                                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                    <strong>{item.price > 0 ? `$${item.price.toLocaleString('es-AR')}` : 'Sin precio'}</strong>
+                                                                    <strong>{Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}</strong>
                                                                     <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
                                                                         <Pencil size={14} />
                                                                     </button>
@@ -750,7 +750,7 @@ const Stock = () => {
                                                     </div>
                                                 </div>
                                                 <div className="item-quantity">
-                                                    <span className="quantity-value">{item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)}</span>
+                                                    <span className="quantity-value">{Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}</span>
                                                     <span className="quantity-unit">{item.unit === 'kg' ? 'kg' : 'un'}</span>
                                                 </div>
                                             </div>

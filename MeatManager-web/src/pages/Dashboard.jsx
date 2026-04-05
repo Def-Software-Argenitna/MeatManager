@@ -169,7 +169,7 @@ const Dashboard = () => {
                 />
                 <StatCard
                     title="Stock Kilos"
-                    value={`${totalStockKg.toFixed(1)} kg`}
+                    value={`${toNumber(totalStockKg).toFixed(1)} kg`}
                     icon={TrendingUp}
                     trend="Total Carne"
                 />
@@ -196,7 +196,7 @@ const Dashboard = () => {
                         title="Sucursales Remotas"
                         value={`${remoteBranchCount}`}
                         icon={BarChart3}
-                        trend={`${remoteTotalKg.toFixed(1)} kg informados`}
+                        trend={`${toNumber(remoteTotalKg).toFixed(1)} kg informados`}
                         isWarning={remoteLowStock > 0}
                     />
                 )}
@@ -379,7 +379,7 @@ const Dashboard = () => {
                                         {(snapshot.stock || []).slice(0, 5).map((item, idx) => (
                                             <div key={`${snapshot.id}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.88rem' }}>
                                                 <span style={{ color: 'var(--color-text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                                <span style={{ color: Number(item.quantity) < 10 ? '#f59e0b' : 'var(--color-text-muted)', fontWeight: 600 }}>{Number(item.quantity || 0).toFixed(1)} kg</span>
+                                                <span style={{ color: toNumber(item.quantity) < 10 ? '#f59e0b' : 'var(--color-text-muted)', fontWeight: 600 }}>{toNumber(item.quantity).toFixed(1)} kg</span>
                                             </div>
                                         ))}
                                         {(snapshot.stock || []).length > 5 && (

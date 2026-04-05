@@ -32,6 +32,10 @@ const cleanValue = (value) => String(value || '').trim();
 const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
 const isCompanyClient = (client) => cleanValue(client?.client_type) === 'company';
 const getClientContactName = (client) => [cleanValue(client?.contact_first_name), cleanValue(client?.contact_last_name)].filter(Boolean).join(' ');
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const parseOrderItems = (pedido) => {
     if (Array.isArray(pedido?.items)) return pedido.items;
@@ -261,7 +265,7 @@ const Pedidos = () => {
             quantity,
             price: selectedStockItem.price,
             subtotal,
-            label: `${selectedStockItem.name} · ${quantity.toFixed(selectedStockItem.unit === 'kg' ? 3 : 0)} ${qtySuffix(selectedStockItem.unit)}`,
+            label: `${selectedStockItem.name} · ${toNumber(quantity).toFixed(selectedStockItem.unit === 'kg' ? 3 : 0)} ${qtySuffix(selectedStockItem.unit)}`,
         };
         setNewPedido((prev) => ({ ...prev, items: [...prev.items, nextItem], total: prev.total || String(Math.round((prev.items.reduce((sum, item) => sum + (Number(item.subtotal) || 0), 0)) + subtotal)) }));
         setItemDraft(emptyDraft());
@@ -445,7 +449,7 @@ const Pedidos = () => {
                             </div>
                         </div>
                         <div className="pedido-footer">
-                            <div className="total-amount">${Number(pedido.total || 0).toLocaleString()}</div>
+                            <div className="total-amount">${toNumber(pedido.total).toLocaleString()}</div>
                             <div className="action-buttons">
                                 {pedido.status === 'pending' && <button className="icon-btn ready" title="Marcar como Listo" onClick={() => updateStatus(pedido.id, 'ready')}><Clock size={18} /></button>}
                                 {pedido.status === 'ready' && <button className="icon-btn deliver" title="Entregar" onClick={() => updateStatus(pedido.id, 'delivered')}><CheckCircle2 size={18} /></button>}
@@ -497,7 +501,7 @@ const Pedidos = () => {
                                         <label>Producto en stock</label>
                                         <select className="neo-input" value={itemDraft.stockKey} onChange={(e) => setItemDraft((prev) => ({ ...prev, stockKey: e.target.value }))}>
                                             <option value="">Seleccionar producto</option>
-                                            {stockOptions.map((item) => <option key={item.key} value={item.key}>{item.name} · {item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {qtySuffix(item.unit)} disponibles</option>)}
+                                            {stockOptions.map((item) => <option key={item.key} value={item.key}>{item.name} · {toNumber(item.quantity).toFixed(item.unit === 'kg' ? 3 : 0)} {qtySuffix(item.unit)} disponibles</option>)}
                                         </select>
                                     </div>
                                     <div className="field-group">
@@ -506,7 +510,7 @@ const Pedidos = () => {
                                     </div>
                                     <button className="neo-button pedido-line-builder__add" type="button" onClick={addLineItem}><Plus size={18} /> Agregar</button>
                                 </div>
-                                {selectedStockItem && <div className="pedido-line-builder__meta"><span>{selectedStockItem.type.toUpperCase()}</span><span>Disponible: {selectedStockItem.quantity.toFixed(selectedStockItem.unit === 'kg' ? 3 : 0)} {qtySuffix(selectedStockItem.unit)}</span>{selectedStockItem.price > 0 && <span>Precio sugerido: ${selectedStockItem.price.toLocaleString()}</span>}</div>}
+                                {selectedStockItem && <div className="pedido-line-builder__meta"><span>{selectedStockItem.type.toUpperCase()}</span><span>Disponible: {toNumber(selectedStockItem.quantity).toFixed(selectedStockItem.unit === 'kg' ? 3 : 0)} {qtySuffix(selectedStockItem.unit)}</span>{toNumber(selectedStockItem.price) > 0 && <span>Precio sugerido: ${toNumber(selectedStockItem.price).toLocaleString()}</span>}</div>}
                             </div>
 
                             <div className="pedido-selected-items neo-card">
@@ -515,8 +519,8 @@ const Pedidos = () => {
                                     <div className="pedido-selected-items__list">
                                         {newPedido.items.map((item) => (
                                             <div key={item.id} className="pedido-selected-item">
-                                                <div><strong>{item.product_name}</strong><p>{item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {qtySuffix(item.unit)} · {item.category}</p></div>
-                                                <div className="pedido-selected-item__actions"><span>{item.subtotal > 0 ? `$${Math.round(item.subtotal).toLocaleString()}` : 'Sin precio'}</span><button type="button" className="icon-btn cancel" onClick={() => removeLineItem(item.id)}><XCircle size={16} /></button></div>
+                                                <div><strong>{item.product_name}</strong><p>{toNumber(item.quantity).toFixed(item.unit === 'kg' ? 3 : 0)} {qtySuffix(item.unit)} · {item.category}</p></div>
+                                                <div className="pedido-selected-item__actions"><span>{toNumber(item.subtotal) > 0 ? `$${Math.round(toNumber(item.subtotal)).toLocaleString()}` : 'Sin precio'}</span><button type="button" className="icon-btn cancel" onClick={() => removeLineItem(item.id)}><XCircle size={16} /></button></div>
                                             </div>
                                         ))}
                                     </div>

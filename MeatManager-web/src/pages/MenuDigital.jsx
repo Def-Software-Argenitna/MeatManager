@@ -18,6 +18,8 @@ import { BRAND_CONFIG } from '../brandConfig';
 import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import './MenuDigital.css';
 
+const toNumber = (value) => Number(value) || 0;
+
 const MenuDigital = () => {
     const navigate = useNavigate();
     const [isAdding, setIsAdding] = useState(false);
@@ -102,7 +104,7 @@ const MenuDigital = () => {
         text += `*PRODUCTOS DISPONIBLES:*\n`;
 
         availableItems.forEach((item, index) => {
-            text += `${index + 1}. ${item.product_name} -> *$${item.price.toLocaleString()}/kg* ${item.is_offer ? '🔥' : ''}\n`;
+            text += `${index + 1}. ${item.product_name} -> *$${toNumber(item.price).toLocaleString()}/kg* ${item.is_offer ? '🔥' : ''}\n`;
         });
 
         text += `\n--- \n`;
@@ -301,7 +303,7 @@ const MenuDigital = () => {
                                                     {!hasStock && <span style={{ fontSize: '0.6rem', color: '#ef4444', fontWeight: 'bold' }}>SIN STOCK</span>}
                                                 </div>
                                                 <span className="item-price">
-                                                    {hasStock ? `$${(item.price / 1000).toFixed(1)}k /kg` : '---'}
+                                                    {hasStock ? `$${(toNumber(item.price) / 1000).toFixed(1)}k /kg` : '---'}
                                                 </span>
                                             </div>
                                         );
@@ -357,7 +359,7 @@ const MenuDigital = () => {
                                                         fontWeight: 'bold',
                                                         fontSize: '0.9rem'
                                                     }}>
-                                                        {stock.toFixed(1)} kg
+                                                        {toNumber(stock).toFixed(1)} kg
                                                     </span>
                                                 </td>
                                                 <td>

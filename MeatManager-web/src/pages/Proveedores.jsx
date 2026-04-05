@@ -182,7 +182,7 @@ const Proveedores = () => {
                         <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '0.5rem' }}>
                                 <span style={{ fontWeight: 'bold', color: saldo > 0 ? '#ef4444' : '#22c55e' }}>
-                                    Cuenta Corriente: ${saldo.toLocaleString()}
+                                    Cuenta Corriente: ${Number(saldo || 0).toLocaleString()}
                                 </span>
                                 <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }} onClick={() => alert('Movimientos no implementado aún')}>Ver Movimientos</button>
                                 <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem', background: '#22c55e', color: 'white' }} onClick={() => alert('Registrar pago no implementado aún')}>Registrar Pago</button>
