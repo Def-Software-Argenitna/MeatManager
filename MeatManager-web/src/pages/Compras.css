@@ -262,6 +262,31 @@
     box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.2);
 }
 
+select.neo-input {
+    appearance: none;
+    -webkit-appearance: none;
+    -moz-appearance: none;
+    background-image:
+        linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%),
+        linear-gradient(45deg, transparent 50%, rgba(255,255,255,0.75) 50%),
+        linear-gradient(135deg, rgba(255,255,255,0.75) 50%, transparent 50%);
+    background-position:
+        0 0,
+        calc(100% - 18px) calc(50% - 2px),
+        calc(100% - 12px) calc(50% - 2px);
+    background-size:
+        100% 100%,
+        6px 6px,
+        6px 6px;
+    background-repeat: no-repeat;
+    padding-right: 2.5rem;
+}
+
+select.neo-input option {
+    background: #171922;
+    color: #f3f4f6;
+}
+
 .modal-overlay {
     position: fixed;
     top: 0;
