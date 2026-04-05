@@ -793,9 +793,49 @@ async function getClientAccessContext({ uid, email }) {
             [uid || null, normalizedEmail, uid || null]
         );
 
-        const user = rows[0];
+        let user = rows[0] || null;
+
+        if (!user && normalizedEmail) {
+            const [ownerRows] = await conn.query(
+                `SELECT
+                    c.id AS clientId,
+                    c.businessName,
+                    c.taxId,
+                    c.billingEmail,
+                    c.cashAuthorizationEmail,
+                    c.status AS clientStatus
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                 WHERE LOWER(c.billingEmail) = ?
+                 LIMIT 1`,
+                [normalizedEmail]
+            );
+
+            const ownerClient = ownerRows[0];
+            if (ownerClient) {
+                user = {
+                    id: `owner-${ownerClient.clientId}`,
+                    clientId: ownerClient.clientId,
+                    branchId: null,
+                    firebaseUid: uid || null,
+                    name: ownerClient.businessName || normalizedEmail,
+                    lastname: '',
+                    email: normalizedEmail,
+                    role: 'admin',
+                    userStatus: 'ACTIVE',
+                    isSynced: 1,
+                    lastLogin: null,
+                    businessName: ownerClient.businessName,
+                    taxId: ownerClient.taxId,
+                    billingEmail: ownerClient.billingEmail,
+                    cashAuthorizationEmail: ownerClient.cashAuthorizationEmail,
+                    clientStatus: ownerClient.clientStatus,
+                    isOwnerFallback: true,
+                };
+            }
+        }
+
         if (!user) return null;
-        user.perms = await getUserPermissions(conn, user.id);
+        user.perms = user.isOwnerFallback ? [] : await getUserPermissions(conn, user.id);
 
         const [licenseRows] = await conn.query(
             `SELECT
@@ -825,6 +865,10 @@ async function getClientAccessContext({ uid, email }) {
         const effectiveLicenses = licenseRows
             .filter((license) => {
                 if (!licenseAppliesToWebapp(license)) return false;
+
+                if (user.isOwnerFallback) {
+                    return true;
+                }
 
                 const matchesUser = license.userId == null || String(license.userId) === String(user.id);
                 const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
