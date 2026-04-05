@@ -11,6 +11,7 @@ import {
     Navigation2,
     Share2,
     Users,
+    Tag,
     X,
     AlertCircle,
     Mail,
@@ -21,7 +22,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useLicense } from '../context/LicenseContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
-import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers } from '../utils/apiClient';
+import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -170,19 +171,10 @@ const Logistica = () => {
     const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
     const [registeredDrivers, setRegisteredDrivers] = useState([]);
     const [driversError, setDriversError] = useState('');
-<<<<<<< HEAD
     const [pedidos, setPedidos] = useState([]);
     const [clients, setClients] = useState([]);
     const [selectedDriverIdentity, setSelectedDriverIdentity] = useState('');
-=======
->>>>>>> d54cc230480b3c27e55ef2f09d8eabd31ecfd7f8
-
-    const pedidos = useLiveQuery(async () => {
-        const rows = await db.pedidos?.toArray();
-        return (rows || []).filter((pedido) => pedido.delivery_type === 'delivery');
-    });
-
-    const clients = useLiveQuery(() => db.clients?.toArray());
+    const [paymentDraft, setPaymentDraft] = useState({ status: 'pending_driver_collection', amountDue: '', method: '' });
     const hasLogisticsModule = hasModule('logistica');
     const driversById = useMemo(() => {
         const map = new Map();
@@ -371,12 +363,8 @@ const Logistica = () => {
     };
 
     const handleFocusPedido = (pedido) => {
-<<<<<<< HEAD
         setSelectedPedido(normalizeOrderForLogistics(pedido));
         setSelectedDriverIdentity('');
-=======
-        setSelectedPedido(pedido);
->>>>>>> d54cc230480b3c27e55ef2f09d8eabd31ecfd7f8
         const coords = getOrderCoordinates(pedido);
         if (coords) {
             setMapCenter(coords);
@@ -384,7 +372,6 @@ const Logistica = () => {
         }
     };
 
-<<<<<<< HEAD
     const handleFocusDriver = (driver) => {
         setSelectedPedido(null);
         setSelectedDriverIdentity(String(driver.firebaseUid || '').trim() || String(driver.email || '').trim().toLowerCase());
@@ -392,7 +379,8 @@ const Logistica = () => {
             setMapCenter([Number(driver.lat), Number(driver.lng)]);
             setMapZoom(16);
         }
-=======
+    };
+
     const syncSelectedOrder = async (pedido, patch) => {
         const payload = {
             status: pedido.status || 'pending',
@@ -411,11 +399,25 @@ const Logistica = () => {
             amount_due: order?.amountDue ?? payload.amountDue,
             status: order?.status || pedido.status,
         };
-
-        await db.pedidos.update(pedido.id, nextPatch);
         setSelectedPedido((current) => (current && Number(current.id) === Number(pedido.id) ? { ...current, ...nextPatch } : current));
->>>>>>> d54cc230480b3c27e55ef2f09d8eabd31ecfd7f8
     };
+
+    useEffect(() => {
+        if (!selectedPedido) {
+            setPaymentDraft({ status: 'pending_driver_collection', amountDue: '', method: '' });
+            return;
+        }
+
+        setPaymentDraft({
+            status: selectedPedido.paid ? 'paid' : (selectedPedido.payment_status || 'pending_driver_collection'),
+            amountDue: String(
+                selectedPedido.paid
+                    ? 0
+                    : (Number(selectedPedido.amount_due) || Number(selectedPedido.total) || 0)
+            ),
+            method: selectedPedido.payment_method || '',
+        });
+    }, [selectedPedido]);
 
     const assignDriver = async (id, driverId) => {
         const driver = driversById.get(String(driverId));
@@ -575,68 +577,6 @@ const Logistica = () => {
             </div>
 
             <div className="logistica-content">
-<<<<<<< HEAD
-=======
-                {/* LIST PANEL */}
-                <div className="logistica-sidebar neo-card">
-                    <div className="sidebar-search">
-                        <Search size={18} />
-                        <input
-                            type="text"
-                            placeholder="Buscar dirección o cliente..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-
-                    <div className="filter-pills">
-                        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
-                        <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
-                        <button className={filter === 'assigned' ? 'active' : ''} onClick={() => setFilter('assigned')}>En Reparto</button>
-                        <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
-                    </div>
-
-                    <div style={{ padding: '0 1rem 1rem' }}>
-                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
-                            <Share2 size={14} /> Link del Repartidor
-                        </button>
-                    </div>
-
-                    <div className="orders-list">
-                        {deliveryOrders.length === 0 ? (
-                            <div className="empty-delivery">
-                                <Truck size={32} />
-                                <p>No hay envíos pendientes.</p>
-                            </div>
-                        ) : (
-                            deliveryOrders.map(p => (
-                                <div
-                                    key={p.id}
-                                    className={`delivery-item ${selectedPedido?.id === p.id ? 'selected' : ''}`}
-                                    onClick={() => handleFocusPedido(p)}
-                                >
-                                    <div className="status-indicator" style={{ background: p.status === 'delivered' ? '#22c55e' : (p.status === 'ready' ? '#3b82f6' : '#f59e0b') }}></div>
-                                    <div className="item-main">
-                                        <div className="item-info">
-                                            <h4>{p.customer_name}</h4>
-                                            <p className="address"><MapPin size={12} /> {p.address}</p>
-                                            {p.repartidor && <p className="driver-label"><Truck size={12} /> {p.repartidor}</p>}
-                                            <p className="driver-label"><Tag size={12} /> {getPaymentLabel(p)}</p>
-                                        </div>
-                                        <ChevronRight size={18} className="arrow" />
-                                    </div>
-                                    <div className="item-footer">
-                                        <span>#{p.id}</span>
-                                        <span className={`badge-status ${p.status}`}>{getStatusLabel(p.status)}</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* MAP PANEL */}
->>>>>>> d54cc230480b3c27e55ef2f09d8eabd31ecfd7f8
                 <div className="map-view neo-card">
                     <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%', borderRadius: '12px' }}>
                         <ChangeView center={mapCenter} zoom={mapZoom} />
@@ -787,7 +727,8 @@ const Logistica = () => {
                             </div>
                             <div className="overlay-actions">
                                 <button className="btn-delivered" onClick={async () => {
-                                    await db.pedidos.update(selectedPedido.id, { status: 'delivered' });
+                                    await saveTableRecord('pedidos', 'update', { ...selectedPedido, status: 'delivered' }, selectedPedido.id);
+                                    await refreshOrders();
                                     setSelectedPedido(null);
                                 }}>
                                     Confirmar Entrega
@@ -898,7 +839,6 @@ const Logistica = () => {
                 </div>
                 </div>
                 </div>
-            </div>
 
             {/* DRIVER MANAGEMENT MODAL */}
             {isDriverModalOpen && (

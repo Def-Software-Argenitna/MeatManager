@@ -4,7 +4,6 @@ import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle,
 import { BRAND_CONFIG } from '../brandConfig';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
-import { saveTableRecord } from '../utils/apiClient';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
