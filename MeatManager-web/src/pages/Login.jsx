@@ -45,7 +45,7 @@ const Login = () => {
                 <div className="login-card animate-fade-in" style={{ maxWidth: '420px', textAlign: 'center' }}>
                     <div className="login-header">
                         <div className="login-logo"><Utensils size={40} /></div>
-                        <h1 className="login-title">MeatManager PRO</h1>
+                        <h1 className="login-title">MeatManager</h1>
                         <p className="login-subtitle">¡Bienvenido, {tenant.empresa || tenant.email}!</p>
                     </div>
 
@@ -87,7 +87,7 @@ const Login = () => {
             <div className="login-card animate-fade-in" style={{ maxWidth: '420px' }}>
                 <div className="login-header">
                     <div className="login-logo"><Utensils size={40} /></div>
-                    <h1 className="login-title">MeatManager PRO</h1>
+                    <h1 className="login-title">MeatManager</h1>
                     <p className="login-subtitle">Ingresá con tu cuenta de empresa</p>
                 </div>
 
