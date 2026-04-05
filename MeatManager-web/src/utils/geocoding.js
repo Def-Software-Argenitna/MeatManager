@@ -1,5 +1,6 @@
 const COUNTRY_SUFFIX = 'Argentina';
 const geocodeInFlight = new Map();
+const suggestInFlight = new Map();
 
 export const normalizeAddressParts = (...parts) =>
     parts
@@ -90,5 +91,57 @@ export const geocodeAddress = async (rawAddress) => {
         return await request;
     } finally {
         geocodeInFlight.delete(cacheKey);
+    }
+};
+
+export const searchAddressSuggestions = async (rawAddress) => {
+    const address = normalizeAddressParts(rawAddress, COUNTRY_SUFFIX);
+    if (!address || address.length < 5) return [];
+
+    const cacheKey = `suggest:${address.toLowerCase()}`;
+    if (suggestInFlight.has(cacheKey)) {
+        return suggestInFlight.get(cacheKey);
+    }
+
+    const request = (async () => {
+        const params = new URLSearchParams({
+            format: 'jsonv2',
+            limit: '5',
+            countrycodes: 'ar',
+            addressdetails: '1',
+            q: address,
+        });
+
+        const response = await fetch(`https://nominatim.openstreetmap.org/search?${params.toString()}`, {
+            headers: {
+                Accept: 'application/json',
+                'Accept-Language': 'es-AR,es;q=0.9',
+            },
+        });
+
+        if (!response.ok) {
+            throw new Error(`Sugerencias de direccion fallidas (${response.status})`);
+        }
+
+        const rows = await response.json();
+        if (!Array.isArray(rows)) return [];
+
+        return rows.map((row) => ({
+            label: row.display_name || address,
+            latitude: parseCoordinate(row.lat),
+            longitude: parseCoordinate(row.lon),
+            city: row.address?.city || row.address?.town || row.address?.village || '',
+            zip_code: row.address?.postcode || '',
+            street: normalizeAddressParts(row.address?.road, row.address?.house_number),
+            raw: row,
+        })).filter((row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+    })();
+
+    suggestInFlight.set(cacheKey, request);
+
+    try {
+        return await request;
+    } finally {
+        suggestInFlight.delete(cacheKey);
     }
 };
