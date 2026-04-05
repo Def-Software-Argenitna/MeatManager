@@ -19,6 +19,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     qendraGetTodayTickets: (horas) => ipcRenderer.invoke('qendra-get-today-tickets', horas),
     qendraUpdatePrecio: (plu, precio) => ipcRenderer.invoke('qendra-update-precio', plu, precio),
     nukeIndexedDb: () => ipcRenderer.invoke('nuke-indexeddb'),
+    chooseDirectory: () => ipcRenderer.invoke('choose-directory'),
+    saveHtmlPdf: (payload) => ipcRenderer.invoke('save-html-pdf', payload),
+    openPath: (targetPath) => ipcRenderer.invoke('open-path', targetPath),
 });
 
 window.addEventListener('DOMContentLoaded', () => {

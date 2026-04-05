@@ -62,6 +62,10 @@ const Compras = () => {
         () => db.suppliers?.orderBy('name').toArray()
     );
 
+    const paymentMethods = useLiveQuery(
+        () => db.payment_methods?.toArray()
+    );
+
     // Form state now includes a list of items instead of a text blob
     const getLocalDateStr = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; };
     const [newPurchase, setNewPurchase] = useState({
@@ -215,12 +219,32 @@ const Compras = () => {
         if (!newPurchase.supplier) return;
 
         try {
+            const purchaseTotal = parseFloat(newPurchase.total) || 0;
+            const purchaseBreakdown = newPurchase.selectedItems.reduce((acc, item) => {
+                const subtotal = Number(item.subtotal) || 0;
+                if ((item.destination || 'venta') === 'interno') {
+                    acc.internal += subtotal;
+                } else {
+                    acc.sale += subtotal;
+                }
+                acc.total += subtotal;
+                return acc;
+            }, { sale: 0, internal: 0, total: 0 });
+
+            const normalizedPaymentMethod = String(newPurchase.payment_method || '').trim().toLowerCase();
+            const shouldAffectCash = purchaseBreakdown.internal > 0 && !newPurchase.is_account && normalizedPaymentMethod !== 'cta_cte';
+
+            if (shouldAffectCash && !newPurchase.payment_method) {
+                window.alert('Seleccioná el medio de pago para registrar la compra interna y descontarla de caja.');
+                return;
+            }
+
             // 1. Save the purchase record
             const purchaseId = await db.compras.add({
                 supplier: newPurchase.supplier,
                 invoice_num: newPurchase.invoice_num,
                 date: newPurchase.date,
-                total: parseFloat(newPurchase.total) || 0,
+                total: purchaseTotal,
                 payment_method: newPurchase.payment_method,
                 is_account: newPurchase.is_account,
                 synced: 0
@@ -287,6 +311,24 @@ const Compras = () => {
                     updated_at: new Date(),
                     synced: 0,
                     reference: `compra_${purchaseId}`
+                });
+            }
+
+            if (shouldAffectCash) {
+                const selectedPaymentMethod = paymentMethods?.find((method) => (
+                    method.name === newPurchase.payment_method || String(method.name || '').trim().toLowerCase() === normalizedPaymentMethod
+                ));
+
+                await db.caja_movimientos.add({
+                    type: 'egreso',
+                    amount: purchaseBreakdown.internal,
+                    category: 'Compra interna',
+                    description: `${newPurchase.supplier}${newPurchase.invoice_num ? ` · Comprobante ${newPurchase.invoice_num}` : ''}`,
+                    payment_method: newPurchase.payment_method || 'Efectivo',
+                    payment_method_type: selectedPaymentMethod?.type || (normalizedPaymentMethod === 'transferencia' ? 'transfer' : 'cash'),
+                    date: new Date(`${newPurchase.date}T12:00:00`),
+                    purchase_id: purchaseId,
+                    synced: 0
                 });
             }
 

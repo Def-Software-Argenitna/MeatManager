@@ -391,6 +391,20 @@ const Ventas = () => {
         };
     }, []);
 
+    const todayOpeningMovements = useLiveQuery(async () => {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        return db.caja_movimientos
+            .where('date')
+            .between(start, end)
+            .filter((movement) => movement.type === 'apertura')
+            .toArray();
+    }, []);
+
+    const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
+
     // 6. Recent sales (for delete-ticket modal)
     const recentSales = useLiveQuery(async () => {
         return db.ventas.orderBy('date').reverse().limit(150).toArray();
@@ -1114,6 +1128,11 @@ const Ventas = () => {
     };
 
     const openPaymentModal = (preferredMethod = null) => {
+        if (!hasCashOpeningToday) {
+            showToast('⚠️ Debés registrar la apertura de caja antes de comenzar a vender.', 'warning');
+            navigate('/caja');
+            return;
+        }
         const defaultMethod = preferredMethod || dbPaymentMethods?.find(m => m.type === 'cash') || dbPaymentMethods?.[0];
         setSelectedPaymentMethod(defaultMethod?.id || null);
         setIsSplitPayment(false);
@@ -1778,6 +1797,21 @@ const Ventas = () => {
                     >
                         {isProcessing ? 'PROCESANDO...' : 'COBRAR TICKET'}
                     </button>
+                    {!hasCashOpeningToday && (
+                        <div style={{
+                            marginTop: '0.6rem',
+                            padding: '0.75rem 0.85rem',
+                            borderRadius: '12px',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px solid rgba(245, 158, 11, 0.22)',
+                            color: '#f59e0b',
+                            fontSize: '0.75rem',
+                            lineHeight: 1.45,
+                            textAlign: 'center'
+                        }}>
+                            La caja todavía no fue abierta hoy. Registrá la apertura en <strong>Caja</strong> para habilitar ventas.
+                        </div>
+                    )}
                     
                     <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
                         <button
