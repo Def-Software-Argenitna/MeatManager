@@ -793,9 +793,94 @@ async function getClientAccessContext({ uid, email }) {
             [uid || null, normalizedEmail, uid || null]
         );
 
-        const user = rows[0];
+        let user = rows[0] || null;
+
+        if (!user) {
+            let ownerClient = null;
+
+            if (normalizedEmail) {
+                const [ownerRows] = await conn.query(
+                    `SELECT
+                        c.id AS clientId,
+                        c.businessName,
+                        c.taxId,
+                        c.billingEmail,
+                        c.cashAuthorizationEmail,
+                        c.status AS clientStatus
+                     FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                     WHERE LOWER(c.billingEmail) = ?
+                     LIMIT 1`,
+                    [normalizedEmail]
+                );
+                ownerClient = ownerRows[0] || null;
+            }
+
+            if (!ownerClient && uid) {
+                const ownerDoc = await admin.firestore().collection('clientes').doc(uid).get();
+                const ownerData = ownerDoc.exists ? ownerDoc.data() || {} : {};
+                const ownerTaxId = String(ownerData.cuit || '').trim();
+                const ownerBusinessName = String(ownerData.empresa || '').trim();
+
+                if (ownerTaxId) {
+                    const [ownerRowsByTaxId] = await conn.query(
+                        `SELECT
+                            c.id AS clientId,
+                            c.businessName,
+                            c.taxId,
+                            c.billingEmail,
+                            c.cashAuthorizationEmail,
+                            c.status AS clientStatus
+                         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                         WHERE c.taxId = ?
+                         LIMIT 1`,
+                        [ownerTaxId]
+                    );
+                    ownerClient = ownerRowsByTaxId[0] || null;
+                }
+
+                if (!ownerClient && ownerBusinessName) {
+                    const [ownerRowsByName] = await conn.query(
+                        `SELECT
+                            c.id AS clientId,
+                            c.businessName,
+                            c.taxId,
+                            c.billingEmail,
+                            c.cashAuthorizationEmail,
+                            c.status AS clientStatus
+                         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                         WHERE LOWER(c.businessName) = LOWER(?)
+                         LIMIT 1`,
+                        [ownerBusinessName]
+                    );
+                    ownerClient = ownerRowsByName[0] || null;
+                }
+            }
+
+            if (ownerClient) {
+                user = {
+                    id: `owner-${ownerClient.clientId}`,
+                    clientId: ownerClient.clientId,
+                    branchId: null,
+                    firebaseUid: uid || null,
+                    name: ownerClient.businessName || normalizedEmail,
+                    lastname: '',
+                    email: normalizedEmail,
+                    role: 'admin',
+                    userStatus: 'ACTIVE',
+                    isSynced: 1,
+                    lastLogin: null,
+                    businessName: ownerClient.businessName,
+                    taxId: ownerClient.taxId,
+                    billingEmail: ownerClient.billingEmail,
+                    cashAuthorizationEmail: ownerClient.cashAuthorizationEmail,
+                    clientStatus: ownerClient.clientStatus,
+                    isOwnerFallback: true,
+                };
+            }
+        }
+
         if (!user) return null;
-        user.perms = await getUserPermissions(conn, user.id);
+        user.perms = user.isOwnerFallback ? [] : await getUserPermissions(conn, user.id);
 
         const [licenseRows] = await conn.query(
             `SELECT
@@ -825,6 +910,10 @@ async function getClientAccessContext({ uid, email }) {
         const effectiveLicenses = licenseRows
             .filter((license) => {
                 if (!licenseAppliesToWebapp(license)) return false;
+
+                if (user.isOwnerFallback) {
+                    return true;
+                }
 
                 const matchesUser = license.userId == null || String(license.userId) === String(user.id);
                 const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
