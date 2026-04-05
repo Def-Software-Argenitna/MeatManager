@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Utensils, LogIn, AlertCircle } from 'lucide-react';
+import { Beef, LogIn, AlertCircle } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useUser } from '../context/UserContext';
 import '../styles/Login.css';
@@ -44,8 +44,10 @@ const Login = () => {
             <div className="login-container">
                 <div className="login-card animate-fade-in" style={{ maxWidth: '420px', textAlign: 'center' }}>
                     <div className="login-header">
-                        <div className="login-logo"><Utensils size={40} /></div>
-                        <h1 className="login-title">MeatManager</h1>
+                        <div className="login-brand">
+                            <div className="login-logo"><Beef size={34} /></div>
+                            <h1 className="login-title">MeatManager</h1>
+                        </div>
                         <p className="login-subtitle">¡Bienvenido, {tenant.empresa || tenant.email}!</p>
                     </div>
 
@@ -86,8 +88,10 @@ const Login = () => {
         <div className="login-container">
             <div className="login-card animate-fade-in" style={{ maxWidth: '420px' }}>
                 <div className="login-header">
-                    <div className="login-logo"><Utensils size={40} /></div>
-                    <h1 className="login-title">MeatManager</h1>
+                    <div className="login-brand">
+                        <div className="login-logo"><Beef size={34} /></div>
+                        <h1 className="login-title">MeatManager</h1>
+                    </div>
                     <p className="login-subtitle">Ingresá con tu cuenta de empresa</p>
                 </div>
 
