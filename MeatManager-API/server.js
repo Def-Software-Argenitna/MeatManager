@@ -1,8 +1,17 @@
 // MeatManager API - Provisioning Multi-Tenant
 // Genera y gestiona una BD MySQL por cada empresa (identificada por CUIT)
 
+const fs = require('fs');
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '.env') });
+const gdcBackendEnvPath = path.resolve(__dirname, '..', 'Gestionclientes', '.deploy', 'backend.env');
+const hasLocalSmtpConfig =
+    Boolean(process.env.SMTP_HOST) &&
+    Boolean(process.env.SMTP_PORT);
+
+if (!hasLocalSmtpConfig && fs.existsSync(gdcBackendEnvPath)) {
+    require('dotenv').config({ path: gdcBackendEnvPath, override: false });
+}
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -101,8 +110,12 @@ redisClient.on('error', (error) => {
     console.error('[REDIS ERROR]', error.message);
 });
 
+function getSmtpFromAddress() {
+    return process.env.SMTP_FROM || 'no-reply@def-software.com.ar';
+}
+
 function hasSmtpConfig() {
-    return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT && process.env.SMTP_FROM);
+    return Boolean(process.env.SMTP_HOST && process.env.SMTP_PORT);
 }
 
 function getSmtpTransport() {
@@ -196,7 +209,7 @@ async function sendCashWithdrawalAuthorizationEmail({
     `;
 
     await transport.sendMail({
-        from: process.env.SMTP_FROM,
+        from: getSmtpFromAddress(),
         to: recipientEmail,
         subject,
         text,
@@ -631,9 +644,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
-            await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL AFTER `payment_method_id`');
-            await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0 AFTER `authorization_id`');
-            await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL AFTER `authorization_verified`');
+            await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
+            await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
+            await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
@@ -713,6 +726,12 @@ async function ensureClientsControlStore() {
                 INDEX idx_client_user_permissions_user (userId)
             )
         `);
+        if (!(await hasColumn(conn, CLIENTS_DB_NAME, CLIENTS_TABLE, 'cashAuthorizationEmail'))) {
+            await conn.query(`
+                ALTER TABLE \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\`
+                ADD COLUMN cashAuthorizationEmail VARCHAR(150) NULL AFTER billingEmail
+            `);
+        }
     } finally {
         conn.release();
     }
@@ -756,6 +775,7 @@ async function getClientAccessContext({ uid, email }) {
                 c.businessName,
                 c.taxId,
                 c.billingEmail,
+                c.cashAuthorizationEmail,
                 c.status AS clientStatus
              FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
              INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
@@ -829,6 +849,7 @@ async function getClientAccessContext({ uid, email }) {
                 id: user.clientId,
                 businessName: user.businessName,
                 taxId: user.taxId,
+                cashAuthorizationEmail: user.cashAuthorizationEmail,
                 billingEmail: user.billingEmail,
                 status: user.clientStatus,
             },
@@ -1570,7 +1591,8 @@ async function createCashWithdrawalAuthorization({
     description,
 }) {
     const recipientEmail = String(
-        accessContext?.client?.billingEmail
+        accessContext?.client?.cashAuthorizationEmail
+        || accessContext?.client?.billingEmail
         || accessContext?.user?.email
         || ''
     ).trim().toLowerCase();
