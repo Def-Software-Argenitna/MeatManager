@@ -237,13 +237,14 @@
     bottom: 20px;
     left: 20px;
     right: 20px;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
+    background:
+        linear-gradient(180deg, rgba(10, 14, 22, 0.92) 0%, rgba(15, 23, 35, 0.9) 100%);
+    backdrop-filter: blur(18px);
     border-radius: 16px;
     padding: 1.5rem;
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
     z-index: 1000;
-    border: 1px solid var(--glass-border);
+    border: 1px solid rgba(255,255,255,0.12);
 }
 
 .overlay-header {
@@ -256,11 +257,13 @@
 .overlay-header h3 {
     margin: 0;
     font-size: 1.25rem;
+    color: #f8fafc;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
 }
 
 .overlay-header p {
     margin: 0;
-    color: var(--color-text-muted);
+    color: #cbd5e1;
     font-size: 0.9rem;
 }
 
@@ -287,24 +290,24 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.9rem;
-    color: var(--color-text-muted);
+    color: #dbe4f0;
 }
 
 .items-preview {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255,255,255,0.05);
     padding: 0.75rem;
     border-radius: 8px;
     font-size: 0.85rem;
-    color: var(--color-text-muted);
-    border: 1px dashed rgba(255,255,255,0.14);
+    color: #e2e8f0;
+    border: 1px dashed rgba(255,255,255,0.18);
 }
 
 .assignment-box {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255,255,255,0.05);
     padding: 1rem;
     border-radius: 12px;
     margin-bottom: 1rem;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
 }
 
 .risk-warning-banner {
@@ -339,7 +342,7 @@
 .assignment-box label {
     font-size: 0.75rem;
     font-weight: bold;
-    color: var(--color-text-muted);
+    color: #cbd5e1;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -347,8 +350,13 @@
 }
 
 .assignment-box .neo-input {
-    background: rgba(255,255,255,0.05);
-    color: var(--color-text-main);
+    background: rgba(255,255,255,0.08);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
+}
+
+.assignment-box .neo-input option {
+    color: #0f172a;
 }
 
 .overlay-actions {
