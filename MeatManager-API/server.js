@@ -795,22 +795,67 @@ async function getClientAccessContext({ uid, email }) {
 
         let user = rows[0] || null;
 
-        if (!user && normalizedEmail) {
-            const [ownerRows] = await conn.query(
-                `SELECT
-                    c.id AS clientId,
-                    c.businessName,
-                    c.taxId,
-                    c.billingEmail,
-                    c.cashAuthorizationEmail,
-                    c.status AS clientStatus
-                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
-                 WHERE LOWER(c.billingEmail) = ?
-                 LIMIT 1`,
-                [normalizedEmail]
-            );
+        if (!user) {
+            let ownerClient = null;
 
-            const ownerClient = ownerRows[0];
+            if (normalizedEmail) {
+                const [ownerRows] = await conn.query(
+                    `SELECT
+                        c.id AS clientId,
+                        c.businessName,
+                        c.taxId,
+                        c.billingEmail,
+                        c.cashAuthorizationEmail,
+                        c.status AS clientStatus
+                     FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                     WHERE LOWER(c.billingEmail) = ?
+                     LIMIT 1`,
+                    [normalizedEmail]
+                );
+                ownerClient = ownerRows[0] || null;
+            }
+
+            if (!ownerClient && uid) {
+                const ownerDoc = await admin.firestore().collection('clientes').doc(uid).get();
+                const ownerData = ownerDoc.exists ? ownerDoc.data() || {} : {};
+                const ownerTaxId = String(ownerData.cuit || '').trim();
+                const ownerBusinessName = String(ownerData.empresa || '').trim();
+
+                if (ownerTaxId) {
+                    const [ownerRowsByTaxId] = await conn.query(
+                        `SELECT
+                            c.id AS clientId,
+                            c.businessName,
+                            c.taxId,
+                            c.billingEmail,
+                            c.cashAuthorizationEmail,
+                            c.status AS clientStatus
+                         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                         WHERE c.taxId = ?
+                         LIMIT 1`,
+                        [ownerTaxId]
+                    );
+                    ownerClient = ownerRowsByTaxId[0] || null;
+                }
+
+                if (!ownerClient && ownerBusinessName) {
+                    const [ownerRowsByName] = await conn.query(
+                        `SELECT
+                            c.id AS clientId,
+                            c.businessName,
+                            c.taxId,
+                            c.billingEmail,
+                            c.cashAuthorizationEmail,
+                            c.status AS clientStatus
+                         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                         WHERE LOWER(c.businessName) = LOWER(?)
+                         LIMIT 1`,
+                        [ownerBusinessName]
+                    );
+                    ownerClient = ownerRowsByName[0] || null;
+                }
+            }
+
             if (ownerClient) {
                 user = {
                     id: `owner-${ownerClient.clientId}`,
