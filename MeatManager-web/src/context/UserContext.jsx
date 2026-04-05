@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useTenant } from './TenantContext';
 import {
     createFirebaseUser,
@@ -72,14 +72,13 @@ const restoreSession = () => {
 };
 
 export const UserProvider = ({ children }) => {
-    const { tenant, loading: loadingTenant, authToken } = useTenant();
+    const { tenant, loading: loadingTenant } = useTenant();
     const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
-    const recoveryAttemptRef = useRef('');
 
     const applyResolvedUser = useCallback((userData) => {
         const superUser = hasSuperUserLicense(userData?.licenses);
@@ -134,7 +133,6 @@ export const UserProvider = ({ children }) => {
                         await auth.currentUser.getIdToken(true);
                         payload = await fetchCurrentFirebaseUser().catch(() => null);
                         if (payload?.user) {
-                            recoveryAttemptRef.current = '';
                             return applyResolvedUser(payload.user);
                         }
                     }
@@ -143,7 +141,6 @@ export const UserProvider = ({ children }) => {
                 return { ok: false, error: 'Usuario inactivo o no encontrado' };
             }
             if (!userData.active) return { ok: false, error: 'Usuario inactivo o no encontrado' };
-            recoveryAttemptRef.current = '';
             return applyResolvedUser(userData);
         } catch (error) {
             if (tenant?.email && email === tenant.email) {
@@ -151,7 +148,6 @@ export const UserProvider = ({ children }) => {
                     await auth.currentUser.getIdToken(true).catch(() => null);
                     const retryPayload = await fetchCurrentFirebaseUser().catch(() => null);
                     if (retryPayload?.user) {
-                        recoveryAttemptRef.current = '';
                         return applyResolvedUser(retryPayload.user);
                     }
                 }
@@ -183,10 +179,6 @@ export const UserProvider = ({ children }) => {
                 return;
             }
 
-            if (!authToken) {
-                return;
-            }
-
             setLoadingUser(true);
             try {
                 const result = await login({ uid: tenant.uid, email: tenant.email });
@@ -207,31 +199,7 @@ export const UserProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, [tenant, authToken, loadingTenant, login, logout]);
-
-    useEffect(() => {
-        const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
-        const tenantEmail = String(tenant?.email || '').trim().toLowerCase();
-        const hasNoLicenses = Array.isArray(accessProfile?.licenses) && accessProfile.licenses.length === 0;
-        const needsRecovery =
-            Boolean(currentUser) &&
-            currentUser?.role === 'admin' &&
-            hasNoLicenses &&
-            Boolean(tenantEmail) &&
-            currentEmail === tenantEmail &&
-            !loadingUser;
-
-        if (!needsRecovery) {
-            recoveryAttemptRef.current = '';
-            return;
-        }
-
-        const recoveryKey = `${tenant?.uid || tenantEmail}:${currentEmail}`;
-        if (recoveryAttemptRef.current === recoveryKey) return;
-
-        recoveryAttemptRef.current = recoveryKey;
-        login({ uid: tenant?.uid, email: tenant?.email }).catch(() => {});
-    }, [accessProfile?.licenses, currentUser, loadingUser, login, tenant]);
+    }, [tenant, loadingTenant, login, logout]);
 
 
     // Admin always true; employee checks permission list
