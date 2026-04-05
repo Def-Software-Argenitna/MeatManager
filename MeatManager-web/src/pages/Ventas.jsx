@@ -25,6 +25,10 @@ const getClientDisplayName = (client) => {
 const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
 const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
 const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+const toNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
@@ -521,8 +525,8 @@ const Ventas = () => {
                             <span>${i.name.slice(0, 20)}</span>
                         </div>
                         <div class="item">
-                            <span style="padding-left: 2mm;">${i.quantity.toFixed(3)} ${i.unit || 'kg'} x $${i.price.toLocaleString()}</span>
-                            <span>$${(i.price * i.quantity).toLocaleString()}</span>
+                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
+                            <span>$${(toNumber(i.price) * toNumber(i.quantity)).toLocaleString()}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -565,11 +569,11 @@ const Ventas = () => {
                     category: item.type,
                     totalQuantity: 0,
                     unit: item.unit || 'kg',
-                    price: priceRecord.price || 0,
+                    price: toNumber(priceRecord.price),
                     plu: priceRecord.plu || ''
                 };
             }
-            grouped[key].totalQuantity += item.quantity;
+            grouped[key].totalQuantity += toNumber(item.quantity);
         });
 
         return Object.values(grouped);
@@ -1658,7 +1662,7 @@ const Ventas = () => {
                                 )}
 
                                 <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
-                                    Stock: {product.totalQuantity.toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                    Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
                                 </div>
 
                                 <button
@@ -1696,7 +1700,7 @@ const Ventas = () => {
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
                                 <div className="item-detail">
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{item.quantity.toFixed(3)} {item.unit || 'Kg'}</span>
+                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
                                     <span>× ${formatPrice(item.price, priceFormat)}</span>
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
@@ -2994,8 +2998,8 @@ const Ventas = () => {
                                             {notConfigured
                                                 ? '❌ No configurado en el sistema — ir a Stock a cargarlo'
                                                 : noStock
-                                                    ? `⚠️ Sin stock disponible (${item.product.totalQuantity.toFixed(3)} ${item.product.unit}) — verificá en Stock`
-                                                    : `✅ Stock disponible: ${item.product.totalQuantity.toFixed(3)} ${item.product.unit}`
+                                                    ? `⚠️ Sin stock disponible (${toNumber(item.product.totalQuantity).toFixed(3)} ${item.product.unit}) — verificá en Stock`
+                                                    : `✅ Stock disponible: ${toNumber(item.product.totalQuantity).toFixed(3)} ${item.product.unit}`
                                             }
                                         </div>
                                     </div>
