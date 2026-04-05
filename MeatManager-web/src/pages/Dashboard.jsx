@@ -7,6 +7,11 @@ import { useUser } from '../context/UserContext';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
 
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
 const Dashboard = () => {
     const navigate = useNavigate();
     const { currentUser } = useUser();
@@ -67,18 +72,19 @@ const Dashboard = () => {
     const totalComprasMes = comprasMes?.reduce((acc, c) => acc + (parseFloat(c.total) || 0), 0) || 0;
 
     const totalStockKg = stockItems?.reduce((acc, item) => {
-        return item.unit === 'kg' ? acc + item.quantity : acc;
+        return item.unit === 'kg' ? acc + toNumber(item.quantity) : acc;
     }, 0) || 0;
 
     const lowStockCount = stockItems?.filter(item => item.quantity < 10).length || 0; // Warning threshold < 10
 
     // Calculate Total Debts (Negative balances)
     const totalDeudaCalle = clients?.reduce((acc, client) => {
-        return client.balance < 0 ? acc + Math.abs(client.balance) : acc;
+        const balance = toNumber(client.balance);
+        return balance < 0 ? acc + Math.abs(balance) : acc;
     }, 0) || 0;
 
     const avgYield = proLogs?.length > 0
-        ? (proLogs.reduce((acc, log) => acc + log.yield_percentage, 0) / proLogs.length).toFixed(1)
+        ? (proLogs.reduce((acc, log) => acc + toNumber(log.yield_percentage), 0) / proLogs.length).toFixed(1)
         : 0;
 
     const filteredBranchSnapshots = (branchSnapshots || []).filter((snapshot) => selectedRemoteBranch === 'all' || snapshot.branch_code === selectedRemoteBranch);
