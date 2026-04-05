@@ -16,7 +16,7 @@ const TopBar = ({ onToggleSidebar }) => {
         if (path.includes("/precios") || path.includes("/formato")) return "FORMATO DE PRECIOS";
         if (path.includes("/cierre")) return "CIERRE DE CAJA";
         if (path.includes("/dashboard")) return "PANEL DE CONTROL";
-        return "ADMINISTRACIÓN";
+        return "";
     };
 
     return (
