@@ -488,12 +488,25 @@ function buildDriverIdentity(accessContext) {
     };
 }
 
+function normalizePaymentStatus(value) {
+    const token = String(value || '').trim().toLowerCase();
+    if (!token) return null;
+    if (['paid', 'pagado', 'pago_confirmado'].includes(token)) return 'paid';
+    if (['pending_driver_collection', 'collect_on_delivery', 'cobrar_al_entregar', 'pendiente_cobro'].includes(token)) {
+        return 'pending_driver_collection';
+    }
+    if (['not_required', 'sin_cobro', 'no_requiere_cobro'].includes(token)) return 'not_required';
+    return token;
+}
+
 function mapDeliveryOrder(row) {
     const status = normalizeDeliveryStatus(row.status);
+    const amountDue = row.amount_due == null ? null : Number(row.amount_due);
     return {
         id: row.id,
         customerId: row.customer_id,
         customerName: row.customer_name,
+        customerPhone: row.customer_phone || null,
         items: safeJsonParse(row.items, []),
         total: row.total == null ? 0 : Number(row.total),
         status,
@@ -507,6 +520,10 @@ function mapDeliveryOrder(row) {
         createdAt: row.created_at,
         assignedAt: row.assigned_at,
         statusUpdatedAt: row.status_updated_at,
+        paymentMethod: row.payment_method || null,
+        paymentStatus: normalizePaymentStatus(row.payment_status),
+        paid: row.paid === 1 || row.paid === true,
+        amountDue,
         driver: {
             name: row.repartidor || null,
             firebaseUid: row.assigned_driver_uid || null,
@@ -852,6 +869,11 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'pedidos', 'assigned_driver_email', '`assigned_driver_email` VARCHAR(150) NULL');
             await ensureColumn(conn, 'pedidos', 'assigned_at', '`assigned_at` DATETIME NULL');
             await ensureColumn(conn, 'pedidos', 'status_updated_at', '`status_updated_at` DATETIME NULL');
+            await ensureColumn(conn, 'pedidos', 'customer_phone', '`customer_phone` VARCHAR(50) NULL');
+            await ensureColumn(conn, 'pedidos', 'payment_method', '`payment_method` VARCHAR(100) NULL');
+            await ensureColumn(conn, 'pedidos', 'payment_status', '`payment_status` VARCHAR(100) NULL');
+            await ensureColumn(conn, 'pedidos', 'paid', '`paid` TINYINT(1) NOT NULL DEFAULT 0');
+            await ensureColumn(conn, 'pedidos', 'amount_due', '`amount_due` DECIMAL(12,2) NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
@@ -1709,9 +1731,14 @@ function getSchemaTables() {
             delivery_date   DATETIME,
             delivery_type   VARCHAR(50),
             address         VARCHAR(255),
+            customer_phone  VARCHAR(50),
             latitude        DECIMAL(10,7),
             longitude       DECIMAL(10,7),
             geocoded_at     DATETIME,
+            payment_method  VARCHAR(100),
+            payment_status  VARCHAR(100),
+            paid            TINYINT(1) DEFAULT 0,
+            amount_due      DECIMAL(12,2),
             repartidor      VARCHAR(100),
             assigned_driver_uid VARCHAR(191),
             assigned_driver_email VARCHAR(150),
@@ -2131,6 +2158,18 @@ async function updateDeliveryOrderStatus(pool, tenantId, orderId, status, driver
     const nextDriverName = order.repartidor || driverIdentity?.name || null;
     const nextDriverUid = order.assigned_driver_uid || driverIdentity?.firebaseUid || null;
     const nextDriverEmail = order.assigned_driver_email || driverIdentity?.email || null;
+    const nextPaymentMethod = driverIdentity?.paymentMethodOverride !== undefined
+        ? driverIdentity.paymentMethodOverride
+        : order.payment_method || null;
+    const nextPaymentStatus = driverIdentity?.paymentStatusOverride !== undefined
+        ? driverIdentity.paymentStatusOverride
+        : normalizePaymentStatus(order.payment_status);
+    const nextPaid = driverIdentity?.paidOverride !== undefined
+        ? (driverIdentity.paidOverride ? 1 : 0)
+        : (order.paid ? 1 : 0);
+    const nextAmountDue = driverIdentity?.amountDueOverride !== undefined
+        ? driverIdentity.amountDueOverride
+        : order.amount_due;
 
     await pool.query(
         `UPDATE pedidos
@@ -2138,6 +2177,10 @@ async function updateDeliveryOrderStatus(pool, tenantId, orderId, status, driver
                 repartidor = ?,
                 assigned_driver_uid = ?,
                 assigned_driver_email = ?,
+                payment_method = ?,
+                payment_status = ?,
+                paid = ?,
+                amount_due = ?,
                 status_updated_at = CURRENT_TIMESTAMP
           WHERE \`${TENANT_COLUMN}\` = ?
             AND id = ?`,
@@ -2146,6 +2189,10 @@ async function updateDeliveryOrderStatus(pool, tenantId, orderId, status, driver
             nextDriverName,
             nextDriverUid,
             nextDriverEmail,
+            nextPaymentMethod,
+            nextPaymentStatus,
+            nextPaid,
+            nextAmountDue,
             tenantId,
             orderId,
         ]
@@ -3385,6 +3432,22 @@ app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res
         const orderId = Number(req.params.id);
         const status = normalizeDeliveryStatus(req.body?.status);
         const driverIdentity = buildDriverIdentity(accessContext);
+        driverIdentity.paymentMethodOverride = req.body?.paymentMethod !== undefined
+            ? String(req.body.paymentMethod || '').trim() || null
+            : undefined;
+        driverIdentity.paymentStatusOverride = req.body?.paymentStatus !== undefined
+            ? normalizePaymentStatus(req.body.paymentStatus)
+            : undefined;
+        driverIdentity.paidOverride = req.body?.paid !== undefined
+            ? (req.body.paid === true || String(req.body.paid).trim().toLowerCase() === 'true')
+            : undefined;
+        driverIdentity.amountDueOverride = req.body?.amountDue !== undefined
+            ? (() => {
+                if (req.body.amountDue == null || req.body.amountDue === '') return null;
+                const nextAmountDue = Number(req.body.amountDue);
+                return Number.isFinite(nextAmountDue) ? nextAmountDue : null;
+            })()
+            : undefined;
         const lat = req.body?.lat == null ? null : Number(req.body.lat);
         const lng = req.body?.lng == null ? null : Number(req.body.lng);
         const accuracy = req.body?.accuracy == null ? null : Number(req.body.accuracy);
@@ -3414,7 +3477,13 @@ app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res
             actorUserId: accessContext.user.id,
             actorFirebaseUid: accessContext.user.firebaseUid || null,
             actorEmail: accessContext.user.email || null,
-            payloadJson: req.body || {},
+            payloadJson: {
+                ...(req.body || {}),
+                paymentMethod: driverIdentity.paymentMethodOverride,
+                paymentStatus: driverIdentity.paymentStatusOverride,
+                paid: driverIdentity.paidOverride,
+                amountDue: driverIdentity.amountDueOverride,
+            },
         });
 
         return res.json({

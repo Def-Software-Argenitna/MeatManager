@@ -191,6 +191,20 @@ export const assignLogisticsOrder = async (orderId, payload) => {
     return res.json();
 };
 
+export const updateLogisticsOrderStatus = async (orderId, payload) => {
+    const res = await apiFetch(`/api/delivery/orders/${encodeURIComponent(orderId)}/status`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo actualizar el pedido logístico');
+    }
+
+    return res.json();
+};
+
 export const createFirebaseUser = async (record) => {
     const res = await apiFetch('/api/firebase-users', {
         method: 'POST',

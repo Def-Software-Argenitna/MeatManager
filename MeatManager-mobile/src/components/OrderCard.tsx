@@ -10,7 +10,7 @@ import {
 } from 'react-native';
 
 import { theme } from '../theme';
-import { markOrderAsDelivered } from '../services/deliveryService';
+import { markOrderAsDelivered, registerOrderCollection } from '../services/deliveryService';
 import type { DeliveryOrder } from '../types/delivery';
 import { getOrderStatusColors, getOrderStatusLabel } from '../utils/orderStatus';
 
@@ -20,16 +20,26 @@ type Props = {
 
 export function OrderCard({ order }: Props) {
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isCollecting, setIsCollecting] = useState(false);
+  const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(order.payment_method || '');
+  const [collectionRegistered, setCollectionRegistered] = useState(order.paid === true);
   const statusColors = getOrderStatusColors(order.status);
-  const paymentLabel = order.paid === true
-    ? 'Pago confirmado'
-    : order.payment_status
-      ? String(order.payment_status)
-      : order.amount_due && order.amount_due > 0
-        ? `Cobrar ${order.amount_due.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}`
-        : order.payment_method
-          ? `Medio: ${order.payment_method}`
-          : 'Cobro no informado';
+  const requiresCollection = !collectionRegistered && (
+    order.requires_collection === true
+    || (order.paid !== true && String(order.payment_status || '').trim().toLowerCase() === 'pending_driver_collection')
+    || ((order.amount_due || 0) > 0)
+  );
+  const paymentLabel = collectionRegistered || order.paid === true
+    ? `Pago confirmado${selectedPaymentMethod ? ` · ${selectedPaymentMethod}` : (order.payment_method ? ` · ${order.payment_method}` : '')}`
+    : String(order.payment_status || '').trim().toLowerCase() === 'pending_driver_collection'
+      ? `Cobrar ${order.amount_due?.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }) || 'al entregar'}`
+      : order.payment_status
+        ? String(order.payment_status)
+        : order.amount_due && order.amount_due > 0
+          ? `Cobrar ${order.amount_due.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 })}`
+          : order.payment_method
+            ? `Medio: ${order.payment_method}`
+            : 'Cobro no informado';
 
   const openMaps = async () => {
     const url = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(order.address)}`;
@@ -46,6 +56,11 @@ export function OrderCard({ order }: Props) {
   };
 
   const confirmDelivery = () => {
+    if (requiresCollection) {
+      Alert.alert('Cobro pendiente', 'Antes de confirmar la entrega tenés que registrar el cobro del pedido.');
+      return;
+    }
+
     Alert.alert('Confirmar entrega', `Marcar el pedido de ${order.customer_name} como entregado?`, [
       { text: 'Cancelar', style: 'cancel' },
       {
@@ -66,6 +81,25 @@ export function OrderCard({ order }: Props) {
     ]);
   };
 
+  const collectPayment = async () => {
+    if (!selectedPaymentMethod.trim()) {
+      Alert.alert('Elegí un medio de cobro', 'Seleccioná cómo te pagó el cliente antes de continuar.');
+      return;
+    }
+
+    setIsCollecting(true);
+    try {
+      await registerOrderCollection(order.cloudId, selectedPaymentMethod, order.status);
+      setCollectionRegistered(true);
+      Alert.alert('Cobro registrado', `El pedido quedó marcado como cobrado por ${selectedPaymentMethod}.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'No se pudo registrar el cobro.';
+      Alert.alert('Error', message);
+    } finally {
+      setIsCollecting(false);
+    }
+  };
+
   return (
     <View style={styles.card}>
       <View style={styles.header}>
@@ -83,6 +117,45 @@ export function OrderCard({ order }: Props) {
         <Text style={styles.paymentLabel}>Cobro</Text>
         <Text style={styles.paymentValue}>{paymentLabel}</Text>
       </View>
+
+      {requiresCollection ? (
+        <View style={styles.collectionBox}>
+          <Text style={styles.collectionTitle}>Cobrar antes de entregar</Text>
+          <Text style={styles.collectionSubtitle}>Elegí el medio con el que te pagó el cliente y registrá el cobro.</Text>
+          <View style={styles.methodRow}>
+            {['Efectivo', 'Transferencia', 'Mercado Pago', 'Tarjeta'].map((method) => (
+              <Pressable
+                key={method}
+                style={[
+                  styles.methodPill,
+                  selectedPaymentMethod === method && styles.methodPillActive,
+                ]}
+                onPress={() => setSelectedPaymentMethod(method)}
+              >
+                <Text
+                  style={[
+                    styles.methodPillText,
+                    selectedPaymentMethod === method && styles.methodPillTextActive,
+                  ]}
+                >
+                  {method}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Pressable
+            style={({ pressed }) => [
+              styles.collectButton,
+              (!selectedPaymentMethod || isCollecting) && styles.collectButtonDisabled,
+              pressed && styles.primaryButtonPressed,
+            ]}
+            disabled={!selectedPaymentMethod || isCollecting}
+            onPress={collectPayment}
+          >
+            {isCollecting ? <ActivityIndicator color={theme.colors.white} /> : <Text style={styles.collectButtonText}>Registrar cobro</Text>}
+          </Pressable>
+        </View>
+      ) : null}
 
       <Text style={styles.addressLabel}>Direccion</Text>
       <Text style={styles.addressText}>{order.address || 'Sin direccion cargada'}</Text>
@@ -104,10 +177,10 @@ export function OrderCard({ order }: Props) {
       <Pressable
         style={({ pressed }) => [
           styles.primaryButton,
-          order.status === 'delivered' && styles.primaryButtonDisabled,
+          (order.status === 'delivered' || requiresCollection) && styles.primaryButtonDisabled,
           (pressed || isSubmitting) && styles.primaryButtonPressed,
         ]}
-        disabled={isSubmitting || order.status === 'delivered'}
+        disabled={isSubmitting || order.status === 'delivered' || requiresCollection}
         onPress={confirmDelivery}
       >
         {isSubmitting ? (
@@ -174,6 +247,62 @@ const styles = StyleSheet.create({
     lineHeight: 21,
     fontWeight: '700',
     color: theme.colors.text,
+  },
+  collectionBox: {
+    backgroundColor: theme.colors.warningSoft,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    gap: 10,
+  },
+  collectionTitle: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: theme.colors.text,
+  },
+  collectionSubtitle: {
+    fontSize: 13,
+    lineHeight: 20,
+    color: theme.colors.muted,
+  },
+  methodRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  methodPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  methodPillActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  methodPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  methodPillTextActive: {
+    color: theme.colors.white,
+  },
+  collectButton: {
+    minHeight: 48,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collectButtonDisabled: {
+    opacity: 0.55,
+  },
+  collectButtonText: {
+    color: theme.colors.white,
+    fontSize: 15,
+    fontWeight: '800',
   },
   addressLabel: {
     fontSize: 12,
