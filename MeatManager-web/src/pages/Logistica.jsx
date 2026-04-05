@@ -566,7 +566,6 @@ const Logistica = () => {
                                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                                         <select
                                             className="neo-input"
-                                            style={{ color: '#1e293b' }}
                                             value={getDriverSelectValue(selectedPedido)}
                                             onChange={(e) => assignDriver(selectedPedido.id, e.target.value)}
                                         >

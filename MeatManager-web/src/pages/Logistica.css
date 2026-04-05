@@ -353,10 +353,26 @@
     background: rgba(255,255,255,0.08);
     color: #f8fafc;
     border: 1px solid rgba(255,255,255,0.12);
+    font-weight: 600;
+    -webkit-text-fill-color: #f8fafc;
+    appearance: none;
 }
 
 .assignment-box .neo-input option {
     color: #0f172a;
+    background: #f8fafc;
+}
+
+.assignment-box select.neo-input {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.06) 100%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23f8fafc' d='M6 8L0 0h12z'/%3E%3C/svg%3E") no-repeat right 14px center / 12px 8px;
+    padding-right: 2.5rem;
+}
+
+.assignment-box select.neo-input:focus {
+    border-color: rgba(249, 115, 22, 0.5);
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
 }
 
 .overlay-actions {
@@ -366,24 +382,36 @@
 
 .btn-delivered {
     flex: 2;
-    background: #22c55e;
-    color: white;
-    border: none;
+    background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
     padding: 0.75rem;
     border-radius: 8px;
     font-weight: bold;
     cursor: pointer;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    box-shadow: 0 12px 24px rgba(22, 163, 74, 0.28);
 }
 
 .btn-call {
     flex: 1;
-    background: #3b82f6;
-    color: white;
-    border: none;
+    background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
     padding: 0.75rem;
     border-radius: 8px;
     font-weight: bold;
     cursor: pointer;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
+}
+
+.btn-delivered:hover {
+    filter: brightness(1.06);
+}
+
+.btn-call:hover {
+    filter: brightness(1.06);
 }
 
 /* STATS MINI */
