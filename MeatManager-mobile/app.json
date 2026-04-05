@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "MeatManager Delivery",
-    "slug": "meatmanager-delivery",
+    "name": "MeatManager Mobile",
+    "slug": "meatmanager",
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
@@ -13,20 +13,29 @@
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.meatmanager.delivery",
+      "bundleIdentifier": "com.meatmanager.mobile",
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real."
+        "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.meatmanager.delivery",
+      "package": "com.meatmanager.mobile",
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION"
       ]
     },
     "plugins": [
       "expo-location"
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "217d824d-37fa-42e3-b3cc-acac32e5e3fb"
+      }
+    },
+    "owner": "def-software-organization"
   }
 }

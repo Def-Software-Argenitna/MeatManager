@@ -2,6 +2,7 @@ import React from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
@@ -23,6 +24,10 @@ export function AdminDashboardScreen({ profile }: Props) {
   const {
     isLoading,
     error,
+    selectedBranchCode,
+    selectedBranchName,
+    branchOptions,
+    setSelectedBranchCode,
     salesTodayTotal,
     salesMonthTotal,
     salesTodayCount,
@@ -52,13 +57,35 @@ export function AdminDashboardScreen({ profile }: Props) {
           <View style={styles.hero}>
             <Text style={styles.eyebrow}>Panel admin</Text>
             <Text style={styles.title}>{profile.username || 'Administracion'}</Text>
-            <Text style={styles.subtitle}>Caja, ventas y seguimiento de repartidores en un solo lugar.</Text>
+            <Text style={styles.subtitle}>Caja, ventas y seguimiento del tenant en un solo lugar.</Text>
+            <View style={styles.branchSelector}>
+              {branchOptions.map((branch) => (
+                <Pressable
+                  key={branch.code}
+                  style={[
+                    styles.branchPill,
+                    selectedBranchCode === branch.code && styles.branchPillActive,
+                  ]}
+                  onPress={() => setSelectedBranchCode(branch.code)}
+                >
+                  <Text
+                    style={[
+                      styles.branchPillText,
+                      selectedBranchCode === branch.code && styles.branchPillTextActive,
+                    ]}
+                  >
+                    {branch.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
 
           <View style={styles.metricsGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>Caja actual</Text>
               <Text style={styles.metricValue}>{currency(cashInDrawerTotal)}</Text>
+              <Text style={styles.metricHint}>{selectedBranchName}</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>Ventas hoy</Text>
@@ -167,6 +194,32 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     lineHeight: 22,
     fontSize: 15,
+  },
+  branchSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  branchPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  branchPillActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  branchPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  branchPillTextActive: {
+    color: theme.colors.white,
   },
   metricsGrid: {
     flexDirection: 'row',

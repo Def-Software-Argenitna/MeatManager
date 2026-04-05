@@ -1,11 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 
-import { fetchDriverLocations, fetchTableRows } from '../services/mobileApi';
+import {
+  fetchClientBranches,
+  fetchDriverLocations,
+  fetchLogisticsDrivers,
+  fetchTableRows,
+} from '../services/mobileApi';
 
 type VentaRow = {
   id: number;
   date?: string;
   total?: number | string;
+  branch_id?: number | null;
+  receipt_code?: string | null;
   payment_method?: string | null;
   payment_breakdown?: Array<{ method_name?: string; amount_charged?: number | string }> | string | null;
 };
@@ -15,6 +22,8 @@ type CajaMovimientoRow = {
   type?: string | null;
   amount?: number | string;
   date?: string;
+  branch_id?: number | null;
+  receipt_code?: string | null;
 };
 
 type PaymentMethodRow = {
@@ -25,17 +34,35 @@ type PaymentMethodRow = {
 
 type PedidoRow = {
   id: number;
+  branch_id?: number | null;
   customer_name?: string;
   repartidor?: string | null;
+  assigned_driver_uid?: string | null;
+  assigned_driver_email?: string | null;
   status?: string | null;
   total?: number | string;
 };
 
+type BranchOption = {
+  code: string;
+  name: string;
+};
+
 type DriverRow = {
   id: number;
+  branchId?: number | null;
+  firebaseUid?: string | null;
+  email?: string | null;
   name?: string | null;
   vehicle?: string | null;
   status?: string | null;
+};
+
+type ClientBranchRow = {
+  id: number;
+  name?: string | null;
+  internalCode?: string | null;
+  address?: string | null;
 };
 
 type DriverLocationRow = {
@@ -60,6 +87,10 @@ type DriverSummary = {
 type AdminDashboardState = {
   isLoading: boolean;
   error: string | null;
+  selectedBranchCode: string;
+  selectedBranchName: string;
+  branchOptions: BranchOption[];
+  setSelectedBranchCode: (value: string) => void;
   salesTodayTotal: number;
   salesMonthTotal: number;
   salesTodayCount: number;
@@ -76,6 +107,16 @@ const toNumber = (value: unknown) => {
 };
 
 const normalizeName = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeBranchCode = (value: unknown) => {
+  const digits = String(value ?? '').replace(/\D/g, '');
+  if (!digits) return null;
+  const parsed = Number(digits);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+};
+const extractBranchCodeFromReceipt = (value: unknown) => {
+  const match = String(value || '').trim().match(/^(\d{4})-/);
+  return match ? normalizeBranchCode(match[1]) : null;
+};
 
 const isCashPayment = (methodName: string, paymentMethods: PaymentMethodRow[]) => {
   const cashMethodNames = new Set(
@@ -91,6 +132,8 @@ export function useAdminDashboard(): AdminDashboardState {
   const [refreshTick, setRefreshTick] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedBranchCode, setSelectedBranchCode] = useState('all');
+  const [branchOptions, setBranchOptions] = useState<BranchOption[]>([]);
   const [salesTodayTotal, setSalesTodayTotal] = useState(0);
   const [salesMonthTotal, setSalesMonthTotal] = useState(0);
   const [salesTodayCount, setSalesTodayCount] = useState(0);
@@ -107,28 +150,73 @@ export function useAdminDashboard(): AdminDashboardState {
       setError(null);
 
       try {
-        const [ventas, cajaMovimientos, paymentMethods, pedidos, repartidores, locations] = await Promise.all([
+        const [ventas, cajaMovimientos, paymentMethods, pedidos, repartidores, locations, branches] = await Promise.all([
           fetchTableRows<VentaRow>('ventas', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
           fetchTableRows<CajaMovimientoRow>('caja_movimientos', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
           fetchTableRows<PaymentMethodRow>('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' }),
           fetchTableRows<PedidoRow>('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
-          fetchTableRows<DriverRow>('repartidores', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+          fetchLogisticsDrivers(),
           fetchDriverLocations(),
+          fetchClientBranches(),
         ]);
 
         if (cancelled) return;
+
+        const nextBranchOptions: BranchOption[] = [{ code: 'all', name: 'Todas las sucursales' }];
+        const seenCodes = new Set<string>(['all']);
+        branches.forEach((branch: ClientBranchRow) => {
+          const code = String(branch.id);
+          const name = String(branch.name || `Sucursal ${branch.id}`).trim();
+          if (!seenCodes.has(code)) {
+            seenCodes.add(code);
+            nextBranchOptions.push({ code, name });
+          }
+        });
+
+        setBranchOptions(nextBranchOptions);
+
+        const selectedCode = selectedBranchCode === 'all'
+          ? 'all'
+          : (nextBranchOptions.some((branch) => branch.code === selectedBranchCode) ? selectedBranchCode : 'all');
+
+        if (selectedCode !== selectedBranchCode) {
+          setSelectedBranchCode(selectedCode);
+        }
+        const selectedBranchId = selectedCode === 'all' ? null : Number(selectedCode);
+        const matchesSelectedBranch = (branchId: unknown, receiptCode?: unknown) => {
+          if (selectedBranchId == null) return true;
+          const directBranchId = Number(branchId);
+          if (Number.isFinite(directBranchId) && directBranchId > 0) {
+            return directBranchId === selectedBranchId;
+          }
+          return extractBranchCodeFromReceipt(receiptCode) === selectedBranchId;
+        };
+        const filteredVentas = ventas.filter((sale) => matchesSelectedBranch(sale.branch_id, sale.receipt_code));
+        const filteredCajaMovimientos = cajaMovimientos.filter((movement) => matchesSelectedBranch(movement.branch_id, movement.receipt_code));
+        const filteredDrivers = repartidores.filter((driver) => (
+          selectedCode === 'all' || String(driver.branchId || '') === selectedCode
+        ));
+        const branchDriverNames = new Set(filteredDrivers.map((driver) => normalizeName(driver.name)).filter(Boolean));
+        const branchDriverEmails = new Set(filteredDrivers.map((driver) => normalizeName(driver.email)).filter(Boolean));
+        const branchDriverUids = new Set(filteredDrivers.map((driver) => String(driver.firebaseUid || '').trim()).filter(Boolean));
+        const filteredPedidos = pedidos.filter((pedido) => (
+          matchesSelectedBranch(pedido.branch_id)
+          || branchDriverNames.has(normalizeName(pedido.repartidor))
+          || branchDriverEmails.has(normalizeName(pedido.assigned_driver_email))
+          || branchDriverUids.has(String(pedido.assigned_driver_uid || '').trim())
+        ));
 
         const now = new Date();
         const startDay = new Date(now);
         startDay.setHours(0, 0, 0, 0);
         const startMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
-        const salesToday = ventas.filter((sale) => {
+        const salesToday = filteredVentas.filter((sale) => {
           const saleDate = sale.date ? new Date(sale.date) : null;
           return saleDate && !Number.isNaN(saleDate.getTime()) && saleDate >= startDay;
         });
 
-        const salesMonth = ventas.filter((sale) => {
+        const salesMonth = filteredVentas.filter((sale) => {
           const saleDate = sale.date ? new Date(sale.date) : null;
           return saleDate && !Number.isNaN(saleDate.getTime()) && saleDate >= startMonth;
         });
@@ -151,11 +239,11 @@ export function useAdminDashboard(): AdminDashboardState {
           return isCashPayment(methodName, paymentMethods) ? sum + total : sum;
         }, 0);
 
-        const totalExpenses = cajaMovimientos
+        const totalExpenses = filteredCajaMovimientos
           .filter((movement) => movement.type === 'egreso')
           .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
 
-        const totalIncomes = cajaMovimientos
+        const totalIncomes = filteredCajaMovimientos
           .filter((movement) => movement.type === 'ingreso')
           .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
 
@@ -165,7 +253,7 @@ export function useAdminDashboard(): AdminDashboardState {
           keys.forEach((key) => locationMap.set(key, location));
         });
 
-        const orderGroups = pedidos.reduce<Record<string, DriverSummary>>((acc, pedido) => {
+        const orderGroups = filteredPedidos.reduce<Record<string, DriverSummary>>((acc, pedido) => {
           const rawName = String(pedido.repartidor || '').trim();
           if (!rawName) return acc;
           const key = normalizeName(rawName);
@@ -195,7 +283,7 @@ export function useAdminDashboard(): AdminDashboardState {
           return acc;
         }, {});
 
-        repartidores.forEach((driver) => {
+        filteredDrivers.forEach((driver) => {
           const rawName = String(driver.name || '').trim();
           if (!rawName) return;
           const key = normalizeName(rawName);
@@ -229,8 +317,8 @@ export function useAdminDashboard(): AdminDashboardState {
         setSalesMonthTotal(salesMonth.reduce((sum, sale) => sum + toNumber(sale.total), 0));
         setSalesTodayCount(salesToday.length);
         setCashInDrawerTotal(cashSales - totalExpenses + totalIncomes);
-        setPendingDeliveries(pedidos.filter((pedido) => pedido.status && pedido.status !== 'delivered').length);
-        setDeliveredOrders(pedidos.filter((pedido) => pedido.status === 'delivered').length);
+        setPendingDeliveries(filteredPedidos.filter((pedido) => pedido.status && pedido.status !== 'delivered').length);
+        setDeliveredOrders(filteredPedidos.filter((pedido) => pedido.status === 'delivered').length);
         setDrivers(sortedDrivers);
       } catch (nextError) {
         if (cancelled) return;
@@ -248,12 +336,16 @@ export function useAdminDashboard(): AdminDashboardState {
     return () => {
       cancelled = true;
     };
-  }, [refreshTick]);
+  }, [refreshTick, selectedBranchCode]);
 
   return useMemo(
     () => ({
       isLoading,
       error,
+      selectedBranchCode,
+      selectedBranchName: branchOptions.find((branch) => branch.code === selectedBranchCode)?.name || 'Todas las sucursales',
+      branchOptions,
+      setSelectedBranchCode,
       salesTodayTotal,
       salesMonthTotal,
       salesTodayCount,
@@ -265,11 +357,13 @@ export function useAdminDashboard(): AdminDashboardState {
     }),
     [
       cashInDrawerTotal,
+      branchOptions,
       deliveredOrders,
       drivers,
       error,
       isLoading,
       pendingDeliveries,
+      selectedBranchCode,
       salesMonthTotal,
       salesTodayCount,
       salesTodayTotal,

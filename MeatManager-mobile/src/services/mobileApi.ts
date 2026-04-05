@@ -9,6 +9,31 @@ type TableFetchOptions = {
   direction?: 'ASC' | 'DESC';
 };
 
+type LogisticsDriver = {
+  id: number;
+  clientId?: number;
+  branchId?: number | null;
+  firebaseUid?: string | null;
+  email?: string | null;
+  role?: string | null;
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  vehicle?: string | null;
+  status?: string | null;
+  licenses?: unknown[];
+};
+
+type ClientBranch = {
+  id: number;
+  clientId?: number;
+  name?: string | null;
+  internalCode?: string | null;
+  address?: string | null;
+  isBillable?: boolean;
+  status?: string | null;
+};
+
 async function getAuthHeaders() {
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -95,4 +120,26 @@ export async function fetchDriverLocations() {
   }
 
   return Array.isArray(payload.locations) ? payload.locations : [];
+}
+
+export async function fetchLogisticsDrivers(): Promise<LogisticsDriver[]> {
+  const response = await apiFetch('/api/logistics/drivers');
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudieron leer los repartidores habilitados.');
+  }
+
+  return Array.isArray(payload.drivers) ? (payload.drivers as LogisticsDriver[]) : [];
+}
+
+export async function fetchClientBranches(): Promise<ClientBranch[]> {
+  const response = await apiFetch('/api/client/branches');
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudieron leer las sucursales del cliente.');
+  }
+
+  return Array.isArray(payload.branches) ? (payload.branches as ClientBranch[]) : [];
 }

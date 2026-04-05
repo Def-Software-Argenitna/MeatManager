@@ -72,6 +72,7 @@ const clientsControlPool = mysql.createPool({
 
 const CLIENTS_DB_NAME = process.env.CLIENTS_DB_NAME || 'GestionClientes';
 const CLIENTS_TABLE = process.env.CLIENTS_TABLE || 'clients';
+const CLIENT_BRANCHES_TABLE = process.env.CLIENT_BRANCHES_TABLE || 'branches';
 const CLIENT_USERS_TABLE = process.env.CLIENT_USERS_TABLE || 'client_users';
 const CLIENT_LICENSES_TABLE = process.env.CLIENT_LICENSES_TABLE || 'client_licenses';
 const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE || 'client_user_permissions';
@@ -554,6 +555,7 @@ const TABLES_WITH_NUMERIC_ID = [
     'caja_movimientos', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
+const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos']);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -874,10 +876,26 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'pedidos', 'payment_status', '`payment_status` VARCHAR(100) NULL');
             await ensureColumn(conn, 'pedidos', 'paid', '`paid` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'pedidos', 'amount_due', '`amount_due` DECIMAL(12,2) NULL');
+            await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
+            await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
+            await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
             await ensureColumnType(conn, 'prices', 'product_id', '`product_id` VARCHAR(191) NULL', ['varchar']);
+
+            await conn.query(
+                `UPDATE ventas
+                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                 WHERE branch_id IS NULL
+                   AND receipt_code REGEXP '^[0-9]{4}-'`
+            );
+            await conn.query(
+                `UPDATE caja_movimientos
+                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                 WHERE branch_id IS NULL
+                   AND receipt_code REGEXP '^[0-9]{4}-'`
+            );
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
@@ -1315,6 +1333,88 @@ async function listEligibleLogisticsDrivers(clientId) {
     }
 }
 
+async function listClientBranches(clientId) {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const [rows] = await conn.query(
+            `SELECT
+                id,
+                clientId,
+                name,
+                internalCode,
+                address,
+                isBillable,
+                status
+             FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE clientId = ?
+               AND status = 'ACTIVE'
+             ORDER BY id ASC`,
+            [clientId]
+        );
+
+        return rows.map((row) => ({
+            id: row.id,
+            clientId: row.clientId,
+            name: String(row.name || '').trim() || `Sucursal ${row.id}`,
+            internalCode: row.internalCode || null,
+            address: row.address || null,
+            isBillable: row.isBillable === 1 || row.isBillable === true,
+            status: row.status || 'ACTIVE',
+        }));
+    } finally {
+        conn.release();
+    }
+}
+
+async function getTenantBranchCode(pool, tenantId) {
+    const [rows] = await pool.query(
+        'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+        [tenantId, 'branch_code']
+    );
+    return normalizeBranchCodeValue(rows[0]?.value || null);
+}
+
+async function resolveClientBranchId(clientId, { branchId, branchCode, receiptCode } = {}) {
+    const explicitBranchId = Number(branchId);
+    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
+        return explicitBranchId;
+    }
+
+    const candidateCode = normalizeBranchCodeValue(branchCode) || extractBranchCodeFromReceipt(receiptCode);
+    if (!candidateCode) return null;
+
+    const branches = await listClientBranches(clientId);
+    const matchedBranch = branches.find((branch) => (
+        Number(branch.id) === candidateCode
+        || normalizeBranchCodeValue(branch.internalCode) === candidateCode
+    ));
+
+    return matchedBranch ? Number(matchedBranch.id) : null;
+}
+
+async function resolveOperationalBranchId({ pool, tenantId, accessContext, record }) {
+    if (!accessContext?.client?.id) return null;
+
+    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
+    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
+        return explicitBranchId;
+    }
+
+    const branchCodeFromRecord =
+        record?.branch_code
+        ?? record?.branchCode
+        ?? extractBranchCodeFromReceipt(record?.receipt_code);
+
+    const currentBranchCode =
+        normalizeBranchCodeValue(branchCodeFromRecord)
+        || await getTenantBranchCode(pool, tenantId);
+
+    return resolveClientBranchId(accessContext.client.id, {
+        branchCode: currentBranchCode,
+        receiptCode: record?.receipt_code,
+    });
+}
+
 function tenantWhereClause(table, tenantId, prefix = '') {
     if (!isTenantScopedTable(table)) {
         return { sql: '1 = 1', params: [] };
@@ -1637,6 +1737,7 @@ function getSchemaTables() {
             payment_method_id   INT,
             client_id           INT,
             clientId            INT,
+            branch_id           INT,
             payment_breakdown   JSON,
             receipt_number      INT,
             receipt_code        VARCHAR(32),
@@ -1724,6 +1825,7 @@ function getSchemaTables() {
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             customer_id     INT,
+            branch_id       INT,
             customer_name   VARCHAR(150),
             items           JSON,
             total           DECIMAL(12,2),
@@ -1785,6 +1887,7 @@ function getSchemaTables() {
             description     VARCHAR(255),
             date            DATETIME,
             client_id       INT,
+            branch_id       INT,
             payment_method  VARCHAR(100),
             payment_method_id INT,
             authorization_id BIGINT,
@@ -2501,6 +2604,18 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+function normalizeBranchCodeValue(value) {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    if (!digits) return null;
+    const parsed = Number(digits);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function extractBranchCodeFromReceipt(receiptCode) {
+    const match = String(receiptCode || '').trim().match(/^(\d{4})-/);
+    return match ? normalizeBranchCodeValue(match[1]) : null;
+}
+
 // ── RUTA: POST /api/data ───────────────────────────────────────────────────
 // Recibe { table, operation, record, id } y replica la operación en MySQL
 // operations: insert | update | delete | upsert
@@ -2518,16 +2633,30 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         const tableDesc = await getTableDescribe(pool, dbName, table);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
             const validCols = await getTableColumns(pool, dbName, table);
             const out = {};
+            const resolvedBranchId = validCols.includes('branch_id') && BRANCH_SCOPED_TABLES.has(table)
+                ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: rec || {} })
+                : null;
             for (const col of validCols) {
                 if (AUTO_COLS.has(col)) continue;
                 if (excludeId && col === 'id') continue;
                 if (col === TENANT_COLUMN) {
                     out[col] = tenantId;
+                    continue;
+                }
+                if (col === 'branch_id') {
+                    const nextBranchId = Number(rec?.branch_id ?? rec?.branchId ?? resolvedBranchId);
+                    if (Number.isFinite(nextBranchId) && nextBranchId > 0) {
+                        out[col] = nextBranchId;
+                    }
                     continue;
                 }
                 if (rec[col] !== undefined && rec[col] !== null) {
@@ -3356,6 +3485,29 @@ app.get('/api/logistics/drivers', verifyFirebaseToken, async (req, res) => {
         console.error('[LOGISTICS DRIVERS ERROR]', err.message);
         const statusCode = err.statusCode || 500;
         return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los repartidores habilitados' });
+    }
+});
+
+// ── RUTA: GET /api/client/branches ────────────────────────────────────────
+app.get('/api/client/branches', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+
+        const branches = await listClientBranches(accessContext.client.id);
+
+        return res.json({
+            ok: true,
+            count: branches.length,
+            branches,
+        });
+    } catch (err) {
+        console.error('[CLIENT BRANCHES ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudieron leer las sucursales del cliente' });
     }
 });
 

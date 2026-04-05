@@ -28,7 +28,6 @@ const Pedidos = lazy(() => import('./pages/Pedidos'));
 const MenuDigital = lazy(() => import('./pages/MenuDigital'));
 const CustomerPortal = lazy(() => import('./pages/CustomerPortal'));
 const Logistica = lazy(() => import('./pages/Logistica'));
-const DeliveryPortal = lazy(() => import('./pages/DeliveryPortal'));
 const AdminPanel = lazy(() => import('./pages/AdminPanel'));
 const Sucursales = lazy(() => import('./pages/Sucursales'));
 const CierreCaja = lazy(() => import('./pages/CierreCaja'));
@@ -37,7 +36,7 @@ const Manual = lazy(() => import('./pages/Manual'));
 const Security = lazy(() => import('./pages/Security'));
 const ConfiguracionPrecio = lazy(() => import('./pages/ConfiguracionPrecio'));
 
-const PUBLIC_PATHS = ['/catalogo', '/reparto'];
+const PUBLIC_PATHS = ['/catalogo'];
 
 const RouteLoader = () => (
   <div style={{
@@ -108,7 +107,6 @@ function App() {
                 <Route path="pedidos" element={lazyElement(Pedidos)} />
                 <Route path="logistica" element={lazyElement(Logistica)} />
                 <Route path="admin-pablo-control-master" element={lazyElement(AdminPanel)} />
-                <Route path="reparto" element={lazyElement(DeliveryPortal)} />
                 <Route path="menu-digital" element={lazyElement(MenuDigital)} />
                 <Route path="sucursales" element={lazyElement(Sucursales)} />
                 <Route path="catalogo" element={lazyElement(CustomerPortal)} />

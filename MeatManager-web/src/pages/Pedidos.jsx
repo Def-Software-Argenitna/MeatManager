@@ -313,7 +313,7 @@ const Pedidos = () => {
             }
         }
 
-        await db.pedidos.add({
+        await saveTableRecord('pedidos', 'insert', {
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
             customer_name: newPedido.name.trim(),
             items: newPedido.items,
