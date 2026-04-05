@@ -561,6 +561,30 @@ async function ensureColumn(conn, tableName, columnName, definitionSql) {
     );
 }
 
+async function getColumnType(conn, dbName, tableName, columnName) {
+    const [rows] = await conn.query(
+        `SELECT COLUMN_TYPE
+         FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName, columnName]
+    );
+    return String(rows?.[0]?.COLUMN_TYPE || '').toLowerCase();
+}
+
+async function ensureColumnType(conn, tableName, columnName, definitionSql, expectedSnippets = []) {
+    if (!(await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, columnName))) return;
+    const currentType = await getColumnType(conn, OPERATIONAL_DB_NAME, tableName, columnName);
+    const matches = expectedSnippets.every((snippet) => currentType.includes(String(snippet).toLowerCase()));
+    if (matches) return;
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+         MODIFY COLUMN ${definitionSql}`
+    );
+    tableDescCache.delete(`${OPERATIONAL_DB_NAME}.${tableName}`);
+    tableColCache.delete(`${OPERATIONAL_DB_NAME}.${tableName}`);
+}
+
 async function getPrimaryKeyColumns(conn, dbName, tableName) {
     const [rows] = await conn.query(
         `SELECT COLUMN_NAME
@@ -831,6 +855,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
+            await ensureColumnType(conn, 'prices', 'product_id', '`product_id` VARCHAR(191) NULL', ['varchar']);
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
@@ -1821,7 +1846,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
-            product_id      INT,
+            product_id      VARCHAR(191),
             price           DECIMAL(12,2),
             plu             VARCHAR(20),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
