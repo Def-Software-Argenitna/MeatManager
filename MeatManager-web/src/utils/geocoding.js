@@ -1,6 +1,7 @@
 const COUNTRY_SUFFIX = 'Argentina';
 const geocodeInFlight = new Map();
 const suggestInFlight = new Map();
+const GOOGLE_MAPS_API_KEY = String(import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '').trim();
 
 export const normalizeAddressParts = (...parts) =>
     parts
@@ -48,6 +49,39 @@ export const geocodeAddress = async (rawAddress) => {
     }
 
     const request = (async () => {
+        if (GOOGLE_MAPS_API_KEY) {
+            const params = new URLSearchParams({
+                address,
+                key: GOOGLE_MAPS_API_KEY,
+                region: 'ar',
+                language: 'es-AR',
+            });
+
+            const response = await fetch(`https://maps.googleapis.com/maps/api/geocode/json?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`Geocodificacion Google fallida (${response.status})`);
+            }
+
+            const payload = await response.json();
+            if (payload.status !== 'OK' || !Array.isArray(payload.results) || payload.results.length === 0) {
+                return null;
+            }
+
+            const best = payload.results[0];
+            const latitude = parseCoordinate(best.geometry?.location?.lat);
+            const longitude = parseCoordinate(best.geometry?.location?.lng);
+            if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
+
+            return {
+                latitude,
+                longitude,
+                label: best.formatted_address || address,
+                query: address,
+                source: 'google-geocoding',
+                geocoded_at: new Date().toISOString(),
+            };
+        }
+
         const params = new URLSearchParams({
             format: 'jsonv2',
             limit: '1',
@@ -104,6 +138,68 @@ export const searchAddressSuggestions = async (rawAddress) => {
     }
 
     const request = (async () => {
+        if (GOOGLE_MAPS_API_KEY) {
+            const params = new URLSearchParams({
+                input: address,
+                key: GOOGLE_MAPS_API_KEY,
+                language: 'es-AR',
+                components: 'country:ar',
+                types: 'address',
+            });
+
+            const response = await fetch(`https://maps.googleapis.com/maps/api/place/autocomplete/json?${params.toString()}`);
+            if (!response.ok) {
+                throw new Error(`Sugerencias Google fallidas (${response.status})`);
+            }
+
+            const payload = await response.json();
+            if (payload.status !== 'OK' && payload.status !== 'ZERO_RESULTS') {
+                throw new Error(`Sugerencias Google fallidas (${payload.status})`);
+            }
+
+            if (!Array.isArray(payload.predictions) || payload.predictions.length === 0) {
+                return [];
+            }
+
+            const detailedSuggestions = await Promise.all(
+                payload.predictions.slice(0, 5).map(async (prediction) => {
+                    const detailParams = new URLSearchParams({
+                        place_id: prediction.place_id,
+                        key: GOOGLE_MAPS_API_KEY,
+                        language: 'es-AR',
+                        fields: 'formatted_address,geometry,address_component',
+                    });
+
+                    const detailResponse = await fetch(`https://maps.googleapis.com/maps/api/place/details/json?${detailParams.toString()}`);
+                    if (!detailResponse.ok) return null;
+
+                    const detailPayload = await detailResponse.json();
+                    if (detailPayload.status !== 'OK' || !detailPayload.result) return null;
+
+                    const components = detailPayload.result.address_components || [];
+                    const findComponent = (...types) =>
+                        components.find((component) => types.every((type) => component.types.includes(type)))?.long_name || '';
+
+                    const streetName = findComponent('route');
+                    const streetNumber = findComponent('street_number');
+                    const city = findComponent('locality') || findComponent('administrative_area_level_2') || findComponent('sublocality');
+                    const zip_code = findComponent('postal_code');
+
+                    return {
+                        label: detailPayload.result.formatted_address || prediction.description || address,
+                        latitude: parseCoordinate(detailPayload.result.geometry?.location?.lat),
+                        longitude: parseCoordinate(detailPayload.result.geometry?.location?.lng),
+                        city,
+                        zip_code,
+                        street: normalizeAddressParts(streetName, streetNumber),
+                        raw: detailPayload.result,
+                    };
+                })
+            );
+
+            return detailedSuggestions.filter((row) => row && Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+        }
+
         const params = new URLSearchParams({
             format: 'jsonv2',
             limit: '5',
