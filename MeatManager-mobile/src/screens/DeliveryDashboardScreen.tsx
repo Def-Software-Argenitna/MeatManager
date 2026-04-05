@@ -14,13 +14,20 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { OrderCard } from '../components/OrderCard';
 import { useAuthSession } from '../hooks/useAuthSession';
 import { useDeliveryTracking } from '../hooks/useDeliveryTracking';
+import { useDriverOrdersHistory } from '../hooks/useDriverOrdersHistory';
 import { theme } from '../theme';
 import { LoginScreen } from './LoginScreen';
+import { AdminDashboardScreen } from './AdminDashboardScreen';
 
 export function DeliveryDashboardScreen() {
-  const { user, driverName, login, logout, isLoading } = useAuthSession();
+  const { user, profile, appMode, driverName, login, logout, isLoading, sessionError } = useAuthSession();
   const { orders, locationText, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
-    useDeliveryTracking(driverName || null);
+    useDeliveryTracking(appMode === 'driver' ? driverName || null : null);
+  const {
+    deliveredOrders,
+    pendingOrders,
+    error: driverHistoryError,
+  } = useDriverOrdersHistory(appMode === 'driver' ? driverName || null : null);
 
   if (isLoading) {
     return (
@@ -37,6 +44,44 @@ export function DeliveryDashboardScreen() {
           return login(email, password);
         }}
       />
+    );
+  }
+
+  if (sessionError) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.centerCard}>
+          <Text style={styles.centerTitle}>No pudimos validar tu acceso</Text>
+          <Text style={styles.centerText}>{sessionError}</Text>
+          <Pressable style={styles.centerButton} onPress={logout}>
+            <Text style={styles.centerButtonText}>Cerrar sesion</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (appMode === 'admin' && profile) {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <AdminDashboardScreen profile={profile} />
+      </SafeAreaView>
+    );
+  }
+
+  if (appMode !== 'driver') {
+    return (
+      <SafeAreaView style={styles.screen}>
+        <View style={styles.centerCard}>
+          <Text style={styles.centerTitle}>Sin acceso movil habilitado</Text>
+          <Text style={styles.centerText}>
+            Este usuario no tiene permisos o licencias para usar esta app. Revisá el rol y las licencias asignadas en el panel web.
+          </Text>
+          <Pressable style={styles.centerButton} onPress={logout}>
+            <Text style={styles.centerButtonText}>Cerrar sesion</Text>
+          </Pressable>
+        </View>
+      </SafeAreaView>
     );
   }
 
@@ -65,6 +110,14 @@ export function DeliveryDashboardScreen() {
             <View style={styles.metricsRow}>
               <View style={styles.metricCard}>
                 <Text style={styles.metricLabel}>Pendientes</Text>
+                <Text style={styles.metricValue}>{pendingOrders.length}</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Entregados</Text>
+                <Text style={styles.metricValue}>{deliveredOrders.length}</Text>
+              </View>
+              <View style={styles.metricCard}>
+                <Text style={styles.metricLabel}>Activos</Text>
                 <Text style={styles.metricValue}>{orders.length}</Text>
               </View>
               <View style={styles.metricCard}>
@@ -78,26 +131,29 @@ export function DeliveryDashboardScreen() {
               <Text style={styles.locationValue}>{locationText}</Text>
             </View>
 
-            {permissionError ? (
+            {permissionError || driverHistoryError ? (
               <Pressable
                 style={styles.warningCard}
-                onPress={() => Alert.alert('Seguimiento', permissionError)}
+                onPress={() => Alert.alert('Seguimiento', permissionError || driverHistoryError || '')}
               >
                 <Text style={styles.warningTitle}>Atencion con la ubicacion</Text>
-                <Text style={styles.warningText}>{permissionError}</Text>
+                <Text style={styles.warningText}>{permissionError || driverHistoryError}</Text>
               </Pressable>
             ) : null}
 
-            <Text style={styles.sectionTitle}>Entregas asignadas</Text>
+            <Text style={styles.sectionTitle}>Pedidos para entregar</Text>
+            <Text style={styles.sectionSubtitle}>
+              Los pedidos activos se sincronizan en tiempo real. Si el pedido ya informa pago o cobro pendiente, lo vas a ver dentro de la tarjeta.
+            </Text>
           </View>
         }
         renderItem={({ item }) => <OrderCard order={item} />}
         ItemSeparatorComponent={() => <View style={{ height: 14 }} />}
         ListEmptyComponent={
           <View style={styles.emptyCard}>
-            <Text style={styles.emptyTitle}>No hay pedidos pendientes</Text>
+            <Text style={styles.emptyTitle}>No hay pedidos activos</Text>
             <Text style={styles.emptyText}>
-              Cuando asignen un envio en la web, lo vas a ver automaticamente aca.
+              Pendientes: {pendingOrders.length} · Entregados: {deliveredOrders.length}
             </Text>
           </View>
         }
@@ -167,10 +223,11 @@ const styles = StyleSheet.create({
   },
   metricsRow: {
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 12,
   },
   metricCard: {
-    flex: 1,
+    width: '48%',
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.md,
     padding: 16,
@@ -238,6 +295,10 @@ const styles = StyleSheet.create({
     color: theme.colors.text,
     marginTop: 4,
   },
+  sectionSubtitle: {
+    color: theme.colors.muted,
+    lineHeight: 21,
+  },
   emptyCard: {
     backgroundColor: theme.colors.surface,
     borderRadius: theme.radius.lg,
@@ -256,5 +317,37 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     color: theme.colors.muted,
     lineHeight: 22,
+  },
+  centerCard: {
+    margin: 18,
+    marginTop: 40,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    padding: 24,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    gap: 12,
+  },
+  centerTitle: {
+    fontSize: 24,
+    fontWeight: '900',
+    color: theme.colors.text,
+  },
+  centerText: {
+    color: theme.colors.muted,
+    lineHeight: 22,
+  },
+  centerButton: {
+    marginTop: 8,
+    minHeight: 52,
+    borderRadius: theme.radius.md,
+    backgroundColor: theme.colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  centerButtonText: {
+    color: theme.colors.white,
+    fontSize: 16,
+    fontWeight: '800',
   },
 });

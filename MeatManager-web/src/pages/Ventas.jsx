@@ -391,6 +391,20 @@ const Ventas = () => {
         };
     }, []);
 
+    const todayOpeningMovements = useLiveQuery(async () => {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        return db.caja_movimientos
+            .where('date')
+            .between(start, end)
+            .filter((movement) => movement.type === 'apertura')
+            .toArray();
+    }, []);
+
+    const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
+
     // 6. Recent sales (for delete-ticket modal)
     const recentSales = useLiveQuery(async () => {
         return db.ventas.orderBy('date').reverse().limit(150).toArray();
@@ -1017,6 +1031,10 @@ const Ventas = () => {
             ? { id: 'current_account', name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0 }
             : null
     ), [selectedClientId, selectedClientHasCurrentAccount]);
+    const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
+    const availableSplitMethods = React.useMemo(() => (
+        currentAccountMethod ? [...(dbPaymentMethods || []), currentAccountMethod] : (dbPaymentMethods || [])
+    ), [currentAccountMethod, dbPaymentMethods]);
 
     const getMethodById = React.useCallback((id) => {
         if (id === 'current_account') return currentAccountMethod;
@@ -1110,6 +1128,11 @@ const Ventas = () => {
     };
 
     const openPaymentModal = (preferredMethod = null) => {
+        if (!hasCashOpeningToday) {
+            showToast('⚠️ Debés registrar la apertura de caja antes de comenzar a vender.', 'warning');
+            navigate('/caja');
+            return;
+        }
         const defaultMethod = preferredMethod || dbPaymentMethods?.find(m => m.type === 'cash') || dbPaymentMethods?.[0];
         setSelectedPaymentMethod(defaultMethod?.id || null);
         setIsSplitPayment(false);
@@ -1774,6 +1797,21 @@ const Ventas = () => {
                     >
                         {isProcessing ? 'PROCESANDO...' : 'COBRAR TICKET'}
                     </button>
+                    {!hasCashOpeningToday && (
+                        <div style={{
+                            marginTop: '0.6rem',
+                            padding: '0.75rem 0.85rem',
+                            borderRadius: '12px',
+                            background: 'rgba(245, 158, 11, 0.08)',
+                            border: '1px solid rgba(245, 158, 11, 0.22)',
+                            color: '#f59e0b',
+                            fontSize: '0.75rem',
+                            lineHeight: 1.45,
+                            textAlign: 'center'
+                        }}>
+                            La caja todavía no fue abierta hoy. Registrá la apertura en <strong>Caja</strong> para habilitar ventas.
+                        </div>
+                    )}
                     
                     <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
                         <button
@@ -2034,30 +2072,35 @@ const Ventas = () => {
                                             )}
                                         </button>
                                     ))}
-                                    {currentAccountMethod && (
-                                        <button
-                                            onClick={() => {
-                                                setSelectedPaymentMethod(currentAccountMethod.id);
-                                                setCashReceived('');
-                                            }}
-                                            style={{
-                                                padding: '0.75rem',
-                                                borderRadius: 'var(--radius-md)',
-                                                border: selectedPaymentMethod === currentAccountMethod.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                                background: selectedPaymentMethod === currentAccountMethod.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
-                                                color: 'var(--color-text-main)',
-                                                cursor: 'pointer',
-                                                display: 'flex',
-                                                flexDirection: 'column',
-                                                alignItems: 'center',
-                                                gap: '0.2rem',
-                                                transition: 'all 0.2s'
-                                            }}
-                                        >
-                                            <div style={{ fontSize: '1.8rem', lineHeight: 1 }}>📋</div>
-                                            <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>Cuenta Corriente</div>
-                                        </button>
-                                    )}
+                                    <button
+                                        onClick={() => {
+                                            if (!currentAccountAvailable || !currentAccountMethod) return;
+                                            setSelectedPaymentMethod(currentAccountMethod.id);
+                                            setCashReceived('');
+                                        }}
+                                        disabled={!currentAccountAvailable}
+                                        title={currentAccountAvailable ? 'Registrar venta en cuenta corriente' : 'Seleccioná un cliente con cuenta corriente habilitada'}
+                                        style={{
+                                            padding: '0.75rem',
+                                            borderRadius: 'var(--radius-md)',
+                                            border: selectedPaymentMethod === currentAccountMethod?.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                            background: selectedPaymentMethod === currentAccountMethod?.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
+                                            color: currentAccountAvailable ? 'var(--color-text-main)' : 'var(--color-text-muted)',
+                                            cursor: currentAccountAvailable ? 'pointer' : 'not-allowed',
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            alignItems: 'center',
+                                            gap: '0.2rem',
+                                            transition: 'all 0.2s',
+                                            opacity: currentAccountAvailable ? 1 : 0.55
+                                        }}
+                                    >
+                                        <div style={{ fontSize: '1.8rem', lineHeight: 1 }}>📋</div>
+                                        <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>Cuenta Corriente</div>
+                                        <div style={{ fontSize: '0.68rem', textAlign: 'center', color: currentAccountAvailable ? '#f59e0b' : 'var(--color-text-muted)' }}>
+                                            {currentAccountAvailable ? 'Cliente habilitado' : 'Elegí un cliente'}
+                                        </div>
+                                    </button>
                                 </div>
                             ) : (
                                 <div style={{ display: 'grid', gap: '0.75rem' }}>
@@ -2071,10 +2114,13 @@ const Ventas = () => {
                                                         <span>Medio</span>
                                                         <select
                                                             value={row.methodId || ''}
-                                                            onChange={(e) => updateSplitPayment(index, 'methodId', Number(e.target.value))}
+                                                            onChange={(e) => {
+                                                                const rawValue = e.target.value;
+                                                                updateSplitPayment(index, 'methodId', rawValue === 'current_account' ? rawValue : Number(rawValue));
+                                                            }}
                                                             style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
                                                         >
-                                                            {dbPaymentMethods?.map(m => (
+                                                            {availableSplitMethods?.map(m => (
                                                                 <option key={m.id} value={m.id}>{m.name}</option>
                                                             ))}
                                                         </select>

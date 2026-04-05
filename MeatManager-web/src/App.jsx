@@ -93,6 +93,7 @@ function App() {
                 <Route index element={lazyElement(Dashboard)} />
                 <Route path="ventas" element={lazyElement(Ventas)} />
                 <Route path="ventas/historial" element={lazyElement(HistorialVentas)} />
+                <Route path="caja" element={lazyElement(CierreCaja)} />
                 <Route path="cierre-caja" element={lazyElement(CierreCaja)} />
                 <Route path="compras" element={lazyElement(Compras)} />
                 <Route path="stock" element={lazyElement(Stock)} />

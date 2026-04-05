@@ -22,20 +22,37 @@
     margin-bottom: 2rem;
 }
 
-.login-logo {
+.login-brand {
     display: inline-flex;
-    padding: 1rem;
-    background-color: var(--color-primary-light);
-    color: var(--color-primary);
-    border-radius: 50%;
+    align-items: center;
+    justify-content: center;
+    gap: 0.9rem;
     margin-bottom: 1rem;
 }
 
+.login-logo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 58px;
+    height: 58px;
+    background: linear-gradient(180deg, rgba(255, 126, 0, 0.18) 0%, rgba(255, 126, 0, 0.08) 100%);
+    color: var(--color-primary);
+    border-radius: 18px;
+    border: 1px solid rgba(255, 126, 0, 0.2);
+    box-shadow: 0 12px 24px rgba(255, 126, 0, 0.14);
+}
+
 .login-title {
-    font-size: 1.5rem;
-    font-weight: 700;
-    margin-bottom: 0.5rem;
+    font-size: 1.9rem;
+    font-weight: 950;
+    margin: 0;
     color: var(--color-text-main);
+    letter-spacing: -0.03em;
+    text-transform: uppercase;
+    background: linear-gradient(to bottom, #fff, #9a9a9a);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
 }
 
 .login-subtitle {

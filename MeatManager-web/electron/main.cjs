@@ -25,6 +25,67 @@ ipcMain.handle('nuke-indexeddb', async () => {
     }
 });
 
+ipcMain.handle('choose-directory', async () => {
+    const result = await dialog.showOpenDialog({
+        properties: ['openDirectory', 'createDirectory'],
+        title: 'Elegí la carpeta para guardar cierres de caja',
+    });
+
+    if (result.canceled || !result.filePaths?.[0]) {
+        return { ok: false, canceled: true };
+    }
+
+    return {
+        ok: true,
+        path: result.filePaths[0],
+        name: path.basename(result.filePaths[0]),
+    };
+});
+
+ipcMain.handle('open-path', async (_event, targetPath) => {
+    if (!targetPath) return { ok: false, error: 'Ruta no informada' };
+    const error = await shell.openPath(targetPath);
+    return error ? { ok: false, error } : { ok: true };
+});
+
+ipcMain.handle('save-html-pdf', async (_event, payload = {}) => {
+    const { html, folderPath, fileName } = payload;
+
+    if (!html || !folderPath || !fileName) {
+        return { ok: false, error: 'Faltan datos para generar el PDF' };
+    }
+
+    try {
+        const targetFile = path.join(folderPath, fileName);
+        const pdfWindow = new BrowserWindow({
+            show: false,
+            width: 900,
+            height: 1200,
+            webPreferences: {
+                sandbox: true,
+            },
+        });
+
+        await pdfWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+        const pdfBuffer = await pdfWindow.webContents.printToPDF({
+            printBackground: true,
+            pageSize: 'A4',
+            margins: {
+                top: 0.5,
+                bottom: 0.5,
+                left: 0.4,
+                right: 0.4,
+            },
+        });
+        fs.writeFileSync(targetFile, pdfBuffer);
+        pdfWindow.close();
+
+        return { ok: true, path: targetFile };
+    } catch (error) {
+        return { ok: false, error: error.message };
+    }
+});
+
 // ── Fijar userData ANTES de todo: mismo path para portable e instalado ─────
 const fixedUserData = path.join(app.getPath('appData'), 'MeatManager PRO');
 app.setPath('userData', fixedUserData);

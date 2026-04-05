@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
+import { buildClientAddress, geocodeAddress } from '../utils/geocoding';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -298,6 +299,14 @@ const Clientes = () => {
         const balance = newClient.hasCurrentAccount && newClient.hasInitialBalance
             ? (parseFloat(newClient.balance) || 0)
             : 0;
+        let geocoded = null;
+        if (address) {
+            try {
+                geocoded = await geocodeAddress(buildClientAddress(newClient));
+            } catch (error) {
+                console.warn('[CLIENTES] No se pudo geocodificar la direccion del cliente', error?.message || error);
+            }
+        }
 
         await saveTableRecord('clients', 'insert', {
             name: fullName,
@@ -315,6 +324,9 @@ const Clientes = () => {
             street_number: cleanValue(newClient.street_number),
             zip_code: cleanValue(newClient.zip_code),
             city: cleanValue(newClient.city),
+            latitude: geocoded?.latitude ?? null,
+            longitude: geocoded?.longitude ?? null,
+            geocoded_at: geocoded?.geocoded_at ?? null,
             has_current_account: newClient.hasCurrentAccount,
             has_initial_balance: newClient.hasCurrentAccount && newClient.hasInitialBalance,
             balance,

@@ -7,6 +7,8 @@ import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { desktopApi } from '../utils/desktopApi';
 
+const IVA_OPTIONS = [10.5, 21];
+
 const ProductosCompra = () => {
     const navigate = useNavigate();
     const { hasModule } = useLicense();
@@ -28,6 +30,7 @@ const ProductosCompra = () => {
         unit: 'kg', // default unit
         type: 'directo', // directo or despostada
         species: 'vaca', // default species for traceability
+        default_iva_rate: 10.5,
         sale_category: 'vaca',
         sale_price: '',
         sale_plu: ''
@@ -74,7 +77,8 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
-                species: formData.type === 'despostada' ? formData.species : null
+                species: formData.type === 'despostada' ? formData.species : null,
+                default_iva_rate: Number(formData.default_iva_rate) || 10.5
             });
             setEditingItem(null);
         } else {
@@ -84,7 +88,8 @@ const ProductosCompra = () => {
                 unit: formData.unit,
                 type: formData.type,
                 species: formData.type === 'despostada' ? formData.species : 'vaca',
-                last_price: 0
+                last_price: 0,
+                default_iva_rate: Number(formData.default_iva_rate) || 10.5
             });
         }
 
@@ -124,7 +129,7 @@ const ProductosCompra = () => {
         }
 
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
@@ -143,6 +148,7 @@ const ProductosCompra = () => {
             unit: item.unit || 'kg',
             type: item.type || 'directo',
             species: item.species || 'vaca',
+            default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
             sale_price: priceRecord?.price?.toString() || '',
             sale_plu: priceRecord?.plu || ''
@@ -152,7 +158,7 @@ const ProductosCompra = () => {
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
         setIsModalOpen(true);
     };
 
@@ -230,6 +236,9 @@ const ProductosCompra = () => {
                                 <span style={{ background: 'var(--color-bg-main)', padding: '0 0.3rem', borderRadius: '4px' }}>
                                     {item.unit}
                                 </span>
+                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                                    IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
+                                </span>
                                 {item.type === 'despostada' && (
                                     <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)' }}>
                                         PARA DESPOSTAR
@@ -306,6 +315,18 @@ const ProductosCompra = () => {
                                         <option value="l">Litros (l)</option>
                                         <option value="caja">Caja</option>
                                         <option value="bulto">Bulto</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>IVA sugerido de compra</label>
+                                    <select
+                                        className="neo-input"
+                                        value={formData.default_iva_rate}
+                                        onChange={e => setFormData({ ...formData, default_iva_rate: parseFloat(e.target.value) })}
+                                    >
+                                        {IVA_OPTIONS.map((rate) => (
+                                            <option key={rate} value={rate}>{rate}%</option>
+                                        ))}
                                     </select>
                                 </div>
                                 <div>

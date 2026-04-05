@@ -3,31 +3,60 @@ import { buildApiUrl } from './runtimeConfig';
 
 export const hasTenantSession = () => !!sessionStorage.getItem('mm_tenant');
 export const getStoredAuthToken = () => sessionStorage.getItem('mm_auth_token');
+const setStoredAuthToken = (token) => {
+    if (token) {
+        sessionStorage.setItem('mm_auth_token', token);
+        return;
+    }
+    sessionStorage.removeItem('mm_auth_token');
+};
 
 export const getAuthToken = async () => {
     if (!hasTenantSession()) return null;
-    const storedToken = getStoredAuthToken();
-    if (storedToken) return storedToken;
     const user = auth.currentUser;
-    if (!user) return null;
-    return user.getIdToken();
+    if (user) {
+        const token = await user.getIdToken();
+        setStoredAuthToken(token);
+        return token;
+    }
+    return getStoredAuthToken();
 };
 
 export const apiFetch = async (path, options = {}) => {
-    const token = await getAuthToken();
-    const headers = {
-        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-        ...(options.headers || {}),
+    const buildHeaders = async (forcedRefresh = false) => {
+        let token = null;
+        if (hasTenantSession()) {
+            if (auth.currentUser) {
+                token = await auth.currentUser.getIdToken(forcedRefresh);
+                setStoredAuthToken(token);
+            } else if (!forcedRefresh) {
+                token = getStoredAuthToken();
+            }
+        }
+
+        const headers = {
+            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(options.headers || {}),
+        };
+
+        if (token) {
+            headers.Authorization = `Bearer ${token}`;
+        }
+
+        return headers;
     };
 
-    if (token) {
-        headers.Authorization = `Bearer ${token}`;
-    }
-
-    const response = await fetch(buildApiUrl(path), {
+    let response = await fetch(buildApiUrl(path), {
         ...options,
-        headers,
+        headers: await buildHeaders(false),
     });
+
+    if (response.status === 401 && auth.currentUser) {
+        response = await fetch(buildApiUrl(path), {
+            ...options,
+            headers: await buildHeaders(true),
+        });
+    }
 
     return response;
 };
@@ -180,6 +209,34 @@ export const getNextRemoteReceiptData = async (counterKey, branchKey = 'branch_c
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'No se pudo obtener el próximo comprobante');
+    }
+
+    return res.json();
+};
+
+export const requestCashWithdrawalAuthorization = async (payload) => {
+    const res = await apiFetch('/api/cash/withdrawals/request-authorization', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo enviar el codigo de autorizacion');
+    }
+
+    return res.json();
+};
+
+export const verifyCashWithdrawalAuthorization = async (payload) => {
+    const res = await apiFetch('/api/cash/withdrawals/verify-authorization', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo validar el codigo de autorizacion');
     }
 
     return res.json();

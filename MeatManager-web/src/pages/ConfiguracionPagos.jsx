@@ -7,13 +7,14 @@ import './ConfiguracionPagos.css';
 
 // Initialize payment methods once when module loads
 initializePaymentMethods();
-const ALLOWED_PAYMENT_METHODS = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
+const ALLOWED_PAYMENT_METHODS = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia', 'Cuenta Corriente'];
 const DEFAULT_PAYMENT_METHODS = [
     { name: 'Posnet', type: 'card', percentage: 0, enabled: true, icon: '💳', bank: 'posnet' },
     { name: 'Mercado Pago', type: 'wallet', percentage: 0, enabled: true, icon: '💙' },
     { name: 'Cuenta DNI', type: 'wallet', percentage: 0, enabled: true, icon: '🆔' },
     { name: 'Efectivo', type: 'cash', percentage: 0, enabled: true, icon: '💵' },
     { name: 'Transferencia', type: 'transfer', percentage: 0, enabled: true, icon: '🏦' },
+    { name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0, enabled: true, icon: '📋' },
 ];
 
 const ConfiguracionPagos = () => {
@@ -79,6 +80,7 @@ const ConfiguracionPagos = () => {
         credit: { name: 'Tarjetas de Crédito', icon: '💳', color: '#ef4444' },
         wallet: { name: 'Billeteras Virtuales', icon: '📱', color: '#8b5cf6' },
         transfer: { name: 'Transferencias', icon: '🏦', color: '#06b6d4' },
+        cuenta_corriente: { name: 'Cuenta Corriente', icon: '📋', color: '#f59e0b' },
         crypto: { name: 'Criptomonedas', icon: '₿', color: '#f59e0b' },
     };
 

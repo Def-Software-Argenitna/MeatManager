@@ -26,3 +26,28 @@ Ejemplos:
 5. Ajustar sólo variables del server y del proxy.
 
 Con esta configuración no hace falta recompilar por cada cliente si el dominio y el proxy ya están bien armados.
+
+## Redis para logística
+
+Se dejó una base de despliegue en:
+
+- [deploy/docker-compose.redis.yml](./deploy/docker-compose.redis.yml)
+- [deploy/redis/users.acl.example](./deploy/redis/users.acl.example)
+
+Uso recomendado:
+
+1. Copiar `deploy/redis/users.acl.example` a `deploy/redis/users.acl`
+2. Cambiar la clave del usuario `root`
+3. Ajustar el `healthcheck` del compose con esa misma clave
+4. Levantar con:
+
+```bash
+docker compose -f deploy/docker-compose.redis.yml up -d
+```
+
+Este Redis queda con:
+
+- persistencia AOF
+- reinicio automático
+- usuario `default` desactivado
+- usuario `root` con acceso total

@@ -50,4 +50,16 @@ export const desktopApi = {
         if (!window.electronAPI?.qendraUpdatePrecio) throw new Error('Electron API no disponible');
         return window.electronAPI.qendraUpdatePrecio(plu, precio);
     },
+    async chooseDirectory() {
+        if (!window.electronAPI?.chooseDirectory) throw new Error('Electron API no disponible');
+        return window.electronAPI.chooseDirectory();
+    },
+    async saveHtmlPdf(payload) {
+        if (!window.electronAPI?.saveHtmlPdf) throw new Error('Electron API no disponible');
+        return window.electronAPI.saveHtmlPdf(payload);
+    },
+    async openPath(targetPath) {
+        if (!window.electronAPI?.openPath) throw new Error('Electron API no disponible');
+        return window.electronAPI.openPath(targetPath);
+    },
 };

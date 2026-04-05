@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { bootstrapTenantData } from '../utils/bootstrapTenantData';
 
@@ -26,6 +26,7 @@ const mapFirebaseUserToTenant = (user) => ({
 export const TenantProvider = ({ children }) => {
     const [tenant, setTenant] = useState(restoreTenant);
     const [loading, setLoading] = useState(true);
+    const [authToken, setAuthToken] = useState(() => sessionStorage.getItem(TOKEN_KEY) || '');
 
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -37,16 +38,45 @@ export const TenantProvider = ({ children }) => {
                 return;
             }
 
-            const nextTenant = mapFirebaseUserToTenant(user);
-            setTenant(nextTenant);
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
-
             try {
+                const token = await user.getIdToken();
+                if (token) {
+                    sessionStorage.setItem(TOKEN_KEY, token);
+                    setAuthToken(token);
+                }
+                const nextTenant = mapFirebaseUserToTenant(user);
+                setTenant(nextTenant);
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
                 await bootstrapTenantData();
             } catch (error) {
                 console.error('[TENANT BOOTSTRAP ERROR]', error);
+                const nextTenant = mapFirebaseUserToTenant(user);
+                setTenant(nextTenant);
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
             } finally {
                 setLoading(false);
+            }
+        });
+
+        return unsubscribe;
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onIdTokenChanged(auth, async (user) => {
+            if (!user) {
+                sessionStorage.removeItem(TOKEN_KEY);
+                setAuthToken('');
+                return;
+            }
+
+            try {
+                const token = await user.getIdToken();
+                if (token) {
+                    sessionStorage.setItem(TOKEN_KEY, token);
+                    setAuthToken(token);
+                }
+            } catch (error) {
+                console.error('[AUTH TOKEN REFRESH ERROR]', error);
             }
         });
 
@@ -82,13 +112,22 @@ export const TenantProvider = ({ children }) => {
             await signOut(auth);
         } finally {
             setTenant(null);
+            setAuthToken('');
             sessionStorage.removeItem(SESSION_KEY);
             sessionStorage.removeItem(TOKEN_KEY);
         }
     };
 
+    const value = useMemo(() => ({
+        tenant,
+        login,
+        logout,
+        loading,
+        authToken,
+    }), [tenant, loading, authToken]);
+
     return (
-        <TenantContext.Provider value={{ tenant, login, logout, loading }}>
+        <TenantContext.Provider value={value}>
             {children}
         </TenantContext.Provider>
     );

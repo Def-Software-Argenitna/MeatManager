@@ -7,10 +7,21 @@ import {
 } from 'firebase/auth';
 
 import { auth } from '../config/firebase';
+import { fetchCurrentMobileProfile } from '../services/mobileApi';
+import type { MobileAccessProfile, MobileAppMode, MobileLicense } from '../types/session';
 
 type LoginResult = {
   ok: boolean;
   error?: string;
+};
+
+const FEATURE_ALIASES: Record<string, string> = {
+  logistics: 'logistica',
+  logistica: 'logistica',
+  delivery: 'logistica',
+  deliveries: 'logistica',
+  envios: 'logistica',
+  shipping: 'logistica',
 };
 
 const mapFirebaseError = (code?: string) => {
@@ -34,26 +45,96 @@ const mapFirebaseError = (code?: string) => {
   return 'No se pudo iniciar sesion';
 };
 
-const getDriverNameFromUser = (user: User | null) => {
-  if (!user) return null;
+const normalizeToken = (value: unknown) => String(value || '').trim().toLowerCase();
 
-  const displayName = String(user.displayName || '').trim();
+const extractFeatureTokens = (value: MobileLicense['featureFlags']): string[] => {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.flatMap(extractFeatureTokens);
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return [];
+    try {
+      return extractFeatureTokens(JSON.parse(trimmed));
+    } catch {
+      return trimmed.includes(',') ? trimmed.split(',').flatMap(extractFeatureTokens) : [trimmed];
+    }
+  }
+  if (typeof value === 'object') {
+    return Object.entries(value)
+      .filter(([, enabled]) => Boolean(enabled))
+      .map(([key]) => key);
+  }
+  return [];
+};
+
+const hasLogisticsAccess = (profile: MobileAccessProfile | null) => {
+  if (!profile) return false;
+  if (profile.role === 'admin') return true;
+  if (Array.isArray(profile.perms) && profile.perms.includes('/logistica')) return true;
+
+  return (Array.isArray(profile.licenses) ? profile.licenses : []).some((license) => {
+    const tokens = [
+      normalizeToken(license.internalCode),
+      normalizeToken(license.commercialName),
+      normalizeToken(license.category),
+      ...extractFeatureTokens(license.featureFlags).map(normalizeToken),
+    ].filter(Boolean);
+
+    return tokens.some((token) => FEATURE_ALIASES[token] === 'logistica' || token === 'logistica');
+  });
+};
+
+const getDriverName = (user: User | null, profile: MobileAccessProfile | null) => {
+  const profileName = String(profile?.username || '').trim();
+  if (profileName) return profileName;
+
+  const displayName = String(user?.displayName || '').trim();
   if (displayName) return displayName;
 
-  const email = String(user.email || '').trim().toLowerCase();
+  const email = String(user?.email || '').trim().toLowerCase();
   if (!email) return null;
 
   return email.split('@')[0];
 };
 
+const getAppMode = (profile: MobileAccessProfile | null): MobileAppMode => {
+  if (!profile) return 'restricted';
+  if (profile.role === 'admin') return 'admin';
+  if (hasLogisticsAccess(profile)) return 'driver';
+  return 'restricted';
+};
+
 export function useAuthSession() {
   const [user, setUser] = useState<User | null>(auth.currentUser);
+  const [profile, setProfile] = useState<MobileAccessProfile | null>(null);
+  const [sessionError, setSessionError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (nextUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (nextUser) => {
       setUser(nextUser);
-      setIsLoading(false);
+
+      if (!nextUser) {
+        setProfile(null);
+        setSessionError(null);
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setSessionError(null);
+
+      try {
+        const nextProfile = await fetchCurrentMobileProfile();
+        setProfile(nextProfile);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'No se pudo validar el acceso del usuario.';
+        setProfile(null);
+        setSessionError(message);
+      } finally {
+        setIsLoading(false);
+      }
     });
 
     return unsubscribe;
@@ -62,8 +143,11 @@ export function useAuthSession() {
   return useMemo(
     () => ({
       user,
+      profile,
+      sessionError,
       isLoading,
-      driverName: getDriverNameFromUser(user),
+      appMode: getAppMode(profile),
+      driverName: getDriverName(user, profile),
       login: async (email: string, password: string): Promise<LoginResult> => {
         try {
           await signInWithEmailAndPassword(auth, email.trim(), password);
@@ -77,6 +161,6 @@ export function useAuthSession() {
         await signOut(auth);
       },
     }),
-    [isLoading, user],
+    [isLoading, profile, sessionError, user],
   );
 }

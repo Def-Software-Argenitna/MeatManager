@@ -5,7 +5,6 @@ import {
   Banknote,
   ShoppingCart,
   PackageSearch,
-  Database,
   Utensils,
   UtensilsCrossed,
   Grid,
@@ -102,7 +101,7 @@ const Sidebar = ({ isCollapsed }) => {
   const operationItems = [
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
     { title: 'Ventas', path: '/ventas', icon: Banknote },
-    { title: 'Cierre de Caja', path: '/cierre-caja', icon: Calculator },
+    { title: 'Caja', path: '/caja', icon: Calculator },
     { title: 'Compras', path: '/compras', icon: ShoppingCart },
     { title: 'Stock', path: '/stock', icon: PackageSearch },
   ];
@@ -128,7 +127,6 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
     { title: 'Licencia', path: '/config/licencia', icon: ShieldCheck },
-    { title: 'Mantenimiento', path: '/config/mantenimiento', icon: Database },
     { title: 'Usuarios / Seguridad', path: '/config/seguridad', icon: Lock },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
@@ -197,7 +195,7 @@ const Sidebar = ({ isCollapsed }) => {
     if (!hasVisibleItems) return null;
 
     return (
-      <div className="nav-group nested">
+      <div className="nav-group">
         <button
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
           onClick={() => !isCollapsed && setDespostadaOpen(!isDespostadaOpen)}
@@ -296,14 +294,20 @@ const Sidebar = ({ isCollapsed }) => {
           </div>
           {!isCollapsed && (
             <div className="user-info">
-              <span className="user-name" style={{ fontSize: '0.85rem', fontWeight: '800', color: '#fff' }}>{displayName}</span>
+              <span
+                className="user-name"
+                title={displayName}
+                style={{ fontSize: '0.85rem', fontWeight: '800', color: '#fff' }}
+              >
+                {displayName}
+              </span>
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {currentUser?.role === 'admin' ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
             </div>
           )}
           <button
-            style={{ marginLeft: isCollapsed ? '0' : 'auto', padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
+            style={{ marginLeft: isCollapsed ? '0' : 'auto', flexShrink: 0, padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
             onClick={handleLogout}
             title="Cerrar Sesion"
           >
@@ -312,7 +316,7 @@ const Sidebar = ({ isCollapsed }) => {
         </div>
         {!isCollapsed && (
           <div style={{ marginTop: '0.75rem', textAlign: 'center', opacity: 0.3, fontSize: '0.55rem', letterSpacing: '0.1em', fontWeight: '700' }}>
-            © 2026 MEATMANAGER · TODOS LOS DERECHOS RESERVADOS
+            © 2026 MEATMANAGER · TODOS LOS DERECHOS RESERVADOS · DEF-SOFTWARE
           </div>
         )}
       </div>
