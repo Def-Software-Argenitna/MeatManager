@@ -44,11 +44,13 @@ export function subscribeToAssignedOrders(
   );
 }
 
-export async function updateDriverLocation(location: DriverLocation & {
-  accuracy?: number | null;
-  speed?: number | null;
-  heading?: number | null;
-}) {
+export async function updateDriverLocation(
+  location: DriverLocation & {
+    accuracy?: number | null;
+    speed?: number | null;
+    heading?: number | null;
+  },
+) {
   const currentUser = auth.currentUser;
   if (!currentUser) {
     throw new Error('No hay una sesion autenticada para reportar ubicacion.');
