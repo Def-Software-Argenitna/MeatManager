@@ -4,6 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
 import { db } from '../db';
 import { BRAND_CONFIG } from '../brandConfig';
+import { fetchTable } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import './Pedidos.css';
 
@@ -61,6 +62,7 @@ const Pedidos = () => {
     const [addressSuggestions, setAddressSuggestions] = useState([]);
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+    const [clients, setClients] = useState([]);
 
     const pedidos = useLiveQuery(async () => {
         const rows = await db.pedidos?.toArray();
@@ -73,7 +75,28 @@ const Pedidos = () => {
     }, []);
     const stockRows = useLiveQuery(() => db.stock?.toArray(), []);
     const prices = useLiveQuery(() => db.prices?.toArray(), []);
-    const clients = useLiveQuery(() => db.clients?.toArray(), []);
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadClients = async () => {
+            try {
+                const rows = await fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' });
+                if (!cancelled) {
+                    setClients(Array.isArray(rows) ? rows : []);
+                }
+            } catch (error) {
+                console.error('[PEDIDOS] No se pudieron cargar clientes desde la API', error);
+                if (!cancelled) {
+                    setClients([]);
+                }
+            }
+        };
+
+        loadClients();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const clientOptions = useMemo(() => (
         (clients || []).map((client) => ({
