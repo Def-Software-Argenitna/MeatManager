@@ -1,4 +1,11 @@
-export type DeliveryOrderStatus = 'pending' | 'ready' | 'delivered' | 'cancelled';
+export type DeliveryOrderStatus =
+  | 'pending'
+  | 'assigned'
+  | 'on_route'
+  | 'arrived'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled';
 
 export type DeliveryOrder = {
   cloudId: string;

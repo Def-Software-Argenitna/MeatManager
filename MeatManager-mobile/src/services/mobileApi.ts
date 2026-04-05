@@ -33,15 +33,39 @@ async function apiFetch(path: string, options: RequestInit = {}) {
   });
 }
 
+const normalizeMobileProfile = (profile: any): MobileAccessProfile => ({
+  id: profile?.id ?? profile?.firebaseUid ?? profile?.email ?? 'unknown',
+  uid: profile?.uid ?? profile?.firebaseUid ?? null,
+  firebaseUid: profile?.firebaseUid ?? profile?.uid ?? null,
+  email: profile?.email ?? null,
+  username: profile?.username || profile?.name || profile?.email || 'Usuario',
+  role: profile?.role === 'admin' ? 'admin' : 'employee',
+  active: Number(profile?.active ?? 1),
+  perms: Array.isArray(profile?.perms) ? profile.perms : [],
+  clientId: profile?.clientId,
+  branchId: profile?.branchId ?? null,
+  clientStatus: profile?.clientStatus,
+  logisticsEnabled: Boolean(profile?.logisticsEnabled),
+  tenantHasDeliveryLicense: Boolean(profile?.tenantHasDeliveryLicense),
+  licenses: Array.isArray(profile?.licenses) ? profile.licenses : [],
+});
+
 export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> {
+  const deliveryResponse = await apiFetch('/api/delivery/me');
+  const deliveryPayload = await deliveryResponse.json().catch(() => ({}));
+
+  if (deliveryResponse.ok && deliveryPayload?.profile) {
+    return normalizeMobileProfile(deliveryPayload.profile);
+  }
+
   const response = await apiFetch('/api/firebase-users/me');
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(payload.error || 'No se pudo leer el perfil actual.');
+    throw new Error(deliveryPayload.error || payload.error || 'No se pudo leer el perfil actual.');
   }
 
-  return payload.user as MobileAccessProfile;
+  return normalizeMobileProfile(payload.user);
 }
 
 export async function fetchTableRows<T>(table: string, options: TableFetchOptions = {}): Promise<T[]> {

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
 import {
@@ -9,25 +9,21 @@ import {
     MapPin,
     ChevronRight,
     Search,
-    Filter,
     Printer,
     Navigation2,
     Share2,
-    UserPlus,
     Users,
-    Trash2,
     X,
-    AlertTriangle,
-    ShieldAlert,
-    CalendarDays,
-    AlertCircle
+    AlertCircle,
+    Mail,
+    Wifi,
+    WifiOff
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { fdb } from '../firebase';
-import { collection, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { useLicense } from '../context/LicenseContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
+import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -88,49 +84,126 @@ const Logistica = () => {
     const [selectedPedido, setSelectedPedido] = useState(null);
     const [mapCenter, setMapCenter] = useState([-34.6037, -58.3816]); // Buenos Aires default
     const [mapZoom, setMapZoom] = useState(13);
-    const [driversLocations, setDriversLocations] = useState({});
+    const [driversLocations, setDriversLocations] = useState([]);
     const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
-    const [newDriver, setNewDriver] = useState({
-        name: '',
-        vehicle: '',
-        plate: '',
-        phone: '',
-        vtv_expiry: '',
-        license_expiry: '',
-        insurance_expiry: ''
-    });
+    const [registeredDrivers, setRegisteredDrivers] = useState([]);
+    const [driversError, setDriversError] = useState('');
 
     const pedidos = useLiveQuery(async () => {
         const rows = await db.pedidos?.toArray();
         return (rows || []).filter((pedido) => pedido.delivery_type === 'delivery');
     });
 
-    const registeredDrivers = useLiveQuery(() => db.repartidores?.toArray());
     const clients = useLiveQuery(() => db.clients?.toArray());
-    const settings = useLiveQuery(() => db.settings.toArray());
     const hasLogisticsModule = hasModule('logistica');
-
+    const driversById = useMemo(() => {
+        const map = new Map();
+        registeredDrivers.forEach((driver) => map.set(String(driver.id), driver));
+        return map;
+    }, [registeredDrivers]);
+    const driversByIdentity = useMemo(() => {
+        const map = new Map();
+        registeredDrivers.forEach((driver) => {
+            const keys = [
+                String(driver.firebaseUid || '').trim(),
+                String(driver.email || '').trim().toLowerCase(),
+                String(driver.name || '').trim().toLowerCase(),
+            ].filter(Boolean);
+            keys.forEach((key) => map.set(key, driver));
+        });
+        return map;
+    }, [registeredDrivers]);
 
     useEffect(() => {
-        if (settings) {
-            const locations = {};
-            settings.forEach(s => {
-                if (s.key.startsWith('location_')) {
-                    locations[s.key.replace('location_', '')] = s.value;
+        if (!hasLogisticsModule) return;
+
+        let cancelled = false;
+
+        const loadDrivers = async () => {
+            try {
+                const payload = await fetchLogisticsDrivers();
+                if (!cancelled) {
+                    setRegisteredDrivers(Array.isArray(payload?.drivers) ? payload.drivers : []);
+                    setDriversError('');
                 }
-            });
-            setDriversLocations(locations);
-        }
-    }, [settings]);
+            } catch (error) {
+                if (!cancelled) {
+                    setDriversError(error instanceof Error ? error.message : 'No se pudo leer el staff de reparto.');
+                    setRegisteredDrivers([]);
+                }
+            }
+        };
+
+        loadDrivers();
+        return () => {
+            cancelled = true;
+        };
+    }, [hasLogisticsModule]);
+
+    useEffect(() => {
+        if (!hasLogisticsModule) return;
+
+        let cancelled = false;
+
+        const loadLiveDrivers = async () => {
+            try {
+                const payload = await fetchLiveDrivers();
+                if (!cancelled) {
+                    setDriversLocations(Array.isArray(payload?.drivers) ? payload.drivers : []);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    console.warn('[LOGISTICA] No se pudo leer tracking vivo', error?.message || error);
+                }
+            }
+        };
+
+        loadLiveDrivers();
+        const interval = window.setInterval(loadLiveDrivers, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [hasLogisticsModule]);
 
     // Filtered orders
     const deliveryOrders = pedidos?.filter(p => {
         const matchesSearch = p.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (p.address && p.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
             (p.repartidor && p.repartidor.toLowerCase().includes(searchTerm.toLowerCase()));
-        const matchesFilter = filter === 'all' || p.status === filter;
+        const normalizedStatus = p.status === 'ready' ? 'assigned' : p.status;
+        const matchesFilter = filter === 'all' || normalizedStatus === filter;
         return matchesSearch && matchesFilter;
     }) || [];
+
+    const findDriverForOrder = (pedido) => {
+        const keys = [
+            String(pedido?.assigned_driver_uid || '').trim(),
+            String(pedido?.assigned_driver_email || '').trim().toLowerCase(),
+            String(pedido?.repartidor || '').trim().toLowerCase(),
+        ].filter(Boolean);
+
+        for (const key of keys) {
+            const driver = driversByIdentity.get(key);
+            if (driver) return driver;
+        }
+
+        return null;
+    };
+
+    const getDriverSelectValue = (pedido) => {
+        const driver = findDriverForOrder(pedido);
+        return driver ? String(driver.id) : '';
+    };
+
+    const getStatusLabel = (status) => {
+        if (status === 'ready' || status === 'assigned') return 'En Reparto';
+        if (status === 'on_route') return 'En Ruta';
+        if (status === 'arrived') return 'En Puerta';
+        if (status === 'delivered') return 'Entregado';
+        return 'Sin Asignar';
+    };
 
     const getOrderCoordinates = (pedido) => {
         const stored = getStoredCoordinates(pedido);
@@ -161,60 +234,52 @@ const Logistica = () => {
         }
     };
 
-    const assignDriver = async (id, driverName) => {
-        await db.pedidos.update(id, { repartidor: driverName, status: 'ready' });
+    const assignDriver = async (id, driverId) => {
+        const driver = driversById.get(String(driverId));
+        if (!driver) {
+            await db.pedidos.update(id, {
+                repartidor: null,
+                assigned_driver_uid: null,
+                assigned_driver_email: null,
+                status: 'pending',
+            });
+            return;
+        }
 
-        // CLOUD SYNC: Push assigned order to Firestore
-        if (hasLogisticsModule) {
-            try {
-                const pedido = pedidos.find(p => p.id === id);
-                if (pedido) {
-                    await setDoc(doc(fdb, "orders_delivery", id.toString()), {
-                        ...pedido,
-                        repartidor: driverName,
-                        status: 'ready',
-                        updated_at: new Date().toISOString()
-                    });
-                }
-            } catch (err) {
-                console.error("Cloud Sync Error:", err);
-            }
+        try {
+            const payload = await assignLogisticsOrder(id, {
+                driverUserId: driver.id,
+                driverFirebaseUid: driver.firebaseUid || null,
+                driverEmail: driver.email || null,
+                driverName: driver.name,
+                status: 'assigned',
+            });
+
+            const order = payload?.order;
+            await db.pedidos.update(id, {
+                repartidor: order?.driver?.name || driver.name,
+                assigned_driver_uid: order?.driver?.firebaseUid || driver.firebaseUid || null,
+                assigned_driver_email: order?.driver?.email || driver.email || null,
+                status: order?.status || 'assigned',
+                assigned_at: order?.assignedAt || new Date().toISOString(),
+                status_updated_at: order?.statusUpdatedAt || new Date().toISOString(),
+            });
+
+            setSelectedPedido((current) => (
+                current && Number(current.id) === Number(id)
+                    ? {
+                        ...current,
+                        repartidor: order?.driver?.name || driver.name,
+                        assigned_driver_uid: order?.driver?.firebaseUid || driver.firebaseUid || null,
+                        assigned_driver_email: order?.driver?.email || driver.email || null,
+                        status: order?.status || 'assigned',
+                    }
+                    : current
+            ));
+        } catch (error) {
+            alert(error instanceof Error ? error.message : 'No se pudo asignar el pedido.');
         }
     };
-
-    // REAL-TIME CLOUD LISTENERS
-    useEffect(() => {
-        if (!hasLogisticsModule) return;
-
-        // 1. Listen for Driver Locations
-        const unsubLocations = onSnapshot(collection(fdb, "drivers_locations"), (snapshot) => {
-            const locations = {};
-            snapshot.forEach(doc => {
-                locations[doc.id] = doc.data(); // doc.id is driver name
-            });
-            setDriversLocations(locations);
-        });
-
-        // 2. Listen for Status Updates from Drivers (Delivered)
-        const unsubStatus = onSnapshot(collection(fdb, "orders_delivery"), (snapshot) => {
-            snapshot.docChanges().forEach(async (change) => {
-                if (change.type === "modified") {
-                    const cloudOrder = change.doc.data();
-                    if (cloudOrder.status === 'delivered') {
-                        // Sync back to Local DB
-                        await db.pedidos.update(parseInt(change.doc.id), { status: 'delivered' });
-                        // Clean up cloud
-                        await deleteDoc(doc(fdb, "orders_delivery", change.doc.id));
-                    }
-                }
-            });
-        });
-
-        return () => {
-            unsubLocations();
-            unsubStatus();
-        };
-    }, [hasLogisticsModule]);
 
     useEffect(() => {
         if (!pedidos?.length) return;
@@ -251,38 +316,6 @@ const Logistica = () => {
         };
     }, [pedidos]);
 
-    const checkExpiry = (date) => {
-        if (!date) return 'missing';
-        const today = new Date();
-        const expiry = new Date(date);
-        const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-
-        if (diffDays < 0) return 'expired';
-        if (diffDays < 15) return 'soon';
-        return 'ok';
-    };
-
-    const hasAnyWarning = (driver) => {
-        return checkExpiry(driver.vtv_expiry) !== 'ok' ||
-            checkExpiry(driver.license_expiry) !== 'ok' ||
-            checkExpiry(driver.insurance_expiry) !== 'ok';
-    };
-
-    const handleAddDriver = async () => {
-        if (!newDriver.name) return;
-        await db.repartidores.add({ ...newDriver, status: 'idle' });
-        setNewDriver({
-            name: '', vehicle: '', plate: '', phone: '',
-            vtv_expiry: '', license_expiry: '', insurance_expiry: ''
-        });
-    };
-
-    const deleteDriver = async (id) => {
-        if (confirm('¿Eliminar a este repartidor?')) {
-            await db.repartidores.delete(id);
-        }
-    };
-
     const copyPortalLink = () => {
         const link = `${window.location.origin}/#/reparto`;
         navigator.clipboard.writeText(link);
@@ -302,15 +335,12 @@ const Logistica = () => {
                     </button>
                     <div className="stat-mini-card">
                         <span className="label">Flota</span>
-                        <span className="value" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            {registeredDrivers?.length || 0}
-                            {registeredDrivers?.some(d => hasAnyWarning(d)) && <AlertTriangle size={18} color="#ef4444" />}
-                        </span>
+                        <span className="value">{registeredDrivers?.length || 0}</span>
                     </div>
                     <div className="stat-mini-card">
                         <span className="label">En Camino</span>
                         <span className="value" style={{ color: '#3b82f6' }}>
-                            {pedidos?.filter(p => p.status === 'ready').length || 0}
+                            {pedidos?.filter(p => ['ready', 'assigned', 'on_route', 'arrived'].includes(p.status)).length || 0}
                         </span>
                     </div>
                     <div className="stat-mini-card">
@@ -338,7 +368,7 @@ const Logistica = () => {
                     <div className="filter-pills">
                         <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
                         <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
-                        <button className={filter === 'ready' ? 'active' : ''} onClick={() => setFilter('ready')}>En Reparto</button>
+                        <button className={filter === 'assigned' ? 'active' : ''} onClick={() => setFilter('assigned')}>En Reparto</button>
                         <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
                     </div>
 
@@ -372,7 +402,7 @@ const Logistica = () => {
                                     </div>
                                     <div className="item-footer">
                                         <span>#{p.id}</span>
-                                        <span className={`badge-status ${p.status}`}>{p.status === 'ready' ? 'En Camino' : p.status}</span>
+                                        <span className={`badge-status ${p.status}`}>{getStatusLabel(p.status)}</span>
                                     </div>
                                 </div>
                             ))
@@ -390,10 +420,10 @@ const Logistica = () => {
                         />
 
                         {/* Driver Markers */}
-                        {Object.entries(driversLocations).map(([name, loc]) => (
-                            <Marker key={name} position={[loc.lat, loc.lng]} icon={truckIcon}>
+                        {driversLocations.map((loc) => (
+                            <Marker key={loc.firebaseUid || loc.email || loc.repartidor} position={[loc.lat, loc.lng]} icon={truckIcon}>
                                 <Popup>
-                                    <strong>Repartidor: {name}</strong><br />
+                                    <strong>Repartidor: {loc.repartidor}</strong><br />
                                     Última vez: {new Date(loc.time).toLocaleTimeString()}
                                 </Popup>
                             </Marker>
@@ -456,34 +486,24 @@ const Logistica = () => {
                                 )}
                                 <div className="info-row">
                                     <Clock size={16} />
-                                    <span>{selectedPedido.status === 'ready' ? 'En viaje' : 'Esperando asignación'}</span>
+                                    <span>{getStatusLabel(selectedPedido.status)}</span>
                                 </div>
 
-                                {selectedPedido.repartidor && registeredDrivers?.find(d => d.name === selectedPedido.repartidor) && hasAnyWarning(registeredDrivers.find(d => d.name === selectedPedido.repartidor)) && (
-                                    <div className="risk-warning-banner">
-                                        <AlertCircle size={18} />
-                                        <span>DOCUMENTACIÓN VENCIDA O INCOMPLETA</span>
-                                    </div>
-                                )}
-
                                 <div className="assignment-box">
-                                    <label><UserPlus size={14} /> Asignar Repartidor:</label>
+                                    <label><Users size={14} /> Asignar Repartidor:</label>
                                     <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
                                         <select
                                             className="neo-input"
                                             style={{ color: '#1e293b' }}
-                                            value={selectedPedido.repartidor || ''}
+                                            value={getDriverSelectValue(selectedPedido)}
                                             onChange={(e) => assignDriver(selectedPedido.id, e.target.value)}
                                         >
                                             <option value="">-- Seleccionar Repartidor --</option>
-                                            {registeredDrivers?.map(d => {
-                                                const warning = hasAnyWarning(d);
-                                                return (
-                                                    <option key={d.id} value={d.name} style={{ color: warning ? '#ef4444' : 'inherit' }}>
-                                                        {warning ? '⚠️ ' : ''}{d.name} ({d.vehicle} - {d.plate})
-                                                    </option>
-                                                );
-                                            })}
+                                            {registeredDrivers?.map((driver) => (
+                                                <option key={driver.id} value={driver.id}>
+                                                    {driver.name} · {driver.email}
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
                                 </div>
@@ -500,8 +520,8 @@ const Logistica = () => {
                                     Confirmar Entrega
                                 </button>
                                 <button className="btn-call" onClick={() => {
-                                    const driver = registeredDrivers?.find(d => d.name === selectedPedido.repartidor);
-                                    if (driver?.phone) window.open(`tel:${driver.phone}`);
+                                    const driver = findDriverForOrder(selectedPedido);
+                                    if (driver?.email) window.open(`mailto:${driver.email}`);
                                 }}>Llamar Repartidor</button>
                             </div>
                         </div>
@@ -515,90 +535,73 @@ const Logistica = () => {
                     <div className="modal-content neo-card" style={{ maxWidth: '600px' }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                             <h1 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <ShieldAlert color="var(--color-primary)" /> Control de Flota y Documentación
+                                <Users color="var(--color-primary)" /> Repartidores habilitados del tenant
                             </h1>
                             <button className="icon-btn" onClick={() => setIsDriverModalOpen(false)}><X /></button>
                         </div>
 
-                        <div className="add-driver-form-pro">
-                            <div className="input-field">
-                                <label>Repartidor</label>
-                                <input className="neo-input" placeholder="Nombre" value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Vehículo / Modelo</label>
-                                <input className="neo-input" placeholder="Ej: VW Saveiro" value={newDriver.vehicle} onChange={e => setNewDriver({ ...newDriver, vehicle: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Patente</label>
-                                <input className="neo-input" placeholder="AAA 000" value={newDriver.plate} onChange={e => setNewDriver({ ...newDriver, plate: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Teléfono</label>
-                                <input className="neo-input" placeholder="549..." value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> VTV Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.vtv_expiry} onChange={e => setNewDriver({ ...newDriver, vtv_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> Carnet Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.license_expiry} onChange={e => setNewDriver({ ...newDriver, license_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> Seguro Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.insurance_expiry} onChange={e => setNewDriver({ ...newDriver, insurance_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field" style={{ display: 'flex', alignItems: 'flex-end' }}>
-                                <button className="neo-button pro-btn full-width" style={{ height: '42px' }} onClick={handleAddDriver}>Registrar en Flota</button>
-                            </div>
+                        <div style={{ marginBottom: '1rem', color: '#94a3b8', fontSize: '0.95rem', lineHeight: 1.5 }}>
+                            Acá aparecen los usuarios reales del cliente que están activos y tienen una licencia de reparto asignada.
                         </div>
+                        {driversError && (
+                            <div className="risk-warning-banner" style={{ marginBottom: '1rem' }}>
+                                <AlertCircle size={18} />
+                                <span>{driversError}</span>
+                            </div>
+                        )}
 
                         <div className="drivers-table-container">
                             <table className="menu-table pro-table">
                                 <thead>
                                     <tr>
-                                        <th>Personal / Vehículo</th>
-                                        <th>Documentación (Vencimientos)</th>
-                                        <th>Acciones</th>
+                                        <th>Repartidor</th>
+                                        <th>Licencias</th>
+                                        <th>Estado</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {registeredDrivers?.map(d => {
-                                        const vtvStatus = checkExpiry(d.vtv_expiry);
-                                        const licStatus = checkExpiry(d.license_expiry);
-                                        const insStatus = checkExpiry(d.insurance_expiry);
+                                    {registeredDrivers?.map((driver) => {
+                                        const liveDriver = driversLocations.find((entry) => (
+                                            (entry.firebaseUid && entry.firebaseUid === driver.firebaseUid)
+                                            || (entry.email && entry.email.toLowerCase() === String(driver.email || '').toLowerCase())
+                                        ));
 
                                         return (
-                                            <tr key={d.id}>
+                                            <tr key={driver.id}>
                                                 <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{d.name}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{d.vehicle} • <span style={{ fontWeight: 'bold' }}>{d.plate}</span></div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>📞 {d.phone}</div>
+                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{driver.name}</div>
+                                                    <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                        <Mail size={12} /> {driver.email}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Sucursal #{driver.branchId || 'General'}</div>
                                                 </td>
                                                 <td>
                                                     <div className="compliance-grid">
-                                                        <div className={`comp-pill ${vtvStatus}`}>
-                                                            VTV: {d.vtv_expiry || 'N/A'}
-                                                        </div>
-                                                        <div className={`comp-pill ${licStatus}`}>
-                                                            CARNET: {d.license_expiry || 'N/A'}
-                                                        </div>
-                                                        <div className={`comp-pill ${insStatus}`}>
-                                                            SEGURO: {d.insurance_expiry || 'N/A'}
-                                                        </div>
+                                                        {(driver.licenses || []).map((license) => (
+                                                            <div key={license.clientLicenseId} className="comp-pill ok">
+                                                                {license.commercialName || license.internalCode}
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <button className="delete-btn" onClick={() => deleteDriver(d.id)}>
-                                                        <Trash2 size={18} />
-                                                    </button>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                        <div className={`comp-pill ${liveDriver ? 'ok' : 'missing'}`}>
+                                                            {liveDriver ? <Wifi size={12} /> : <WifiOff size={12} />}
+                                                            {liveDriver ? 'Online' : 'Sin tracking'}
+                                                        </div>
+                                                        {liveDriver?.activeOrders ? (
+                                                            <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                                                {liveDriver.activeOrders} pedido(s) activos
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
                                     })}
                                     {registeredDrivers?.length === 0 && (
-                                        <tr><td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>No hay repartidores cargados</td></tr>
+                                        <tr><td colSpan="3" style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>No hay usuarios habilitados para reparto</td></tr>
                                     )}
                                 </tbody>
                             </table>

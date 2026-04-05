@@ -84,7 +84,7 @@ const extractFeatureTokens = (value) => {
     return [];
 };
 
-const buildLicenseCapabilities = (licenses) => {
+const buildLicenseCapabilities = (licenses, options = {}) => {
     const normalizedLicenses = Array.isArray(licenses) ? licenses : [];
     const rawFlags = new Set();
     const modules = new Set(BASE_MODULES);
@@ -120,6 +120,11 @@ const buildLicenseCapabilities = (licenses) => {
     if (hasSuperUser) {
         ALL_MODULES.forEach((moduleKey) => modules.add(moduleKey));
         rawFlags.add('superuser');
+    }
+
+    if (options.tenantHasDeliveryLicense) {
+        modules.add('logistica');
+        rawFlags.add('logistica');
     }
 
     return {
@@ -173,7 +178,12 @@ export const LicenseProvider = ({ children }) => {
     const [machineId, setMachineId] = useState('');
     const settings = useLiveQuery(() => db.settings.toArray());
     const licenses = useMemo(() => normalizeVisibleLicenses(accessProfile?.licenses || []), [accessProfile]);
-    const capabilities = useMemo(() => buildLicenseCapabilities(licenses), [licenses]);
+    const capabilities = useMemo(
+        () => buildLicenseCapabilities(licenses, {
+            tenantHasDeliveryLicense: Boolean(accessProfile?.tenantHasDeliveryLicense),
+        }),
+        [accessProfile?.tenantHasDeliveryLicense, licenses],
+    );
     const licenseMode = capabilities.isPro ? 'pro' : 'base';
 
     useEffect(() => {

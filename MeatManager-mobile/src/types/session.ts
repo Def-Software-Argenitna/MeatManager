@@ -12,13 +12,17 @@ export type MobileLicense = {
 export type MobileAccessProfile = {
   id: number | string;
   uid?: string | null;
+  firebaseUid?: string | null;
   email?: string | null;
   username: string;
   role: 'admin' | 'employee';
   active: number;
   perms: string[];
   clientId?: number | string;
+  branchId?: number | string | null;
   clientStatus?: string;
+  logisticsEnabled?: boolean;
+  tenantHasDeliveryLicense?: boolean;
   licenses: MobileLicense[];
 };
 

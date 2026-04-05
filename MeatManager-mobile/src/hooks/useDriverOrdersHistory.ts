@@ -79,7 +79,18 @@ export function useDriverOrdersHistory(driverName: string | null) {
             address: row.address || 'Sin direccion cargada',
             items: normalizeItems(row.items),
             repartidor: row.repartidor || driverName,
-            status: row.status === 'delivered' ? 'delivered' : row.status === 'cancelled' ? 'cancelled' : row.status === 'ready' ? 'ready' : 'pending',
+            status:
+              row.status === 'delivered'
+                ? 'delivered'
+                : row.status === 'cancelled'
+                  ? 'cancelled'
+                  : row.status === 'on_route'
+                    ? 'on_route'
+                    : row.status === 'arrived'
+                      ? 'arrived'
+                      : row.status === 'ready' || row.status === 'assigned'
+                        ? 'assigned'
+                        : 'pending',
             total: row.total == null ? undefined : Number(row.total),
             updated_at: row.updated_at || undefined,
             delivered_at: row.delivered_at || undefined,

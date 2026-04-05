@@ -401,6 +401,40 @@ function parseLicenseTokens(value) {
     return [];
 }
 
+const LOGISTICS_LICENSE_HINTS = [
+    'logistica',
+    'logistics',
+    'delivery',
+    'deliveries',
+    'envios',
+    'shipping',
+    'entrega',
+    'entregas',
+    'reparto',
+    'repartos',
+];
+
+function licenseHasLogisticsCapability(license) {
+    const tokens = [
+        normalizeLicenseToken(license?.internalCode),
+        normalizeLicenseToken(license?.commercialName),
+        normalizeLicenseToken(license?.category),
+        ...parseLicenseTokens(license?.featureFlags).map(normalizeLicenseToken),
+    ].filter(Boolean);
+
+    return tokens.some((token) => (
+        LOGISTICS_LICENSE_HINTS.some((hint) => token === hint || token.includes(hint))
+    ));
+}
+
+function tenantHasAssignedLogisticsLicense(licenses = []) {
+    return licenses.some((license) => (
+        licenseHasLogisticsCapability(license)
+        && license.userId != null
+        && String(license.userId).trim() !== ''
+    ));
+}
+
 function hasSuperLicense(licenses = []) {
     return licenses.some((license) => (
         ['superuser', 'su'].includes(normalizeLicenseToken(license?.internalCode))
@@ -414,14 +448,7 @@ function hasLogisticsAccess(accessContext) {
     if (accessContext.user.role === 'admin') return true;
     if (hasSuperLicense(accessContext.effectiveLicenses || [])) return true;
 
-    const tokens = new Set();
-    for (const license of accessContext.effectiveLicenses || []) {
-        for (const token of parseLicenseTokens(license?.featureFlags)) {
-            tokens.add(normalizeLicenseToken(token));
-        }
-    }
-
-    return ['logistica', 'logistics', 'delivery', 'deliveries', 'envios', 'shipping'].some((token) => tokens.has(token));
+    return (accessContext.deliveryLicenses || []).some((license) => licenseHasLogisticsCapability(license));
 }
 
 function assertLogisticsAccess(accessContext) {
@@ -1052,34 +1079,48 @@ async function getClientAccessContext({ uid, email }) {
             [user.clientId]
         );
 
+        const tenantHasDeliveryLicense = tenantHasAssignedLogisticsLicense(licenseRows);
+
+        const licenseMatchesScope = (license) => {
+            if (user.isOwnerFallback) {
+                return true;
+            }
+
+            const matchesUser = license.userId == null || String(license.userId) === String(user.id);
+            const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
+
+            const isMandatoryBase =
+                Number(license.isMandatory) === 1 ||
+                normalizeLicenseToken(license.internalCode) === 'base_mm' ||
+                normalizeLicenseToken(license.category) === 'base_webapp';
+
+            return (matchesUser && matchesBranch) || isMandatoryBase;
+        };
+
+        const mapResolvedLicense = (license) => ({
+            clientLicenseId: license.clientLicenseId,
+            licenseId: license.licenseId,
+            commercialName: license.commercialName,
+            internalCode: license.internalCode,
+            category: license.category,
+            billingScope: license.billingScope,
+            appliesToWebapp: licenseAppliesToWebapp(license),
+            featureFlags: parseFeatureFlags(license.featureFlags),
+        });
+
         const effectiveLicenses = licenseRows
             .filter((license) => {
                 if (!licenseAppliesToWebapp(license)) return false;
-
-                if (user.isOwnerFallback) {
-                    return true;
-                }
-
-                const matchesUser = license.userId == null || String(license.userId) === String(user.id);
-                const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
-
-                const isMandatoryBase =
-                    Number(license.isMandatory) === 1 ||
-                    normalizeLicenseToken(license.internalCode) === 'base_mm' ||
-                    normalizeLicenseToken(license.category) === 'base_webapp';
-
-                return (matchesUser && matchesBranch) || isMandatoryBase;
+                return licenseMatchesScope(license);
             })
-            .map((license) => ({
-                clientLicenseId: license.clientLicenseId,
-                licenseId: license.licenseId,
-                commercialName: license.commercialName,
-                internalCode: license.internalCode,
-                category: license.category,
-                billingScope: license.billingScope,
-                appliesToWebapp: licenseAppliesToWebapp(license),
-                featureFlags: parseFeatureFlags(license.featureFlags),
-            }))
+            .map(mapResolvedLicense)
+            .filter((license, index, arr) => (
+                arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+            ));
+
+        const deliveryLicenses = licenseRows
+            .filter((license) => licenseHasLogisticsCapability(license) && licenseMatchesScope(license))
+            .map(mapResolvedLicense)
             .filter((license, index, arr) => (
                 arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
             ));
@@ -1093,8 +1134,10 @@ async function getClientAccessContext({ uid, email }) {
                 cashAuthorizationEmail: user.cashAuthorizationEmail,
                 billingEmail: user.billingEmail,
                 status: user.clientStatus,
+                tenantHasDeliveryLicense,
             },
             effectiveLicenses,
+            deliveryLicenses,
         };
     } finally {
         conn.release();
@@ -1145,8 +1188,79 @@ function buildAccessResponse(accessContext) {
         perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
         clientId: accessContext.client.id,
         clientStatus: accessContext.client.status,
+        tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
         licenses: accessContext.effectiveLicenses,
     };
+}
+
+async function listEligibleLogisticsDrivers(clientId) {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const [rows] = await conn.query(
+            `SELECT
+                cu.id,
+                cu.clientId,
+                cu.branchId,
+                cu.firebaseUid,
+                cu.name,
+                cu.lastname,
+                cu.email,
+                cu.role,
+                cu.status,
+                cl.id AS clientLicenseId,
+                cl.licenseId,
+                cl.branchId AS licenseBranchId,
+                cl.userId,
+                l.commercialName,
+                l.internalCode,
+                l.category,
+                l.featureFlags
+             FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
+             INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                ON cl.clientId = cu.clientId
+               AND cl.userId = cu.id
+               AND cl.status = 'ACTIVE'
+             INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                ON l.id = cl.licenseId
+               AND l.status = 'ACTIVE'
+             WHERE cu.clientId = ?
+               AND cu.status = 'ACTIVE'
+             ORDER BY cu.name ASC, cu.lastname ASC, cu.id ASC`,
+            [clientId]
+        );
+
+        const driversById = new Map();
+        for (const row of rows) {
+            if (!licenseHasLogisticsCapability(row)) continue;
+
+            const existing = driversById.get(String(row.id)) || {
+                id: row.id,
+                clientId: row.clientId,
+                branchId: row.branchId,
+                firebaseUid: row.firebaseUid || null,
+                email: normalizeEmail(row.email || ''),
+                role: row.role === 'admin' ? 'admin' : 'employee',
+                name: [row.name, row.lastname].map((value) => String(value || '').trim()).filter(Boolean).join(' ') || row.email || 'Repartidor',
+                firstName: row.name || '',
+                lastName: row.lastname || '',
+                licenses: [],
+            };
+
+            existing.licenses.push({
+                clientLicenseId: row.clientLicenseId,
+                licenseId: row.licenseId,
+                commercialName: row.commercialName,
+                internalCode: row.internalCode,
+                category: row.category,
+                featureFlags: parseFeatureFlags(row.featureFlags),
+            });
+            driversById.set(String(row.id), existing);
+        }
+
+        return Array.from(driversById.values());
+    } finally {
+        conn.release();
+    }
 }
 
 function tenantWhereClause(table, tenantId, prefix = '') {
@@ -3004,6 +3118,12 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
         assertLogisticsAccess(accessContext);
 
         const driverIdentity = buildDriverIdentity(accessContext);
+        const profileLicenses = [
+            ...(Array.isArray(accessContext.effectiveLicenses) ? accessContext.effectiveLicenses : []),
+            ...(Array.isArray(accessContext.deliveryLicenses) ? accessContext.deliveryLicenses : []),
+        ].filter((license, index, arr) => (
+            arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+        ));
 
         return res.json({
             ok: true,
@@ -3012,11 +3132,15 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
                 firebaseUid: accessContext.user.firebaseUid,
                 email: accessContext.user.email,
                 name: driverIdentity.name,
+                username: driverIdentity.name,
                 role: accessContext.user.role,
+                active: isActiveStatus(accessContext.user.userStatus, false) ? 1 : 0,
+                perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
                 clientId: accessContext.client.id,
                 branchId: accessContext.user.branchId ?? null,
                 logisticsEnabled: true,
-                licenses: accessContext.effectiveLicenses,
+                tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
+                licenses: profileLicenses,
             },
         });
     } catch (err) {
@@ -3058,6 +3182,34 @@ app.get('/api/delivery/orders', verifyFirebaseToken, async (req, res) => {
         console.error('[DELIVERY ORDERS ERROR]', err.message);
         const statusCode = err.statusCode || 500;
         return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los pedidos de delivery' });
+    }
+});
+
+// ── RUTA: GET /api/logistics/drivers ──────────────────────────────────────
+app.get('/api/logistics/drivers', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+        });
+        assertClientAccess(accessContext);
+        assertLogisticsAccess(accessContext);
+
+        if (accessContext.user.role !== 'admin') {
+            return res.status(403).json({ error: 'Solo un administrador puede listar repartidores' });
+        }
+
+        const drivers = await listEligibleLogisticsDrivers(accessContext.client.id);
+
+        return res.json({
+            ok: true,
+            count: drivers.length,
+            drivers,
+        });
+    } catch (err) {
+        console.error('[LOGISTICS DRIVERS ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los repartidores habilitados' });
     }
 });
 

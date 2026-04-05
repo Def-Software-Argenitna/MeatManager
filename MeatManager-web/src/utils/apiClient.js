@@ -159,6 +159,38 @@ export const fetchCurrentFirebaseUser = async () => {
     return res.json();
 };
 
+export const fetchLogisticsDrivers = async () => {
+    const res = await apiFetch('/api/logistics/drivers');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudieron leer los repartidores habilitados');
+    }
+    return res.json();
+};
+
+export const fetchLiveDrivers = async () => {
+    const res = await apiFetch('/api/logistics/drivers/live');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer el mapa en tiempo real');
+    }
+    return res.json();
+};
+
+export const assignLogisticsOrder = async (orderId, payload) => {
+    const res = await apiFetch(`/api/logistics/orders/${encodeURIComponent(orderId)}/assign`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo asignar el pedido');
+    }
+
+    return res.json();
+};
+
 export const createFirebaseUser = async (record) => {
     const res = await apiFetch('/api/firebase-users', {
         method: 'POST',
