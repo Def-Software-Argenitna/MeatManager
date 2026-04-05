@@ -294,14 +294,20 @@ const Sidebar = ({ isCollapsed }) => {
           </div>
           {!isCollapsed && (
             <div className="user-info">
-              <span className="user-name" style={{ fontSize: '0.85rem', fontWeight: '800', color: '#fff' }}>{displayName}</span>
+              <span
+                className="user-name"
+                title={displayName}
+                style={{ fontSize: '0.85rem', fontWeight: '800', color: '#fff' }}
+              >
+                {displayName}
+              </span>
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {currentUser?.role === 'admin' ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
             </div>
           )}
           <button
-            style={{ marginLeft: isCollapsed ? '0' : 'auto', padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
+            style={{ marginLeft: isCollapsed ? '0' : 'auto', flexShrink: 0, padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
             onClick={handleLogout}
             title="Cerrar Sesion"
           >
