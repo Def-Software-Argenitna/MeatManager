@@ -71,7 +71,7 @@ const restoreSession = () => {
 };
 
 export const UserProvider = ({ children }) => {
-    const { tenant } = useTenant();
+    const { tenant, loading: loadingTenant, authToken } = useTenant();
     const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
@@ -176,8 +176,14 @@ export const UserProvider = ({ children }) => {
         let cancelled = false;
 
         const syncUser = async () => {
+            if (loadingTenant) return;
+
             if (!tenant?.email) {
                 logout();
+                return;
+            }
+
+            if (!authToken) {
                 return;
             }
 
@@ -201,7 +207,7 @@ export const UserProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, [tenant, login, logout]);
+    }, [tenant, authToken, loadingTenant, login, logout]);
 
 
     // Admin always true; employee checks permission list
