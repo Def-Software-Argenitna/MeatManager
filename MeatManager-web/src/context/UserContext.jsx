@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useTenant } from './TenantContext';
 import {
     createFirebaseUser,
@@ -79,6 +79,7 @@ export const UserProvider = ({ children }) => {
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
+    const profileRecoveryRef = useRef('');
 
     const applyResolvedUser = useCallback((userData) => {
         const superUser = hasSuperUserLicense(userData?.licenses);
@@ -200,6 +201,51 @@ export const UserProvider = ({ children }) => {
             cancelled = true;
         };
     }, [tenant, loadingTenant, login, logout]);
+
+    useEffect(() => {
+        const tenantEmail = String(tenant?.email || '').trim().toLowerCase();
+        const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
+        const hasNoLicenses = Array.isArray(accessProfile?.licenses) && accessProfile.licenses.length === 0;
+        const needsRecovery =
+            Boolean(tenantEmail) &&
+            tenantEmail === currentEmail &&
+            currentUser?.role === 'admin' &&
+            hasNoLicenses &&
+            !loadingUser;
+
+        if (!needsRecovery) {
+            profileRecoveryRef.current = '';
+            return;
+        }
+
+        const recoveryKey = `${tenant?.uid || tenantEmail}:${currentEmail}`;
+        if (profileRecoveryRef.current === recoveryKey) return;
+        profileRecoveryRef.current = recoveryKey;
+
+        let cancelled = false;
+
+        const recoverProfile = async () => {
+            if (!auth.currentUser) return;
+
+            try {
+                await auth.currentUser.getIdToken(true);
+                const payload = await fetchCurrentFirebaseUser();
+                const remoteUser = payload?.user || null;
+
+                if (!cancelled && remoteUser && Array.isArray(remoteUser.licenses) && remoteUser.licenses.length > 0) {
+                    applyResolvedUser(remoteUser);
+                }
+            } catch {
+                // Silent retry guard: if remote profile is unavailable, keep current fallback session.
+            }
+        };
+
+        recoverProfile();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [accessProfile?.licenses, applyResolvedUser, currentUser?.email, currentUser?.role, loadingUser, tenant?.email, tenant?.uid]);
 
 
     // Admin always true; employee checks permission list
