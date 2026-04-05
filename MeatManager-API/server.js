@@ -29,6 +29,7 @@ admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
 
 // ── Express setup ──────────────────────────────────────────────────────────
 const app = express();
+app.set('trust proxy', 1);
 app.use(helmet());
 const allowedOrigins = String(process.env.CORS_ORIGIN || '')
     .split(',')
