@@ -1,20 +1,15 @@
 .manual-page {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
+    padding: 1.5rem 1.75rem 2rem;
+    max-width: none;
+    margin: 0;
     font-family: 'Inter', sans-serif;
     color: var(--color-text-main);
-    background-color: var(--color-bg-main);
-    min-height: 100vh;
+    background-color: transparent;
+    min-height: 100%;
 }
 
 .manual-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 3rem;
-    padding-bottom: 2rem;
-    border-bottom: 1px solid var(--color-border);
+    margin-bottom: 1.5rem;
 }
 
 .header-left {
@@ -26,22 +21,6 @@
 .header-icon {
     color: var(--color-primary);
     filter: drop-shadow(0 0 10px rgba(var(--color-primary-rgb), 0.3));
-}
-
-.manual-header h1 {
-    font-size: 2.5rem;
-    font-weight: 800;
-    margin: 0;
-    background: linear-gradient(135deg, var(--color-text-main), #64748b);
-    -webkit-background-clip: text;
-    background-clip: text;
-    -webkit-text-fill-color: transparent;
-}
-
-.manual-header p {
-    margin: 0.5rem 0 0 0;
-    color: var(--color-text-muted);
-    font-size: 1.1rem;
 }
 
 .print-btn {

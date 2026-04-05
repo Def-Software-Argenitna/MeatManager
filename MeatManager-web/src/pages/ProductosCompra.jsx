@@ -199,7 +199,7 @@ const ProductosCompra = () => {
     );
 
     return (
-        <div className="animate-fade-in" style={{ padding: '1rem' }}>
+        <div className="animate-fade-in">
             {qendraSendStatus && (
                 <div style={{
                     position: 'fixed', top: '1.2rem', right: '1.2rem', zIndex: 9999,
@@ -213,15 +213,17 @@ const ProductosCompra = () => {
                     <span>{qendraSendStatus.msg}</span>
                 </div>
             )}
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+            <header className="page-header">
+                <div className="page-header-main">
                     <h1 className="page-title">Catálogo de Compras</h1>
                     <p className="page-description">Define los productos que compras a proveedores</p>
                 </div>
-                <button className="neo-button" onClick={openNew}>
-                    <Plus size={20} />
-                    Nuevo Producto
-                </button>
+                <div className="page-header-actions">
+                    <button className="neo-button" onClick={openNew}>
+                        <Plus size={20} />
+                        Nuevo Producto
+                    </button>
+                </div>
             </header>
 
             <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>

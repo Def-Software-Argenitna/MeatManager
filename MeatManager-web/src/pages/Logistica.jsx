@@ -153,6 +153,7 @@ const Logistica = () => {
     const [driversError, setDriversError] = useState('');
     const [pedidos, setPedidos] = useState([]);
     const [clients, setClients] = useState([]);
+    const [selectedDriverIdentity, setSelectedDriverIdentity] = useState('');
 
     const hasLogisticsModule = hasModule('logistica');
     const driversById = useMemo(() => {
@@ -293,6 +294,14 @@ const Logistica = () => {
         return driver ? String(driver.id) : '';
     };
 
+    const selectedLiveDriver = useMemo(() => {
+        if (!selectedDriverIdentity) return null;
+        return driversLocations.find((loc) => (
+            String(loc.firebaseUid || '').trim() === selectedDriverIdentity
+            || String(loc.email || '').trim().toLowerCase() === selectedDriverIdentity
+        )) || null;
+    }, [driversLocations, selectedDriverIdentity]);
+
     const getStatusLabel = (status) => {
         if (status === 'ready' || status === 'assigned') return 'En Reparto';
         if (status === 'on_route') return 'En Ruta';
@@ -323,9 +332,19 @@ const Logistica = () => {
 
     const handleFocusPedido = (pedido) => {
         setSelectedPedido(normalizeOrderForLogistics(pedido));
+        setSelectedDriverIdentity('');
         const coords = getOrderCoordinates(pedido);
         if (coords) {
             setMapCenter(coords);
+            setMapZoom(16);
+        }
+    };
+
+    const handleFocusDriver = (driver) => {
+        setSelectedPedido(null);
+        setSelectedDriverIdentity(String(driver.firebaseUid || '').trim() || String(driver.email || '').trim().toLowerCase());
+        if (Number.isFinite(Number(driver.lat)) && Number.isFinite(Number(driver.lng))) {
+            setMapCenter([Number(driver.lat), Number(driver.lng)]);
             setMapZoom(16);
         }
     };
@@ -463,15 +482,11 @@ const Logistica = () => {
 
     return (
         <div className="logistica-container animate-fade-in">
-            <header className="page-header">
-                <div>
-                    <h1 className="page-title">Control de Logística y Reparto</h1>
-                    <p className="page-description">Seguimiento de envíos y control de rutas en tiempo real.</p>
-                </div>
+            <div className="logistica-toolbar neo-card">
+                <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
+                    <Users size={18} /> Staff Repartidores
+                </button>
                 <div className="stats-mini-grid">
-                    <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
-                        <Users size={18} /> Staff Repartidores
-                    </button>
                     <div className="stat-mini-card">
                         <span className="label">Flota</span>
                         <span className="value">{registeredDrivers?.length || 0}</span>
@@ -489,67 +504,9 @@ const Logistica = () => {
                         </span>
                     </div>
                 </div>
-            </header>
+            </div>
 
             <div className="logistica-content">
-                {/* LIST PANEL */}
-                <div className="logistica-sidebar neo-card">
-                    <div className="sidebar-search">
-                        <Search size={18} />
-                        <input
-                            type="text"
-                            placeholder="Buscar dirección o cliente..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-
-                    <div className="filter-pills">
-                        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
-                        <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
-                        <button className={filter === 'assigned' ? 'active' : ''} onClick={() => setFilter('assigned')}>En Reparto</button>
-                        <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
-                    </div>
-
-                    <div style={{ padding: '0 1rem 1rem' }}>
-                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
-                            <Share2 size={14} /> Link del Repartidor
-                        </button>
-                    </div>
-
-                    <div className="orders-list">
-                        {deliveryOrders.length === 0 ? (
-                            <div className="empty-delivery">
-                                <Truck size={32} />
-                                <p>No hay envíos pendientes.</p>
-                            </div>
-                        ) : (
-                            deliveryOrders.map(p => (
-                                <div
-                                    key={p.id}
-                                    className={`delivery-item ${selectedPedido?.id === p.id ? 'selected' : ''}`}
-                                    onClick={() => handleFocusPedido(p)}
-                                >
-                                    <div className="status-indicator" style={{ background: p.status === 'delivered' ? '#22c55e' : (p.status === 'ready' ? '#3b82f6' : '#f59e0b') }}></div>
-                                    <div className="item-main">
-                                        <div className="item-info">
-                                            <h4>{p.customer_name}</h4>
-                                            <p className="address"><MapPin size={12} /> {p.address}</p>
-                                            {p.repartidor && <p className="driver-label"><Truck size={12} /> {p.repartidor}</p>}
-                                        </div>
-                                        <ChevronRight size={18} className="arrow" />
-                                    </div>
-                                    <div className="item-footer">
-                                        <span>#{p.id}</span>
-                                        <span className={`badge-status ${p.status}`}>{getStatusLabel(p.status)}</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* MAP PANEL */}
                 <div className="map-view neo-card">
                     <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%', borderRadius: '12px' }}>
                         <ChangeView center={mapCenter} zoom={mapZoom} />
@@ -558,7 +515,6 @@ const Logistica = () => {
                             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         />
 
-                        {/* Driver Markers */}
                         {driversLocations.map((loc) => (
                             <Marker key={loc.firebaseUid || loc.email || loc.repartidor} position={[loc.lat, loc.lng]} icon={truckIcon}>
                                 <Popup>
@@ -577,7 +533,7 @@ const Logistica = () => {
                                     position={coords}
                                     icon={getIconForStatus(p.status)}
                                     eventHandlers={{
-                                        click: () => setSelectedPedido(p),
+                                        click: () => handleFocusPedido(p),
                                     }}
                                 >
                                     <Popup>
@@ -605,7 +561,6 @@ const Logistica = () => {
                         })}
                     </MapContainer>
 
-                    {/* OVERLAY PANEL FOR SELECTED ORDER */}
                     {selectedPedido && (
                         <div className="order-map-overlay animate-slide-up">
                             <div className="overlay-header">
@@ -672,6 +627,104 @@ const Logistica = () => {
                             </div>
                         </div>
                     )}
+                </div>
+
+                <div className="logistica-panels">
+                    <div className="logistica-panel neo-card drivers-panel">
+                        <div className="panel-header-row">
+                            <h3>Repartidores</h3>
+                            <span>{driversLocations.length} con tracking</span>
+                        </div>
+                        {driversLocations.length === 0 ? (
+                            <div className="empty-delivery compact">
+                                <Truck size={28} />
+                                <p>No hay repartidores reportando ubicación.</p>
+                            </div>
+                        ) : (
+                            <div className="drivers-live-list">
+                                {driversLocations.map((driver) => {
+                                    const identity = String(driver.firebaseUid || '').trim() || String(driver.email || '').trim().toLowerCase();
+                                    const isSelected = selectedLiveDriver && (
+                                        (selectedLiveDriver.firebaseUid && selectedLiveDriver.firebaseUid === driver.firebaseUid)
+                                        || (selectedLiveDriver.email && selectedLiveDriver.email === driver.email)
+                                    );
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={identity || driver.repartidor}
+                                            className={`driver-live-card ${isSelected ? 'selected' : ''}`}
+                                            onClick={() => handleFocusDriver(driver)}
+                                        >
+                                            <div>
+                                                <strong>{driver.repartidor || 'Repartidor'}</strong>
+                                                <span>{formatDriverLastSeen(driver.time || driver.updatedAt || driver.timestamp)}</span>
+                                            </div>
+                                            <div className={`comp-pill ${driver.activeOrders ? 'ok' : 'missing'}`}>
+                                                {driver.activeOrders ? `${driver.activeOrders} pedidos` : 'Sin pedidos'}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="logistica-panel logistica-sidebar neo-card">
+                    <div className="sidebar-search">
+                        <Search size={18} />
+                        <input
+                            type="text"
+                            placeholder="Buscar dirección o cliente..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="filter-pills">
+                        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
+                        <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
+                        <button className={filter === 'assigned' ? 'active' : ''} onClick={() => setFilter('assigned')}>En Reparto</button>
+                        <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
+                    </div>
+
+                    <div style={{ padding: '0 1rem 1rem' }}>
+                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
+                            <Share2 size={14} /> Link del Repartidor
+                        </button>
+                    </div>
+
+                    <div className="orders-list">
+                        {deliveryOrders.length === 0 ? (
+                            <div className="empty-delivery compact">
+                                <Truck size={32} />
+                                <p>No hay envíos pendientes.</p>
+                            </div>
+                        ) : (
+                            deliveryOrders.map(p => (
+                                <div
+                                    key={p.id}
+                                    className={`delivery-item ${selectedPedido?.id === p.id ? 'selected' : ''}`}
+                                    onClick={() => handleFocusPedido(p)}
+                                >
+                                    <div className="status-indicator" style={{ background: p.status === 'delivered' ? '#22c55e' : (p.status === 'ready' ? '#3b82f6' : '#f59e0b') }}></div>
+                                    <div className="item-main">
+                                        <div className="item-info">
+                                            <h4>{p.customer_name}</h4>
+                                            <p className="address"><MapPin size={12} /> {p.address}</p>
+                                            {p.repartidor && <p className="driver-label"><Truck size={12} /> {p.repartidor}</p>}
+                                        </div>
+                                        <ChevronRight size={18} className="arrow" />
+                                    </div>
+                                    <div className="item-footer">
+                                        <span>#{p.id}</span>
+                                        <span className={`badge-status ${p.status}`}>{getStatusLabel(p.status)}</span>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+                </div>
                 </div>
             </div>
 

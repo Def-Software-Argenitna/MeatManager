@@ -108,16 +108,18 @@ const Proveedores = () => {
     }, [formData.province]);
 
     return (
-        <div className="animate-fade-in" style={{ padding: '1rem' }}>
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+        <div className="animate-fade-in">
+            <header className="page-header">
+                <div className="page-header-main">
                     <h1 className="page-title">Proveedores</h1>
                     <p className="page-description">Gestión fiscal y logística de abastecimiento</p>
                 </div>
-                <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
-                    <Plus size={20} />
-                    Nuevo Proveedor
-                </button>
+                <div className="page-header-actions">
+                    <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
+                        <Plus size={20} />
+                        Nuevo Proveedor
+                    </button>
+                </div>
             </header>
 
             <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>

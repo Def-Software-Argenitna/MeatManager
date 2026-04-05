@@ -1,14 +1,11 @@
 .sucursales-container {
-    padding: 2rem;
-    max-width: 1400px;
-    margin: 0 auto;
+    padding: 1.5rem 1.75rem 2rem;
+    max-width: none;
+    margin: 0;
 }
 
 .sucursales-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 2rem;
+    margin-bottom: 1.5rem;
 }
 
 .header-info h1 {

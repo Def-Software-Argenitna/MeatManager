@@ -106,16 +106,18 @@ const Categorias = () => {
     );
 
     return (
-        <div className="animate-fade-in" style={{ padding: '1rem' }}>
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+        <div className="animate-fade-in">
+            <header className="page-header">
+                <div className="page-header-main">
                     <h1 className="page-title">Categorías</h1>
                     <p className="page-description">Estructura de productos (Rubros y Sub-rubros)</p>
                 </div>
-                <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
-                    <PlusIcon size={20} />
-                    Nueva Categoría Principal
-                </button>
+                <div className="page-header-actions">
+                    <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
+                        <PlusIcon size={20} />
+                        Nueva Categoría Principal
+                    </button>
+                </div>
             </header>
 
             <div style={{ maxWidth: '800px' }}>

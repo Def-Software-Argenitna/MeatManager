@@ -6,12 +6,6 @@
     overflow-y: auto;
 }
 
-.page-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-}
-
 .reset-btn {
     display: flex;
     align-items: center;

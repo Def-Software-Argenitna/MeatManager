@@ -95,7 +95,7 @@ const ConfiguracionPagos = () => {
     return (
         <div className="config-pagos-container animate-fade-in">
             <header className="page-header">
-                <div>
+                <div className="page-header-main">
                     <h1 className="page-title">
                         <Settings size={32} />
                         Configuración de Métodos de Pago
@@ -104,6 +104,7 @@ const ConfiguracionPagos = () => {
                         Gestiona los recargos y descuentos para cada método de pago
                     </p>
                 </div>
+                <div className="page-header-actions">
                 <button
                     className="reset-btn"
                     onClick={handleResetPayments}
@@ -112,6 +113,7 @@ const ConfiguracionPagos = () => {
                     <Trash2 size={18} />
                     Reiniciar Métodos
                 </button>
+                </div>
             </header>
 
             <div className="info-banner">

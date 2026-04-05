@@ -85,7 +85,7 @@ const Alimentos = () => {
     return (
         <div className="alimentos-container animate-fade-in">
             <header className="page-header">
-                <div>
+                <div className="page-header-main">
                     <h1 className="page-title">
                         <Package size={32} />
                         Alimentos Pre-elaborados
