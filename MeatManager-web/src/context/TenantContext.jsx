@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
+import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { bootstrapTenantData } from '../utils/bootstrapTenantData';
 
@@ -42,11 +42,35 @@ export const TenantProvider = ({ children }) => {
             sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
 
             try {
+                const token = await user.getIdToken();
+                if (token) {
+                    sessionStorage.setItem(TOKEN_KEY, token);
+                }
                 await bootstrapTenantData();
             } catch (error) {
                 console.error('[TENANT BOOTSTRAP ERROR]', error);
             } finally {
                 setLoading(false);
+            }
+        });
+
+        return unsubscribe;
+    }, []);
+
+    useEffect(() => {
+        const unsubscribe = onIdTokenChanged(auth, async (user) => {
+            if (!user) {
+                sessionStorage.removeItem(TOKEN_KEY);
+                return;
+            }
+
+            try {
+                const token = await user.getIdToken();
+                if (token) {
+                    sessionStorage.setItem(TOKEN_KEY, token);
+                }
+            } catch (error) {
+                console.error('[AUTH TOKEN REFRESH ERROR]', error);
             }
         });
 
