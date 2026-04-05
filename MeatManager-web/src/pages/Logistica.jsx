@@ -1,6 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import {
     Map as MapIcon,
     Truck,
@@ -23,7 +21,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useLicense } from '../context/LicenseContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
-import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers } from '../utils/apiClient';
+import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -88,13 +86,9 @@ const Logistica = () => {
     const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
     const [registeredDrivers, setRegisteredDrivers] = useState([]);
     const [driversError, setDriversError] = useState('');
+    const [pedidos, setPedidos] = useState([]);
+    const [clients, setClients] = useState([]);
 
-    const pedidos = useLiveQuery(async () => {
-        const rows = await db.pedidos?.toArray();
-        return (rows || []).filter((pedido) => pedido.delivery_type === 'delivery');
-    });
-
-    const clients = useLiveQuery(() => db.clients?.toArray());
     const hasLogisticsModule = hasModule('logistica');
     const driversById = useMemo(() => {
         const map = new Map();
@@ -119,6 +113,25 @@ const Logistica = () => {
 
         let cancelled = false;
 
+        const loadOrders = async () => {
+            try {
+                const [orderRows, clientRows] = await Promise.all([
+                    fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+                    fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
+                ]);
+                if (!cancelled) {
+                    setPedidos((Array.isArray(orderRows) ? orderRows : []).filter((pedido) => pedido.delivery_type === 'delivery'));
+                    setClients(Array.isArray(clientRows) ? clientRows : []);
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    console.warn('[LOGISTICA] No se pudieron cargar pedidos/clientes', error?.message || error);
+                    setPedidos([]);
+                    setClients([]);
+                }
+            }
+        };
+
         const loadDrivers = async () => {
             try {
                 const payload = await fetchLogisticsDrivers();
@@ -134,11 +147,21 @@ const Logistica = () => {
             }
         };
 
+        loadOrders();
         loadDrivers();
         return () => {
             cancelled = true;
         };
     }, [hasLogisticsModule]);
+
+    const refreshOrders = async () => {
+        const [orderRows, clientRows] = await Promise.all([
+            fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+            fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
+        ]);
+        setPedidos((Array.isArray(orderRows) ? orderRows : []).filter((pedido) => pedido.delivery_type === 'delivery'));
+        setClients(Array.isArray(clientRows) ? clientRows : []);
+    };
 
     useEffect(() => {
         if (!hasLogisticsModule) return;
@@ -237,12 +260,18 @@ const Logistica = () => {
     const assignDriver = async (id, driverId) => {
         const driver = driversById.get(String(driverId));
         if (!driver) {
-            await db.pedidos.update(id, {
+            const pedido = pedidos.find((item) => Number(item.id) === Number(id));
+            if (!pedido) return;
+            await saveTableRecord('pedidos', 'update', {
+                ...pedido,
                 repartidor: null,
                 assigned_driver_uid: null,
                 assigned_driver_email: null,
                 status: 'pending',
-            });
+                assigned_at: null,
+                status_updated_at: new Date().toISOString(),
+            }, id);
+            await refreshOrders();
             return;
         }
 
@@ -256,14 +285,7 @@ const Logistica = () => {
             });
 
             const order = payload?.order;
-            await db.pedidos.update(id, {
-                repartidor: order?.driver?.name || driver.name,
-                assigned_driver_uid: order?.driver?.firebaseUid || driver.firebaseUid || null,
-                assigned_driver_email: order?.driver?.email || driver.email || null,
-                status: order?.status || 'assigned',
-                assigned_at: order?.assignedAt || new Date().toISOString(),
-                status_updated_at: order?.statusUpdatedAt || new Date().toISOString(),
-            });
+            await refreshOrders();
 
             setSelectedPedido((current) => (
                 current && Number(current.id) === Number(id)
@@ -298,11 +320,12 @@ const Logistica = () => {
                 try {
                     const geocoded = await geocodeAddress(buildOrderAddress(pedido));
                     if (!geocoded || cancelled) continue;
-                    await db.pedidos.update(pedido.id, {
+                    await saveTableRecord('pedidos', 'update', {
+                        ...pedido,
                         latitude: geocoded.latitude,
                         longitude: geocoded.longitude,
                         geocoded_at: geocoded.geocoded_at,
-                    });
+                    }, pedido.id);
                 } catch (error) {
                     console.warn('[LOGISTICA] No se pudo geocodificar pedido', pedido.id, error?.message || error);
                 }
@@ -514,7 +537,12 @@ const Logistica = () => {
                             </div>
                             <div className="overlay-actions">
                                 <button className="btn-delivered" onClick={async () => {
-                                    await db.pedidos.update(selectedPedido.id, { status: 'delivered' });
+                                    await saveTableRecord('pedidos', 'update', {
+                                        ...selectedPedido,
+                                        status: 'delivered',
+                                        status_updated_at: new Date().toISOString(),
+                                    }, selectedPedido.id);
+                                    await refreshOrders();
                                     setSelectedPedido(null);
                                 }}>
                                     Confirmar Entrega

@@ -1,18 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { db } from '../db';
 import { CheckCircle, Cpu, Globe } from 'lucide-react';
+import { getRemoteSetting } from '../utils/apiClient';
 
 const AiBackgroundManager = () => {
     const [status, setStatus] = useState({ enabled: false, model: 'llama3' });
 
     useEffect(() => {
         const initAI = async () => {
-            const aiEnabled = await db.settings.get('ai_enabled');
-            const aiModel = await db.settings.get('ai_model');
+            const [aiEnabled, aiModel] = await Promise.all([
+                getRemoteSetting('ai_enabled'),
+                getRemoteSetting('ai_model'),
+            ]);
 
             setStatus({
-                enabled: Boolean(aiEnabled?.value),
-                model: aiModel?.value || 'llama3'
+                enabled: aiEnabled === true || aiEnabled === 'true' || aiEnabled === 1 || aiEnabled === '1',
+                model: aiModel || 'llama3'
             });
         };
 

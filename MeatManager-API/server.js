@@ -2348,7 +2348,7 @@ const ALLOWED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots',
 ]);
 

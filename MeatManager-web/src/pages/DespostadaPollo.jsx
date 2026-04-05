@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Save, RotateCcw, Check } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { scaleService } from '../utils/SerialScaleService';
 import { useLicense } from '../context/LicenseContext';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaPollo.css';
 
 // Detailed cuts mapping for chicken
@@ -28,11 +27,21 @@ const DespostadaPollo = () => {
     const [selectedLotSupplier, setSelectedLotSupplier] = useState('');
     const [costPerKg, setCostPerKg] = useState(0);
     const [isSessionStarted, setIsSessionStarted] = useState(false);
+    const [availableLots, setAvailableLots] = useState([]);
+    const [compras, setCompras] = useState([]);
 
-    // DB Data
-    const availableLots = useLiveQuery(() =>
-        db.animal_lots?.where('status').equals('disponible').and(l => l.species === 'pollo').toArray()
-    );
+    const loadDespostadaData = React.useCallback(async () => {
+        const [lotRows, comprasRows] = await Promise.all([
+            fetchTable('animal_lots'),
+            fetchTable('compras'),
+        ]);
+        setAvailableLots((Array.isArray(lotRows) ? lotRows : []).filter((lot) => lot.status === 'disponible' && lot.species === 'pollo'));
+        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+    }, []);
+
+    React.useEffect(() => {
+        loadDespostadaData().catch((error) => console.error('Error cargando despostada pollo:', error));
+    }, [loadDespostadaData]);
 
     // Workspace State
     const [selectedCutId, setSelectedCutId] = useState(null);
@@ -73,7 +82,7 @@ const DespostadaPollo = () => {
         setInitialWeight(lot.weight);
 
         if (lot.purchase_id) {
-            const purchase = await db.compras.get(lot.purchase_id);
+            const purchase = compras.find((item) => Number(item.id) === Number(lot.purchase_id));
             if (purchase?.items_detail) {
                 const itemMatch = purchase.items_detail.find(i =>
                     i.type === 'despostada' && (i.species === 'pollo' || i.name.toLowerCase().includes('pollo'))
@@ -93,11 +102,11 @@ const DespostadaPollo = () => {
 
         if (window.confirm('¿Finalizar troceado de pollo?')) {
             if (selectedLotId) {
-                await db.animal_lots.update(selectedLotId, { status: 'despostado' });
+                await saveTableRecord('animal_lots', 'update', { status: 'despostado' }, selectedLotId);
             }
 
             const selectedLot = availableLots?.find((lot) => lot.id === selectedLotId) || null;
-            await db.despostada_logs.add(buildDespostadaLogPayload({
+            await saveTableRecord('despostada_logs', 'insert', buildDespostadaLogPayload({
                 type: 'pollo',
                 supplier: selectedLotSupplier,
                 initialWeight,
@@ -106,6 +115,7 @@ const DespostadaPollo = () => {
                 selectedLot,
                 costPerKg
             }));
+            await loadDespostadaData();
 
             setIsSessionStarted(false);
             setLogs([]);
@@ -176,12 +186,11 @@ const DespostadaPollo = () => {
         setLogs([newLog, ...logs]);
 
         // Save to DB
-        await db.stock.add({
+        await saveTableRecord('stock', 'insert', {
             name: cutInfo.name,
             type: 'pollo',
             quantity: weightVal,
-            updated_at: new Date(),
-            synced: 0
+            updated_at: new Date().toISOString(),
         });
 
         // Reset for next cut

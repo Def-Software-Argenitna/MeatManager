@@ -1,9 +1,8 @@
-import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, formatReceiptCode } from '../db';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { useUser } from '../context/UserContext';
+import { fetchTable } from '../utils/apiClient';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
 
@@ -12,57 +11,96 @@ const toNumber = (value) => {
     return Number.isFinite(numeric) ? numeric : 0;
 };
 
+const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
+    `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
+
 const Dashboard = () => {
     const navigate = useNavigate();
     const { currentUser } = useUser();
     const isAdmin = currentUser?.role === 'admin';
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
+    const [ventasDia, setVentasDia] = useState([]);
+    const [allVentas, setAllVentas] = useState([]);
+    const [comprasMes, setComprasMes] = useState([]);
+    const [stockItems, setStockItems] = useState([]);
+    const [clients, setClients] = useState([]);
+    const [proLogs, setProLogs] = useState([]);
+    const [branchSnapshots, setBranchSnapshots] = useState([]);
 
-    // Queries
-    const ventasDia = useLiveQuery(() => {
+    useEffect(() => {
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date();
         end.setHours(23, 59, 59, 999);
-        return db.ventas.where('date').between(start, end).toArray();
-    });
 
-    const allVentas = useLiveQuery(async () => {
-        const sales = await db.ventas.orderBy('date').reverse().limit(5).toArray();
-        return Promise.all(sales.map(async v => {
-            if (v.items) return v;
-            const items = await db.ventas_items.where('venta_id').equals(v.id).toArray();
-            return { ...v, items };
-        }));
-    });
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
 
-    // Generate local date string for Compras filtering (YYYY-MM-DD)
-    const _sm = new Date();
-    _sm.setDate(1);
-    const dateStr = `${_sm.getFullYear()}-${String(_sm.getMonth() + 1).padStart(2, '0')}-01`;
+        let cancelled = false;
 
-    const comprasMes = useLiveQuery(
-        () => db.compras.where('date').aboveOrEqual(dateStr).toArray(),
-        [dateStr]
-    );
+        const loadDashboard = async () => {
+            try {
+                const [ventasRows, ventasItemsRows, comprasRows, stockRows, clientRows, logRows, snapshotRows] = await Promise.all([
+                    fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
+                    fetchTable('ventas_items', { limit: 10000, orderBy: 'id', direction: 'DESC' }),
+                    fetchTable('compras', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
+                    fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
+                    fetchTable('clients', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                    fetchTable('despostada_logs', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
+                    fetchTable('branch_stock_snapshots', { limit: 5000, orderBy: 'snapshot_at', direction: 'DESC' }),
+                ]);
 
-    const stockItems = useLiveQuery(
-        () => db.stock.toArray()
-    );
+                if (cancelled) return;
 
-    const clients = useLiveQuery(
-        () => db.clients.toArray()
-    );
+                const salesList = Array.isArray(ventasRows) ? ventasRows : [];
+                const saleItems = Array.isArray(ventasItemsRows) ? ventasItemsRows : [];
+                const itemsBySaleId = new Map();
+                saleItems.forEach((item) => {
+                    const key = Number(item.venta_id);
+                    const list = itemsBySaleId.get(key) || [];
+                    list.push(item);
+                    itemsBySaleId.set(key, list);
+                });
 
-    const proLogs = useLiveQuery(
-        () => db.despostada_logs.toArray()
-    );
+                setVentasDia(salesList.filter((sale) => {
+                    const saleDate = new Date(sale.date);
+                    return saleDate >= start && saleDate <= end;
+                }));
+                setAllVentas(
+                    salesList
+                        .slice()
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+                        .slice(0, 5)
+                        .map((sale) => ({
+                            ...sale,
+                            items: sale.items || itemsBySaleId.get(Number(sale.id)) || [],
+                        }))
+                );
+                setComprasMes((Array.isArray(comprasRows) ? comprasRows : []).filter((compra) => new Date(compra.date) >= monthStart));
+                setStockItems(Array.isArray(stockRows) ? stockRows : []);
+                setClients(Array.isArray(clientRows) ? clientRows : []);
+                setProLogs(Array.isArray(logRows) ? logRows : []);
+                setBranchSnapshots(Array.isArray(snapshotRows) ? snapshotRows : []);
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('[DASHBOARD] No se pudieron cargar métricas desde la API', error);
+                    setVentasDia([]);
+                    setAllVentas([]);
+                    setComprasMes([]);
+                    setStockItems([]);
+                    setClients([]);
+                    setProLogs([]);
+                    setBranchSnapshots([]);
+                }
+            }
+        };
 
-    const branchSnapshots = useLiveQuery(
-        () => db.branch_stock_snapshots?.orderBy('snapshot_at').reverse().toArray() || [],
-        [],
-        []
-    );
+        loadDashboard();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
 
     const { hasModule } = useLicense();
 

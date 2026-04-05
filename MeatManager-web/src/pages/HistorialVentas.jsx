@@ -1,8 +1,7 @@
 import React, { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt, Search } from 'lucide-react';
-import { db, formatReceiptCode } from '../db';
+import { fetchTable } from '../utils/apiClient';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -12,18 +11,34 @@ const formatCurrency = (amount) =>
     }).format(Number(amount) || 0);
 
 const normalize = (value) => String(value || '').toLowerCase().trim();
+const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
+const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
 
 const HistorialVentas = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
+    const [sales, setSales] = useState([]);
 
-    const sales = useLiveQuery(async () => {
-        const rows = await db.ventas.orderBy('date').reverse().toArray();
-        return Promise.all(rows.map(async (sale) => {
-            const items = await db.ventas_items.where('venta_id').equals(sale.id).toArray();
-            return { ...sale, items };
-        }));
-    }, [], []);
+    React.useEffect(() => {
+        const loadSales = async () => {
+            const [salesRows, salesItemsRows] = await Promise.all([
+                fetchTable('ventas', { orderBy: 'date', direction: 'desc' }),
+                fetchTable('ventas_items'),
+            ]);
+            const grouped = {};
+            for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
+                const ventaId = Number(item.venta_id);
+                if (!grouped[ventaId]) grouped[ventaId] = [];
+                grouped[ventaId].push(item);
+            }
+            setSales((Array.isArray(salesRows) ? salesRows : []).map((sale) => ({
+                ...sale,
+                items: grouped[Number(sale.id)] || [],
+            })));
+        };
+
+        loadSales().catch((error) => console.error('Error cargando historial de ventas:', error));
+    }, []);
 
     const filteredSales = useMemo(() => {
         const term = normalize(search);

@@ -1,10 +1,9 @@
 import React, { useState } from 'react';
 import { Save, RotateCcw, Check, ShieldCheck, TrendingUp, DollarSign } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { useLicense } from '../context/LicenseContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaVaca.css';
 
 // Detailed cuts mapping based on the provided diagram
@@ -54,14 +53,24 @@ const DespostadaVaca = () => {
     const [selectedLotSupplier, setSelectedLotSupplier] = useState('');
     const [isSessionStarted, setIsSessionStarted] = useState(false);
     const [costPerKg, setCostPerKg] = useState(0); // For PRO mode
+    const [availableLots, setAvailableLots] = useState([]);
+    const [compras, setCompras] = useState([]);
 
     const { hasModule } = useLicense();
     const hasDespostadaModule = hasModule('despostada');
 
-    // DB Data
-    const availableLots = useLiveQuery(() =>
-        db.animal_lots?.where('status').equals('disponible').and(l => l.species === 'vaca').toArray()
-    );
+    const loadDespostadaData = React.useCallback(async () => {
+        const [lotRows, comprasRows] = await Promise.all([
+            fetchTable('animal_lots'),
+            fetchTable('compras'),
+        ]);
+        setAvailableLots((Array.isArray(lotRows) ? lotRows : []).filter((lot) => lot.status === 'disponible' && lot.species === 'vaca'));
+        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+    }, []);
+
+    React.useEffect(() => {
+        loadDespostadaData().catch((error) => console.error('Error cargando despostada vaca:', error));
+    }, [loadDespostadaData]);
 
     // Workspace State
     const [selectedCutId, setSelectedCutId] = useState(null);
@@ -93,7 +102,7 @@ const DespostadaVaca = () => {
 
         // PRO: Attempt to find the cost per kg from the original purchase
         if (hasDespostadaModule && lot.purchase_id) {
-            const purchase = await db.compras.get(lot.purchase_id);
+            const purchase = compras.find((item) => Number(item.id) === Number(lot.purchase_id));
             if (purchase && purchase.items_detail) {
                 // Find the item that generated this lot (matching species or general name)
                 const itemMatch = purchase.items_detail.find(i =>
@@ -114,11 +123,11 @@ const DespostadaVaca = () => {
 
         if (window.confirm('¿Finalizar esta despostada? Se actualizará el stock de piezas enteras.')) {
             if (selectedLotId) {
-                await db.animal_lots.update(selectedLotId, { status: 'despostado' });
+                await saveTableRecord('animal_lots', 'update', { status: 'despostado' }, selectedLotId);
             }
 
             const selectedLot = availableLots?.find((lot) => lot.id === selectedLotId) || null;
-            await db.despostada_logs.add(buildDespostadaLogPayload({
+            await saveTableRecord('despostada_logs', 'insert', buildDespostadaLogPayload({
                 type: 'vaca',
                 supplier: selectedLotSupplier,
                 initialWeight,
@@ -127,6 +136,7 @@ const DespostadaVaca = () => {
                 selectedLot,
                 costPerKg
             }));
+            await loadDespostadaData();
 
             // Reset
             setIsSessionStarted(false);
@@ -198,12 +208,11 @@ const DespostadaVaca = () => {
         setLogs([newLog, ...logs]);
 
         // Save to DB
-        await db.stock.add({
+        await saveTableRecord('stock', 'insert', {
             name: cutInfo.name,
             type: 'vaca',
             quantity: weightVal,
-            updated_at: new Date(),
-            synced: 0
+            updated_at: new Date().toISOString(),
         });
 
         // Reset for next cut

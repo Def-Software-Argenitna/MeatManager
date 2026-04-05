@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { Settings, CreditCard, Wallet, DollarSign, TrendingUp, TrendingDown, Save, ChevronDown, Trash2 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, initializePaymentMethods } from '../db';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './ConfiguracionPagos.css';
 
-// Initialize payment methods once when module loads
-initializePaymentMethods();
 const ALLOWED_PAYMENT_METHODS = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia', 'Cuenta Corriente'];
 const DEFAULT_PAYMENT_METHODS = [
     { name: 'Posnet', type: 'card', percentage: 0, enabled: true, icon: '💳', bank: 'posnet' },
@@ -21,15 +18,23 @@ const ConfiguracionPagos = () => {
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState({});
+    const [paymentMethods, setPaymentMethods] = useState([]);
 
-    // Load payment methods
-    const paymentMethods = useLiveQuery(
-        async () => {
-            const methods = await db.payment_methods.toArray();
-            return methods.filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name));
-        },
-        []
-    );
+    const loadPaymentMethods = React.useCallback(async () => {
+        let methods = await fetchTable('payment_methods');
+        methods = (Array.isArray(methods) ? methods : []).filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name));
+
+        if (methods.length === 0) {
+            await Promise.all(DEFAULT_PAYMENT_METHODS.map((method) => saveTableRecord('payment_methods', 'insert', method)));
+            methods = await fetchTable('payment_methods');
+        }
+
+        setPaymentMethods((Array.isArray(methods) ? methods : []).filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name)));
+    }, []);
+
+    React.useEffect(() => {
+        loadPaymentMethods().catch((error) => console.error('Error cargando medios de pago:', error));
+    }, [loadPaymentMethods]);
 
     const handleEdit = (method) => {
         setEditingId(method.id);
@@ -37,17 +42,19 @@ const ConfiguracionPagos = () => {
     };
 
     const handleSave = async (id) => {
-        await db.payment_methods.update(id, {
+        await saveTableRecord('payment_methods', 'update', {
             percentage: parseFloat(editValue)
-        });
+        }, id);
+        await loadPaymentMethods();
         setEditingId(null);
         setEditValue('');
     };
 
     const handleToggle = async (id, currentState) => {
-        await db.payment_methods.update(id, {
+        await saveTableRecord('payment_methods', 'update', {
             enabled: !currentState
-        });
+        }, id);
+        await loadPaymentMethods();
     };
 
     const toggleGroup = (type) => {
@@ -59,8 +66,9 @@ const ConfiguracionPagos = () => {
 
     const handleResetPayments = async () => {
         if (confirm('¿Estás seguro? Esto eliminará todos los métodos de pago y los reiniciará.')) {
-            await db.payment_methods.clear();
-            await db.payment_methods.bulkAdd(DEFAULT_PAYMENT_METHODS);
+            await Promise.all(paymentMethods.map((method) => saveTableRecord('payment_methods', 'delete', null, method.id)));
+            await Promise.all(DEFAULT_PAYMENT_METHODS.map((method) => saveTableRecord('payment_methods', 'insert', method)));
+            await loadPaymentMethods();
             alert('✅ Métodos de pago reiniciados correctamente');
         }
     };

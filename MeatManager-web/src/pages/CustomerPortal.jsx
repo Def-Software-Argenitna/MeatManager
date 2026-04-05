@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import {
     ShoppingBasket,
     ArrowLeft,
@@ -13,6 +11,7 @@ import {
     Plus,
     X
 } from 'lucide-react';
+import { fetchTable, getRemoteSetting } from '../utils/apiClient';
 import './CustomerPortal.css';
 
 const CustomerPortal = () => {
@@ -20,13 +19,27 @@ const CustomerPortal = () => {
     const [step, setStep] = useState('browse'); // browse, checkout, success
     const [deliveryMode, setDeliveryMode] = useState('pickup');
     const [paymentMethod, setPaymentMethod] = useState('cash');
+    const [menuItems, setMenuItems] = useState([]);
+    const [stockItems, setStockItems] = useState([]);
+    const [shopName, setShopName] = useState('Nuestra Carnicería');
+    const [whatsapp, setWhatsapp] = useState('');
 
-    const menuItems = useLiveQuery(() => db.menu_digital.toArray());
-    const stockItems = useLiveQuery(() => db.stock.toArray());
-    const settings = useLiveQuery(() => db.settings.toArray());
+    React.useEffect(() => {
+        const loadPortalData = async () => {
+            const [menuRows, stockRows, remoteShopName, remoteWhatsapp] = await Promise.all([
+                fetchTable('menu_digital'),
+                fetchTable('stock'),
+                getRemoteSetting('shop_name'),
+                getRemoteSetting('whatsapp_number'),
+            ]);
+            setMenuItems(Array.isArray(menuRows) ? menuRows : []);
+            setStockItems(Array.isArray(stockRows) ? stockRows : []);
+            setShopName(remoteShopName || 'Nuestra Carnicería');
+            setWhatsapp(remoteWhatsapp || '');
+        };
 
-    const shopName = settings?.find(s => s.key === 'shop_name')?.value || 'Nuestra Carnicería';
-    const whatsapp = settings?.find(s => s.key === 'whatsapp_number')?.value || '';
+        loadPortalData().catch((error) => console.error('Error cargando portal de clientes:', error));
+    }, []);
 
     const getStock = (name) => stockItems?.find(s => s.name.toLowerCase() === name.toLowerCase())?.quantity || 0;
 

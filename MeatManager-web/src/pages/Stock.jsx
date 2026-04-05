@@ -1,10 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Package, Search, Filter, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { Package, Search, Filter, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet, Pencil } from 'lucide-react';
 import { scaleService, SCALE_PROTOCOLS } from '../utils/SerialScaleService';
 import { desktopApi } from '../utils/desktopApi';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css';
 
 const Stock = () => {
@@ -15,9 +14,50 @@ const Stock = () => {
     const [diagLogs, setDiagLogs] = useState([]);
     const [showDiag, setShowDiag] = useState(false);
     const [qendraAvailable, setQendraAvailable] = useState(false);
+    const [prices, setPrices] = useState([]);
+    const [editingPriceId, setEditingPriceId] = useState('');
+    const [editingPriceValue, setEditingPriceValue] = useState('');
+    const [allStock, setAllStock] = useState([]);
 
     useEffect(() => {
         desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
+    }, []);
+
+    const loadStockAndPrices = async () => {
+        const [stockRows, priceRows] = await Promise.all([
+            fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
+            fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+        ]);
+        setAllStock(Array.isArray(stockRows) ? stockRows : []);
+        setPrices(Array.isArray(priceRows) ? priceRows : []);
+    };
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadPrices = async () => {
+            try {
+                const [stockRows, priceRows] = await Promise.all([
+                    fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
+                    fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                ]);
+                if (!cancelled) {
+                    setAllStock(Array.isArray(stockRows) ? stockRows : []);
+                    setPrices(Array.isArray(priceRows) ? priceRows : []);
+                }
+            } catch (error) {
+                console.error('[STOCK] No se pudieron cargar stock/precios desde la API', error);
+                if (!cancelled) {
+                    setAllStock([]);
+                    setPrices([]);
+                }
+            }
+        };
+
+        loadPrices();
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     const addDiagLog = (type, msg) => {
@@ -31,12 +71,6 @@ const Stock = () => {
             setTimeout(() => setImportStatus(null), 6000);
         }
     };
-
-    // Cargar todos los movimientos de stock y consolidarlos por producto
-    const allStock = useLiveQuery(
-        () => db.stock.toArray(),
-        []
-    );
 
     const consolidatedStock = React.useMemo(() => {
         if (!allStock) return [];
@@ -64,8 +98,28 @@ const Stock = () => {
 
         return Object.values(grouped)
             .filter((item) => Math.abs(item.quantity) > 0.0001)
+            .map((item) => {
+                const normalizedName = String(item.name || '').trim().toLowerCase().replace(/\s+/g, '_');
+                const normalizedType = String(item.type || '').trim().toLowerCase().replace(/\s+/g, '_');
+                const productId = `${normalizedName}-${normalizedType}`;
+                const priceMatch = (prices || []).find((price) => {
+                    const rawProductId = String(price.product_id || '').trim().toLowerCase();
+                    return (
+                        rawProductId === productId ||
+                        rawProductId === normalizedName ||
+                        rawProductId.startsWith(`${normalizedName}-`)
+                    );
+                });
+                return {
+                    ...item,
+                    product_id: productId,
+                    price_record_id: priceMatch?.id || null,
+                    price: Number(priceMatch?.price) || 0,
+                    plu: priceMatch?.plu || '',
+                };
+            })
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-    }, [allStock]);
+    }, [allStock, prices]);
 
     // Filtrar stock consolidado
     const filteredStock = consolidatedStock.filter(item => {
@@ -130,16 +184,16 @@ const Stock = () => {
         const qty = parseFloat(adjustment.quantity);
         const finalQty = adjustment.type === 'add' ? qty : -qty;
 
-        await db.stock.add({
+        await saveTableRecord('stock', 'insert', {
             name: product.name,
             type: product.category,
             quantity: finalQty,
             unit: product.unit,
-            updated_at: new Date(),
-            synced: 0,
+            updated_at: new Date().toISOString(),
             reference: 'ajuste_manual'
         });
 
+        await loadStockAndPrices();
         setIsModalOpen(false);
         setAdjustment({ productId: '', quantity: '', type: 'add' });
     };
@@ -217,39 +271,40 @@ const Stock = () => {
 
                 // Update or create price — only if price is valid
                 if (validPrice) {
-                    const existingPrice = await db.prices.where('plu').equals(art.plu).first();
+                    const existingPrice = prices.find((price) => String(price.plu || '') === String(art.plu || ''));
                     if (existingPrice) {
-                        await db.prices.update(existingPrice.id, {
+                        await saveTableRecord('prices', 'update', {
+                            ...existingPrice,
                             price: art.price,
-                            updated_at: new Date()
-                        });
+                            updated_at: new Date().toISOString()
+                        }, existingPrice.id);
                         updatedCount++;
                     } else {
-                        await db.prices.add({
+                        await saveTableRecord('prices', 'insert', {
                             product_id: productId,
                             price: art.price,
                             plu: art.plu,
-                            updated_at: new Date()
+                            updated_at: new Date().toISOString()
                         });
                         createdCount++;
                     }
                 }
 
                 // Ensure product exists in stock tracker
-                const inStock = await db.stock.where('name').equals(art.name).first();
+                const inStock = allStock.find((item) => String(item.name || '').trim().toLowerCase() === String(art.name || '').trim().toLowerCase());
                 if (!inStock) {
-                    await db.stock.add({
+                    await saveTableRecord('stock', 'insert', {
                         name: art.name,
                         type: 'vaca',
                         quantity: 0,
                         unit: art.unit || 'kg',
-                        updated_at: new Date(),
-                        synced: 0,
+                        updated_at: new Date().toISOString(),
                         reference: 'importacion_balanza'
                     });
                 }
             }
 
+            await loadStockAndPrices();
             showStatus('success', `Sincronización exitosa — Nuevos: ${createdCount} | Actualizados: ${updatedCount} | Total: ${articles.length}`);
             addDiagLog('ok', `✅ Sincronización exitosa — Nuevos: ${createdCount} | Actualizados: ${updatedCount}`);
         } catch (error) {
@@ -274,6 +329,46 @@ const Stock = () => {
             unit: item.unit
         }));
     }, [consolidatedStock]);
+
+    const startPriceEdit = (item) => {
+        setEditingPriceId(item.id);
+        setEditingPriceValue(item.price ? String(item.price) : '');
+    };
+
+    const cancelPriceEdit = () => {
+        setEditingPriceId('');
+        setEditingPriceValue('');
+    };
+
+    const savePriceEdit = async (item) => {
+        const numericPrice = Number(editingPriceValue);
+        if (!Number.isFinite(numericPrice) || numericPrice < 0) {
+            showStatus('error', 'Ingresá un precio válido');
+            return;
+        }
+
+        const payload = {
+            product_id: item.product_id,
+            price: numericPrice,
+            plu: item.plu || null,
+            updated_at: new Date().toISOString(),
+        };
+
+        try {
+            if (item.price_record_id) {
+                await saveTableRecord('prices', 'update', payload, item.price_record_id);
+            } else {
+                await saveTableRecord('prices', 'insert', payload);
+            }
+
+            await loadStockAndPrices();
+            cancelPriceEdit();
+            showStatus('success', `Precio actualizado para ${item.name}`);
+        } catch (error) {
+            console.error('[STOCK] No se pudo guardar el precio', error);
+            showStatus('error', error.message || 'No se pudo guardar el precio');
+        }
+    };
 
     const [qendraPreview, setQendraPreview] = useState(null); // { rows, columns, tableFound }
     const [qendraImporting, setQendraImporting] = useState(false);
@@ -391,12 +486,21 @@ const Stock = () => {
             // Update or create price — solo si precio es un número válido > 0
             const validPrecio = typeof precio === 'number' && !isNaN(precio) && precio > 0;
             if (plu && validPrecio) {
-                const existing = await db.prices.where('plu').equals(plu).first();
+                const existing = prices.find((price) => String(price.plu || '') === String(plu || ''));
                 if (existing) {
-                    await db.prices.update(existing.id, { price: precio, updated_at: new Date() });
+                    await saveTableRecord('prices', 'update', {
+                        ...existing,
+                        price: precio,
+                        updated_at: new Date().toISOString(),
+                    }, existing.id);
                     updated++;
                 } else {
-                    await db.prices.add({ product_id: nombre.toLowerCase().replace(/ /g,'_'), price: precio, plu, updated_at: new Date() });
+                    await saveTableRecord('prices', 'insert', {
+                        product_id: nombre.toLowerCase().replace(/ /g,'_'),
+                        price: precio,
+                        plu,
+                        updated_at: new Date().toISOString(),
+                    });
                     created++;
                 }
             } else if (plu && !validPrecio) {
@@ -404,16 +508,17 @@ const Stock = () => {
             }
 
             // Ensure product exists in stock
-            const inStock = await db.stock.where('name').equals(nombre).first();
+            const inStock = allStock.find((item) => String(item.name || '').trim().toLowerCase() === String(nombre || '').trim().toLowerCase());
             if (!inStock) {
-                await db.stock.add({
+                await saveTableRecord('stock', 'insert', {
                     name: nombre, type: tipo, quantity: 0,
                     unit: esKg ? 'kg' : 'unidades',
-                    updated_at: new Date(), synced: 0, reference: 'qendra'
+                    updated_at: new Date().toISOString(), reference: 'qendra'
                 });
             }
         }
 
+        await loadStockAndPrices();
         setQendraPreview(null);
         setQendraImporting(false);
         showStatus('success', `Importación exitosa — Nuevos: ${created} | Actualizados: ${updated} | Omitidos: ${skipped}`);
@@ -605,6 +710,34 @@ const Stock = () => {
                                                 <div className="item-info">
                                                     <div className="item-name">{item.name}</div>
                                                     <div className="item-meta">
+                                                        <span className="item-price">
+                                                            Precio: {editingPriceId === item.id ? (
+                                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                    <input
+                                                                        type="number"
+                                                                        min="0"
+                                                                        step="0.01"
+                                                                        className="neo-input"
+                                                                        style={{ width: '120px', marginBottom: 0, padding: '0.35rem 0.55rem' }}
+                                                                        value={editingPriceValue}
+                                                                        onChange={(e) => setEditingPriceValue(e.target.value)}
+                                                                    />
+                                                                    <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}>
+                                                                        <Save size={14} />
+                                                                    </button>
+                                                                    <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}>
+                                                                        <X size={14} />
+                                                                    </button>
+                                                                </span>
+                                                            ) : (
+                                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                    <strong>{item.price > 0 ? `$${item.price.toLocaleString('es-AR')}` : 'Sin precio'}</strong>
+                                                                    <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
+                                                                        <Pencil size={14} />
+                                                                    </button>
+                                                                </span>
+                                                            )}
+                                                        </span>
                                                         <span className="item-date">
                                                             {new Date(item.updated_at).toLocaleDateString('es-AR', {
                                                                 day: '2-digit',

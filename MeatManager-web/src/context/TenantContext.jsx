@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
-import { bootstrapTenantData } from '../utils/bootstrapTenantData';
 
 const SESSION_KEY = 'mm_tenant';
 const TOKEN_KEY = 'mm_auth_token';
@@ -47,7 +46,6 @@ export const TenantProvider = ({ children }) => {
                 const nextTenant = mapFirebaseUserToTenant(user);
                 setTenant(nextTenant);
                 sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
-                await bootstrapTenantData();
             } catch (error) {
                 console.error('[TENANT BOOTSTRAP ERROR]', error);
                 const nextTenant = mapFirebaseUserToTenant(user);

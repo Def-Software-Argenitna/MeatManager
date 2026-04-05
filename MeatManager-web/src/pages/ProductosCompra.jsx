@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { desktopApi } from '../utils/desktopApi';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 
 const IVA_OPTIONS = [10.5, 21];
 
@@ -18,10 +17,28 @@ const ProductosCompra = () => {
     const [editingItem, setEditingItem] = useState(null);
     const [qendraAvailable, setQendraAvailable] = useState(false);
     const [qendraSendStatus, setQendraSendStatus] = useState(null);
+    const [items, setItems] = useState([]);
+    const [prices, setPrices] = useState([]);
+    const [categories, setCategories] = useState([]);
 
     useEffect(() => {
         desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
     }, []);
+
+    const loadData = React.useCallback(async () => {
+        const [itemsRows, pricesRows, categoriesRows] = await Promise.all([
+            fetchTable('purchase_items'),
+            fetchTable('prices'),
+            fetchTable('categories'),
+        ]);
+        setItems(Array.isArray(itemsRows) ? itemsRows : []);
+        setPrices(Array.isArray(pricesRows) ? pricesRows : []);
+        setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
+    }, []);
+
+    useEffect(() => {
+        loadData().catch((error) => console.error('Error cargando catálogo de compras:', error));
+    }, [loadData]);
 
     // Form State
     const [formData, setFormData] = useState({
@@ -35,10 +52,6 @@ const ProductosCompra = () => {
         sale_price: '',
         sale_plu: ''
     });
-
-    const items = useLiveQuery(() => db.purchase_items.toArray());
-    const prices = useLiveQuery(() => db.prices.toArray());
-    const categories = useLiveQuery(() => db.categories.toArray());
 
     // Build category map for display
     const categoryMap = React.useMemo(() => {
@@ -72,17 +85,17 @@ const ProductosCompra = () => {
         }
 
         if (editingItem) {
-            await db.purchase_items.update(editingItem.id, {
+            await saveTableRecord('purchase_items', 'update', {
                 name: nameTrimmed,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
                 species: formData.type === 'despostada' ? formData.species : null,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
-            });
+            }, editingItem.id);
             setEditingItem(null);
         } else {
-            await db.purchase_items.add({
+            await saveTableRecord('purchase_items', 'insert', {
                 name: nameTrimmed,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
@@ -94,47 +107,48 @@ const ProductosCompra = () => {
         }
 
         const productId = `${nameTrimmed}-${formData.sale_category}`;
-        const existingStock = await db.stock
-            .where('name')
-            .equals(nameTrimmed)
-            .and(item => item.type === formData.sale_category)
-            .first();
+        const stockRows = await fetchTable('stock');
+        const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
+            String(item.name || '').trim().toLowerCase() === nameTrimmed.toLowerCase() &&
+            String(item.type || '').trim().toLowerCase() === String(formData.sale_category || '').trim().toLowerCase()
+        );
 
         if (!existingStock) {
-            await db.stock.add({
+            await saveTableRecord('stock', 'insert', {
                 name: nameTrimmed,
                 type: formData.sale_category,
                 quantity: 0,
                 unit: formData.unit,
-                updated_at: new Date(),
-                synced: 0,
+                updated_at: new Date().toISOString(),
                 reference: 'catalogo_compra'
             });
         }
 
-        const existingPrice = await db.prices.where('product_id').equals(productId).first();
+        const existingPrice = prices.find((item) => String(item.product_id || '') === productId);
         if (existingPrice) {
-            await db.prices.update(existingPrice.id, {
+            await saveTableRecord('prices', 'update', {
                 price: salePrice,
                 plu: formData.sale_plu.trim(),
-                updated_at: new Date()
-            });
+                updated_at: new Date().toISOString()
+            }, existingPrice.id);
         } else {
-            await db.prices.add({
+            await saveTableRecord('prices', 'insert', {
                 product_id: productId,
                 price: salePrice,
                 plu: formData.sale_plu.trim(),
-                updated_at: new Date()
+                updated_at: new Date().toISOString()
             });
         }
 
+        await loadData();
         setIsModalOpen(false);
         setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
         if (window.confirm('¿Eliminar este producto del catálogo de compras?')) {
-            await db.purchase_items.delete(id);
+            await saveTableRecord('purchase_items', 'delete', null, id);
+            await loadData();
         }
     };
 

@@ -1,19 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { Truck, Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 
 const Proveedores = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingId, setEditingId] = useState(null);
-
-    const suppliers = useLiveQuery(() => db.suppliers.toArray());
-    // Traer compras y pagos para calcular saldo
-    const compras = useLiveQuery(() => db.compras?.toArray());
-    const pagos = useLiveQuery(() => db.caja_movimientos?.where('category').equals('Pago Proveedor').toArray());
+    const [suppliers, setSuppliers] = useState([]);
+    const [compras, setCompras] = useState([]);
+    const [pagos, setPagos] = useState([]);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -38,6 +35,21 @@ const Proveedores = () => {
         'No Responsable'
     ];
 
+    const loadSuppliersData = React.useCallback(async () => {
+        const [suppliersRows, comprasRows, pagosRows] = await Promise.all([
+            fetchTable('suppliers'),
+            fetchTable('compras'),
+            fetchTable('caja_movimientos'),
+        ]);
+        setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
+        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+        setPagos((Array.isArray(pagosRows) ? pagosRows : []).filter((item) => item.category === 'Pago Proveedor'));
+    }, []);
+
+    React.useEffect(() => {
+        loadSuppliersData().catch((error) => console.error('Error cargando proveedores:', error));
+    }, [loadSuppliersData]);
+
     const resetForm = () => {
         setFormData({
             name: '', cuit: '', iva_condition: 'Responsable Inscripto',
@@ -54,10 +66,11 @@ const Proveedores = () => {
 
         try {
             if (editingId) {
-                await db.suppliers.update(editingId, formData);
+                await saveTableRecord('suppliers', 'update', formData, editingId);
             } else {
-                await db.suppliers.add(formData);
+                await saveTableRecord('suppliers', 'insert', formData);
             }
+            await loadSuppliersData();
             setIsModalOpen(false);
             resetForm();
         } catch (error) {
@@ -68,7 +81,8 @@ const Proveedores = () => {
 
     const handleDelete = async (id) => {
         if (window.confirm('¿Seguro que desea eliminar este proveedor?')) {
-            await db.suppliers.delete(id);
+            await saveTableRecord('suppliers', 'delete', null, id);
+            await loadSuppliersData();
         }
     };
 

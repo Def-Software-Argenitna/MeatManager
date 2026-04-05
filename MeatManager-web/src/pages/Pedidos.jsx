@@ -1,10 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
-import { db } from '../db';
 import { BRAND_CONFIG } from '../brandConfig';
-import { fetchTable } from '../utils/apiClient';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import './Pedidos.css';
 
@@ -31,6 +29,7 @@ const qtyStep = (unit) => (unit === 'kg' ? '0.001' : '1');
 const qtySuffix = (unit) => (unit === 'kg' ? 'kg' : 'un');
 const qtyLabel = (unit) => (unit === 'kg' ? 'Kilos' : 'Cantidad');
 const cleanValue = (value) => String(value || '').trim();
+const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
 const isCompanyClient = (client) => cleanValue(client?.client_type) === 'company';
 const getClientContactName = (client) => [cleanValue(client?.contact_first_name), cleanValue(client?.contact_last_name)].filter(Boolean).join(' ');
 
@@ -63,40 +62,60 @@ const Pedidos = () => {
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [selectedSuggestion, setSelectedSuggestion] = useState(null);
     const [clients, setClients] = useState([]);
+    const [prices, setPrices] = useState([]);
+    const [pedidos, setPedidos] = useState([]);
+    const [stockRows, setStockRows] = useState([]);
 
-    const pedidos = useLiveQuery(async () => {
-        const rows = await db.pedidos?.toArray();
-        return (rows || []).sort((a, b) => {
-            const left = new Date(b?.created_at || b?.date || 0).getTime();
-            const right = new Date(a?.created_at || a?.date || 0).getTime();
-            if (left !== right) return left - right;
-            return Number(b?.id || 0) - Number(a?.id || 0);
-        });
-    }, []);
-    const stockRows = useLiveQuery(() => db.stock?.toArray(), []);
-    const prices = useLiveQuery(() => db.prices?.toArray(), []);
+    const sortOrders = (rows) => [...(rows || [])].sort((a, b) => {
+        const left = new Date(b?.created_at || b?.date || 0).getTime();
+        const right = new Date(a?.created_at || a?.date || 0).getTime();
+        if (left !== right) return left - right;
+        return Number(b?.id || 0) - Number(a?.id || 0);
+    });
     useEffect(() => {
         let cancelled = false;
 
-        const loadClients = async () => {
+        const loadRemoteData = async () => {
             try {
-                const rows = await fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' });
+                const [clientRows, priceRows, orderRows, stockTableRows] = await Promise.all([
+                    fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
+                    fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                    fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+                    fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
+                ]);
                 if (!cancelled) {
-                    setClients(Array.isArray(rows) ? rows : []);
+                    setClients(Array.isArray(clientRows) ? clientRows : []);
+                    setPrices(Array.isArray(priceRows) ? priceRows : []);
+                    setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
+                    setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
                 }
             } catch (error) {
-                console.error('[PEDIDOS] No se pudieron cargar clientes desde la API', error);
+                console.error('[PEDIDOS] No se pudieron cargar datos desde la API', error);
                 if (!cancelled) {
                     setClients([]);
+                    setPrices([]);
+                    setPedidos([]);
+                    setStockRows([]);
                 }
             }
         };
 
-        loadClients();
+        loadRemoteData();
         return () => {
             cancelled = true;
         };
     }, []);
+
+    const refreshPedidosData = async () => {
+        const [orderRows, stockTableRows, priceRows] = await Promise.all([
+            fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+            fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
+            fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+        ]);
+        setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
+        setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
+        setPrices(Array.isArray(priceRows) ? priceRows : []);
+    };
 
     const clientOptions = useMemo(() => (
         (clients || []).map((client) => ({
@@ -127,8 +146,17 @@ const Pedidos = () => {
         return Array.from(grouped.values())
             .filter((item) => item.quantity > 0.0001)
             .map((item) => {
-                const productId = `${slugify(item.name)}-${slugify(item.type)}`;
-                const priceMatch = (prices || []).find((price) => String(price.product_id || '').toLowerCase() === productId || String(price.product_id || '').toLowerCase() === slugify(item.name));
+                const normalizedName = normalizeProductKey(item.name);
+                const normalizedType = slugify(item.type);
+                const productId = `${normalizedName}-${normalizedType}`;
+                const priceMatch = (prices || []).find((price) => {
+                    const rawProductId = normalizeProductKey(price.product_id);
+                    return (
+                        rawProductId === productId ||
+                        rawProductId === normalizedName ||
+                        rawProductId.startsWith(`${normalizedName}-`)
+                    );
+                });
                 return { ...item, productId, price: Number(priceMatch?.price) || 0 };
             })
             .sort((a, b) => a.name.localeCompare(b.name));
@@ -177,7 +205,14 @@ const Pedidos = () => {
     });
 
     const updateStatus = async (id, newStatus) => {
-        await db.pedidos.update(id, { status: newStatus });
+        const pedido = pedidos.find((item) => Number(item.id) === Number(id));
+        if (!pedido) return;
+        await saveTableRecord('pedidos', 'update', {
+            ...pedido,
+            status: newStatus,
+            status_updated_at: new Date().toISOString(),
+        }, id);
+        await refreshPedidosData();
     };
 
     const resetModal = () => {
@@ -267,7 +302,7 @@ const Pedidos = () => {
             }
         }
 
-        await db.pedidos.add({
+        await saveTableRecord('pedidos', 'insert', {
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
             customer_name: selectedClient.label,
             items: newPedido.items,
@@ -282,9 +317,10 @@ const Pedidos = () => {
             latitude: geocoded?.latitude ?? null,
             longitude: geocoded?.longitude ?? null,
             geocoded_at: geocoded?.geocoded_at ?? null,
-            created_at: new Date(),
+            created_at: new Date().toISOString(),
             source: 'manual',
         });
+        await refreshPedidosData();
         resetModal();
     };
 
@@ -316,7 +352,7 @@ const Pedidos = () => {
                         geocoded = null;
                     }
                 }
-                await db.pedidos.add({
+                await saveTableRecord('pedidos', 'insert', {
                     customer_name: parsed.name,
                     items: parsed.items,
                     items_text: parsed.items,
@@ -328,9 +364,10 @@ const Pedidos = () => {
                     geocoded_at: geocoded?.geocoded_at ?? null,
                     status: 'pending',
                     delivery_date: getLocalDateStr(),
-                    created_at: new Date(),
+                    created_at: new Date().toISOString(),
                     source: 'whatsapp',
                 });
+                await refreshPedidosData();
                 alert('Pedido importado con éxito!');
             } else {
                 alert('No se detectó un formato de pedido válido en el portapapeles.');

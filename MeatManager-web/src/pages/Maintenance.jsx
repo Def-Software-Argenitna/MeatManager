@@ -10,7 +10,6 @@ import {
     Trash2
 } from 'lucide-react';
 import { exportFullBackup, importFullBackup } from '../utils/backupService';
-import { db } from '../db';
 import { desktopApi } from '../utils/desktopApi';
 import './Maintenance.css';
 
@@ -50,24 +49,7 @@ const Maintenance = () => {
     };
 
     const handleClearSync = async () => {
-        if (confirm("¿Limpiar marcas de sincronización? Esto hará que todo se vuelva a subir a la nube la próxima vez que conectes.")) {
-            setLoading(true);
-            try {
-                const tables = ['ventas', 'ventas_items', 'stock', 'clients', 'suppliers', 'compras', 'compras_items', 'despostada_logs'];
-                await db.transaction('rw', tables, async () => {
-                    for (const table of tables) {
-                        if (db[table]) {
-                            await db[table].where('synced').equals(1).modify({ synced: 0 });
-                        }
-                    }
-                });
-                setMessage({ type: 'success', text: 'Marcas de sincronización reseteadas' });
-            } catch {
-                setMessage({ type: 'error', text: 'Error al resetear' });
-            } finally {
-                setLoading(false);
-            }
-        }
+        setMessage({ type: 'error', text: 'La resincronización local fue retirada. La app ahora trabaja directo sobre MySQL.' });
     };
 
     const handleNukeGlobal = async () => {
@@ -83,31 +65,7 @@ const Maintenance = () => {
             return;
         }
 
-        setLoading(true);
-        try {
-            // Borrado explícito de todas las tablas antes de eliminar la base
-            const tables = Object.keys(db.tables ? db.tables.reduce((acc, t) => { acc[t.name] = true; return acc; }, {}) : {});
-            for (const table of tables) {
-                if (db[table] && db[table].clear) {
-                    await db[table].clear();
-                }
-            }
-            // Si existe el método nukeIndexedDb (Electron), usarlo para borrar todo físicamente
-            if (window.electronAPI?.nukeIndexedDb) {
-                const res = await desktopApi.nukeIndexedDb();
-                if (!res.ok) throw new Error(res.error || 'Error físico al borrar IndexedDB');
-                return;
-            } else {
-                await db.delete();
-                if (window && window.localStorage) window.localStorage.clear();
-                if (window && window.sessionStorage) window.sessionStorage.clear();
-                setMessage({ type: 'success', text: 'Base de datos eliminada. Reiniciando aplicación...' });
-                setTimeout(() => window.location.reload(), 2000);
-            }
-        } catch {
-            setMessage({ type: 'error', text: 'Error al eliminar base de datos' });
-            setLoading(false);
-        }
+        setMessage({ type: 'error', text: 'La base local IndexedDB fue retirada. Esta acción ya no aplica en la app actual.' });
     };
 
     return (

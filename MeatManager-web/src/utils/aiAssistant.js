@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { db } from '../db';
+import { fetchTable, saveTableRecord } from './apiClient';
 
 const OLLAMA_URL = 'http://localhost:11434/api/chat';
 
@@ -14,9 +14,15 @@ const getAppContext = async () => {
     endOfDay.setHours(23, 59, 59, 999);
 
     // Get all records
-    const allStockRecords = await db.stock.toArray();
-    const ventasHoy = await db.ventas.where('date').between(startOfDay, endOfDay).toArray();
-    const totalVentasSnapshot = await db.ventas.toArray();
+    const [allStockRecords, totalVentasSnapshot, recentLogsRows] = await Promise.all([
+        fetchTable('stock'),
+        fetchTable('ventas'),
+        fetchTable('app_logs', { orderBy: 'timestamp', direction: 'desc', limit: 10 }),
+    ]);
+    const ventasHoy = (Array.isArray(totalVentasSnapshot) ? totalVentasSnapshot : []).filter((venta) => {
+        const saleDate = venta?.date ? new Date(venta.date) : null;
+        return saleDate && saleDate >= startOfDay && saleDate <= endOfDay;
+    });
 
     // Calculate Totals
     const totalRevenueToday = ventasHoy.reduce((acc, v) => acc + (parseFloat(v.total) || 0), 0);
@@ -38,7 +44,7 @@ const getAppContext = async () => {
     const topStock = [...stockBalances].sort((a, b) => b.quantity - a.quantity).slice(0, 5).map(i => `${i.name} (${i.quantity.toFixed(1)}kg)`);
 
     // Recent logs
-    const recentLogs = await db.app_logs.orderBy('timestamp').reverse().limit(10).toArray();
+    const recentLogs = Array.isArray(recentLogsRows) ? recentLogsRows : [];
 
     return {
         timestamp: new Date().toLocaleString(),
@@ -110,12 +116,11 @@ INFORME DE STOCK:
  */
 export const logAppEvent = async (level, message, details = '') => {
     try {
-        await db.app_logs.add({
+        await saveTableRecord('app_logs', 'insert', {
             level,
             message,
             details,
             timestamp: new Date().toISOString(),
-            synced: 0
         });
     } catch (e) {
         console.error("Failed to log app event", e);

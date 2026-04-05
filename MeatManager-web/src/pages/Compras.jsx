@@ -1,8 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Compras.css';
 
 const IVA_OPTIONS = [10.5, 21];
@@ -76,40 +75,12 @@ const Compras = () => {
         invoice_num: ''
     });
     const [showAdvanced, setShowAdvanced] = useState(false);
-
-    const compras = useLiveQuery(
-        async () => {
-            const list = await db.compras.orderBy('date').reverse().toArray();
-            return Promise.all(list.map(async c => {
-                if (c.items_detail) return c; // Compatibility with old data
-                const items = await db.compras_items.where('purchase_id').equals(c.id).toArray();
-                // Map product_name back to name for UI consistency
-                const mappedItems = items.map(i => ({ ...i, name: i.product_name }));
-                return { ...c, items_detail: mappedItems };
-            }));
-        },
-        []
-    );
-
-    const purchaseItems = useLiveQuery(
-        () => db.purchase_items?.toArray()
-    );
-
-    const suppliers = useLiveQuery(
-        () => db.suppliers?.orderBy('name').toArray()
-    );
-
-    const paymentMethods = useLiveQuery(
-        () => db.payment_methods?.toArray()
-    );
-
-    const categories = useLiveQuery(
-        () => db.categories?.toArray()
-    );
-
-    const supplierTaxProfiles = useLiveQuery(
-        () => db.supplier_item_tax_profiles?.toArray()
-    );
+    const [compras, setCompras] = useState([]);
+    const [purchaseItems, setPurchaseItems] = useState([]);
+    const [suppliers, setSuppliers] = useState([]);
+    const [paymentMethods, setPaymentMethods] = useState([]);
+    const [categories, setCategories] = useState([]);
+    const [supplierTaxProfiles, setSupplierTaxProfiles] = useState([]);
 
     // Form state now includes a list of items instead of a text blob
     const getLocalDateStr = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; };
@@ -141,6 +112,48 @@ const Compras = () => {
     const [suggestions, setSuggestions] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
     const isMixedPurchase = newPurchase.destination === 'mixto';
+
+    const loadComprasData = async () => {
+        const [comprasRows, comprasItemsRows, purchaseItemsRows, suppliersRows, paymentMethodsRows, categoriesRows, supplierTaxRows] = await Promise.all([
+            fetchTable('compras', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
+            fetchTable('compras_items', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('purchase_items', { limit: 2000, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('suppliers', { limit: 1000, orderBy: 'name', direction: 'ASC' }),
+            fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('categories', { limit: 500, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('supplier_item_tax_profiles', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }).catch(() => []),
+        ]);
+
+        const itemsByPurchaseId = new Map();
+        (Array.isArray(comprasItemsRows) ? comprasItemsRows : []).forEach((item) => {
+            const key = Number(item.purchase_id);
+            const list = itemsByPurchaseId.get(key) || [];
+            list.push({ ...item, name: item.product_name });
+            itemsByPurchaseId.set(key, list);
+        });
+
+        setCompras((Array.isArray(comprasRows) ? comprasRows : []).map((compra) => ({
+            ...compra,
+            items_detail: compra.items_detail || itemsByPurchaseId.get(Number(compra.id)) || [],
+        })));
+        setPurchaseItems(Array.isArray(purchaseItemsRows) ? purchaseItemsRows : []);
+        setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
+        setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
+        setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
+        setSupplierTaxProfiles(Array.isArray(supplierTaxRows) ? supplierTaxRows : []);
+    };
+
+    useEffect(() => {
+        loadComprasData().catch((error) => {
+            console.error('[COMPRAS] No se pudieron cargar datos desde la API', error);
+            setCompras([]);
+            setPurchaseItems([]);
+            setSuppliers([]);
+            setPaymentMethods([]);
+            setCategories([]);
+            setSupplierTaxProfiles([]);
+        });
+    }, []);
 
     // Filter suggestions based on input
     useEffect(() => {
@@ -325,15 +338,17 @@ const Compras = () => {
             }
 
             // 1. Save the purchase record
-            const purchaseId = await db.compras.add({
+            const purchaseInsert = await saveTableRecord('compras', 'insert', {
                 supplier: newPurchase.supplier,
                 invoice_num: newPurchase.invoice_num,
                 date: newPurchase.date,
                 total: purchaseTotal,
                 payment_method: newPurchase.payment_method,
                 is_account: newPurchase.is_account,
-                synced: 0
+                synced: 0,
+                items_detail: newPurchase.selectedItems
             });
+            const purchaseId = Number(purchaseInsert?.insertId);
 
             // 1.1 Normalized Items
             const purchaseItemsNormalized = newPurchase.selectedItems.map(i => ({
@@ -349,25 +364,26 @@ const Compras = () => {
                 destination: i.destination || 'venta',
                 unit: i.unit
             }));
-            await db.compras_items.bulkAdd(purchaseItemsNormalized);
+            await Promise.all(purchaseItemsNormalized.map((item) => saveTableRecord('compras_items', 'insert', item)));
 
             // 2. Logic for Stock and Traceability
             for (const item of newPurchase.selectedItems) {
                 // UPDATE LAST PRICE
                 const catalogItem = purchaseItems?.find(pi => pi.name.toLowerCase() === item.name.toLowerCase());
                 if (catalogItem && item.unit_price > 0) {
-                    await db.purchase_items.update(catalogItem.id, {
+                    await saveTableRecord('purchase_items', 'update', {
+                        ...catalogItem,
                         last_price: item.unit_price,
                         usage: item.destination || 'venta',
                         default_iva_rate: Number(item.iva_rate) || catalogItem.default_iva_rate || 10.5
-                    });
+                    }, catalogItem.id);
                 }
 
-                await db.supplier_item_tax_profiles.put({
+                await saveTableRecord('supplier_item_tax_profiles', 'upsert', {
                     supplier_name: newPurchase.supplier,
                     product_name: item.name,
                     last_iva_rate: Number(item.iva_rate) || 0,
-                    updated_at: new Date()
+                    updated_at: new Date().toISOString()
                 });
 
                 // IF FOR DESPOSTADA -> CREATE ANIMAL_LOTS (ONLY IF PRO)
@@ -381,7 +397,7 @@ const Compras = () => {
                     const weightPerLot = item.unit === 'un' ? (item.weight / (item.quantity || 1)) : item.weight;
 
                     for (let i = 0; i < numLots; i++) {
-                        await db.animal_lots.add({
+                        await saveTableRecord('animal_lots', 'insert', {
                             purchase_id: purchaseId,
                             supplier: newPurchase.supplier,
                             date: newPurchase.date,
@@ -399,12 +415,12 @@ const Compras = () => {
                 }
 
                 // IF DIRECT SALE -> UPDATE STOCK
-                await db.stock.add({
+                await saveTableRecord('stock', 'insert', {
                     name: item.name,
                     type: item.species || 'vaca',
                     quantity: item.unit === 'kg' ? (parseFloat(item.weight) || parseFloat(item.quantity)) : parseFloat(item.quantity),
                     unit: item.unit,
-                    updated_at: new Date(),
+                    updated_at: new Date().toISOString(),
                     synced: 0,
                     reference: `compra_${purchaseId}`
                 });
@@ -415,19 +431,20 @@ const Compras = () => {
                     method.name === newPurchase.payment_method || String(method.name || '').trim().toLowerCase() === normalizedPaymentMethod
                 ));
 
-                await db.caja_movimientos.add({
+                await saveTableRecord('caja_movimientos', 'insert', {
                     type: 'egreso',
                     amount: purchaseBreakdown.internal,
                     category: 'Compra interna',
                     description: `${newPurchase.supplier}${newPurchase.invoice_num ? ` · Comprobante ${newPurchase.invoice_num}` : ''}`,
                     payment_method: newPurchase.payment_method || 'Efectivo',
                     payment_method_type: selectedPaymentMethod?.type || (normalizedPaymentMethod === 'transferencia' ? 'transfer' : 'cash'),
-                    date: new Date(`${newPurchase.date}T12:00:00`),
+                    date: new Date(`${newPurchase.date}T12:00:00`).toISOString(),
                     purchase_id: purchaseId,
                     synced: 0
                 });
             }
 
+            await loadComprasData();
             setIsModalOpen(false);
             setNewPurchase({
                 supplier: '',

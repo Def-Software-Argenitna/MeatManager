@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, Package } from 'lucide-react';
-import { db } from '../db';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Alimentos.css';
 
 // Tipos de productos pre-elaborados
@@ -24,12 +23,19 @@ const Alimentos = () => {
     const [quantity, setQuantity] = useState('');
     const [weight, setWeight] = useState('');
     const [unitType, setUnitType] = useState('unidades'); // 'unidades' o 'peso'
+    const [preElaborados, setPreElaborados] = useState([]);
 
-    // Cargar productos pre-elaborados desde la DB
-    const preElaborados = useLiveQuery(
-        () => db.stock.where('type').equals('pre-elaborado').reverse().sortBy('updated_at'),
-        []
-    );
+    const loadPreElaborados = React.useCallback(async () => {
+        const rows = await fetchTable('stock');
+        const filtered = (Array.isArray(rows) ? rows : [])
+            .filter((item) => item.type === 'pre-elaborado')
+            .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+        setPreElaborados(filtered);
+    }, []);
+
+    React.useEffect(() => {
+        loadPreElaborados().catch((error) => console.error('Error cargando pre-elaborados:', error));
+    }, [loadPreElaborados]);
 
     const handleAddProduct = async () => {
         if (unitType === 'unidades' && (!quantity || quantity <= 0)) {
@@ -47,20 +53,20 @@ const Alimentos = () => {
         const productName = `${productType.name} de ${meatType.name}`;
 
         try {
-            await db.stock.add({
+            await saveTableRecord('stock', 'insert', {
                 name: productName,
                 type: 'pre-elaborado',
                 subtype: selectedProductType,
                 meat_type: selectedMeatType,
                 quantity: unitType === 'unidades' ? parseFloat(quantity) : parseFloat(weight),
                 unit: unitType === 'unidades' ? 'unidades' : 'kg',
-                updated_at: new Date(),
-                synced: 0
+                updated_at: new Date().toISOString(),
             });
 
             // Reset form
             setQuantity('');
             setWeight('');
+            await loadPreElaborados();
 
             alert(`✅ ${productName} agregado correctamente`);
         } catch (error) {
@@ -71,7 +77,8 @@ const Alimentos = () => {
 
     const handleDeleteProduct = async (id) => {
         if (confirm('¿Está seguro de eliminar este producto?')) {
-            await db.stock.delete(id);
+            await saveTableRecord('stock', 'delete', null, id);
+            await loadPreElaborados();
         }
     };
 
