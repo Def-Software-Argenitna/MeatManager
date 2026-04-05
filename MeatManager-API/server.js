@@ -644,6 +644,12 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
+            await ensureColumn(conn, 'clients', 'latitude', '`latitude` DECIMAL(10,7) NULL');
+            await ensureColumn(conn, 'clients', 'longitude', '`longitude` DECIMAL(10,7) NULL');
+            await ensureColumn(conn, 'clients', 'geocoded_at', '`geocoded_at` DATETIME NULL');
+            await ensureColumn(conn, 'pedidos', 'latitude', '`latitude` DECIMAL(10,7) NULL');
+            await ensureColumn(conn, 'pedidos', 'longitude', '`longitude` DECIMAL(10,7) NULL');
+            await ensureColumn(conn, 'pedidos', 'geocoded_at', '`geocoded_at` DATETIME NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
@@ -1208,6 +1214,9 @@ function getSchemaTables() {
             street_number   VARCHAR(20),
             zip_code        VARCHAR(20),
             city            VARCHAR(100),
+            latitude        DECIMAL(10,7),
+            longitude       DECIMAL(10,7),
+            geocoded_at     DATETIME,
             cuit            VARCHAR(20),
             balance         DECIMAL(12,2) DEFAULT 0,
             has_current_account TINYINT(1) DEFAULT 1,
@@ -1321,6 +1330,9 @@ function getSchemaTables() {
             delivery_date   DATETIME,
             delivery_type   VARCHAR(50),
             address         VARCHAR(255),
+            latitude        DECIMAL(10,7),
+            longitude       DECIMAL(10,7),
+            geocoded_at     DATETIME,
             repartidor      VARCHAR(100),
             source          VARCHAR(50),
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,

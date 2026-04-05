@@ -20,6 +20,7 @@ import {
     Tag
 } from 'lucide-react';
 import { BRAND_CONFIG } from '../brandConfig';
+import { buildOrderAddress, geocodeAddress } from '../utils/geocoding';
 import './Pedidos.css';
 
 const Pedidos = () => {
@@ -55,6 +56,14 @@ const Pedidos = () => {
 
     const handleSaveOrder = async () => {
         if (!newPedido.name || !newPedido.items) return;
+        let geocoded = null;
+        if (newPedido.delivery_type === 'delivery' && newPedido.address) {
+            try {
+                geocoded = await geocodeAddress(buildOrderAddress(newPedido));
+            } catch (error) {
+                console.warn('[PEDIDOS] No se pudo geocodificar el pedido manual', error?.message || error);
+            }
+        }
         await db.pedidos.add({
             customer_name: newPedido.name,
             items: newPedido.items,
@@ -63,6 +72,9 @@ const Pedidos = () => {
             delivery_date: newPedido.date,
             address: newPedido.address,
             delivery_type: newPedido.delivery_type,
+            latitude: geocoded?.latitude ?? null,
+            longitude: geocoded?.longitude ?? null,
+            geocoded_at: geocoded?.geocoded_at ?? null,
             created_at: new Date(),
             source: 'manual'
         });
@@ -112,12 +124,23 @@ const Pedidos = () => {
             }
 
             if (parsed.items) {
+                let geocoded = null;
+                if (parsed.delivery_type === 'delivery' && parsed.address) {
+                    try {
+                        geocoded = await geocodeAddress(buildOrderAddress(parsed));
+                    } catch (error) {
+                        console.warn('[PEDIDOS] No se pudo geocodificar el pedido importado', error?.message || error);
+                    }
+                }
                 await db.pedidos.add({
                     customer_name: parsed.name,
                     items: parsed.items,
                     total: parsed.total,
                     address: parsed.address || '',
                     delivery_type: parsed.delivery_type || 'pickup',
+                    latitude: geocoded?.latitude ?? null,
+                    longitude: geocoded?.longitude ?? null,
+                    geocoded_at: geocoded?.geocoded_at ?? null,
                     status: 'pending',
                     delivery_date: getLocalDateStr(),
                     created_at: new Date(),

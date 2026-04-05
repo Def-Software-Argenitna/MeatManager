@@ -27,6 +27,7 @@ import L from 'leaflet';
 import { fdb } from '../firebase';
 import { collection, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { useLicense } from '../context/LicenseContext';
+import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -105,6 +106,7 @@ const Logistica = () => {
     });
 
     const registeredDrivers = useLiveQuery(() => db.repartidores?.toArray());
+    const clients = useLiveQuery(() => db.clients?.toArray());
     const settings = useLiveQuery(() => db.settings.toArray());
     const hasLogisticsModule = hasModule('logistica');
 
@@ -130,14 +132,15 @@ const Logistica = () => {
         return matchesSearch && matchesFilter;
     }) || [];
 
-    // Mock geolocation for the demo (in real app, use a geocoding service)
-    const getCoordsForAddress = (address, id) => {
-        // Deterministic mock coords based on ID to keep markers consistent
-        const seed = id * 0.01;
-        return [
-            -34.6037 + (Math.sin(seed) * 0.05),
-            -58.3816 + (Math.cos(seed) * 0.05)
-        ];
+    const getOrderCoordinates = (pedido) => {
+        const stored = getStoredCoordinates(pedido);
+        if (stored) return [stored.latitude, stored.longitude];
+
+        const clientMatch = clients?.find((client) => Number(client.id) === Number(pedido.customer_id));
+        const clientCoords = getStoredCoordinates(clientMatch);
+        if (clientCoords) return [clientCoords.latitude, clientCoords.longitude];
+
+        return null;
     };
 
     const getIconForStatus = (status) => {
@@ -151,9 +154,11 @@ const Logistica = () => {
 
     const handleFocusPedido = (pedido) => {
         setSelectedPedido(pedido);
-        const coords = getCoordsForAddress(pedido.address, pedido.id);
-        setMapCenter(coords);
-        setMapZoom(16);
+        const coords = getOrderCoordinates(pedido);
+        if (coords) {
+            setMapCenter(coords);
+            setMapZoom(16);
+        }
     };
 
     const assignDriver = async (id, driverName) => {
@@ -210,6 +215,41 @@ const Logistica = () => {
             unsubStatus();
         };
     }, [hasLogisticsModule]);
+
+    useEffect(() => {
+        if (!pedidos?.length) return;
+
+        let cancelled = false;
+
+        const geocodeMissingOrders = async () => {
+            const missingOrders = pedidos.filter((pedido) =>
+                pedido.delivery_type === 'delivery' &&
+                pedido.address &&
+                !getStoredCoordinates(pedido)
+            );
+
+            for (const pedido of missingOrders) {
+                if (cancelled) return;
+                try {
+                    const geocoded = await geocodeAddress(buildOrderAddress(pedido));
+                    if (!geocoded || cancelled) continue;
+                    await db.pedidos.update(pedido.id, {
+                        latitude: geocoded.latitude,
+                        longitude: geocoded.longitude,
+                        geocoded_at: geocoded.geocoded_at,
+                    });
+                } catch (error) {
+                    console.warn('[LOGISTICA] No se pudo geocodificar pedido', pedido.id, error?.message || error);
+                }
+            }
+        };
+
+        geocodeMissingOrders();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [pedidos]);
 
     const checkExpiry = (date) => {
         if (!date) return 'missing';
@@ -360,7 +400,8 @@ const Logistica = () => {
                         ))}
 
                         {deliveryOrders.map(p => {
-                            const coords = getCoordsForAddress(p.address, p.id);
+                            const coords = getOrderCoordinates(p);
+                            if (!coords) return null;
                             return (
                                 <Marker
                                     key={p.id}
@@ -405,8 +446,14 @@ const Logistica = () => {
                             <div className="overlay-body">
                                 <div className="info-row">
                                     <MapPin size={16} />
-                                    <span>{selectedPedido.address}</span>
+                                    <span>{selectedPedido.address || 'Direccion pendiente'}</span>
                                 </div>
+                                {!getOrderCoordinates(selectedPedido) && (
+                                    <div className="risk-warning-banner">
+                                        <AlertCircle size={18} />
+                                        <span>NO SE PUDO UBICAR ESTE DESTINO EN EL MAPA</span>
+                                    </div>
+                                )}
                                 <div className="info-row">
                                     <Clock size={16} />
                                     <span>{selectedPedido.status === 'ready' ? 'En viaje' : 'Esperando asignación'}</span>
