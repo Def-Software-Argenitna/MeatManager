@@ -1,5 +1,5 @@
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useTenant } from './TenantContext';
 import {
     createFirebaseUser,
@@ -9,6 +9,7 @@ import {
     replaceUserPermissions as replaceFirebaseUserPermissions,
     updateFirebaseUser,
 } from '../utils/apiClient';
+import { auth } from '../firebase';
 
 // All navigable routes — used for permission management
 export const ALL_ROUTES = [
@@ -78,90 +79,89 @@ export const UserProvider = ({ children }) => {
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
+    const recoveryAttemptRef = useRef('');
+
+    const applyResolvedUser = useCallback((userData) => {
+        const superUser = hasSuperUserLicense(userData?.licenses);
+        const perms = (userData?.role === 'admin' || superUser) ? ALL_PATHS : (userData?.perms || []);
+        const sessionUser = {
+            id: userData?.id || userData?.uid || userData?.email,
+            uid: userData?.uid || null,
+            email: userData?.email,
+            username: userData?.username || userData?.empresa || userData?.email,
+            role: userData?.role || 'employee',
+        };
+        setCurrentUser(sessionUser);
+        setUserPerms(perms);
+        setAccessProfile(userData);
+        sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
+        sessionStorage.setItem('mm_perms', JSON.stringify(perms));
+        sessionStorage.setItem('mm_access_profile', JSON.stringify(userData));
+        return { ok: true };
+    }, []);
+
+    const applyOwnerFallback = useCallback(({ uid, email }) => {
+        const ownerSession = {
+            id: uid || email,
+            uid: uid || null,
+            email,
+            username: tenant?.empresa || email,
+            role: 'admin',
+        };
+        const fallbackProfile = {
+            ...ownerSession,
+            active: 1,
+            perms: ALL_PATHS,
+            licenses: [],
+        };
+        setCurrentUser(ownerSession);
+        setUserPerms(ALL_PATHS);
+        setAccessProfile(fallbackProfile);
+        sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
+        sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
+        sessionStorage.setItem('mm_access_profile', JSON.stringify(fallbackProfile));
+        return { ok: true };
+    }, [tenant]);
 
     const login = useCallback(async ({ uid, email }) => {
         setLoadingUser(true);
         try {
-            const payload = await fetchCurrentFirebaseUser();
+            let payload = await fetchCurrentFirebaseUser();
             const userData = payload?.user || null;
             if (!userData) {
                 if (tenant?.email && email === tenant.email) {
-                    const ownerSession = {
-                        id: uid || email,
-                        uid: uid || null,
-                        email,
-                        username: tenant.empresa || email,
-                        role: 'admin',
-                    };
-                    setCurrentUser(ownerSession);
-                    setUserPerms(ALL_PATHS);
-                    setAccessProfile({
-                        ...ownerSession,
-                        active: 1,
-                        perms: ALL_PATHS,
-                        licenses: [],
-                    });
-                    sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
-                    sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
-                    sessionStorage.setItem('mm_access_profile', JSON.stringify({
-                        ...ownerSession,
-                        active: 1,
-                        perms: ALL_PATHS,
-                        licenses: [],
-                    }));
-                    return { ok: true };
+                    if (auth.currentUser) {
+                        await auth.currentUser.getIdToken(true);
+                        payload = await fetchCurrentFirebaseUser().catch(() => null);
+                        if (payload?.user) {
+                            recoveryAttemptRef.current = '';
+                            return applyResolvedUser(payload.user);
+                        }
+                    }
+                    return applyOwnerFallback({ uid, email });
                 }
                 return { ok: false, error: 'Usuario inactivo o no encontrado' };
             }
             if (!userData.active) return { ok: false, error: 'Usuario inactivo o no encontrado' };
-            const superUser = hasSuperUserLicense(userData.licenses);
-            const perms = (userData.role === 'admin' || superUser) ? ALL_PATHS : (userData.perms || []);
-            const sessionUser = {
-                id: userData.id || userData.uid || userData.email,
-                uid: userData.uid || null,
-                email: userData.email,
-                username: userData.username || userData.empresa || userData.email,
-                role: userData.role || 'employee',
-            };
-            setCurrentUser(sessionUser);
-            setUserPerms(perms);
-            setAccessProfile(userData);
-            sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
-            sessionStorage.setItem('mm_perms', JSON.stringify(perms));
-            sessionStorage.setItem('mm_access_profile', JSON.stringify(userData));
-            return { ok: true };
+            recoveryAttemptRef.current = '';
+            return applyResolvedUser(userData);
         } catch (error) {
             if (tenant?.email && email === tenant.email) {
-                const ownerSession = {
-                    id: uid || email,
-                    uid: uid || null,
-                    email,
-                    username: tenant.empresa || email,
-                    role: 'admin',
-                };
-                setCurrentUser(ownerSession);
-                setUserPerms(ALL_PATHS);
-                setAccessProfile({
-                    ...ownerSession,
-                    active: 1,
-                    perms: ALL_PATHS,
-                    licenses: [],
-                });
-                sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
-                sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
-                sessionStorage.setItem('mm_access_profile', JSON.stringify({
-                    ...ownerSession,
-                    active: 1,
-                    perms: ALL_PATHS,
-                    licenses: [],
-                }));
-                return { ok: true };
+                if (auth.currentUser) {
+                    await auth.currentUser.getIdToken(true).catch(() => null);
+                    const retryPayload = await fetchCurrentFirebaseUser().catch(() => null);
+                    if (retryPayload?.user) {
+                        recoveryAttemptRef.current = '';
+                        return applyResolvedUser(retryPayload.user);
+                    }
+                }
+                return applyOwnerFallback({ uid, email });
             }
             return { ok: false, error: error?.message || 'Usuario inactivo o no encontrado' };
         } finally {
             setLoadingUser(false);
         }
-    }, [tenant]);
+    }, [applyOwnerFallback, applyResolvedUser, tenant]);
 
     const logout = useCallback(() => {
         setCurrentUser(null);
@@ -202,6 +202,30 @@ export const UserProvider = ({ children }) => {
             cancelled = true;
         };
     }, [tenant, login, logout]);
+
+    useEffect(() => {
+        const currentEmail = String(currentUser?.email || '').trim().toLowerCase();
+        const tenantEmail = String(tenant?.email || '').trim().toLowerCase();
+        const hasNoLicenses = Array.isArray(accessProfile?.licenses) && accessProfile.licenses.length === 0;
+        const needsRecovery =
+            Boolean(currentUser) &&
+            currentUser?.role === 'admin' &&
+            hasNoLicenses &&
+            Boolean(tenantEmail) &&
+            currentEmail === tenantEmail &&
+            !loadingUser;
+
+        if (!needsRecovery) {
+            recoveryAttemptRef.current = '';
+            return;
+        }
+
+        const recoveryKey = `${tenant?.uid || tenantEmail}:${currentEmail}`;
+        if (recoveryAttemptRef.current === recoveryKey) return;
+
+        recoveryAttemptRef.current = recoveryKey;
+        login({ uid: tenant?.uid, email: tenant?.email }).catch(() => {});
+    }, [accessProfile?.licenses, currentUser, loadingUser, login, tenant]);
 
 
     // Admin always true; employee checks permission list
