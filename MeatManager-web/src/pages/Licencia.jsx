@@ -36,9 +36,11 @@ const Licencia = () => {
 
     return (
         <div className="licencia-container animate-fade-in">
-            <header style={{ marginBottom: '2rem' }}>
-                <h1 className="page-title">Licencias y Módulos</h1>
-                <p className="page-description">El acceso se administra desde Gestión de Clientes y se aplica automáticamente al iniciar sesión</p>
+            <header className="page-header">
+                <div className="page-header-main">
+                    <h1 className="page-title">Licencias y Módulos</h1>
+                    <p className="page-description">El acceso se administra desde Gestión de Clientes y se aplica automáticamente al iniciar sesión</p>
+                </div>
             </header>
 
             <div className="license-grid">

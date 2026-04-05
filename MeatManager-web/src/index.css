@@ -70,9 +70,57 @@ body {
 
 .page-header {
     display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    padding: 1.1rem 1.25rem;
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.025) 100%);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-lg);
+    backdrop-filter: blur(18px);
+    box-shadow:
+        0 14px 36px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+    position: relative;
+    overflow: hidden;
+}
+
+.page-header::before,
+.manual-header::before,
+.security-header::before,
+.admin-header::before,
+.sucursales-header::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.06) 0%, transparent 38%, rgba(255,255,255,0.03) 100%);
+    pointer-events: none;
+}
+
+.page-header > *,
+.manual-header > *,
+.security-header > *,
+.admin-header > *,
+.sucursales-header > * {
+    position: relative;
+    z-index: 1;
+}
+
+.page-header-main {
+    display: flex;
     flex-direction: column;
     gap: 0.35rem;
-    margin-bottom: 1.5rem;
+    min-width: 0;
+}
+
+.page-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-left: auto;
 }
 
 .page-title {
@@ -88,6 +136,76 @@ body {
     font-size: 1rem;
     color: var(--color-text-muted);
     max-width: 760px;
+}
+
+.manual-header,
+.security-header,
+.admin-header,
+.sucursales-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    flex-wrap: wrap;
+    gap: 1rem 1.5rem;
+    margin-bottom: 1.5rem;
+    padding: 1.1rem 1.25rem;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: var(--radius-lg);
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.025) 100%);
+    backdrop-filter: blur(18px);
+    box-shadow:
+        0 14px 36px rgba(0, 0, 0, 0.28),
+        inset 0 1px 0 rgba(255,255,255,0.05);
+}
+
+.manual-header h1,
+.security-header h1,
+.admin-brand h1,
+.header-info h1 {
+    font-size: clamp(2rem, 3vw, 2.6rem);
+    line-height: 1.05;
+    font-weight: 900;
+    letter-spacing: -0.03em;
+    color: #fff;
+    text-shadow: 0 6px 22px rgba(0, 0, 0, 0.28);
+    margin: 0;
+}
+
+.manual-header p,
+.security-header p,
+.admin-brand p,
+.header-info p {
+    font-size: 1rem;
+    color: var(--color-text-muted);
+    margin: 0.35rem 0 0 0;
+    max-width: 760px;
+}
+
+.main-content > .animate-fade-in,
+.main-content > .manual-page,
+.main-content > .security-container,
+.main-content > .admin-panel-container,
+.main-content > .sucursales-container {
+    width: 100%;
+    min-height: 100%;
+    padding: 1.5rem 1.75rem 2rem;
+}
+
+@media (max-width: 900px) {
+    .page-header,
+    .manual-header,
+    .security-header,
+    .admin-header,
+    .sucursales-header {
+        padding: 1rem 1rem;
+    }
+
+    .page-header-actions {
+        width: 100%;
+        margin-left: 0;
+        justify-content: flex-start;
+    }
 }
 
 .neo-input,

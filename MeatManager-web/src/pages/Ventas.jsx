@@ -1,13 +1,11 @@
 import React, { useState, useRef } from 'react';
 import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { useNavigate } from 'react-router-dom';
-import { db, formatReceiptCode } from '../db';
 import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { formatPrice } from '../utils/priceFormat';
 import { desktopApi } from '../utils/desktopApi';
-import { getNextRemoteReceiptData, getRemoteSetting } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord } from '../utils/apiClient';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './Ventas.css';
 
@@ -24,20 +22,20 @@ const getClientDisplayName = (client) => {
     return [firstName, lastName].filter(Boolean).join(' ') || String(client?.name || '').trim();
 };
 
+const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
+const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
+const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
+const toNumber = (value) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+};
+const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
+
 const Ventas = () => {
     const [cart, setCart] = useState([]);
     const [categoryFilter, setCategoryFilter] = useState('all');
     // Estado para el formato de precio
     const [priceFormat, setPriceFormat] = useState('4d2d');
-
-    // Al montar, leer el formato de precio desde settings
-    React.useEffect(() => {
-        const loadPriceFormat = async () => {
-            const formato = await db.settings.get('precio_formato');
-            setPriceFormat(formato?.value || '4d2d');
-        };
-        loadPriceFormat();
-    }, []);
 
     // Solo redondear si es manual y formato 6d
     // (Ajusta el uso de priceFormat en el resto del componente)
@@ -123,6 +121,14 @@ const Ventas = () => {
     // Print Confirm Modal (reemplaza al confirm() nativo que roba el foco en Electron)
     const [showPrintConfirmModal, setShowPrintConfirmModal] = useState(false);
     const [pendingPrintData, setPendingPrintData] = useState(null);
+    const [stockItems, setStockItems] = useState([]);
+    const [prices, setPrices] = useState([]);
+    const [clients, setClients] = useState([]);
+    const [dbPaymentMethods, setDbPaymentMethods] = useState([]);
+    const [shopInfo, setShopInfo] = useState({ name: 'Nuestra Carnicería', address: '', phone: '' });
+    const [todayOpeningMovements, setTodayOpeningMovements] = useState([]);
+    const [recentSales, setRecentSales] = useState([]);
+    const [recentSalesItems, setRecentSalesItems] = useState({});
 
     // Toast (reemplaza todos los alert() nativos que roban el foco en Electron)
     const [toastMsg, setToastMsg] = useState(null); // { text, type: 'error'|'success'|'warning' }
@@ -135,6 +141,91 @@ const Ventas = () => {
 
     const navigate = useNavigate();
     const { currentUser } = useUser();
+
+    const refreshVentasData = React.useCallback(async () => {
+        const [
+            stockRows,
+            priceRows,
+            clientRows,
+            paymentRows,
+            salesRows,
+            salesItemsRows,
+            movementsRows,
+        ] = await Promise.all([
+            fetchTable('stock'),
+            fetchTable('prices'),
+            fetchTable('clients'),
+            fetchTable('payment_methods'),
+            fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
+            fetchTable('ventas_items'),
+            fetchTable('caja_movimientos'),
+        ]);
+
+        setStockItems(Array.isArray(stockRows) ? stockRows : []);
+        setPrices(Array.isArray(priceRows) ? priceRows : []);
+        setClients(Array.isArray(clientRows) ? clientRows : []);
+        setDbPaymentMethods(
+            (Array.isArray(paymentRows) ? paymentRows : []).filter((m) => {
+                const allowedNames = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
+                return m.enabled && allowedNames.includes(m.name);
+            })
+        );
+
+        const recentRows = Array.isArray(salesRows) ? salesRows : [];
+        setRecentSales(recentRows);
+
+        const recentIds = new Set(recentRows.map((sale) => Number(sale.id)));
+        const groupedItems = {};
+        for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
+            const ventaId = Number(item.venta_id);
+            if (!recentIds.has(ventaId)) continue;
+            if (!groupedItems[ventaId]) groupedItems[ventaId] = [];
+            groupedItems[ventaId].push(item);
+        }
+        setRecentSalesItems(groupedItems);
+
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        setTodayOpeningMovements(
+            (Array.isArray(movementsRows) ? movementsRows : []).filter((movement) => {
+                const movementDate = movement?.date ? new Date(movement.date) : null;
+                return (
+                    movementDate &&
+                    !Number.isNaN(movementDate.getTime()) &&
+                    movementDate >= start &&
+                    movementDate <= end &&
+                    movement.type === 'apertura'
+                );
+            })
+        );
+    }, []);
+
+    React.useEffect(() => {
+        const loadVentasBootstrap = async () => {
+            const [formato, name, address, phone] = await Promise.all([
+                getRemoteSetting('precio_formato'),
+                getRemoteSetting('shop_name'),
+                getRemoteSetting('shop_address'),
+                getRemoteSetting('whatsapp_number'),
+            ]);
+
+            setPriceFormat(formato || '4d2d');
+            setShopInfo({
+                name: name || 'Nuestra Carnicería',
+                address: address || '',
+                phone: phone || '',
+            });
+
+            await refreshVentasData();
+        };
+
+        loadVentasBootstrap().catch((error) => {
+            console.error('Error cargando ventas:', error);
+            showToast('❌ No se pudieron cargar los datos de ventas.', 'error');
+        });
+    }, [refreshVentasData, showToast]);
 
     const handleQendraSyncVentas = async () => {
         setQendraSyncing(true);
@@ -169,11 +260,11 @@ const Ventas = () => {
             for (const ticket of res.tickets) {
                 const ticketId = String(ticket.ID_TICKET);
                 // Verificar si ya fue importado
-                const existing = await db.ventas.where('qendra_ticket_id').equals(ticketId).first();
+                const existing = recentSales.find((venta) => String(venta.qendra_ticket_id || '') === ticketId);
                 if (existing) { skipped++; continue; }
                 const fechaStr = ticket.FECHA ? new Date(ticket.FECHA).toISOString() : new Date().toISOString();
                 const total = parseFloat(ticket.TOTAL) || 0;
-                const ventaId = await db.ventas.add({
+                const { insertId: ventaId } = await saveTableRecord('ventas', 'insert', {
                     date: fechaStr,
                     total,
                     payment_method: 'Balanza QENDRA',
@@ -190,7 +281,7 @@ const Ventas = () => {
                     const pesoKg = parseFloat(it.PESO_KG) || 0;
                     const importe = parseFloat(it.IMPORTE) || 0;
                     const producto = `PLU ${it.ID_PLU}`;
-                    await db.ventas_items.add({
+                    await saveTableRecord('ventas_items', 'insert', {
                         venta_id: ventaId,
                         product_name: producto,
                         quantity: pesoKg,
@@ -201,6 +292,7 @@ const Ventas = () => {
                 }
                 created++;
             }
+            await refreshVentasData();
             setQendraSyncResult({ created, skipped, total: res.tickets.length });
         } catch (e) {
             setQendraSyncResult({ error: String(e) });
@@ -242,11 +334,11 @@ const Ventas = () => {
             // Cobrados de hoy en MeatManager
             const hoy = new Date();
             hoy.setHours(0, 0, 0, 0);
-            const cobrados = await db.ventas
-                .where('date')
-                .above(hoy.toISOString())
-                .filter(v => v.source === 'qendra')
-                .toArray();
+            const ventasRows = await fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 300 });
+            const cobrados = (Array.isArray(ventasRows) ? ventasRows : []).filter((v) => {
+                const saleDate = v?.date ? new Date(v.date) : null;
+                return saleDate && saleDate >= hoy && v.source === 'qendra';
+            });
             setQendraVisorCobrados(cobrados);
         } catch (e) {
             console.error('Error al cargar visor QENDRA:', e);
@@ -284,20 +376,6 @@ const Ventas = () => {
         if (window.innerWidth < 1024) setShowCartMobile(true);
     };
     // ────────────────────────────────────────────────────────────────────────
-
-    // --- REAL DATA QUERIES ---
-
-    // 1. Get raw stock items
-    const stockItems = useLiveQuery(
-        () => db.stock.toArray(),
-        []
-    );
-
-    // 2. Get prices
-    const prices = useLiveQuery(
-        () => db.prices.toArray(),
-        []
-    );
 
     // Auto-focus precio: triple intento para Electron (inmediato, 0ms, 150ms)
     const priceInputRef = React.useRef(null);
@@ -363,72 +441,18 @@ const Ventas = () => {
     ]);
     // ────────────────────────────────────────────────────────────────────────
 
-    // 3. Get clients
-    const clients = useLiveQuery(
-        () => db.clients.toArray(),
-        []
-    );
-
-    // 4. Get active payment methods
-    const dbPaymentMethods = useLiveQuery(
-        async () => {
-            const all = await db.payment_methods.toArray();
-            const allowedNames = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
-            return all.filter(m => m.enabled && allowedNames.includes(m.name));
-        },
-        []
-    );
-
-    // 5. Get Shop Info from Settings
-    const shopInfo = useLiveQuery(async () => {
-        const name = await db.settings.get('shop_name');
-        const address = await db.settings.get('shop_address');
-        const phone = await db.settings.get('whatsapp_number');
-        return {
-            name: name?.value || 'Nuestra Carnicería',
-            address: address?.value || '',
-            phone: phone?.value || ''
-        };
-    }, []);
-
-    const todayOpeningMovements = useLiveQuery(async () => {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        return db.caja_movimientos
-            .where('date')
-            .between(start, end)
-            .filter((movement) => movement.type === 'apertura')
-            .toArray();
-    }, []);
-
     const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
-
-    // 6. Recent sales (for delete-ticket modal)
-    const recentSales = useLiveQuery(async () => {
-        return db.ventas.orderBy('date').reverse().limit(150).toArray();
-    }, [deleteModalRefreshTick]);
-
-    // 7. Items de las ventas recientes (para mostrar en el modal de eliminar)
-    const recentSalesItems = useLiveQuery(async () => {
-        if (!recentSales || recentSales.length === 0) return {};
-        const ids = recentSales.map(v => v.id);
-        const items = await db.ventas_items.where('venta_id').anyOf(ids).toArray();
-        // Agrupar por venta_id
-        const grouped = {};
-        for (const item of items) {
-            if (!grouped[item.venta_id]) grouped[item.venta_id] = [];
-            grouped[item.venta_id].push(item);
-        }
-        return grouped;
-    }, [recentSales]);
 
     React.useEffect(() => {
         if (showDeleteTicketModal) {
             setDeleteModalRefreshTick((prev) => prev + 1);
         }
     }, [showDeleteTicketModal]);
+
+    React.useEffect(() => {
+        if (!showDeleteTicketModal) return;
+        refreshVentasData().catch((error) => console.error('Error refrescando modal de ventas:', error));
+    }, [showDeleteTicketModal, deleteModalRefreshTick, refreshVentasData]);
 
     // SOUND HELPERS
     const playBeep = () => {
@@ -502,15 +526,15 @@ const Ventas = () => {
                             <span>${i.name.slice(0, 20)}</span>
                         </div>
                         <div class="item">
-                            <span style="padding-left: 2mm;">${i.quantity.toFixed(3)} ${i.unit || 'kg'} x $${i.price.toLocaleString()}</span>
-                            <span>$${(i.price * i.quantity).toLocaleString()}</span>
+                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
+                            <span>$${(toNumber(i.price) * toNumber(i.quantity)).toLocaleString()}</span>
                         </div>
                     `).join('')}
                 </div>
                 <div class="total-area">
-                    <div class="item"><span>SUBTOTAL</span><span>$${saleData.subtotal.toLocaleString()}</span></div>
-                    ${saleData.adjustment !== 0 ? `<div class="item"><span>ADJ.</span><span>$${saleData.adjustment.toLocaleString()}</span></div>` : ''}
-                    <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${saleData.total.toLocaleString()}</span></div>
+                    <div class="item"><span>SUBTOTAL</span><span>$${formatNumericLocale(saleData.subtotal)}</span></div>
+                    ${toNumber(saleData.adjustment) !== 0 ? `<div class="item"><span>ADJ.</span><span>$${formatNumericLocale(saleData.adjustment)}</span></div>` : ''}
+                    <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${formatNumericLocale(saleData.total)}</span></div>
                 </div>
                 <div class="center footer">
                     ¡Gracias por su compra!<br>
@@ -546,15 +570,43 @@ const Ventas = () => {
                     category: item.type,
                     totalQuantity: 0,
                     unit: item.unit || 'kg',
-                    price: priceRecord.price || 0,
+                    price: toNumber(priceRecord.price),
                     plu: priceRecord.plu || ''
                 };
             }
-            grouped[key].totalQuantity += item.quantity;
+            grouped[key].totalQuantity += toNumber(item.quantity);
         });
 
         return Object.values(grouped);
     }, [stockItems, prices]);
+
+    const findPriceRecordByPlu = React.useCallback((pluValue) => {
+        const normalized = String(pluValue || '').trim();
+        if (!normalized) return null;
+        const normalizedNumber = String(parseInt(normalized, 10));
+        return prices.find((price) => {
+            const pricePlu = String(price?.plu || '').trim();
+            return pricePlu === normalized || pricePlu === normalizedNumber;
+        }) || null;
+    }, [prices]);
+
+    const findStockItemByName = React.useCallback((name) => {
+        const normalized = String(name || '').trim().toUpperCase();
+        return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
+    }, [stockItems]);
+
+    const findProductByPriceRecord = React.useCallback((priceRecord) => {
+        if (!priceRecord) return null;
+        const productId = String(priceRecord.product_id || '').trim();
+        return products.find((product) => {
+            const productKey = `${product.name}-${product.category}`;
+            return (
+                product.id === productId ||
+                productKey === productId ||
+                normalizeProductKey(productKey) === normalizeProductKey(productId)
+            );
+        }) || null;
+    }, [products]);
 
     // Filter products
     const filteredProducts = products.filter(p => {
@@ -575,13 +627,14 @@ const Ventas = () => {
             return;
         }
         const plu = pluVal;
-        const existing = await db.prices.where('product_id').equals(productId).first();
+        const existing = prices.find((item) => String(item.product_id || '') === String(productId));
 
         if (existing) {
-            await db.prices.update(existing.id, { price, plu, updated_at: new Date() });
+            await saveTableRecord('prices', 'update', { price, plu, updated_at: new Date().toISOString() }, existing.id);
         } else {
-            await db.prices.add({ product_id: productId, price, plu, updated_at: new Date() });
+            await saveTableRecord('prices', 'insert', { product_id: productId, price, plu, updated_at: new Date().toISOString() });
         }
+        await refreshVentasData();
         setEditingPriceId(null);
         setNewPrice('');
         setNewPlu('');
@@ -631,13 +684,10 @@ const Ventas = () => {
 
             console.log(`✅ EAN-13 individual: PLU ${pluNumber}, Peso ${weight}kg`);
 
-            let priceRecord = await db.prices.where('plu').equals(pluNumber).first();
-            if (!priceRecord) {
-                priceRecord = await db.prices.where('plu').equals(pluRaw).first();
-            }
+            let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
             if (priceRecord) {
-                let product = products?.find(p => p.id === priceRecord.product_id);
+                let product = findProductByPriceRecord(priceRecord);
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
@@ -647,9 +697,7 @@ const Ventas = () => {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
                     const normalizedName = (priceRecord.product_id || '')
                         .replace(/_/g, ' ').toUpperCase();
-                    const stockItem = normalizedName
-                        ? await db.stock.where('name').equals(normalizedName).first()
-                        : null;
+                    const stockItem = normalizedName ? findStockItemByName(normalizedName) : null;
                     if (stockItem) {
                         const fallbackProduct = {
                             id: `${stockItem.name}-${stockItem.type}`,
@@ -700,9 +748,8 @@ const Ventas = () => {
                         const pluNumber = parseInt(pluRaw, 10).toString();
                         const weight = parseFloat(weightRaw) / 1000;
 
-                        let priceRecord = await db.prices.where('plu').equals(pluNumber).first();
-                        if (!priceRecord) priceRecord = await db.prices.where('plu').equals(pluRaw).first();
-                        const product = priceRecord ? products.find(p => p.id === priceRecord.product_id) : null;
+                        let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
+                        const product = priceRecord ? findProductByPriceRecord(priceRecord) : null;
 
                         previewItems.push({ plu: pluNumber, pluRaw, weight, priceRecord, product });
                     }
@@ -733,8 +780,8 @@ const Ventas = () => {
                     const qty = parseFloat(qtyStr);
                     if (isNaN(qty)) continue;
 
-                    const priceRecord = await db.prices.where('plu').equals(plu.trim()).first();
-                    const product = priceRecord ? products.find(p => p.id === priceRecord.product_id) : null;
+                    const priceRecord = findPriceRecordByPlu(plu.trim());
+                    const product = priceRecord ? findProductByPriceRecord(priceRecord) : null;
                     previewItems.push({ plu: plu.trim(), weight: qty, priceRecord, product });
                 }
 
@@ -752,9 +799,9 @@ const Ventas = () => {
                     const qty = parseFloat(qtyStr);
                     if (isNaN(qty)) continue;
 
-                    const priceRecord = await db.prices.where('plu').equals(plu.trim()).first();
+                    const priceRecord = findPriceRecordByPlu(plu.trim());
                     if (priceRecord) {
-                        const product = products.find(p => p.id === priceRecord.product_id);
+                        const product = findProductByPriceRecord(priceRecord);
                         if (product) {
                             addToCart({ ...product, price: priceRecord.price }, qty);
                             successCount++;
@@ -791,13 +838,10 @@ const Ventas = () => {
                 const pluNumber = parseInt(pluRaw, 10).toString();
                 const weight = parseFloat(weightRaw) / 1000;
 
-                let priceRecord = await db.prices.where('plu').equals(pluNumber).first();
-                if (!priceRecord) {
-                    priceRecord = await db.prices.where('plu').equals(pluRaw).first();
-                }
+                let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
                 if (priceRecord) {
-                    const product = products.find(p => p.id === priceRecord.product_id);
+                    const product = findProductByPriceRecord(priceRecord);
                     if (product) {
                         addToCart({ ...product, price: priceRecord.price }, weight);
                         successCount++;
@@ -837,22 +881,23 @@ const Ventas = () => {
         try {
             // 1. Crear producto en Stock (con cantidad inicial 0)
             const productId = `${quickProductName}-${quickProductCategory}`;
-            await db.stock.add({
+            await saveTableRecord('stock', 'insert', {
                 name: quickProductName,
                 type: quickProductCategory,
                 quantity: 0, // Inicialmente sin stock
                 unit: 'kg',
-                updated_at: new Date(),
-                synced: 0
+                updated_at: new Date().toISOString(),
             });
 
             // 2. Crear precio con PLU
-            await db.prices.add({
+            await saveTableRecord('prices', 'insert', {
                 product_id: productId,
                 price: price,
                 plu: pendingBarcode.plu,
-                updated_at: new Date()
+                updated_at: new Date().toISOString(),
             });
+
+            await refreshVentasData();
 
             // 3. Agregar al carrito con el peso escaneado
             const newProduct = {
@@ -1188,7 +1233,7 @@ const Ventas = () => {
             const { receiptNumber: saleReceiptNumber, receiptCode: saleReceiptCode } = await getNextRemoteReceiptData('sales_receipt_counter');
 
             // 1. Registrar la Venta
-            const saleId = await db.ventas.add({
+            const { insertId: saleId } = await saveTableRecord('ventas', 'insert', {
                 date: new Date(),
                 subtotal: cartTotal,
                 adjustment: adjustment,
@@ -1199,7 +1244,6 @@ const Ventas = () => {
                 payment_method_id: methodObj.id || null,
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
-                synced: 0,
                 ...(qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {}),
             });
 
@@ -1214,17 +1258,16 @@ const Ventas = () => {
                 subtotal: i.price * i.quantity,
                 synced: 0
             }));
-            await db.ventas_items.bulkAdd(saleItems);
+            await Promise.all(saleItems.map((item) => saveTableRecord('ventas_items', 'insert', item)));
 
             // 3. Ajustar Balance del Cliente (si es cta cte)
             if (methodObj.type === 'cuenta_corriente' && numericClientId !== null) {
-                const client = await db.clients.get(numericClientId);
+                const client = clients.find((item) => Number(item.id) === numericClientId);
                 if (client) {
-                    await db.clients.update(numericClientId, {
+                    await saveTableRecord('clients', 'update', {
                         balance: (client.balance || 0) - finalTotal,
-                        last_updated: new Date(),
-                        synced: 0
-                    });
+                        last_updated: new Date().toISOString(),
+                    }, numericClientId);
                 }
             }
 
@@ -1238,7 +1281,8 @@ const Ventas = () => {
                 synced: 0
             }));
 
-            await db.stock.bulkAdd(stockAdjustments);
+            await Promise.all(stockAdjustments.map((item) => saveTableRecord('stock', 'insert', item)));
+            await refreshVentasData();
 
             console.log("Proceso de guardado completado.");
             playCashRegister();
@@ -1304,8 +1348,7 @@ const Ventas = () => {
 
     const handleDeleteTicket = async (id) => {
         const remoteDeleteCode = await getRemoteSetting('ticket_delete_authorization_code');
-        const storedDeleteCode = await db.settings.get('ticket_delete_authorization_code');
-        const expectedCode = String(remoteDeleteCode ?? storedDeleteCode?.value ?? '').trim();
+        const expectedCode = String(remoteDeleteCode ?? '').trim();
         const providedCode = String(deleteAuthorizationCode || '').trim();
 
         if (!expectedCode) {
@@ -1323,70 +1366,59 @@ const Ventas = () => {
             return;
         }
 
-        await db.transaction(
-            'rw',
-            db.ventas,
-            db.ventas_items,
-            db.stock,
-            db.clients,
-            db.deleted_sales_history,
-            async () => {
-                const venta = await db.ventas.get(id);
-                if (!venta) {
-                    throw new Error('La venta ya no existe.');
-                }
+        const venta = recentSales.find((sale) => Number(sale.id) === Number(id));
+        if (!venta) {
+            throw new Error('La venta ya no existe.');
+        }
 
-                const items = await db.ventas_items.where('venta_id').equals(id).toArray();
+        const items = recentSalesItems?.[id] || recentSalesItems?.[Number(id)] || [];
 
-                if (items.length > 0) {
-                    const stockRestorations = await Promise.all(items.map(async (item) => {
-                        const ref = await db.stock.where('name').equals(item.product_name).first();
-                        return {
-                            name: item.product_name,
-                            type: ref?.type || 'vaca',
-                            quantity: item.quantity,
-                            unit: ref?.unit || item.unit || 'kg',
-                            updated_at: new Date(),
-                            synced: 0,
-                            reference: `anulacion_venta_${id}`
-                        };
-                    }));
-                    await db.stock.bulkAdd(stockRestorations);
-                }
+        if (items.length > 0) {
+            const stockRestorations = items.map((item) => {
+                const ref = findStockItemByName(item.product_name);
+                return {
+                    name: item.product_name,
+                    type: ref?.type || 'vaca',
+                    quantity: item.quantity,
+                    unit: ref?.unit || item.unit || 'kg',
+                    updated_at: new Date().toISOString(),
+                    reference: `anulacion_venta_${id}`,
+                };
+            });
+            await Promise.all(stockRestorations.map((item) => saveTableRecord('stock', 'insert', item)));
+        }
 
-                if (venta.clientId && venta.payment_method === 'Cuenta Corriente') {
-                    const numericClientId = Number(venta.clientId);
-                    const client = await db.clients.get(numericClientId);
-                    if (client) {
-                        await db.clients.update(numericClientId, {
-                            balance: Number(client.balance || 0) + Number(venta.total || 0),
-                            last_updated: new Date(),
-                            synced: 0
-                        });
-                    }
-                }
-
-                await db.deleted_sales_history.add({
-                    sale_id: venta.id,
-                    receipt_number: venta.receipt_number || null,
-                    receipt_code: venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id),
-                    sale_date: venta.date || null,
-                    deleted_at: new Date().toISOString(),
-                    deleted_by_user_id: currentUser?.id || null,
-                    deleted_by_username: currentUser?.username || 'Usuario desconocido',
-                    payment_method: venta.payment_method || '',
-                    clientId: venta.clientId ?? null,
-                    total: Number(venta.total || 0),
-                    source: venta.source || 'manual',
-                    authorization_verified: 1,
-                    sale_snapshot: venta,
-                    items_snapshot: items
-                });
-
-                await db.ventas_items.where('venta_id').equals(id).delete();
-                await db.ventas.delete(id);
+        if (venta.clientId && venta.payment_method === 'Cuenta Corriente') {
+            const numericClientId = Number(venta.clientId);
+            const client = clients.find((item) => Number(item.id) === numericClientId);
+            if (client) {
+                await saveTableRecord('clients', 'update', {
+                    balance: Number(client.balance || 0) + Number(venta.total || 0),
+                    last_updated: new Date().toISOString(),
+                }, numericClientId);
             }
-        );
+        }
+
+        await saveTableRecord('deleted_sales_history', 'insert', {
+            sale_id: venta.id,
+            receipt_number: venta.receipt_number || null,
+            receipt_code: venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id),
+            sale_date: venta.date || null,
+            deleted_at: new Date().toISOString(),
+            deleted_by_user_id: currentUser?.id || null,
+            deleted_by_username: currentUser?.username || 'Usuario desconocido',
+            payment_method: venta.payment_method || '',
+            clientId: venta.clientId ?? null,
+            total: Number(venta.total || 0),
+            source: venta.source || 'manual',
+            authorization_verified: 1,
+            sale_snapshot: venta,
+            items_snapshot: items,
+        });
+
+        await Promise.all(items.map((item) => saveTableRecord('ventas_items', 'delete', null, item.id)));
+        await saveTableRecord('ventas', 'delete', null, id);
+        await refreshVentasData();
 
         setDeleteAuthorizationCode('');
         setConfirmDeleteTicketId(null);
@@ -1624,19 +1656,19 @@ const Ventas = () => {
                                 style={{ position: 'relative', overflow: 'visible' }}
                             >
                                 <div className="product-name">{product.name}</div>
-                                {product.price > 0 ? (
-                                    <div className="product-price">${formatPrice(product.price, priceFormat)}</div>
+                                {toNumber(product.price) > 0 ? (
+                                    <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
                                 ) : (
                                     <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
                                 )}
 
                                 <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
-                                    Stock: {product.totalQuantity.toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                    Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
                                 </div>
 
                                 <button
                                     className="price-tag-btn"
-                                    onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(product.price || ''); setNewPlu(product.plu || ''); }}
+                                    onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
                                     style={{
                                         position: 'absolute', top: '8px', right: '8px',
                                         background: 'transparent', border: 'none', 
@@ -1669,8 +1701,8 @@ const Ventas = () => {
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
                                 <div className="item-detail">
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{item.quantity.toFixed(3)} {item.unit || 'Kg'}</span>
-                                    <span>× ${formatPrice(item.price, priceFormat)}</span>
+                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
+                                    <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
                                 </div>
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
                                     <button
@@ -1684,7 +1716,7 @@ const Ventas = () => {
                                         type="number"
                                         min={item.unit === 'kg' ? '0.001' : '1'}
                                         step={item.unit === 'kg' ? '0.001' : '1'}
-                                        value={item.quantity}
+                                        value={toNumber(item.quantity)}
                                         onChange={(e) => manualQuantity(item.id, e.target.value)}
                                         style={{
                                             width: item.unit === 'kg' ? '88px' : '70px',
@@ -1976,14 +2008,14 @@ const Ventas = () => {
                         <div style={{ background: 'rgba(255,255,255,0.05)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>Subtotal:</span>
-                                <span>${cartTotal.toLocaleString()}</span>
+                                <span>${formatNumericLocale(cartTotal)}</span>
                             </div>
 
                             {!isSplitPayment && cartAdjustment !== 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                     <span style={{ color: 'var(--color-text-muted)' }}>Recargo/Descuento:</span>
                                     <span style={{ color: cartAdjustment > 0 ? '#ef4444' : '#22c55e' }}>
-                                        {cartAdjustment > 0 ? '+' : ''}${cartAdjustment.toLocaleString()}
+                                        {cartAdjustment > 0 ? '+' : ''}${formatNumericLocale(cartAdjustment)}
                                     </span>
                                 </div>
                             )}
@@ -1992,19 +2024,19 @@ const Ventas = () => {
                                 <>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                         <span style={{ color: 'var(--color-text-muted)' }}>Subtotal cubierto:</span>
-                                        <span>${splitPaymentSummary.coveredSubtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                                        <span>${formatNumericLocale(splitPaymentSummary.coveredSubtotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                                     </div>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                         <span style={{ color: 'var(--color-text-muted)' }}>Pendiente de cubrir:</span>
                                         <span style={{ color: splitPaymentSummary.pendingSubtotal > 0.009 ? '#ef4444' : '#22c55e' }}>
-                                            ${splitPaymentSummary.pendingSubtotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                            ${formatNumericLocale(splitPaymentSummary.pendingSubtotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                         </span>
                                     </div>
                                     {splitPaymentSummary.totalAdjustment !== 0 && (
                                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                             <span style={{ color: 'var(--color-text-muted)' }}>Recargo/Descuento combinado:</span>
                                             <span style={{ color: splitPaymentSummary.totalAdjustment > 0 ? '#ef4444' : '#22c55e' }}>
-                                                {splitPaymentSummary.totalAdjustment > 0 ? '+' : ''}${splitPaymentSummary.totalAdjustment.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                {splitPaymentSummary.totalAdjustment > 0 ? '+' : ''}${formatNumericLocale(splitPaymentSummary.totalAdjustment, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </span>
                                         </div>
                                     )}
@@ -2015,8 +2047,8 @@ const Ventas = () => {
                                 <span style={{ fontWeight: 'bold' }}>{isSplitPayment ? 'TOTAL COBRADO:' : 'TOTAL A PAGAR:'}</span>
                                 <span style={{ fontSize: '1.5rem', fontWeight: '800', color: 'var(--color-primary)' }}>
                                     ${isSplitPayment
-                                        ? splitPaymentSummary.chargedTotal.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                        : finalTotal.toLocaleString()}
+                                        ? formatNumericLocale(splitPaymentSummary.chargedTotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                        : formatNumericLocale(finalTotal)}
                                 </span>
                             </div>
                         </div>
@@ -2148,10 +2180,10 @@ const Ventas = () => {
                                                 </div>
                                                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', flexWrap: 'wrap', fontSize: '0.8rem' }}>
                                                     <span style={{ color: 'var(--color-text-muted)' }}>
-                                                        Base cubierta: ${((rowSummary?.baseAmount) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        Base cubierta: ${toNumber(rowSummary?.baseAmount).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                     <span style={{ color: (rowMethod?.percentage || 0) >= 0 ? '#ef4444' : '#22c55e' }}>
-                                                        Ajuste: {((rowSummary?.adjustment || 0) > 0 ? '+' : '')}${((rowSummary?.adjustment) || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                        Ajuste: {(toNumber(rowSummary?.adjustment) > 0 ? '+' : '')}${toNumber(rowSummary?.adjustment).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                                     </span>
                                                 </div>
                                             </div>
@@ -2227,12 +2259,12 @@ const Ventas = () => {
                                                 : parseFloat(cashReceived) >= finalTotal ? '#22c55e' : '#666'
                                         }}>
                                             ${isSplitPayment
-                                                ? splitPaymentSummary.cashCharged.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                                : parseFloat(cashReceived) >= finalTotal ? (parseFloat(cashReceived) - finalTotal).toLocaleString() : '0'}
+                                                ? formatNumericLocale(splitPaymentSummary.cashCharged, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                                                : parseFloat(cashReceived) >= finalTotal ? formatNumericLocale(parseFloat(cashReceived) - finalTotal) : '0'}
                                         </div>
                                         {isSplitPayment && (
                                             <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: splitPaymentSummary.cashReceivedValue >= splitPaymentSummary.cashCharged ? '#22c55e' : 'var(--color-text-muted)' }}>
-                                                Vuelto: ${splitPaymentSummary.cashChange.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                                Vuelto: ${formatNumericLocale(splitPaymentSummary.cashChange, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                             </div>
                                         )}
                                     </div>
@@ -2867,7 +2899,7 @@ const Ventas = () => {
                                     )}
                                 </div>
                                 <span style={{ fontWeight: '800', color: '#22c55e', fontSize: '1rem', whiteSpace: 'nowrap' }}>
-                                    ${s.total.toLocaleString('es-AR')}
+                                    ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
                                     <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -2967,18 +2999,18 @@ const Ventas = () => {
                                             {notConfigured
                                                 ? '❌ No configurado en el sistema — ir a Stock a cargarlo'
                                                 : noStock
-                                                    ? `⚠️ Sin stock disponible (${item.product.totalQuantity.toFixed(3)} ${item.product.unit}) — verificá en Stock`
-                                                    : `✅ Stock disponible: ${item.product.totalQuantity.toFixed(3)} ${item.product.unit}`
+                                                    ? `⚠️ Sin stock disponible (${toNumber(item.product.totalQuantity).toFixed(3)} ${item.product.unit}) — verificá en Stock`
+                                                    : `✅ Stock disponible: ${toNumber(item.product.totalQuantity).toFixed(3)} ${item.product.unit}`
                                             }
                                         </div>
                                     </div>
 
                                     {/* Peso y precio */}
                                     <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                                        <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{item.weight.toFixed(3)} kg</div>
+                                        <div style={{ fontWeight: '700', fontSize: '0.95rem' }}>{toNumber(item.weight).toFixed(3)} kg</div>
                                         {item.priceRecord && (
                                             <div style={{ fontSize: '0.78rem', color: '#22c55e' }}>
-                                                ${((item.priceRecord.price || 0) * item.weight).toLocaleString('es-AR')}
+                                                ${(toNumber(item.priceRecord?.price) * toNumber(item.weight)).toLocaleString('es-AR')}
                                             </div>
                                         )}
                                     </div>

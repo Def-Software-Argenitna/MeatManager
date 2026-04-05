@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { Folder, FolderPlus, ChevronRight, X, Edit2, Trash2, Save } from 'lucide-react';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 
 const Categorias = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingNode, setEditingNode] = useState(null);
     const [newItem, setNewItem] = useState({ name: '', parent_id: null });
+    const [categories, setCategories] = useState([]);
 
-    const categories = useLiveQuery(
-        () => db.categories.toArray()
-    );
+    const loadCategories = React.useCallback(async () => {
+        const rows = await fetchTable('categories');
+        setCategories(Array.isArray(rows) ? rows : []);
+    }, []);
+
+    React.useEffect(() => {
+        loadCategories().catch((error) => console.error('Error cargando categorías:', error));
+    }, [loadCategories]);
 
     // Tree Builder: Convert flat list to tree
     const categoryTree = React.useMemo(() => {
@@ -28,15 +33,16 @@ const Categorias = () => {
         if (!newItem.name) return;
 
         if (editingNode) {
-            await db.categories.update(editingNode.id, { name: newItem.name });
+            await saveTableRecord('categories', 'update', { name: newItem.name }, editingNode.id);
             setEditingNode(null);
         } else {
-            await db.categories.add({
+            await saveTableRecord('categories', 'insert', {
                 name: newItem.name,
                 parent_id: newItem.parent_id || null
             });
         }
 
+        await loadCategories();
         setIsModalOpen(false);
         setNewItem({ name: '', parent_id: null });
     };
@@ -49,7 +55,8 @@ const Categorias = () => {
                 alert("No se puede eliminar una categoría que contiene sub-categorías.");
                 return;
             }
-            await db.categories.delete(id);
+            await saveTableRecord('categories', 'delete', null, id);
+            await loadCategories();
         }
     };
 
@@ -99,16 +106,18 @@ const Categorias = () => {
     );
 
     return (
-        <div className="animate-fade-in" style={{ padding: '1rem' }}>
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+        <div className="animate-fade-in">
+            <header className="page-header">
+                <div className="page-header-main">
                     <h1 className="page-title">Categorías</h1>
                     <p className="page-description">Estructura de productos (Rubros y Sub-rubros)</p>
                 </div>
-                <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
-                    <PlusIcon size={20} />
-                    Nueva Categoría Principal
-                </button>
+                <div className="page-header-actions">
+                    <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
+                        <PlusIcon size={20} />
+                        Nueva Categoría Principal
+                    </button>
+                </div>
             </header>
 
             <div style={{ maxWidth: '800px' }}>

@@ -47,9 +47,9 @@ export function LoginScreen({ onSubmit }: Props) {
     >
       <View style={styles.heroCard}>
         <Text style={styles.kicker}>MeatManager Mobile</Text>
-        <Text style={styles.title}>Portal de reparto</Text>
+        <Text style={styles.title}>MeatManager Mobile</Text>
         <Text style={styles.description}>
-          Ingresa con la misma cuenta Firebase de la web para ver tus pedidos asignados y compartir tu ubicacion en tiempo real.
+          Ingresá con la misma cuenta Firebase del negocio para acceder a tu panel móvil según tu rol y licencias.
         </Text>
 
         <TextInput

@@ -9,11 +9,9 @@ import {
     AlertCircle,
     Wallet,
 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { desktopApi } from '../utils/desktopApi';
-import { requestCashWithdrawalAuthorization, verifyCashWithdrawalAuthorization } from '../utils/apiClient';
+import { fetchTable, requestCashWithdrawalAuthorization, saveTableRecord, upsertRemoteSetting, verifyCashWithdrawalAuthorization, getRemoteSetting } from '../utils/apiClient';
 import './CierreCaja.css';
 
 const OUTFLOW_CATEGORIES = [
@@ -115,6 +113,15 @@ const CierreCaja = () => {
     const [withdrawalAuthorization, setWithdrawalAuthorization] = useState(null);
     const [withdrawalCodeInput, setWithdrawalCodeInput] = useState('');
     const [feedback, setFeedback] = useState(null);
+    const [sales, setSales] = useState([]);
+    const [allSalesUntilDate, setAllSalesUntilDate] = useState([]);
+    const [allSalesBeforeDate, setAllSalesBeforeDate] = useState([]);
+    const [movements, setMovements] = useState([]);
+    const [allMovementsUntilDate, setAllMovementsUntilDate] = useState([]);
+    const [allMovementsBeforeDate, setAllMovementsBeforeDate] = useState([]);
+    const [paymentMethods, setPaymentMethods] = useState([]);
+    const [closureRecord, setClosureRecord] = useState(null);
+    const [reportFolderPath, setReportFolderPath] = useState('');
 
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
     const previousDayEnd = useMemo(() => {
@@ -123,15 +130,64 @@ const CierreCaja = () => {
         return previous;
     }, [start]);
 
-    const sales = useLiveQuery(() => db.ventas.where('date').between(start, end).toArray(), [start, end]);
-    const allSalesUntilDate = useLiveQuery(() => db.ventas.where('date').belowOrEqual(end).toArray(), [end]);
-    const allSalesBeforeDate = useLiveQuery(() => db.ventas.where('date').belowOrEqual(previousDayEnd).toArray(), [previousDayEnd]);
-    const movements = useLiveQuery(() => db.caja_movimientos.where('date').between(start, end).toArray(), [start, end]);
-    const allMovementsUntilDate = useLiveQuery(() => db.caja_movimientos.where('date').belowOrEqual(end).toArray(), [end]);
-    const allMovementsBeforeDate = useLiveQuery(() => db.caja_movimientos.where('date').belowOrEqual(previousDayEnd).toArray(), [previousDayEnd]);
-    const paymentMethods = useLiveQuery(() => db.payment_methods.toArray(), []);
-    const closureRecord = useLiveQuery(() => db.cash_closures?.where('closure_date').equals(selectedDate).first(), [selectedDate]);
-    const reportFolderSetting = useLiveQuery(() => db.settings.get('cash_closure_reports_folder'), []);
+    const refreshCashData = async () => {
+        const [salesRows, movementRows, paymentMethodsRows, closureRows, folderSetting] = await Promise.all([
+            fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
+            fetchTable('caja_movimientos', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
+            fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('cash_closures', { limit: 1000, orderBy: 'closure_date', direction: 'DESC' }).catch(() => []),
+            getRemoteSetting('cash_closure_reports_folder').catch(() => ''),
+        ]);
+
+        const salesList = Array.isArray(salesRows) ? salesRows : [];
+        const movementList = Array.isArray(movementRows) ? movementRows : [];
+        const closureList = Array.isArray(closureRows) ? closureRows : [];
+
+        setSales(salesList.filter((sale) => {
+            const saleDate = new Date(sale.date);
+            return saleDate >= start && saleDate <= end;
+        }));
+        setAllSalesUntilDate(salesList.filter((sale) => new Date(sale.date) <= end));
+        setAllSalesBeforeDate(salesList.filter((sale) => new Date(sale.date) <= previousDayEnd));
+        setMovements(movementList.filter((movement) => {
+            const movementDate = new Date(movement.date);
+            return movementDate >= start && movementDate <= end;
+        }));
+        setAllMovementsUntilDate(movementList.filter((movement) => new Date(movement.date) <= end));
+        setAllMovementsBeforeDate(movementList.filter((movement) => new Date(movement.date) <= previousDayEnd));
+        setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
+        setClosureRecord(closureList.find((closure) => String(closure.closure_date || '') === selectedDate) || null);
+        setReportFolderPath(String(folderSetting || ''));
+    };
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadCashData = async () => {
+            try {
+                await refreshCashData();
+                if (cancelled) return;
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('[CAJA] No se pudieron cargar datos desde la API', error);
+                    setSales([]);
+                    setAllSalesUntilDate([]);
+                    setAllSalesBeforeDate([]);
+                    setMovements([]);
+                    setAllMovementsUntilDate([]);
+                    setAllMovementsBeforeDate([]);
+                    setPaymentMethods([]);
+                    setClosureRecord(null);
+                    setReportFolderPath('');
+                }
+            }
+        };
+
+        loadCashData();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedDate, start, end, previousDayEnd]);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -314,7 +370,6 @@ const CierreCaja = () => {
     const previousCashClose = activePaymentMethods
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + toNumber(previousCloseByMethod[method.name]), 0);
-    const reportFolderPath = reportFolderSetting?.value || '';
     const isPartnerWithdrawal = movementType === 'retiro' && movementCategory === 'Retiro Socios';
     const withdrawalPayloadKey = `${movementType}|${movementCategory}|${Number(movementAmount || 0).toFixed(2)}|${movementPaymentMethod}|${movementDesc.trim()}`;
 
@@ -396,11 +451,15 @@ const CierreCaja = () => {
             }
         });
 
-        await db.caja_movimientos.bulkAdd(records);
+        await Promise.all(records.map((record) => saveTableRecord('caja_movimientos', 'insert', {
+            ...record,
+            date: record.date instanceof Date ? record.date.toISOString() : record.date,
+        })));
 
         setFeedback({ type: 'success', text: 'Apertura de caja registrada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft({});
+        await refreshCashData();
     };
 
     const handleAddMovement = async (e) => {
@@ -417,7 +476,7 @@ const CierreCaja = () => {
             }
         }
 
-        await db.caja_movimientos.add({
+        await saveTableRecord('caja_movimientos', 'insert', {
             type: movementType,
             amount: parseFloat(movementAmount),
             category: movementCategory,
@@ -427,7 +486,7 @@ const CierreCaja = () => {
             authorization_id: withdrawalAuthorization?.authorizationId || null,
             authorization_verified: withdrawalAuthorization?.verified ? 1 : 0,
             authorized_recipient_email: withdrawalAuthorization?.recipient || null,
-            date: new Date(),
+            date: new Date().toISOString(),
             synced: 0,
         });
 
@@ -437,6 +496,7 @@ const CierreCaja = () => {
         setWithdrawalCodeInput('');
         setShowMovementForm(false);
         setFeedback({ type: 'success', text: 'Movimiento de caja guardado correctamente.' });
+        await refreshCashData();
     };
 
     const handleRequestWithdrawalCode = async () => {
@@ -503,15 +563,17 @@ const CierreCaja = () => {
     };
 
     const handleDeleteMovement = async (movementId) => {
-        await db.caja_movimientos.delete(movementId);
+        await saveTableRecord('caja_movimientos', 'delete', null, movementId);
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
+        await refreshCashData();
     };
 
     const handleChooseReportFolder = async () => {
         try {
             const result = await desktopApi.chooseDirectory();
             if (!result?.ok) return;
-            await db.settings.put({ key: 'cash_closure_reports_folder', value: result.path });
+            await upsertRemoteSetting('cash_closure_reports_folder', result.path);
+            setReportFolderPath(result.path);
             setFeedback({ type: 'success', text: `Carpeta de cierres configurada: ${result.path}` });
         } catch (error) {
             setFeedback({ type: 'warning', text: `No se pudo seleccionar la carpeta: ${error.message}` });
@@ -683,7 +745,7 @@ const CierreCaja = () => {
                 throw new Error(pdfResult?.error || 'No se pudo generar el PDF del cierre');
             }
 
-            await db.cash_closures.add({
+            await saveTableRecord('cash_closures', 'insert', {
                 closure_date: selectedDate,
                 closed_at: closurePayload.closedAt,
                 theoretical_cash: cashInDrawer,
@@ -698,6 +760,7 @@ const CierreCaja = () => {
             });
 
             setFeedback({ type: 'success', text: `Cierre guardado correctamente y PDF generado en ${pdfResult.path}` });
+            await refreshCashData();
         } catch (error) {
             setFeedback({ type: 'warning', text: `No se pudo cerrar la caja: ${error.message}` });
         } finally {
@@ -752,19 +815,19 @@ const CierreCaja = () => {
             <div className="cash-overview-grid">
                 <div className="stat-box result">
                     <span className="label">Efectivo acumulado en caja</span>
-                    <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="val">${toNumber(cashInDrawer).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
-                    <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
+                    <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box expense">
                     <span className="label">Retiros y gastos del día</span>
-                    <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                    <span className="val">-${toNumber(totalExpenses).toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
-                    <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
+                    <span className="val">${toNumber(currentAccountSales).toLocaleString('es-AR')}</span>
                 </div>
             </div>
 
@@ -785,15 +848,15 @@ const CierreCaja = () => {
                                         <div className="method-balance-text">
                                             <span className="method-name">{item.name}</span>
                                             <div className="method-breakdown">
-                                                <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
-                                                <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
-                                                <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
+                                                <span>Apertura: ${toNumber(item.opening).toLocaleString('es-AR')}</span>
+                                                <span>Ventas hoy: ${toNumber(item.sales).toLocaleString('es-AR')}</span>
+                                                <span>Mov. manuales: {(toNumber(item.manualNet) >= 0 ? '+' : '-')}${Math.abs(toNumber(item.manualNet)).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
                                     </div>
                                     <div className="method-balance-total">
                                         <Icon size={16} />
-                                        <span>${item.accumulated.toLocaleString('es-AR')}</span>
+                                        <span>${toNumber(item.accumulated).toLocaleString('es-AR')}</span>
                                     </div>
                                 </div>
                             );
@@ -803,7 +866,7 @@ const CierreCaja = () => {
                     <div className="card-footer">
                         <div className="total-row">
                             <span>Ventas brutas del día</span>
-                            <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
+                            <span className="total-val">${toNumber(totalSales).toLocaleString('es-AR')}</span>
                         </div>
                     </div>
                 </div>
@@ -817,11 +880,11 @@ const CierreCaja = () => {
                     <div className="cash-stats">
                         <div className="stat-box">
                             <span className="label">Cierre anterior</span>
-                            <span className="val">${previousCloseTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">${toNumber(previousCloseTotal).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box">
                             <span className="label">Efectivo cierre anterior</span>
-                            <span className="val">${previousCashClose.toLocaleString('es-AR')}</span>
+                            <span className="val">${toNumber(previousCashClose).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box">
                             <span className="label">Apertura registrada</span>
@@ -829,15 +892,15 @@ const CierreCaja = () => {
                         </div>
                         <div className="stat-box income">
                             <span className="label">Ingresos extra</span>
-                            <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
+                            <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
                             <span className="label">Retiros</span>
-                            <span className="val">-${withdrawalsTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">-${toNumber(withdrawalsTotal).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
                             <span className="label">Gastos</span>
-                            <span className="val">-${expensesOnlyTotal.toLocaleString('es-AR')}</span>
+                            <span className="val">-${toNumber(expensesOnlyTotal).toLocaleString('es-AR')}</span>
                         </div>
                     </div>
 
@@ -849,7 +912,7 @@ const CierreCaja = () => {
                         <div className="cash-reconciliation-grid">
                             <div className="reconciliation-box">
                                 <span className="label">Efectivo teórico</span>
-                                <strong>${cashInDrawer.toLocaleString('es-AR')}</strong>
+                                <strong>${toNumber(cashInDrawer).toLocaleString('es-AR')}</strong>
                             </div>
                             <label className="reconciliation-box reconciliation-input-box">
                                 <span className="label">Efectivo contado</span>
@@ -867,7 +930,7 @@ const CierreCaja = () => {
                                 <span className="label">Diferencia</span>
                                 <strong>
                                     {countedCash
-                                        ? `${cashDifference > 0 ? '+' : ''}$${cashDifference.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        ? `${cashDifference > 0 ? '+' : ''}$${toNumber(cashDifference).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
                                         : 'Esperando arqueo'}
                                 </strong>
                             </div>
@@ -893,7 +956,7 @@ const CierreCaja = () => {
                                 {methodCards.map((item) => (
                                     <div key={item.name} className="opening-chip">
                                         <span>{item.name}</span>
-                                        <strong>${item.opening.toLocaleString('es-AR')}</strong>
+                                        <strong>${toNumber(item.opening).toLocaleString('es-AR')}</strong>
                                     </div>
                                 ))}
                             </div>

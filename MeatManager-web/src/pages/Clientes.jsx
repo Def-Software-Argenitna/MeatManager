@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
-import { buildClientAddress, geocodeAddress } from '../utils/geocoding';
+import { buildClientAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -10,8 +10,13 @@ const currentMonth = () => {
 };
 
 const emptyClientForm = {
+    client_type: 'person',
     first_name: '',
     last_name: '',
+    company_name: '',
+    contact_first_name: '',
+    contact_last_name: '',
+    dni_cuit: '',
     street: '',
     street_number: '',
     zip_code: '',
@@ -63,8 +68,13 @@ const formatAddress = (client) => {
 
 const hasCurrentAccount = (client) => client?.has_current_account !== false;
 const getBalanceValue = (client) => Number(client?.balance) || 0;
+const isCompanyClient = (client) => cleanValue(client.client_type) === 'company';
 const getClientFullName = (client) =>
-    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name);
+    isCompanyClient(client)
+        ? (cleanValue(client.company_name) || cleanValue(client.name))
+        : ([cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name));
+const getClientContactName = (client) =>
+    [cleanValue(client.contact_first_name), cleanValue(client.contact_last_name)].filter(Boolean).join(' ');
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 const getMovementPaymentMethod = (movement) => {
@@ -72,6 +82,7 @@ const getMovementPaymentMethod = (movement) => {
     const match = String(movement.description || '').match(/\(([^()]+)\)\s*$/);
     return cleanValue(match?.[1]);
 };
+const toNumber = (value) => Number(value) || 0;
 
 const Clientes = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -86,6 +97,11 @@ const Clientes = () => {
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
+    const [addressSuggestions, setAddressSuggestions] = useState([]);
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+    const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+
+    const clientAddressPreview = useMemo(() => formatAddress(newClient), [newClient]);
 
     const loadCoreData = async () => {
         const [clientsRows, paymentMethodRows] = await Promise.all([
@@ -252,6 +268,35 @@ const Clientes = () => {
         setExpandedLedgerRowId(null);
     }, [historyMonth]);
 
+    useEffect(() => {
+        const streetQuery = [newClient.street, newClient.street_number].map((value) => String(value || '').trim()).filter(Boolean).join(' ');
+        const localityReady = Boolean(String(newClient.city || '').trim() || String(newClient.zip_code || '').trim());
+        const query = buildClientAddress(newClient);
+        if (streetQuery.length < 5 || !localityReady || query.length < 8) {
+            setAddressSuggestions([]);
+            setLoadingSuggestions(false);
+            return;
+        }
+
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            setLoadingSuggestions(true);
+            try {
+                const suggestions = await searchAddressSuggestions(query);
+                if (!cancelled) setAddressSuggestions(suggestions);
+            } catch {
+                if (!cancelled) setAddressSuggestions([]);
+            } finally {
+                if (!cancelled) setLoadingSuggestions(false);
+            }
+        }, 350);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [newClient.street, newClient.street_number, newClient.city, newClient.zip_code]);
+
     const openHistory = (client) => {
         if (!hasCurrentAccount(client)) return;
         setHistoryClient(client);
@@ -262,7 +307,21 @@ const Clientes = () => {
     };
 
     const updateNewClient = (field, value) => {
+        if (['street', 'street_number', 'city', 'zip_code'].includes(field)) {
+            setSelectedSuggestion(null);
+        }
         setNewClient((prev) => {
+            if (field === 'client_type') {
+                return {
+                    ...prev,
+                    client_type: value,
+                    first_name: value === 'company' ? '' : prev.first_name,
+                    last_name: value === 'company' ? '' : prev.last_name,
+                    company_name: value === 'company' ? prev.company_name : '',
+                    contact_first_name: value === 'company' ? prev.contact_first_name : '',
+                    contact_last_name: value === 'company' ? prev.contact_last_name : '',
+                };
+            }
             if (field === 'hasCurrentAccount') {
                 return {
                     ...prev,
@@ -282,11 +341,26 @@ const Clientes = () => {
         });
     };
 
+    const selectAddressSuggestion = (suggestion) => {
+        setSelectedSuggestion(suggestion);
+        setNewClient((prev) => ({
+            ...prev,
+            street: suggestion.street || prev.street,
+            city: suggestion.city || prev.city,
+            zip_code: suggestion.zip_code || prev.zip_code,
+        }));
+        setAddressSuggestions([]);
+    };
+
     const handleAddClient = async (e) => {
         e.preventDefault();
-        const firstName = cleanValue(newClient.first_name);
-        const lastName = cleanValue(newClient.last_name);
-        const fullName = [firstName, lastName].filter(Boolean).join(' ');
+        const clientType = cleanValue(newClient.client_type) || 'person';
+        const firstName = clientType === 'company' ? cleanValue(newClient.contact_first_name) : cleanValue(newClient.first_name);
+        const lastName = clientType === 'company' ? cleanValue(newClient.contact_last_name) : cleanValue(newClient.last_name);
+        const companyName = cleanValue(newClient.company_name);
+        const fullName = clientType === 'company'
+            ? companyName
+            : [firstName, lastName].filter(Boolean).join(' ');
         if (!fullName) return;
 
         const phone1 = cleanValue(newClient.phone1);
@@ -310,8 +384,13 @@ const Clientes = () => {
 
         await saveTableRecord('clients', 'insert', {
             name: fullName,
-            first_name: firstName,
-            last_name: lastName,
+            client_type: clientType,
+            first_name: clientType === 'company' ? '' : firstName,
+            last_name: clientType === 'company' ? '' : lastName,
+            company_name: clientType === 'company' ? companyName : '',
+            contact_first_name: clientType === 'company' ? firstName : '',
+            contact_last_name: clientType === 'company' ? lastName : '',
+            dni_cuit: cleanValue(newClient.dni_cuit),
             phone: phone1,
             phones,
             phone1,
@@ -336,6 +415,8 @@ const Clientes = () => {
 
         setIsModalOpen(false);
         setNewClient(emptyClientForm);
+        setAddressSuggestions([]);
+        setSelectedSuggestion(null);
         await loadCoreData();
     };
 
@@ -429,6 +510,12 @@ const Clientes = () => {
                                     {clientAddress && (
                                         <div className="client-extra-data">{clientAddress}</div>
                                     )}
+                                    {isCompanyClient(client) && getClientContactName(client) && (
+                                        <div className="client-extra-data">Contacto: {getClientContactName(client)}</div>
+                                    )}
+                                    {cleanValue(client.dni_cuit) && (
+                                        <div className="client-extra-data">DNI / CUIT: {cleanValue(client.dni_cuit)}</div>
+                                    )}
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
                                     </div>
@@ -441,7 +528,7 @@ const Clientes = () => {
                             <div style={{ marginTop: '1rem' }}>
                                 <div className="balance-label">Estado de Cuenta</div>
                                 <div className={`client-balance ${clientBalance < 0 ? 'negative' : (clientBalance > 0 ? 'positive' : '')}`}>
-                                    {clientBalance < 0 ? '-' : ''}${Math.abs(clientBalance).toLocaleString()}
+                                    {clientBalance < 0 ? '-' : ''}${Math.abs(toNumber(clientBalance)).toLocaleString()}
                                 </div>
                                 <div style={{ fontSize: '0.8rem', color: clientBalance < 0 ? '#ef4444' : 'var(--color-text-muted)' }}>
                                     {!accountEnabled ? 'Cuenta corriente desactivada' : (clientBalance < 0 ? 'Debe al local' : (clientBalance > 0 ? 'Saldo a favor' : 'Al dia'))}
@@ -471,35 +558,129 @@ const Clientes = () => {
                         </div>
 
                         <form onSubmit={handleAddClient}>
-                            <div className="clients-form-group">
-                                <div className="clients-form-grid">
-                                    <div className="clients-form-group">
-                                        <label className="clients-form-label">Nombre</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            className="neo-input"
-                                            value={newClient.first_name}
-                                            onChange={(e) => updateNewClient('first_name', e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="clients-form-group">
-                                        <label className="clients-form-label">Apellido</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            className="neo-input"
-                                            value={newClient.last_name}
-                                            onChange={(e) => updateNewClient('last_name', e.target.value)}
-                                        />
-                                    </div>
-                                </div>
+                            <div className="clients-type-switch">
+                                <button
+                                    type="button"
+                                    className={`clients-type-option ${newClient.client_type === 'person' ? 'active' : ''}`}
+                                    onClick={() => updateNewClient('client_type', 'person')}
+                                >
+                                    Persona
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`clients-type-option ${newClient.client_type === 'company' ? 'active' : ''}`}
+                                    onClick={() => updateNewClient('client_type', 'company')}
+                                >
+                                    Empresa
+                                </button>
                             </div>
+
+                            {newClient.client_type === 'company' ? (
+                                <>
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre de la empresa</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.company_name}
+                                                onChange={(e) => updateNewClient('company_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">CUIT</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                placeholder="Ej: 30712345678"
+                                                value={newClient.dni_cuit}
+                                                onChange={(e) => updateNewClient('dni_cuit', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre del contacto</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                value={newClient.contact_first_name}
+                                                onChange={(e) => updateNewClient('contact_first_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Apellido del contacto</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                value={newClient.contact_last_name}
+                                                onChange={(e) => updateNewClient('contact_last_name', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.first_name}
+                                                onChange={(e) => updateNewClient('first_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Apellido</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.last_name}
+                                                onChange={(e) => updateNewClient('last_name', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">DNI / CUIT</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                placeholder="Ej: 30111222333"
+                                                value={newClient.dni_cuit}
+                                                onChange={(e) => updateNewClient('dni_cuit', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
 
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Calle</label>
                                     <input type="text" className="neo-input" value={newClient.street} onChange={(e) => updateNewClient('street', e.target.value)} />
+                                    {(loadingSuggestions || addressSuggestions.length > 0) && (
+                                        <div className="clients-address-suggestions">
+                                            {loadingSuggestions && <div className="clients-address-suggestion muted">Buscando direcciones...</div>}
+                                            {!loadingSuggestions && addressSuggestions.map((suggestion) => (
+                                                <button
+                                                    key={`${suggestion.label}-${suggestion.latitude}`}
+                                                    type="button"
+                                                    className="clients-address-suggestion"
+                                                    onClick={() => selectAddressSuggestion(suggestion)}
+                                                >
+                                                    <strong>{suggestion.street || suggestion.label}</strong>
+                                                    <span>{[suggestion.city, suggestion.zip_code].filter(Boolean).join(' ')}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Altura</label>
@@ -514,6 +695,13 @@ const Clientes = () => {
                                     <input type="text" className="neo-input" value={newClient.city} onChange={(e) => updateNewClient('city', e.target.value)} />
                                 </div>
                             </div>
+
+                            {clientAddressPreview && (
+                                <div className="clients-address-preview">
+                                    <span>Direccion compuesta:</span>
+                                    <strong>{selectedSuggestion?.label || clientAddressPreview}</strong>
+                                </div>
+                            )}
 
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
@@ -594,9 +782,11 @@ const Clientes = () => {
                             <div>
                                 <h2 style={{ fontSize: '1.2rem', fontWeight: '800', margin: 0 }}>Historial Cta. Cte.</h2>
                                 <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>{getClientFullName(historyClientData)}</p>
-                                {(formatAddress(historyClientData) || getClientPhones(historyClientData).length > 0 || getClientEmails(historyClientData).length > 0) && (
+                                {(formatAddress(historyClientData) || getClientPhones(historyClientData).length > 0 || getClientEmails(historyClientData).length > 0 || cleanValue(historyClientData?.dni_cuit) || (isCompanyClient(historyClientData) && getClientContactName(historyClientData))) && (
                                     <div style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                                         {formatAddress(historyClientData) && <div>{formatAddress(historyClientData)}</div>}
+                                        {isCompanyClient(historyClientData) && getClientContactName(historyClientData) && <div>Contacto: {getClientContactName(historyClientData)}</div>}
+                                        {cleanValue(historyClientData?.dni_cuit) && <div>DNI / CUIT: {cleanValue(historyClientData.dni_cuit)}</div>}
                                         {getClientPhones(historyClientData).length > 0 && <div>{getClientPhones(historyClientData).join(' | ')}</div>}
                                         {getClientEmails(historyClientData).length > 0 && <div>{getClientEmails(historyClientData).join(' | ')}</div>}
                                     </div>
@@ -615,7 +805,7 @@ const Clientes = () => {
                         }}>
                             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Saldo actual</span>
                             <span style={{ fontSize: '1.4rem', fontWeight: '800', color: effectiveHistoryBalance < 0 ? '#ef4444' : '#22c55e' }}>
-                                {effectiveHistoryBalance < 0 ? '-' : ''}${Math.abs(effectiveHistoryBalance).toLocaleString()}
+                                {effectiveHistoryBalance < 0 ? '-' : ''}${Math.abs(toNumber(effectiveHistoryBalance)).toLocaleString()}
                             </span>
                         </div>
 
@@ -705,7 +895,7 @@ const Clientes = () => {
                                     Debe del mes ({clientLedger.rows.length} movimiento{clientLedger.rows.length !== 1 ? 's' : ''})
                                 </span>
                                 <span style={{ fontWeight: '800', color: '#ef4444', fontSize: '1.1rem' }}>
-                                    ${clientLedger.salesTotal.toLocaleString()}
+                                    ${toNumber(clientLedger.salesTotal).toLocaleString()}
                                 </span>
                             </div>
                         )}
@@ -715,15 +905,15 @@ const Clientes = () => {
                                 <div className="clients-history-summary">
                                     <div className="clients-history-summary-item">
                                         <span>Saldo anterior</span>
-                                        <strong>{clientLedger.openingBalance.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.openingBalance).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item">
                                         <span>Debe</span>
-                                        <strong>{clientLedger.salesTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.salesTotal).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item positive">
                                         <span>Haber</span>
-                                        <strong>{clientLedger.paymentTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
+                                        <strong>{toNumber(clientLedger.paymentTotal).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                 </div>
                             )}
@@ -756,9 +946,9 @@ const Clientes = () => {
                                                     >
                                                         <td>{row.fecha.toLocaleDateString('es-AR')}</td>
                                                         <td>{row.comprobante}</td>
-                                                        <td>{row.debe ? row.debe.toLocaleString('es-AR') : ''}</td>
-                                                        <td>{row.haber ? row.haber.toLocaleString('es-AR') : ''}</td>
-                                                        <td>{row.saldo.toLocaleString('es-AR')}</td>
+                                                        <td>{row.debe ? toNumber(row.debe).toLocaleString('es-AR') : ''}</td>
+                                                        <td>{row.haber ? toNumber(row.haber).toLocaleString('es-AR') : ''}</td>
+                                                        <td>{toNumber(row.saldo).toLocaleString('es-AR')}</td>
                                                     </tr>
                                                     {expandedLedgerRowId === row.id && row.items?.length > 0 && (
                                                         <tr className="clients-history-row-detail">
@@ -768,7 +958,7 @@ const Clientes = () => {
                                                                         <div key={item.id} className="clients-history-item-line">
                                                                             <span>{item.product_name}</span>
                                                                             <span>
-                                                                                {item.quantity} x ${Number(item.price || 0).toLocaleString('es-AR')} = ${Number(item.subtotal || 0).toLocaleString('es-AR')}
+                                                                                {toNumber(item.quantity)} x ${toNumber(item.price).toLocaleString('es-AR')} = ${toNumber(item.subtotal).toLocaleString('es-AR')}
                                                                             </span>
                                                                         </div>
                                                                     ))}

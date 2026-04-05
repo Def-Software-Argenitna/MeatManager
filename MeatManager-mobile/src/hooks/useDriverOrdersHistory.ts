@@ -19,25 +19,73 @@ type PedidoRow = {
 
 const normalizeName = (value: unknown) => String(value || '').trim().toLowerCase();
 
+const formatCurrency = (value: number) =>
+  value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+
+const normalizeNumeric = (value: unknown) => {
+  if (value == null || value === '') return null;
+  const next = Number(value);
+  return Number.isFinite(next) ? next : null;
+};
+
+const formatOrderItem = (item: Record<string, unknown>) => {
+  const name = String(
+    item.name ||
+    item.label ||
+    item.product_name ||
+    item.productName ||
+    item.title ||
+    'Producto'
+  ).trim();
+
+  const quantity = normalizeNumeric(item.quantity);
+  const unit = String(item.unit || '').trim();
+  const subtotal = normalizeNumeric(item.subtotal);
+  const price = normalizeNumeric(item.price);
+
+  const parts = [name];
+
+  if (quantity != null) {
+    parts.push(unit ? `${quantity} ${unit}` : `x${quantity}`);
+  }
+
+  if (price != null) {
+    parts.push(`Precio ${formatCurrency(price)}`);
+  }
+
+  if (subtotal != null) {
+    parts.push(`Subtotal ${formatCurrency(subtotal)}`);
+  }
+
+  return `• ${parts.join(' · ')}`;
+};
+
 const normalizeItems = (value: unknown) => {
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return 'Sin detalle disponible';
+    try {
+      return normalizeItems(JSON.parse(trimmed));
+    } catch {
+      return trimmed;
+    }
+  }
   if (Array.isArray(value)) {
     return value
       .map((item) => {
         if (typeof item === 'string') return item;
-        if (item && typeof item === 'object' && 'name' in item) {
-          return String(item.name);
+        if (item && typeof item === 'object') {
+          return formatOrderItem(item as Record<string, unknown>);
         }
         return JSON.stringify(item);
       })
       .join('\n');
   }
   if (value && typeof value === 'object') {
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return 'Sin detalle disponible';
+    if ('items' in value) {
+      return normalizeItems((value as Record<string, unknown>).items);
     }
+    return formatOrderItem(value as Record<string, unknown>);
   }
   return 'Sin detalle disponible';
 };
@@ -79,7 +127,18 @@ export function useDriverOrdersHistory(driverName: string | null) {
             address: row.address || 'Sin direccion cargada',
             items: normalizeItems(row.items),
             repartidor: row.repartidor || driverName,
-            status: row.status === 'delivered' ? 'delivered' : row.status === 'cancelled' ? 'cancelled' : row.status === 'ready' ? 'ready' : 'pending',
+            status:
+              row.status === 'delivered'
+                ? 'delivered'
+                : row.status === 'cancelled'
+                  ? 'cancelled'
+                  : row.status === 'on_route'
+                    ? 'on_route'
+                    : row.status === 'arrived'
+                      ? 'arrived'
+                      : row.status === 'ready' || row.status === 'assigned'
+                        ? 'assigned'
+                        : 'pending',
             total: row.total == null ? undefined : Number(row.total),
             updated_at: row.updated_at || undefined,
             delivered_at: row.delivered_at || undefined,

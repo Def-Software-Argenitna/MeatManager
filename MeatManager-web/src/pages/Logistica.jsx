@@ -1,6 +1,4 @@
-import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     Map as MapIcon,
     Truck,
@@ -9,25 +7,22 @@ import {
     MapPin,
     ChevronRight,
     Search,
-    Filter,
     Printer,
     Navigation2,
     Share2,
-    UserPlus,
     Users,
-    Trash2,
+    Tag,
     X,
-    AlertTriangle,
-    ShieldAlert,
-    CalendarDays,
-    AlertCircle
+    AlertCircle,
+    Mail,
+    Wifi,
+    WifiOff
 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
-import { fdb } from '../firebase';
-import { collection, doc, setDoc, onSnapshot, deleteDoc } from 'firebase/firestore';
 import { useLicense } from '../context/LicenseContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
+import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -81,6 +76,90 @@ function ChangeView({ center, zoom }) {
     return null;
 }
 
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const formatOrderItems = (pedido) => {
+    if (!pedido) return 'Sin items';
+
+    if (Array.isArray(pedido.items) && pedido.items.length > 0) {
+        return pedido.items.map((item) => {
+            if (typeof item === 'string') return item;
+            const productName = String(item?.product_name || item?.name || 'Item');
+            const quantity = toNumber(item?.quantity);
+            const unit = String(item?.unit || 'un');
+            const quantityLabel = unit === 'kg'
+                ? `${quantity.toFixed(3)} kg`
+                : `${quantity.toFixed(0)} ${unit}`;
+            return `${productName} · ${quantityLabel}`;
+        }).join('\n');
+    }
+
+    if (typeof pedido.items_text === 'string' && pedido.items_text.trim()) {
+        return pedido.items_text;
+    }
+
+    if (typeof pedido.items === 'string' && pedido.items.trim()) {
+        return pedido.items;
+    }
+
+    return 'Sin items';
+};
+
+const formatDriverLastSeen = (value) => {
+    if (!value) return 'Sin dato';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Sin dato';
+    return parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const getOrderPaymentLabel = (pedido) => {
+    const paymentMethod = String(pedido?.payment_method || pedido?.paymentMethod || '').trim();
+    return paymentMethod || 'Sin informar';
+};
+
+const getOrderPaidLabel = (pedido) => {
+    if (pedido?.paid === true || pedido?.is_paid === true || pedido?.payment_status === 'paid') return 'Sí';
+    if (pedido?.paid === false || pedido?.is_paid === false || pedido?.payment_status === 'pending') return 'No';
+    return 'Pendiente';
+};
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
+const normalizeOrderForLogistics = (pedido) => ({
+    ...pedido,
+    customer_name: typeof pedido?.customer_name === 'string' ? pedido.customer_name : String(pedido?.customer_name || ''),
+    address: typeof pedido?.address === 'string' ? pedido.address : String(pedido?.address || ''),
+    repartidor: typeof pedido?.repartidor === 'string' ? pedido.repartidor : String(pedido?.repartidor || ''),
+    items_preview: formatOrderItems(pedido),
+});
+
+const normalizeLiveDriver = (driver) => {
+    const lastSeenRaw = driver?.time
+        ?? driver?.updatedAt
+        ?? driver?.updated_at
+        ?? driver?.timestamp
+        ?? driver?.lastSeen
+        ?? driver?.last_seen
+        ?? null;
+
+    return {
+        ...driver,
+        repartidor: String(driver?.repartidor || driver?.name || driver?.email || 'Repartidor'),
+        lat: toNumber(driver?.lat),
+        lng: toNumber(driver?.lng),
+        activeOrders: toNumber(driver?.activeOrders),
+        lastSeenRaw,
+    };
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -88,49 +167,180 @@ const Logistica = () => {
     const [selectedPedido, setSelectedPedido] = useState(null);
     const [mapCenter, setMapCenter] = useState([-34.6037, -58.3816]); // Buenos Aires default
     const [mapZoom, setMapZoom] = useState(13);
-    const [driversLocations, setDriversLocations] = useState({});
+    const [driversLocations, setDriversLocations] = useState([]);
     const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
-    const [newDriver, setNewDriver] = useState({
-        name: '',
-        vehicle: '',
-        plate: '',
-        phone: '',
-        vtv_expiry: '',
-        license_expiry: '',
-        insurance_expiry: ''
-    });
-
-    const pedidos = useLiveQuery(async () => {
-        const rows = await db.pedidos?.toArray();
-        return (rows || []).filter((pedido) => pedido.delivery_type === 'delivery');
-    });
-
-    const registeredDrivers = useLiveQuery(() => db.repartidores?.toArray());
-    const clients = useLiveQuery(() => db.clients?.toArray());
-    const settings = useLiveQuery(() => db.settings.toArray());
+    const [registeredDrivers, setRegisteredDrivers] = useState([]);
+    const [driversError, setDriversError] = useState('');
+    const [pedidos, setPedidos] = useState([]);
+    const [clients, setClients] = useState([]);
+    const [selectedDriverIdentity, setSelectedDriverIdentity] = useState('');
+    const [paymentDraft, setPaymentDraft] = useState({ status: 'pending_driver_collection', amountDue: '', method: '' });
     const hasLogisticsModule = hasModule('logistica');
-
+    const driversById = useMemo(() => {
+        const map = new Map();
+        registeredDrivers.forEach((driver) => map.set(String(driver.id), driver));
+        return map;
+    }, [registeredDrivers]);
+    const driversByIdentity = useMemo(() => {
+        const map = new Map();
+        registeredDrivers.forEach((driver) => {
+            const keys = [
+                String(driver.firebaseUid || '').trim(),
+                String(driver.email || '').trim().toLowerCase(),
+                String(driver.name || '').trim().toLowerCase(),
+            ].filter(Boolean);
+            keys.forEach((key) => map.set(key, driver));
+        });
+        return map;
+    }, [registeredDrivers]);
 
     useEffect(() => {
-        if (settings) {
-            const locations = {};
-            settings.forEach(s => {
-                if (s.key.startsWith('location_')) {
-                    locations[s.key.replace('location_', '')] = s.value;
+        if (!hasLogisticsModule) return;
+
+        let cancelled = false;
+
+        const loadOrders = async () => {
+            try {
+                const [orderRows, clientRows] = await Promise.all([
+                    fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+                    fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
+                ]);
+                if (!cancelled) {
+                    setPedidos(
+                        (Array.isArray(orderRows) ? orderRows : [])
+                            .filter((pedido) => pedido.delivery_type === 'delivery')
+                            .map(normalizeOrderForLogistics)
+                    );
+                    setClients(Array.isArray(clientRows) ? clientRows : []);
                 }
-            });
-            setDriversLocations(locations);
-        }
-    }, [settings]);
+            } catch (error) {
+                if (!cancelled) {
+                    console.warn('[LOGISTICA] No se pudieron cargar pedidos/clientes', error?.message || error);
+                    setPedidos([]);
+                    setClients([]);
+                }
+            }
+        };
+
+        const loadDrivers = async () => {
+            try {
+                const payload = await fetchLogisticsDrivers();
+                if (!cancelled) {
+                    setRegisteredDrivers(Array.isArray(payload?.drivers) ? payload.drivers : []);
+                    setDriversError('');
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setDriversError(error instanceof Error ? error.message : 'No se pudo leer el staff de reparto.');
+                    setRegisteredDrivers([]);
+                }
+            }
+        };
+
+        loadOrders();
+        loadDrivers();
+        return () => {
+            cancelled = true;
+        };
+    }, [hasLogisticsModule]);
+
+    const refreshOrders = async () => {
+        const [orderRows, clientRows] = await Promise.all([
+            fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
+            fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
+        ]);
+        setPedidos(
+            (Array.isArray(orderRows) ? orderRows : [])
+                .filter((pedido) => pedido.delivery_type === 'delivery')
+                .map(normalizeOrderForLogistics)
+        );
+        setClients(Array.isArray(clientRows) ? clientRows : []);
+    };
+
+    useEffect(() => {
+        if (!hasLogisticsModule) return;
+
+        let cancelled = false;
+
+        const loadLiveDrivers = async () => {
+            try {
+                const payload = await fetchLiveDrivers();
+                if (!cancelled) {
+                    setDriversLocations(
+                        (Array.isArray(payload?.drivers) ? payload.drivers : []).map(normalizeLiveDriver)
+                    );
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    console.warn('[LOGISTICA] No se pudo leer tracking vivo', error?.message || error);
+                }
+            }
+        };
+
+        loadLiveDrivers();
+        const interval = window.setInterval(loadLiveDrivers, 15000);
+
+        return () => {
+            cancelled = true;
+            window.clearInterval(interval);
+        };
+    }, [hasLogisticsModule]);
 
     // Filtered orders
     const deliveryOrders = pedidos?.filter(p => {
         const matchesSearch = p.customer_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (p.address && p.address.toLowerCase().includes(searchTerm.toLowerCase())) ||
             (p.repartidor && p.repartidor.toLowerCase().includes(searchTerm.toLowerCase()));
-        const matchesFilter = filter === 'all' || p.status === filter;
+        const normalizedStatus = p.status === 'ready' ? 'assigned' : p.status;
+        const matchesFilter = filter === 'all' || normalizedStatus === filter;
         return matchesSearch && matchesFilter;
     }) || [];
+
+    const findDriverForOrder = (pedido) => {
+        const keys = [
+            String(pedido?.assigned_driver_uid || '').trim(),
+            String(pedido?.assigned_driver_email || '').trim().toLowerCase(),
+            String(pedido?.repartidor || '').trim().toLowerCase(),
+        ].filter(Boolean);
+
+        for (const key of keys) {
+            const driver = driversByIdentity.get(key);
+            if (driver) return driver;
+        }
+
+        return null;
+    };
+
+    const getDriverSelectValue = (pedido) => {
+        const driver = findDriverForOrder(pedido);
+        return driver ? String(driver.id) : '';
+    };
+
+    const selectedLiveDriver = useMemo(() => {
+        if (!selectedDriverIdentity) return null;
+        return driversLocations.find((loc) => (
+            String(loc.firebaseUid || '').trim() === selectedDriverIdentity
+            || String(loc.email || '').trim().toLowerCase() === selectedDriverIdentity
+        )) || null;
+    }, [driversLocations, selectedDriverIdentity]);
+
+    const getStatusLabel = (status) => {
+        if (status === 'ready' || status === 'assigned') return 'En Reparto';
+        if (status === 'on_route') return 'En Ruta';
+        if (status === 'arrived') return 'En Puerta';
+        if (status === 'delivered') return 'Entregado';
+        return 'Sin Asignar';
+    };
+
+    const getPaymentLabel = (pedido) => {
+        if (pedido?.paid) {
+            return `Cobrado${pedido.payment_method ? ` · ${pedido.payment_method}` : ''}`;
+        }
+        if (pedido?.payment_status === 'pending_driver_collection') {
+            return `Cobra repartidor${pedido?.amount_due ? ` · $${Number(pedido.amount_due).toLocaleString()}` : ''}`;
+        }
+        return 'Cobro no definido';
+    };
 
     const getOrderCoordinates = (pedido) => {
         const stored = getStoredCoordinates(pedido);
@@ -153,7 +363,8 @@ const Logistica = () => {
     };
 
     const handleFocusPedido = (pedido) => {
-        setSelectedPedido(pedido);
+        setSelectedPedido(normalizeOrderForLogistics(pedido));
+        setSelectedDriverIdentity('');
         const coords = getOrderCoordinates(pedido);
         if (coords) {
             setMapCenter(coords);
@@ -161,60 +372,99 @@ const Logistica = () => {
         }
     };
 
-    const assignDriver = async (id, driverName) => {
-        await db.pedidos.update(id, { repartidor: driverName, status: 'ready' });
-
-        // CLOUD SYNC: Push assigned order to Firestore
-        if (hasLogisticsModule) {
-            try {
-                const pedido = pedidos.find(p => p.id === id);
-                if (pedido) {
-                    await setDoc(doc(fdb, "orders_delivery", id.toString()), {
-                        ...pedido,
-                        repartidor: driverName,
-                        status: 'ready',
-                        updated_at: new Date().toISOString()
-                    });
-                }
-            } catch (err) {
-                console.error("Cloud Sync Error:", err);
-            }
+    const handleFocusDriver = (driver) => {
+        setSelectedPedido(null);
+        setSelectedDriverIdentity(String(driver.firebaseUid || '').trim() || String(driver.email || '').trim().toLowerCase());
+        if (Number.isFinite(Number(driver.lat)) && Number.isFinite(Number(driver.lng))) {
+            setMapCenter([Number(driver.lat), Number(driver.lng)]);
+            setMapZoom(16);
         }
     };
 
-    // REAL-TIME CLOUD LISTENERS
-    useEffect(() => {
-        if (!hasLogisticsModule) return;
-
-        // 1. Listen for Driver Locations
-        const unsubLocations = onSnapshot(collection(fdb, "drivers_locations"), (snapshot) => {
-            const locations = {};
-            snapshot.forEach(doc => {
-                locations[doc.id] = doc.data(); // doc.id is driver name
-            });
-            setDriversLocations(locations);
-        });
-
-        // 2. Listen for Status Updates from Drivers (Delivered)
-        const unsubStatus = onSnapshot(collection(fdb, "orders_delivery"), (snapshot) => {
-            snapshot.docChanges().forEach(async (change) => {
-                if (change.type === "modified") {
-                    const cloudOrder = change.doc.data();
-                    if (cloudOrder.status === 'delivered') {
-                        // Sync back to Local DB
-                        await db.pedidos.update(parseInt(change.doc.id), { status: 'delivered' });
-                        // Clean up cloud
-                        await deleteDoc(doc(fdb, "orders_delivery", change.doc.id));
-                    }
-                }
-            });
-        });
-
-        return () => {
-            unsubLocations();
-            unsubStatus();
+    const syncSelectedOrder = async (pedido, patch) => {
+        const payload = {
+            status: pedido.status || 'pending',
+            paymentStatus: patch.payment_status ?? pedido.payment_status ?? null,
+            paymentMethod: patch.payment_method ?? pedido.payment_method ?? null,
+            paid: patch.paid ?? pedido.paid ?? false,
+            amountDue: patch.amount_due ?? pedido.amount_due ?? null,
         };
-    }, [hasLogisticsModule]);
+
+        const response = await updateLogisticsOrderStatus(pedido.id, payload);
+        const order = response?.order;
+        const nextPatch = {
+            payment_status: order?.paymentStatus || payload.paymentStatus,
+            payment_method: order?.paymentMethod || payload.paymentMethod,
+            paid: order?.paid ?? payload.paid,
+            amount_due: order?.amountDue ?? payload.amountDue,
+            status: order?.status || pedido.status,
+        };
+        setSelectedPedido((current) => (current && Number(current.id) === Number(pedido.id) ? { ...current, ...nextPatch } : current));
+    };
+
+    useEffect(() => {
+        if (!selectedPedido) {
+            setPaymentDraft({ status: 'pending_driver_collection', amountDue: '', method: '' });
+            return;
+        }
+
+        setPaymentDraft({
+            status: selectedPedido.paid ? 'paid' : (selectedPedido.payment_status || 'pending_driver_collection'),
+            amountDue: String(
+                selectedPedido.paid
+                    ? 0
+                    : (Number(selectedPedido.amount_due) || Number(selectedPedido.total) || 0)
+            ),
+            method: selectedPedido.payment_method || '',
+        });
+    }, [selectedPedido]);
+
+    const assignDriver = async (id, driverId) => {
+        const driver = driversById.get(String(driverId));
+        if (!driver) {
+            const pedido = pedidos.find((item) => Number(item.id) === Number(id));
+            if (!pedido) return;
+            await saveTableRecord('pedidos', 'update', {
+                ...pedido,
+                repartidor: null,
+                assigned_driver_uid: null,
+                assigned_driver_email: null,
+                status: 'pending',
+                assigned_at: null,
+                status_updated_at: new Date().toISOString(),
+            }, id);
+            await refreshOrders();
+            return;
+        }
+
+        try {
+            const payload = await assignLogisticsOrder(id, {
+                driverUserId: driver.id,
+                driverFirebaseUid: driver.firebaseUid || null,
+                driverEmail: driver.email || null,
+                driverName: driver.name,
+                status: 'assigned',
+            });
+
+            const order = payload?.order;
+            await refreshOrders();
+
+            setSelectedPedido((current) => (
+                current && Number(current.id) === Number(id)
+                    ? {
+                        ...current,
+                        repartidor: order?.driver?.name || driver.name,
+                        assigned_driver_uid: order?.driver?.firebaseUid || driver.firebaseUid || null,
+                        assigned_driver_email: order?.driver?.email || driver.email || null,
+                        status: order?.status || 'assigned',
+                        items_preview: formatOrderItems(current),
+                    }
+                    : current
+            ));
+        } catch (error) {
+            alert(error instanceof Error ? error.message : 'No se pudo asignar el pedido.');
+        }
+    };
 
     useEffect(() => {
         if (!pedidos?.length) return;
@@ -233,11 +483,12 @@ const Logistica = () => {
                 try {
                     const geocoded = await geocodeAddress(buildOrderAddress(pedido));
                     if (!geocoded || cancelled) continue;
-                    await db.pedidos.update(pedido.id, {
+                    await saveTableRecord('pedidos', 'update', {
+                        ...pedido,
                         latitude: geocoded.latitude,
                         longitude: geocoded.longitude,
                         geocoded_at: geocoded.geocoded_at,
-                    });
+                    }, pedido.id);
                 } catch (error) {
                     console.warn('[LOGISTICA] No se pudo geocodificar pedido', pedido.id, error?.message || error);
                 }
@@ -251,66 +502,69 @@ const Logistica = () => {
         };
     }, [pedidos]);
 
-    const checkExpiry = (date) => {
-        if (!date) return 'missing';
-        const today = new Date();
-        const expiry = new Date(date);
-        const diffDays = Math.ceil((expiry - today) / (1000 * 60 * 60 * 24));
-
-        if (diffDays < 0) return 'expired';
-        if (diffDays < 15) return 'soon';
-        return 'ok';
-    };
-
-    const hasAnyWarning = (driver) => {
-        return checkExpiry(driver.vtv_expiry) !== 'ok' ||
-            checkExpiry(driver.license_expiry) !== 'ok' ||
-            checkExpiry(driver.insurance_expiry) !== 'ok';
-    };
-
-    const handleAddDriver = async () => {
-        if (!newDriver.name) return;
-        await db.repartidores.add({ ...newDriver, status: 'idle' });
-        setNewDriver({
-            name: '', vehicle: '', plate: '', phone: '',
-            vtv_expiry: '', license_expiry: '', insurance_expiry: ''
-        });
-    };
-
-    const deleteDriver = async (id) => {
-        if (confirm('¿Eliminar a este repartidor?')) {
-            await db.repartidores.delete(id);
-        }
-    };
-
     const copyPortalLink = () => {
         const link = `${window.location.origin}/#/reparto`;
         navigator.clipboard.writeText(link);
         alert('Link del Portal de Repartidores copiado! Envialo por WhatsApp.');
     };
 
+    const printOrderTicket = (pedido) => {
+        const printWindow = window.open('', '_blank', 'width=360,height=640');
+        if (!printWindow) return;
+
+        const createdAt = pedido?.created_at ? new Date(pedido.created_at) : new Date();
+        const dateLabel = Number.isNaN(createdAt.getTime())
+            ? 'Sin fecha'
+            : createdAt.toLocaleString('es-AR');
+
+        const itemsText = formatOrderItems(pedido)
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => `• ${escapeHtml(line)}`)
+            .join('<br/>');
+
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>Pedido #${escapeHtml(pedido?.id)}</title>
+                </head>
+                <body style="font-family: Arial, sans-serif; padding: 16px; color: #111827;">
+                    <h2 style="margin: 0 0 12px;">Pedido #${escapeHtml(pedido?.id)}</h2>
+                    <p style="margin: 0 0 6px;"><strong>Cliente:</strong> ${escapeHtml(pedido?.customer_name)}</p>
+                    <p style="margin: 0 0 6px;"><strong>Fecha:</strong> ${escapeHtml(dateLabel)}</p>
+                    <p style="margin: 0 0 6px;"><strong>Dirección:</strong> ${escapeHtml(pedido?.address || 'Sin dirección')}</p>
+                    <p style="margin: 0 0 12px;"><strong>Estado:</strong> ${escapeHtml(getStatusLabel(pedido?.status))}</p>
+                    <p style="margin: 0 0 6px;"><strong>Medio de pago:</strong> ${escapeHtml(getOrderPaymentLabel(pedido))}</p>
+                    <p style="margin: 0 0 12px;"><strong>Cobrado:</strong> ${escapeHtml(getOrderPaidLabel(pedido))}</p>
+                    <div style="border-top: 1px solid #d1d5db; padding-top: 12px;">
+                        <strong>Items</strong><br/>
+                        <div style="margin-top: 8px; line-height: 1.5;">${itemsText || 'Sin items'}</div>
+                    </div>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 300);
+    };
+
     return (
         <div className="logistica-container animate-fade-in">
-            <header className="page-header">
-                <div>
-                    <h1 className="page-title">Control de Logística y Reparto</h1>
-                    <p className="page-description">Seguimiento de envíos y control de rutas en tiempo real.</p>
-                </div>
+            <div className="logistica-toolbar neo-card">
+                <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
+                    <Users size={18} /> Staff Repartidores
+                </button>
                 <div className="stats-mini-grid">
-                    <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
-                        <Users size={18} /> Staff Repartidores
-                    </button>
                     <div className="stat-mini-card">
                         <span className="label">Flota</span>
-                        <span className="value" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-                            {registeredDrivers?.length || 0}
-                            {registeredDrivers?.some(d => hasAnyWarning(d)) && <AlertTriangle size={18} color="#ef4444" />}
-                        </span>
+                        <span className="value">{registeredDrivers?.length || 0}</span>
                     </div>
                     <div className="stat-mini-card">
                         <span className="label">En Camino</span>
                         <span className="value" style={{ color: '#3b82f6' }}>
-                            {pedidos?.filter(p => p.status === 'ready').length || 0}
+                            {pedidos?.filter(p => ['ready', 'assigned', 'on_route', 'arrived'].includes(p.status)).length || 0}
                         </span>
                     </div>
                     <div className="stat-mini-card">
@@ -320,67 +574,9 @@ const Logistica = () => {
                         </span>
                     </div>
                 </div>
-            </header>
+            </div>
 
             <div className="logistica-content">
-                {/* LIST PANEL */}
-                <div className="logistica-sidebar neo-card">
-                    <div className="sidebar-search">
-                        <Search size={18} />
-                        <input
-                            type="text"
-                            placeholder="Buscar dirección o cliente..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
-
-                    <div className="filter-pills">
-                        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
-                        <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
-                        <button className={filter === 'ready' ? 'active' : ''} onClick={() => setFilter('ready')}>En Reparto</button>
-                        <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
-                    </div>
-
-                    <div style={{ padding: '0 1rem 1rem' }}>
-                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
-                            <Share2 size={14} /> Link del Repartidor
-                        </button>
-                    </div>
-
-                    <div className="orders-list">
-                        {deliveryOrders.length === 0 ? (
-                            <div className="empty-delivery">
-                                <Truck size={32} />
-                                <p>No hay envíos pendientes.</p>
-                            </div>
-                        ) : (
-                            deliveryOrders.map(p => (
-                                <div
-                                    key={p.id}
-                                    className={`delivery-item ${selectedPedido?.id === p.id ? 'selected' : ''}`}
-                                    onClick={() => handleFocusPedido(p)}
-                                >
-                                    <div className="status-indicator" style={{ background: p.status === 'delivered' ? '#22c55e' : (p.status === 'ready' ? '#3b82f6' : '#f59e0b') }}></div>
-                                    <div className="item-main">
-                                        <div className="item-info">
-                                            <h4>{p.customer_name}</h4>
-                                            <p className="address"><MapPin size={12} /> {p.address}</p>
-                                            {p.repartidor && <p className="driver-label"><Truck size={12} /> {p.repartidor}</p>}
-                                        </div>
-                                        <ChevronRight size={18} className="arrow" />
-                                    </div>
-                                    <div className="item-footer">
-                                        <span>#{p.id}</span>
-                                        <span className={`badge-status ${p.status}`}>{p.status === 'ready' ? 'En Camino' : p.status}</span>
-                                    </div>
-                                </div>
-                            ))
-                        )}
-                    </div>
-                </div>
-
-                {/* MAP PANEL */}
                 <div className="map-view neo-card">
                     <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%', borderRadius: '12px' }}>
                         <ChangeView center={mapCenter} zoom={mapZoom} />
@@ -389,12 +585,11 @@ const Logistica = () => {
                             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
                         />
 
-                        {/* Driver Markers */}
-                        {Object.entries(driversLocations).map(([name, loc]) => (
-                            <Marker key={name} position={[loc.lat, loc.lng]} icon={truckIcon}>
+                        {driversLocations.map((loc) => (
+                            <Marker key={loc.firebaseUid || loc.email || loc.repartidor} position={[loc.lat, loc.lng]} icon={truckIcon}>
                                 <Popup>
-                                    <strong>Repartidor: {name}</strong><br />
-                                    Última vez: {new Date(loc.time).toLocaleTimeString()}
+                                    <strong>Repartidor: {loc.repartidor}</strong><br />
+                                    Última vez: {formatDriverLastSeen(loc.lastSeenRaw)}
                                 </Popup>
                             </Marker>
                         ))}
@@ -408,7 +603,7 @@ const Logistica = () => {
                                     position={coords}
                                     icon={getIconForStatus(p.status)}
                                     eventHandlers={{
-                                        click: () => setSelectedPedido(p),
+                                        click: () => handleFocusPedido(p),
                                     }}
                                 >
                                     <Popup>
@@ -422,7 +617,10 @@ const Logistica = () => {
                                                 }}>
                                                     <Navigation2 size={14} /> GPS
                                                 </button>
-                                                <button className="popup-btn" style={{ background: '#f1f5f9', color: '#334155' }}>
+                                                <button className="popup-btn" style={{ background: '#f1f5f9', color: '#334155' }} onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    printOrderTicket(p);
+                                                }}>
                                                     <Printer size={14} /> Ticket
                                                 </button>
                                             </div>
@@ -433,7 +631,6 @@ const Logistica = () => {
                         })}
                     </MapContainer>
 
-                    {/* OVERLAY PANEL FOR SELECTED ORDER */}
                     {selectedPedido && (
                         <div className="order-map-overlay animate-slide-up">
                             <div className="overlay-header">
@@ -456,58 +653,192 @@ const Logistica = () => {
                                 )}
                                 <div className="info-row">
                                     <Clock size={16} />
-                                    <span>{selectedPedido.status === 'ready' ? 'En viaje' : 'Esperando asignación'}</span>
+                                    <span>{getStatusLabel(selectedPedido.status)}</span>
                                 </div>
 
-                                {selectedPedido.repartidor && registeredDrivers?.find(d => d.name === selectedPedido.repartidor) && hasAnyWarning(registeredDrivers.find(d => d.name === selectedPedido.repartidor)) && (
-                                    <div className="risk-warning-banner">
-                                        <AlertCircle size={18} />
-                                        <span>DOCUMENTACIÓN VENCIDA O INCOMPLETA</span>
-                                    </div>
-                                )}
-
                                 <div className="assignment-box">
-                                    <label><UserPlus size={14} /> Asignar Repartidor:</label>
-                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                    <label><Tag size={14} /> Cobro del pedido:</label>
+                                    <div style={{ display: 'grid', gap: '0.75rem', marginTop: '0.75rem' }}>
                                         <select
                                             className="neo-input"
                                             style={{ color: '#1e293b' }}
-                                            value={selectedPedido.repartidor || ''}
+                                            value={paymentDraft.status}
+                                            onChange={(e) => setPaymentDraft((current) => ({
+                                                ...current,
+                                                status: e.target.value,
+                                                amountDue: e.target.value === 'paid' ? '0' : (current.amountDue || String(Number(selectedPedido.total) || 0)),
+                                                method: e.target.value === 'paid' ? (current.method || 'Cobrado previamente') : current.method,
+                                            }))}
+                                        >
+                                            <option value="pending_driver_collection">Lo cobra el repartidor</option>
+                                            <option value="paid">Ya está cobrado</option>
+                                        </select>
+                                        <input
+                                            className="neo-input"
+                                            type="number"
+                                            min="0"
+                                            disabled={paymentDraft.status === 'paid'}
+                                            value={paymentDraft.status === 'paid' ? '0' : paymentDraft.amountDue}
+                                            onChange={(e) => setPaymentDraft((current) => ({ ...current, amountDue: e.target.value }))}
+                                            placeholder="Monto a cobrar"
+                                        />
+                                        <button
+                                            className="neo-button"
+                                            type="button"
+                                            onClick={async () => {
+                                                try {
+                                                    await syncSelectedOrder(selectedPedido, {
+                                                        payment_status: paymentDraft.status,
+                                                        payment_method: paymentDraft.status === 'paid' ? (paymentDraft.method || 'Cobrado previamente') : null,
+                                                        paid: paymentDraft.status === 'paid',
+                                                        amount_due: paymentDraft.status === 'paid' ? 0 : (Number(paymentDraft.amountDue) || Number(selectedPedido.total) || 0),
+                                                    });
+                                                } catch (error) {
+                                                    alert(error instanceof Error ? error.message : 'No se pudo guardar la condición de cobro.');
+                                                }
+                                            }}
+                                        >
+                                            Guardar condición de cobro
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="assignment-box">
+                                    <label><Users size={14} /> Asignar Repartidor:</label>
+                                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+                                        <select
+                                            className="neo-input"
+                                            value={getDriverSelectValue(selectedPedido)}
                                             onChange={(e) => assignDriver(selectedPedido.id, e.target.value)}
                                         >
                                             <option value="">-- Seleccionar Repartidor --</option>
-                                            {registeredDrivers?.map(d => {
-                                                const warning = hasAnyWarning(d);
-                                                return (
-                                                    <option key={d.id} value={d.name} style={{ color: warning ? '#ef4444' : 'inherit' }}>
-                                                        {warning ? '⚠️ ' : ''}{d.name} ({d.vehicle} - {d.plate})
-                                                    </option>
-                                                );
-                                            })}
+                                            {registeredDrivers?.map((driver) => (
+                                                <option key={driver.id} value={driver.id}>
+                                                    {driver.name} · {driver.email}
+                                                </option>
+                                            ))}
                                         </select>
                                     </div>
                                 </div>
 
-                                <div className="items-preview">
-                                    {selectedPedido.items}
+                                <div className="items-preview" style={{ whiteSpace: 'pre-line' }}>
+                                    {selectedPedido.items_preview || formatOrderItems(selectedPedido)}
                                 </div>
                             </div>
                             <div className="overlay-actions">
                                 <button className="btn-delivered" onClick={async () => {
-                                    await db.pedidos.update(selectedPedido.id, { status: 'delivered' });
+                                    await saveTableRecord('pedidos', 'update', { ...selectedPedido, status: 'delivered' }, selectedPedido.id);
+                                    await refreshOrders();
                                     setSelectedPedido(null);
                                 }}>
                                     Confirmar Entrega
                                 </button>
                                 <button className="btn-call" onClick={() => {
-                                    const driver = registeredDrivers?.find(d => d.name === selectedPedido.repartidor);
-                                    if (driver?.phone) window.open(`tel:${driver.phone}`);
+                                    const driver = findDriverForOrder(selectedPedido);
+                                    if (driver?.email) window.open(`mailto:${driver.email}`);
                                 }}>Llamar Repartidor</button>
                             </div>
                         </div>
                     )}
                 </div>
-            </div>
+
+                <div className="logistica-panels">
+                    <div className="logistica-panel neo-card drivers-panel">
+                        <div className="panel-header-row">
+                            <h3>Repartidores</h3>
+                            <span>{driversLocations.length} con tracking</span>
+                        </div>
+                        {driversLocations.length === 0 ? (
+                            <div className="empty-delivery compact">
+                                <Truck size={28} />
+                                <p>No hay repartidores reportando ubicación.</p>
+                            </div>
+                        ) : (
+                            <div className="drivers-live-list">
+                                {driversLocations.map((driver) => {
+                                    const identity = String(driver.firebaseUid || '').trim() || String(driver.email || '').trim().toLowerCase();
+                                    const isSelected = selectedLiveDriver && (
+                                        (selectedLiveDriver.firebaseUid && selectedLiveDriver.firebaseUid === driver.firebaseUid)
+                                        || (selectedLiveDriver.email && selectedLiveDriver.email === driver.email)
+                                    );
+                                    return (
+                                        <button
+                                            type="button"
+                                            key={identity || driver.repartidor}
+                                            className={`driver-live-card ${isSelected ? 'selected' : ''}`}
+                                            onClick={() => handleFocusDriver(driver)}
+                                        >
+                                            <div>
+                                                <strong>{driver.repartidor || 'Repartidor'}</strong>
+                                                <span>{formatDriverLastSeen(driver.lastSeenRaw)}</span>
+                                            </div>
+                                            <div className={`comp-pill ${driver.activeOrders ? 'ok' : 'missing'}`}>
+                                                {driver.activeOrders ? `${driver.activeOrders} pedidos` : 'Sin pedidos'}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="logistica-panel logistica-sidebar neo-card">
+                    <div className="sidebar-search">
+                        <Search size={18} />
+                        <input
+                            type="text"
+                            placeholder="Buscar dirección o cliente..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+
+                    <div className="filter-pills">
+                        <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
+                        <button className={filter === 'pending' ? 'active' : ''} onClick={() => setFilter('pending')}>Sin Asignar</button>
+                        <button className={filter === 'assigned' ? 'active' : ''} onClick={() => setFilter('assigned')}>En Reparto</button>
+                        <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
+                    </div>
+
+                    <div style={{ padding: '0 1rem 1rem' }}>
+                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
+                            <Share2 size={14} /> Link del Repartidor
+                        </button>
+                    </div>
+
+                    <div className="orders-list">
+                        {deliveryOrders.length === 0 ? (
+                            <div className="empty-delivery compact">
+                                <Truck size={32} />
+                                <p>No hay envíos pendientes.</p>
+                            </div>
+                        ) : (
+                            deliveryOrders.map(p => (
+                                <div
+                                    key={p.id}
+                                    className={`delivery-item ${selectedPedido?.id === p.id ? 'selected' : ''}`}
+                                    onClick={() => handleFocusPedido(p)}
+                                >
+                                    <div className="status-indicator" style={{ background: p.status === 'delivered' ? '#22c55e' : (p.status === 'ready' ? '#3b82f6' : '#f59e0b') }}></div>
+                                    <div className="item-main">
+                                        <div className="item-info">
+                                            <h4>{p.customer_name}</h4>
+                                            <p className="address"><MapPin size={12} /> {p.address}</p>
+                                            {p.repartidor && <p className="driver-label"><Truck size={12} /> {p.repartidor}</p>}
+                                        </div>
+                                        <ChevronRight size={18} className="arrow" />
+                                    </div>
+                                    <div className="item-footer">
+                                        <span>#{p.id}</span>
+                                        <span className={`badge-status ${p.status}`}>{getStatusLabel(p.status)}</span>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+                </div>
+                </div>
 
             {/* DRIVER MANAGEMENT MODAL */}
             {isDriverModalOpen && (
@@ -515,90 +846,73 @@ const Logistica = () => {
                     <div className="modal-content neo-card" style={{ maxWidth: '600px' }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1.5rem' }}>
                             <h1 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <ShieldAlert color="var(--color-primary)" /> Control de Flota y Documentación
+                                <Users color="var(--color-primary)" /> Repartidores habilitados del tenant
                             </h1>
                             <button className="icon-btn" onClick={() => setIsDriverModalOpen(false)}><X /></button>
                         </div>
 
-                        <div className="add-driver-form-pro">
-                            <div className="input-field">
-                                <label>Repartidor</label>
-                                <input className="neo-input" placeholder="Nombre" value={newDriver.name} onChange={e => setNewDriver({ ...newDriver, name: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Vehículo / Modelo</label>
-                                <input className="neo-input" placeholder="Ej: VW Saveiro" value={newDriver.vehicle} onChange={e => setNewDriver({ ...newDriver, vehicle: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Patente</label>
-                                <input className="neo-input" placeholder="AAA 000" value={newDriver.plate} onChange={e => setNewDriver({ ...newDriver, plate: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label>Teléfono</label>
-                                <input className="neo-input" placeholder="549..." value={newDriver.phone} onChange={e => setNewDriver({ ...newDriver, phone: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> VTV Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.vtv_expiry} onChange={e => setNewDriver({ ...newDriver, vtv_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> Carnet Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.license_expiry} onChange={e => setNewDriver({ ...newDriver, license_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field">
-                                <label><CalendarDays size={12} /> Seguro Vence</label>
-                                <input type="date" className="neo-input" value={newDriver.insurance_expiry} onChange={e => setNewDriver({ ...newDriver, insurance_expiry: e.target.value })} />
-                            </div>
-                            <div className="input-field" style={{ display: 'flex', alignItems: 'flex-end' }}>
-                                <button className="neo-button pro-btn full-width" style={{ height: '42px' }} onClick={handleAddDriver}>Registrar en Flota</button>
-                            </div>
+                        <div style={{ marginBottom: '1rem', color: '#94a3b8', fontSize: '0.95rem', lineHeight: 1.5 }}>
+                            Acá aparecen los usuarios reales del cliente que están activos y tienen una licencia de reparto asignada.
                         </div>
+                        {driversError && (
+                            <div className="risk-warning-banner" style={{ marginBottom: '1rem' }}>
+                                <AlertCircle size={18} />
+                                <span>{driversError}</span>
+                            </div>
+                        )}
 
                         <div className="drivers-table-container">
                             <table className="menu-table pro-table">
                                 <thead>
                                     <tr>
-                                        <th>Personal / Vehículo</th>
-                                        <th>Documentación (Vencimientos)</th>
-                                        <th>Acciones</th>
+                                        <th>Repartidor</th>
+                                        <th>Licencias</th>
+                                        <th>Estado</th>
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {registeredDrivers?.map(d => {
-                                        const vtvStatus = checkExpiry(d.vtv_expiry);
-                                        const licStatus = checkExpiry(d.license_expiry);
-                                        const insStatus = checkExpiry(d.insurance_expiry);
+                                    {registeredDrivers?.map((driver) => {
+                                        const liveDriver = driversLocations.find((entry) => (
+                                            (entry.firebaseUid && entry.firebaseUid === driver.firebaseUid)
+                                            || (entry.email && entry.email.toLowerCase() === String(driver.email || '').toLowerCase())
+                                        ));
 
                                         return (
-                                            <tr key={d.id}>
+                                            <tr key={driver.id}>
                                                 <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{d.name}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>{d.vehicle} • <span style={{ fontWeight: 'bold' }}>{d.plate}</span></div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>📞 {d.phone}</div>
+                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{driver.name}</div>
+                                                    <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                        <Mail size={12} /> {driver.email}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Sucursal #{driver.branchId || 'General'}</div>
                                                 </td>
                                                 <td>
                                                     <div className="compliance-grid">
-                                                        <div className={`comp-pill ${vtvStatus}`}>
-                                                            VTV: {d.vtv_expiry || 'N/A'}
-                                                        </div>
-                                                        <div className={`comp-pill ${licStatus}`}>
-                                                            CARNET: {d.license_expiry || 'N/A'}
-                                                        </div>
-                                                        <div className={`comp-pill ${insStatus}`}>
-                                                            SEGURO: {d.insurance_expiry || 'N/A'}
-                                                        </div>
+                                                        {(driver.licenses || []).map((license) => (
+                                                            <div key={license.clientLicenseId} className="comp-pill ok">
+                                                                {license.commercialName || license.internalCode}
+                                                            </div>
+                                                        ))}
                                                     </div>
                                                 </td>
                                                 <td>
-                                                    <button className="delete-btn" onClick={() => deleteDriver(d.id)}>
-                                                        <Trash2 size={18} />
-                                                    </button>
+                                                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                        <div className={`comp-pill ${liveDriver ? 'ok' : 'missing'}`}>
+                                                            {liveDriver ? <Wifi size={12} /> : <WifiOff size={12} />}
+                                                            {liveDriver ? 'Online' : 'Sin tracking'}
+                                                        </div>
+                                                        {liveDriver?.activeOrders ? (
+                                                            <div style={{ fontSize: '0.8rem', color: '#64748b' }}>
+                                                                {liveDriver.activeOrders} pedido(s) activos
+                                                            </div>
+                                                        ) : null}
+                                                    </div>
                                                 </td>
                                             </tr>
                                         );
                                     })}
                                     {registeredDrivers?.length === 0 && (
-                                        <tr><td colSpan="4" style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>No hay repartidores cargados</td></tr>
+                                        <tr><td colSpan="3" style={{ textAlign: 'center', padding: '2rem', color: '#94a3b8' }}>No hay usuarios habilitados para reparto</td></tr>
                                     )}
                                 </tbody>
                             </table>

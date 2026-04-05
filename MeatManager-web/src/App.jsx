@@ -4,7 +4,6 @@ import { UserProvider, useUser } from './context/UserContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
-import CloudSyncManager from './components/CloudSyncManager';
 
 const Login = lazy(() => import('./pages/Login'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -126,7 +125,6 @@ function App() {
               </Route>
             </Route>
           </Routes>
-          <CloudSyncManager />
         </LicenseProvider>
       </UserProvider>
     </TenantProvider>

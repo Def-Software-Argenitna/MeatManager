@@ -46,11 +46,11 @@ const Sidebar = ({ isCollapsed }) => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
   const [isMasterNode, setIsMasterNode] = useState(false);
-  const [isDespostadaOpen, setDespostadaOpen] = useState(true);
+  const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
-    operacion: true,
-    comercial: true,
-    produccion: true,
+    operacion: false,
+    comercial: false,
+    produccion: false,
     configuracion: false,
   });
 
@@ -92,7 +92,19 @@ const Sidebar = ({ isCollapsed }) => {
 
   const toggleGroup = (groupKey) => {
     if (isCollapsed) return;
-    setOpenGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+    setOpenGroups((prev) => {
+      const nextState = !prev[groupKey];
+      return {
+        operacion: false,
+        comercial: false,
+        produccion: false,
+        configuracion: false,
+        [groupKey]: nextState,
+      };
+    });
+    if (groupKey !== 'produccion') {
+      setDespostadaOpen(false);
+    }
   };
 
   const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
@@ -140,40 +152,44 @@ const Sidebar = ({ isCollapsed }) => {
 
   const hasModuleAccess = (item) => !item.module || hasModule(item.module);
 
-  const renderNavItem = (item, options = {}) => (
-    <button
-      key={item.path}
-      className={`nav-item ${isActive(item.path) ? 'active' : ''} ${item.module && !hasModuleAccess(item) ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
-      onClick={() => {
-        if (item.module && !hasModuleAccess(item)) {
-          navigate('/config/licencia');
-        } else {
-          navigate(item.path);
-        }
-      }}
-    >
-      <div className="nav-icon-wrapper" style={{ position: 'relative' }}>
-        <item.icon className="nav-icon" size={options.iconSize || 20} title={item.title} />
-        {item.title === 'Sucursales' && branchNotif > 0 && (
-          <div className="nav-badge animate-pulse">{branchNotif}</div>
-        )}
-        {item.module && (
-          <Crown
-            size={isCollapsed ? 12 : 10}
-            style={{
-              position: 'absolute',
-              top: isCollapsed ? -4 : -2,
-              right: isCollapsed ? -4 : -2,
-              color: 'gold',
-              filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))'
-            }}
-          />
-        )}
-      </div>
-      {!isCollapsed && <span>{item.title}</span>}
-      {item.module && !isCollapsed && !options.compact && <Crown size={12} style={{ marginLeft: 'auto', color: 'gold' }} />}
-    </button>
-  );
+  const renderNavItem = (item, options = {}) => {
+    const isLocked = item.module && !hasModuleAccess(item);
+
+    return (
+      <button
+        key={item.path}
+        className={`nav-item ${isActive(item.path) ? 'active' : ''} ${isLocked ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
+        onClick={() => {
+          if (isLocked) {
+            navigate('/config/licencia');
+          } else {
+            navigate(item.path);
+          }
+        }}
+      >
+        <div className="nav-icon-wrapper" style={{ position: 'relative' }}>
+          <item.icon className="nav-icon" size={options.iconSize || 20} title={item.title} />
+          {item.title === 'Sucursales' && branchNotif > 0 && (
+            <div className="nav-badge animate-pulse">{branchNotif}</div>
+          )}
+          {isLocked && (
+            <Crown
+              size={isCollapsed ? 12 : 10}
+              style={{
+                position: 'absolute',
+                top: isCollapsed ? -4 : -2,
+                right: isCollapsed ? -4 : -2,
+                color: 'gold',
+                filter: 'drop-shadow(0 0 2px rgba(0,0,0,0.5))'
+              }}
+            />
+          )}
+        </div>
+        {!isCollapsed && <span>{item.title}</span>}
+        {isLocked && !isCollapsed && !options.compact && <Crown size={12} style={{ marginLeft: 'auto', color: 'gold' }} />}
+      </button>
+    );
+  };
 
   const renderDespostadaBlock = () => {
     const hasVisibleItems = despostadaItems.some((item) => hasAccess(item.path));
@@ -198,7 +214,16 @@ const Sidebar = ({ isCollapsed }) => {
       <div className="nav-group">
         <button
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
-          onClick={() => !isCollapsed && setDespostadaOpen(!isDespostadaOpen)}
+          onClick={() => {
+            if (isCollapsed) return;
+            setOpenGroups({
+              operacion: false,
+              comercial: false,
+              produccion: true,
+              configuracion: false,
+            });
+            setDespostadaOpen((prev) => !prev);
+          }}
         >
           <Utensils className="nav-icon" title="Despostada" />
           {!isCollapsed && <span style={{ flex: 1 }}>Despostada</span>}

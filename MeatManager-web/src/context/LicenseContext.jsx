@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db, initializeSettings } from '../db';
 import { BRAND_CONFIG } from '../brandConfig';
 import { desktopApi } from '../utils/desktopApi';
+import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import { useUser } from './UserContext';
 
 const LicenseContext = createContext();
@@ -84,7 +83,7 @@ const extractFeatureTokens = (value) => {
     return [];
 };
 
-const buildLicenseCapabilities = (licenses) => {
+const buildLicenseCapabilities = (licenses, options = {}) => {
     const normalizedLicenses = Array.isArray(licenses) ? licenses : [];
     const rawFlags = new Set();
     const modules = new Set(BASE_MODULES);
@@ -120,6 +119,11 @@ const buildLicenseCapabilities = (licenses) => {
     if (hasSuperUser) {
         ALL_MODULES.forEach((moduleKey) => modules.add(moduleKey));
         rawFlags.add('superuser');
+    }
+
+    if (options.tenantHasDeliveryLicense) {
+        modules.add('logistica');
+        rawFlags.add('logistica');
     }
 
     return {
@@ -159,7 +163,7 @@ const syncRemoteBranding = async () => {
         if (response.ok) {
             const data = await response.json();
             if (data.support_whatsapp) {
-                await db.settings.put({ key: 'remote_support_whatsapp', value: data.support_whatsapp });
+                await upsertRemoteSetting('remote_support_whatsapp', data.support_whatsapp);
             }
         }
     } catch {
@@ -171,38 +175,53 @@ export const LicenseProvider = ({ children }) => {
     const { accessProfile } = useUser();
     const [installationId, setInstallationId] = useState('');
     const [machineId, setMachineId] = useState('');
-    const settings = useLiveQuery(() => db.settings.toArray());
+    const [supportNumber, setSupportNumber] = useState(DEFAULT_SUPPORT);
     const licenses = useMemo(() => normalizeVisibleLicenses(accessProfile?.licenses || []), [accessProfile]);
-    const capabilities = useMemo(() => buildLicenseCapabilities(licenses), [licenses]);
+    const capabilities = useMemo(
+        () => buildLicenseCapabilities(licenses, {
+            tenantHasDeliveryLicense: Boolean(accessProfile?.tenantHasDeliveryLicense),
+        }),
+        [accessProfile?.tenantHasDeliveryLicense, licenses],
+    );
     const licenseMode = capabilities.isPro ? 'pro' : 'base';
 
     useEffect(() => {
         const init = async () => {
-            await initializeSettings();
-            syncRemoteBranding();
-
             try {
                 const hwid = await desktopApi.getMachineId();
                 if (hwid) setMachineId(hwid);
             } catch (error) {
                 console.warn('No se pudo obtener machineId:', error);
             }
+
+            try {
+                const [instId, remoteSupport] = await Promise.all([
+                    getRemoteSetting('installation_id'),
+                    getRemoteSetting('remote_support_whatsapp'),
+                ]);
+                if (instId) setInstallationId(instId);
+                if (remoteSupport) setSupportNumber(remoteSupport);
+            } catch (error) {
+                console.warn('No se pudieron leer settings remotas de licencia:', error);
+            }
+
+            syncRemoteBranding().then(async () => {
+                try {
+                    const refreshedSupport = await getRemoteSetting('remote_support_whatsapp');
+                    if (refreshedSupport) setSupportNumber(refreshedSupport);
+                } catch {
+                    // noop
+                }
+            });
         };
         init();
     }, []);
 
     useEffect(() => {
-        if (!settings) return;
-        const instId = settings.find((setting) => setting.key === 'installation_id');
-        if (instId) setInstallationId(instId.value);
-    }, [settings]);
-
-    useEffect(() => {
-        db.settings.put({ key: 'license_mode', value: licenseMode }).catch(() => {});
-        db.settings.put({ key: 'isPro', value: capabilities.isPro }).catch(() => {});
+        upsertRemoteSetting('license_mode', licenseMode).catch(() => {});
+        upsertRemoteSetting('isPro', capabilities.isPro).catch(() => {});
     }, [licenseMode, capabilities.isPro]);
 
-    const currentSupportNumber = settings?.find((setting) => setting.key === 'remote_support_whatsapp')?.value || DEFAULT_SUPPORT;
     const hasModule = (moduleKey) => capabilities.isSuperUser || capabilities.modules.includes(moduleKey);
 
     return (
@@ -212,7 +231,7 @@ export const LicenseProvider = ({ children }) => {
             installationId,
             machineId,
             isBlocked: false,
-            supportNumber: currentSupportNumber,
+            supportNumber,
             licenses,
             featureFlags: capabilities.featureFlags,
             modules: capabilities.modules,

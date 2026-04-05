@@ -7,7 +7,7 @@ import {
     AlertCircle,
     CheckCircle2,
 } from 'lucide-react';
-import { db } from '../db';
+import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './AiSettings.css';
 
 const AiSettings = () => {
@@ -18,16 +18,17 @@ const AiSettings = () => {
     });
     const [status, setStatus] = useState('idle');
     useEffect(() => {
-        // Load settings from Dexie
         const loadSettings = async () => {
-            const tgToken = await db.settings.get('tg_bot_token');
-            const aiModel = await db.settings.get('ai_model');
-            const aiEnabled = await db.settings.get('ai_enabled');
+            const [tgToken, aiModel, aiEnabled] = await Promise.all([
+                getRemoteSetting('tg_bot_token'),
+                getRemoteSetting('ai_model'),
+                getRemoteSetting('ai_enabled'),
+            ]);
 
             setConfig({
-                tgToken: tgToken?.value || '',
-                aiModel: aiModel?.value || 'llama3',
-                aiEnabled: aiEnabled?.value || false
+                tgToken: tgToken || '',
+                aiModel: aiModel || 'llama3',
+                aiEnabled: aiEnabled === true || aiEnabled === 'true' || aiEnabled === 1 || aiEnabled === '1'
             });
         };
         loadSettings();
@@ -36,9 +37,11 @@ const AiSettings = () => {
     const handleSave = async () => {
         setStatus('saving');
         try {
-            await db.settings.put({ key: 'tg_bot_token', value: config.tgToken });
-            await db.settings.put({ key: 'ai_model', value: config.aiModel });
-            await db.settings.put({ key: 'ai_enabled', value: config.aiEnabled });
+            await Promise.all([
+                upsertRemoteSetting('tg_bot_token', config.tgToken),
+                upsertRemoteSetting('ai_model', config.aiModel),
+                upsertRemoteSetting('ai_enabled', config.aiEnabled),
+            ]);
 
             setStatus('success');
             setTimeout(() => setStatus('idle'), 3000);

@@ -1,4 +1,11 @@
-export type DeliveryOrderStatus = 'pending' | 'ready' | 'delivered' | 'cancelled';
+export type DeliveryOrderStatus =
+  | 'pending'
+  | 'assigned'
+  | 'on_route'
+  | 'arrived'
+  | 'delivered'
+  | 'failed'
+  | 'cancelled';
 
 export type DeliveryOrder = {
   cloudId: string;
@@ -16,6 +23,8 @@ export type DeliveryOrder = {
   payment_status?: string;
   paid?: boolean;
   amount_due?: number;
+  requires_collection?: boolean;
+  delivery_date?: string;
 };
 
 export type DriverLocation = {

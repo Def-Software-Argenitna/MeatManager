@@ -1,7 +1,11 @@
 import axios from 'axios';
-import { db } from '../db';
+import { fetchTable, saveTableRecord } from './apiClient';
 
 const OLLAMA_URL = 'http://localhost:11434/api/chat';
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 /**
  * Gather context data for the AI to analyze.
@@ -14,9 +18,15 @@ const getAppContext = async () => {
     endOfDay.setHours(23, 59, 59, 999);
 
     // Get all records
-    const allStockRecords = await db.stock.toArray();
-    const ventasHoy = await db.ventas.where('date').between(startOfDay, endOfDay).toArray();
-    const totalVentasSnapshot = await db.ventas.toArray();
+    const [allStockRecords, totalVentasSnapshot, recentLogsRows] = await Promise.all([
+        fetchTable('stock'),
+        fetchTable('ventas'),
+        fetchTable('app_logs', { orderBy: 'timestamp', direction: 'desc', limit: 10 }),
+    ]);
+    const ventasHoy = (Array.isArray(totalVentasSnapshot) ? totalVentasSnapshot : []).filter((venta) => {
+        const saleDate = venta?.date ? new Date(venta.date) : null;
+        return saleDate && saleDate >= startOfDay && saleDate <= endOfDay;
+    });
 
     // Calculate Totals
     const totalRevenueToday = ventasHoy.reduce((acc, v) => acc + (parseFloat(v.total) || 0), 0);
@@ -28,17 +38,17 @@ const getAppContext = async () => {
         if (!stockBalanceMap[item.name]) {
             stockBalanceMap[item.name] = { name: item.name, quantity: 0, type: item.type };
         }
-        stockBalanceMap[item.name].quantity += item.quantity;
+        stockBalanceMap[item.name].quantity += toNumber(item.quantity);
     });
 
     const stockBalances = Object.values(stockBalanceMap);
 
     // Stats for AI
-    const lowStock = stockBalances.filter(i => i.quantity < 10).map(i => `${i.name} (${i.quantity.toFixed(1)}kg)`);
-    const topStock = [...stockBalances].sort((a, b) => b.quantity - a.quantity).slice(0, 5).map(i => `${i.name} (${i.quantity.toFixed(1)}kg)`);
+    const lowStock = stockBalances.filter(i => i.quantity < 10).map(i => `${i.name} (${toNumber(i.quantity).toFixed(1)}kg)`);
+    const topStock = [...stockBalances].sort((a, b) => toNumber(b.quantity) - toNumber(a.quantity)).slice(0, 5).map(i => `${i.name} (${toNumber(i.quantity).toFixed(1)}kg)`);
 
     // Recent logs
-    const recentLogs = await db.app_logs.orderBy('timestamp').reverse().limit(10).toArray();
+    const recentLogs = Array.isArray(recentLogsRows) ? recentLogsRows : [];
 
     return {
         timestamp: new Date().toLocaleString(),
@@ -50,7 +60,7 @@ const getAppContext = async () => {
         },
         inventory_details: {
             critical_stock_low: lowStock,
-            available_stock_overview: stockBalances.map(i => ({ producto: i.name, cantidad: i.quantity.toFixed(1) })),
+            available_stock_overview: stockBalances.map(i => ({ producto: i.name, cantidad: toNumber(i.quantity).toFixed(1) })),
             top_stock_items: topStock
         },
         system_health: {
@@ -110,12 +120,11 @@ INFORME DE STOCK:
  */
 export const logAppEvent = async (level, message, details = '') => {
     try {
-        await db.app_logs.add({
+        await saveTableRecord('app_logs', 'insert', {
             level,
             message,
             details,
             timestamp: new Date().toISOString(),
-            synced: 0
         });
     } catch (e) {
         console.error("Failed to log app event", e);

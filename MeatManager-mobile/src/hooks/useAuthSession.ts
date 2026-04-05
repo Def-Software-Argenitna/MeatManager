@@ -22,6 +22,10 @@ const FEATURE_ALIASES: Record<string, string> = {
   deliveries: 'logistica',
   envios: 'logistica',
   shipping: 'logistica',
+  entrega: 'logistica',
+  entregas: 'logistica',
+  reparto: 'logistica',
+  repartos: 'logistica',
 };
 
 const mapFirebaseError = (code?: string) => {
@@ -46,6 +50,14 @@ const mapFirebaseError = (code?: string) => {
 };
 
 const normalizeToken = (value: unknown) => String(value || '').trim().toLowerCase();
+
+const hasLogisticsToken = (token: string) =>
+  token === 'logistica' ||
+  token.includes('delivery') ||
+  token.includes('logistic') ||
+  token.includes('envio') ||
+  token.includes('entrega') ||
+  token.includes('repart');
 
 const extractFeatureTokens = (value: MobileLicense['featureFlags']): string[] => {
   if (!value) return [];
@@ -80,7 +92,7 @@ const hasLogisticsAccess = (profile: MobileAccessProfile | null) => {
       ...extractFeatureTokens(license.featureFlags).map(normalizeToken),
     ].filter(Boolean);
 
-    return tokens.some((token) => FEATURE_ALIASES[token] === 'logistica' || token === 'logistica');
+    return tokens.some((token) => FEATURE_ALIASES[token] === 'logistica' || hasLogisticsToken(token));
   });
 };
 

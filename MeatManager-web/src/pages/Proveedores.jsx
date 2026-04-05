@@ -1,19 +1,16 @@
 import React, { useState, useMemo } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { Truck, Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 
 const Proveedores = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingId, setEditingId] = useState(null);
-
-    const suppliers = useLiveQuery(() => db.suppliers.toArray());
-    // Traer compras y pagos para calcular saldo
-    const compras = useLiveQuery(() => db.compras?.toArray());
-    const pagos = useLiveQuery(() => db.caja_movimientos?.where('category').equals('Pago Proveedor').toArray());
+    const [suppliers, setSuppliers] = useState([]);
+    const [compras, setCompras] = useState([]);
+    const [pagos, setPagos] = useState([]);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -38,6 +35,21 @@ const Proveedores = () => {
         'No Responsable'
     ];
 
+    const loadSuppliersData = React.useCallback(async () => {
+        const [suppliersRows, comprasRows, pagosRows] = await Promise.all([
+            fetchTable('suppliers'),
+            fetchTable('compras'),
+            fetchTable('caja_movimientos'),
+        ]);
+        setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
+        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+        setPagos((Array.isArray(pagosRows) ? pagosRows : []).filter((item) => item.category === 'Pago Proveedor'));
+    }, []);
+
+    React.useEffect(() => {
+        loadSuppliersData().catch((error) => console.error('Error cargando proveedores:', error));
+    }, [loadSuppliersData]);
+
     const resetForm = () => {
         setFormData({
             name: '', cuit: '', iva_condition: 'Responsable Inscripto',
@@ -54,10 +66,11 @@ const Proveedores = () => {
 
         try {
             if (editingId) {
-                await db.suppliers.update(editingId, formData);
+                await saveTableRecord('suppliers', 'update', formData, editingId);
             } else {
-                await db.suppliers.add(formData);
+                await saveTableRecord('suppliers', 'insert', formData);
             }
+            await loadSuppliersData();
             setIsModalOpen(false);
             resetForm();
         } catch (error) {
@@ -68,7 +81,8 @@ const Proveedores = () => {
 
     const handleDelete = async (id) => {
         if (window.confirm('¿Seguro que desea eliminar este proveedor?')) {
-            await db.suppliers.delete(id);
+            await saveTableRecord('suppliers', 'delete', null, id);
+            await loadSuppliersData();
         }
     };
 
@@ -94,16 +108,18 @@ const Proveedores = () => {
     }, [formData.province]);
 
     return (
-        <div className="animate-fade-in" style={{ padding: '1rem' }}>
-            <header style={{ marginBottom: '2rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div>
+        <div className="animate-fade-in">
+            <header className="page-header">
+                <div className="page-header-main">
                     <h1 className="page-title">Proveedores</h1>
                     <p className="page-description">Gestión fiscal y logística de abastecimiento</p>
                 </div>
-                <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
-                    <Plus size={20} />
-                    Nuevo Proveedor
-                </button>
+                <div className="page-header-actions">
+                    <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
+                        <Plus size={20} />
+                        Nuevo Proveedor
+                    </button>
+                </div>
             </header>
 
             <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
@@ -168,7 +184,7 @@ const Proveedores = () => {
                         <div style={{ borderTop: '1px solid var(--color-border)', paddingTop: '1rem', marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', marginBottom: '0.5rem' }}>
                                 <span style={{ fontWeight: 'bold', color: saldo > 0 ? '#ef4444' : '#22c55e' }}>
-                                    Cuenta Corriente: ${saldo.toLocaleString()}
+                                    Cuenta Corriente: ${Number(saldo || 0).toLocaleString()}
                                 </span>
                                 <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }} onClick={() => alert('Movimientos no implementado aún')}>Ver Movimientos</button>
                                 <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem', background: '#22c55e', color: 'white' }} onClick={() => alert('Registrar pago no implementado aún')}>Registrar Pago</button>

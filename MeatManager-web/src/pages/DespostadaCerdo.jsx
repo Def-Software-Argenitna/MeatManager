@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { useLicense } from '../context/LicenseContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { Save, RotateCcw, Check, ShieldCheck, TrendingUp, DollarSign } from 'lucide-react';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaCerdo.css';
+
+const toNumber = (value) => Number(value) || 0;
 
 // Detailed cuts mapping for pork
 const PIG_MAP = [
@@ -48,14 +49,24 @@ const DespostadaCerdo = () => {
     const [selectedLotSupplier, setSelectedLotSupplier] = useState('');
     const [isSessionStarted, setIsSessionStarted] = useState(false);
     const [costPerKg, setCostPerKg] = useState(0); // For PRO mode
+    const [availableLots, setAvailableLots] = useState([]);
+    const [compras, setCompras] = useState([]);
 
     const { hasModule } = useLicense();
     const hasDespostadaModule = hasModule('despostada');
 
-    // DB Data
-    const availableLots = useLiveQuery(() =>
-        db.animal_lots?.where('status').equals('disponible').and(l => l.species === 'cerdo').toArray()
-    );
+    const loadDespostadaData = React.useCallback(async () => {
+        const [lotRows, comprasRows] = await Promise.all([
+            fetchTable('animal_lots'),
+            fetchTable('compras'),
+        ]);
+        setAvailableLots((Array.isArray(lotRows) ? lotRows : []).filter((lot) => lot.status === 'disponible' && lot.species === 'cerdo'));
+        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+    }, []);
+
+    React.useEffect(() => {
+        loadDespostadaData().catch((error) => console.error('Error cargando despostada cerdo:', error));
+    }, [loadDespostadaData]);
 
     // Workspace State
     const [selectedCutId, setSelectedCutId] = useState(null);
@@ -65,9 +76,9 @@ const DespostadaCerdo = () => {
     const [logs, setLogs] = useState([]);
 
     // Calculated
-    const processedWeight = logs.reduce((acc, log) => acc + log.weight, 0);
+    const processedWeight = logs.reduce((acc, log) => acc + toNumber(log.weight), 0);
     const yieldPercentage = isSessionStarted && initialWeight > 0
-        ? ((processedWeight / initialWeight) * 100).toFixed(1)
+        ? ((toNumber(processedWeight) / toNumber(initialWeight)) * 100).toFixed(1)
         : 0;
 
     const startSession = async () => {
@@ -85,7 +96,7 @@ const DespostadaCerdo = () => {
 
         // PRO: Attempt to find the cost per kg from the original purchase
         if (hasDespostadaModule && lot.purchase_id) {
-            const purchase = await db.compras.get(lot.purchase_id);
+            const purchase = compras.find((item) => Number(item.id) === Number(lot.purchase_id));
             if (purchase && purchase.items_detail) {
                 // Find the item that generated this lot
                 const itemMatch = purchase.items_detail.find(i =>
@@ -104,10 +115,10 @@ const DespostadaCerdo = () => {
 
         if (window.confirm('¿Finalizar esta despostada de cerdo?')) {
             if (selectedLotId) {
-                await db.animal_lots.update(selectedLotId, { status: 'despostado' });
+                await saveTableRecord('animal_lots', 'update', { status: 'despostado' }, selectedLotId);
             }
             const selectedLot = availableLots?.find((lot) => lot.id === selectedLotId) || null;
-            await db.despostada_logs.add(buildDespostadaLogPayload({
+            await saveTableRecord('despostada_logs', 'insert', buildDespostadaLogPayload({
                 type: 'cerdo',
                 supplier: selectedLotSupplier,
                 initialWeight,
@@ -116,6 +127,7 @@ const DespostadaCerdo = () => {
                 selectedLot,
                 costPerKg
             }));
+            await loadDespostadaData();
 
             // Reset
             setIsSessionStarted(false);
@@ -187,12 +199,11 @@ const DespostadaCerdo = () => {
         setLogs([newLog, ...logs]);
 
         // Save to DB
-        await db.stock.add({
+        await saveTableRecord('stock', 'insert', {
             name: cutInfo.name,
             type: 'cerdo',
             quantity: weightVal,
-            updated_at: new Date(),
-            synced: 0
+            updated_at: new Date().toISOString(),
         });
 
         // Reset for next cut
@@ -284,7 +295,7 @@ const DespostadaCerdo = () => {
                             <div className="yield-fill" style={{ width: `${Math.min(yieldPercentage, 100)}%`, backgroundColor: yieldPercentage > 70 ? '#22c55e' : 'var(--color-primary)' }}></div>
                         </div>
                         <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
-                            Procesado: {processedWeight.toFixed(2)} kg
+                            Procesado: {toNumber(processedWeight).toFixed(2)} kg
                         </div>
                     </div>
                 )}
@@ -498,7 +509,7 @@ const DespostadaCerdo = () => {
                                         <span style={{ fontWeight: '500' }}>{log.cutName}</span>
                                         <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{log.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                     </div>
-                                    <span style={{ fontWeight: '700', color: 'var(--color-text-main)' }}>{log.weight.toFixed(3)} kg</span>
+                                    <span style={{ fontWeight: '700', color: 'var(--color-text-main)' }}>{toNumber(log.weight).toFixed(3)} kg</span>
                                 </div>
                             ))}
                         </div>

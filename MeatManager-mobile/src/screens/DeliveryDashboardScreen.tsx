@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,20 +14,16 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { OrderCard } from '../components/OrderCard';
 import { useAuthSession } from '../hooks/useAuthSession';
 import { useDeliveryTracking } from '../hooks/useDeliveryTracking';
-import { useDriverOrdersHistory } from '../hooks/useDriverOrdersHistory';
 import { theme } from '../theme';
 import { LoginScreen } from './LoginScreen';
 import { AdminDashboardScreen } from './AdminDashboardScreen';
 
 export function DeliveryDashboardScreen() {
   const { user, profile, appMode, driverName, login, logout, isLoading, sessionError } = useAuthSession();
-  const { orders, locationText, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
+  const { orders, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
     useDeliveryTracking(appMode === 'driver' ? driverName || null : null);
-  const {
-    deliveredOrders,
-    pendingOrders,
-    error: driverHistoryError,
-  } = useDriverOrdersHistory(appMode === 'driver' ? driverName || null : null);
+  const deliveredOrders = useMemo(() => orders.filter((order) => order.status === 'delivered'), [orders]);
+  const pendingOrders = useMemo(() => orders.filter((order) => order.status !== 'delivered' && order.status !== 'cancelled'), [orders]);
 
   if (isLoading) {
     return (
@@ -126,18 +122,13 @@ export function DeliveryDashboardScreen() {
               </View>
             </View>
 
-            <View style={styles.locationCard}>
-              <Text style={styles.locationLabel}>Ubicacion actual</Text>
-              <Text style={styles.locationValue}>{locationText}</Text>
-            </View>
-
-            {permissionError || driverHistoryError ? (
+            {permissionError ? (
               <Pressable
                 style={styles.warningCard}
-                onPress={() => Alert.alert('Seguimiento', permissionError || driverHistoryError || '')}
+                onPress={() => Alert.alert('Seguimiento', permissionError || '')}
               >
-                <Text style={styles.warningTitle}>Atencion con la ubicacion</Text>
-                <Text style={styles.warningText}>{permissionError || driverHistoryError}</Text>
+                <Text style={styles.warningTitle}>Atencion con la sincronizacion</Text>
+                <Text style={styles.warningText}>{permissionError}</Text>
               </Pressable>
             ) : null}
 
@@ -195,7 +186,7 @@ const styles = StyleSheet.create({
     gap: 4,
   },
   eyebrow: {
-    color: '#f7d5c7',
+    color: '#ffd1ad',
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -207,7 +198,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   subtitle: {
-    color: '#f7e8de',
+    color: '#ffe4cf',
     fontSize: 15,
     lineHeight: 22,
   },
@@ -254,31 +245,12 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: theme.colors.text,
   },
-  locationCard: {
-    backgroundColor: theme.colors.surfaceAlt,
-    borderRadius: theme.radius.md,
-    padding: 16,
-  },
-  locationLabel: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: theme.colors.primary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-  },
-  locationValue: {
-    marginTop: 8,
-    fontSize: 16,
-    lineHeight: 22,
-    color: theme.colors.text,
-    fontWeight: '700',
-  },
   warningCard: {
     borderRadius: theme.radius.md,
     padding: 16,
     backgroundColor: theme.colors.warningSoft,
     borderWidth: 1,
-    borderColor: '#f2cd6b',
+    borderColor: theme.colors.warning,
   },
   warningTitle: {
     color: theme.colors.warning,

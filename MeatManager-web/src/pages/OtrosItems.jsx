@@ -1,36 +1,40 @@
 import React, { useState } from 'react';
 import { Package, Plus, Search, Trash2 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
 
 const OtrosItems = () => {
-    // We might need a separate table for 'otros' or just use 'stock' with type='other'
-    // For now, let's assume we use the main stock table but filter by type
-
-    // Check if we need to add 'other' items to stock table or if they are already there
-    const items = useLiveQuery(
-        () => db.stock?.where('type').equals('insumo').toArray()
-    );
+    const [items, setItems] = useState([]);
 
     const [newItem, setNewItem] = useState({ name: '', quantity: '' });
+
+    const loadItems = React.useCallback(async () => {
+        const rows = await fetchTable('stock');
+        setItems((Array.isArray(rows) ? rows : []).filter((item) => item.type === 'insumo'));
+    }, []);
+
+    React.useEffect(() => {
+        loadItems().catch((error) => console.error('Error cargando insumos:', error));
+    }, [loadItems]);
 
     const handleAddItem = async (e) => {
         e.preventDefault();
         if (!newItem.name || !newItem.quantity) return;
 
-        await db.stock.add({
+        await saveTableRecord('stock', 'insert', {
             name: newItem.name,
             quantity: parseFloat(newItem.quantity),
             type: 'insumo',
-            updated_at: new Date() // Fixed: using Date object handling in Dexie or string if needed, sticking to object or simple string
+            updated_at: new Date().toISOString()
         });
         setNewItem({ name: '', quantity: '' });
+        await loadItems();
     };
 
-    const handleDelete = (id) => {
+    const handleDelete = async (id) => {
         if (confirm('¿Borrar este ítem?')) {
-            db.stock.delete(id);
+            await saveTableRecord('stock', 'delete', null, id);
+            await loadItems();
         }
     }
 

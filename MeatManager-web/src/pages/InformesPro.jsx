@@ -1,10 +1,9 @@
 import React, { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Crown, Filter, Download } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
+import { fetchTable } from '../utils/apiClient';
 import './InformesPro.css';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
@@ -22,13 +21,27 @@ const InformesPro = () => {
     const { hasModule } = useLicense();
     const [filterDays, setFilterDays] = useState('30');
     const [searchParams, setSearchParams] = useSearchParams();
+    const [logs, setLogs] = useState([]);
+    const [animalLots, setAnimalLots] = useState([]);
+    const [compras, setCompras] = useState([]);
+    const [prices, setPrices] = useState([]);
 
-    const logs = useLiveQuery(
-        () => db.despostada_logs.orderBy('date').reverse().toArray()
-    );
-    const animalLots = useLiveQuery(() => db.animal_lots?.toArray());
-    const compras = useLiveQuery(() => db.compras?.toArray());
-    const prices = useLiveQuery(() => db.prices?.toArray());
+    React.useEffect(() => {
+        const loadReportData = async () => {
+            const [logsRows, lotRows, comprasRows, pricesRows] = await Promise.all([
+                fetchTable('despostada_logs', { orderBy: 'date', direction: 'desc' }),
+                fetchTable('animal_lots'),
+                fetchTable('compras'),
+                fetchTable('prices'),
+            ]);
+            setLogs(Array.isArray(logsRows) ? logsRows : []);
+            setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
+            setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+            setPrices(Array.isArray(pricesRows) ? pricesRows : []);
+        };
+
+        loadReportData().catch((error) => console.error('Error cargando informes PRO:', error));
+    }, []);
 
     if (!hasModule('informes-pro')) {
         return (

@@ -1,6 +1,4 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import {
     ShoppingBasket,
     ArrowLeft,
@@ -13,22 +11,42 @@ import {
     Plus,
     X
 } from 'lucide-react';
+import { fetchTable, getRemoteSetting } from '../utils/apiClient';
 import './CustomerPortal.css';
+
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const CustomerPortal = () => {
     const [cart, setCart] = useState([]);
     const [step, setStep] = useState('browse'); // browse, checkout, success
     const [deliveryMode, setDeliveryMode] = useState('pickup');
     const [paymentMethod, setPaymentMethod] = useState('cash');
+    const [menuItems, setMenuItems] = useState([]);
+    const [stockItems, setStockItems] = useState([]);
+    const [shopName, setShopName] = useState('Nuestra Carnicería');
+    const [whatsapp, setWhatsapp] = useState('');
 
-    const menuItems = useLiveQuery(() => db.menu_digital.toArray());
-    const stockItems = useLiveQuery(() => db.stock.toArray());
-    const settings = useLiveQuery(() => db.settings.toArray());
+    React.useEffect(() => {
+        const loadPortalData = async () => {
+            const [menuRows, stockRows, remoteShopName, remoteWhatsapp] = await Promise.all([
+                fetchTable('menu_digital'),
+                fetchTable('stock'),
+                getRemoteSetting('shop_name'),
+                getRemoteSetting('whatsapp_number'),
+            ]);
+            setMenuItems(Array.isArray(menuRows) ? menuRows : []);
+            setStockItems(Array.isArray(stockRows) ? stockRows : []);
+            setShopName(remoteShopName || 'Nuestra Carnicería');
+            setWhatsapp(remoteWhatsapp || '');
+        };
 
-    const shopName = settings?.find(s => s.key === 'shop_name')?.value || 'Nuestra Carnicería';
-    const whatsapp = settings?.find(s => s.key === 'whatsapp_number')?.value || '';
+        loadPortalData().catch((error) => console.error('Error cargando portal de clientes:', error));
+    }, []);
 
-    const getStock = (name) => stockItems?.find(s => s.name.toLowerCase() === name.toLowerCase())?.quantity || 0;
+    const getStock = (name) => toNumber(stockItems?.find(s => s.name.toLowerCase() === name.toLowerCase())?.quantity);
 
     const addToCart = (item) => {
         const existing = cart.find(c => c.id === item.id);
@@ -48,7 +66,7 @@ const CustomerPortal = () => {
         }
     };
 
-    const total = cart.reduce((acc, i) => acc + (i.price * i.qty), 0);
+    const total = cart.reduce((acc, i) => acc + (toNumber(i.price) * toNumber(i.qty)), 0);
 
     const finishOrder = () => {
         // Generate WhatsApp message with the order details
@@ -58,9 +76,9 @@ const CustomerPortal = () => {
         text += `💳 *PAGO:* ${paymentMethod === 'cash' ? 'Efectivo/Transferencia' : 'Mercado Pago'}\n\n`;
         text += `🛒 *DETALLE:*\n`;
         cart.forEach(i => {
-            text += `- ${i.qty}kg x ${i.product_name} ($${(i.price * i.qty).toLocaleString()})\n`;
+            text += `- ${toNumber(i.qty)}kg x ${i.product_name} ($${(toNumber(i.price) * toNumber(i.qty)).toLocaleString()})\n`;
         });
-        text += `\n*TOTAL: $${total.toLocaleString()}*`;
+        text += `\n*TOTAL: $${toNumber(total).toLocaleString()}*`;
 
         const waUrl = `https://wa.me/${whatsapp.replace(/\D/g, '')}?text=${encodeURIComponent(text)}`;
         window.open(waUrl, '_blank');
@@ -106,7 +124,7 @@ const CustomerPortal = () => {
                                 <div key={item.id} className={`portal-item-card ${stock <= 0 ? 'out-of-stock' : ''}`}>
                                     <div className="item-details">
                                         <span className="item-name">{item.product_name}</span>
-                                        <span className="item-price">${item.price.toLocaleString()} /kg</span>
+                                        <span className="item-price">${toNumber(item.price).toLocaleString()} /kg</span>
                                         {item.is_offer && <span className="offer-tag">OFERTA</span>}
                                     </div>
                                     <div className="item-actions">
@@ -133,7 +151,7 @@ const CustomerPortal = () => {
                         <div className="floating-cart" onClick={() => setStep('checkout')}>
                             <div className="cart-summary">
                                 <span>{cart.length} productos</span>
-                                <strong>$ {total.toLocaleString()}</strong>
+                                <strong>$ {toNumber(total).toLocaleString()}</strong>
                             </div>
                             <button className="checkout-btn">Ver Pedido</button>
                         </div>
@@ -148,12 +166,12 @@ const CustomerPortal = () => {
                         {cart.map(i => (
                             <div key={i.id} className="checkout-item">
                                 <span>{i.qty}kg x {i.product_name}</span>
-                                <span>$ {(i.price * i.qty).toLocaleString()}</span>
+                                <span>$ {(toNumber(i.price) * toNumber(i.qty)).toLocaleString()}</span>
                             </div>
                         ))}
                         <div className="checkout-total">
                             <span>TOTAL</span>
-                            <span>$ {total.toLocaleString()}</span>
+                            <span>$ {toNumber(total).toLocaleString()}</span>
                         </div>
                     </div>
 

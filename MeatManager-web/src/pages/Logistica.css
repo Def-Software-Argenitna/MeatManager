@@ -1,30 +1,43 @@
 .logistica-container {
-    height: calc(100vh - 80px);
-    /* Subtracting top nav if any, adjust as needed */
+    min-height: calc(100vh - 80px);
     display: flex;
     flex-direction: column;
     padding: 1.5rem;
     gap: 1.5rem;
-    overflow: hidden;
+    overflow: auto;
 }
 
 .logistica-content {
-    display: grid;
-    grid-template-columns: 350px 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 1.5rem;
     flex: 1;
     min-height: 0;
-    /* Important for flex child with overflow */
+}
+
+.logistica-toolbar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+}
+
+.logistica-panels {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    gap: 1.5rem;
+    min-height: 320px;
 }
 
 @media (max-width: 1024px) {
-    .logistica-content {
+    .logistica-panels {
         grid-template-columns: 1fr;
-        overflow-y: auto;
     }
 
+    .drivers-panel,
     .logistica-sidebar {
-        height: 400px;
+        min-height: 280px;
     }
 
     .map-view {
@@ -38,6 +51,75 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+}
+
+.logistica-panel {
+    min-height: 0;
+}
+
+.drivers-panel {
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.panel-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.panel-header-row h3 {
+    margin: 0;
+    font-size: 1rem;
+    color: var(--color-text-main);
+}
+
+.panel-header-row span {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
+.drivers-live-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    overflow-y: auto;
+}
+
+.driver-live-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    width: 100%;
+    padding: 0.9rem 1rem;
+    border-radius: 12px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
+    color: var(--color-text-main);
+    cursor: pointer;
+    text-align: left;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04), 0 10px 24px rgba(0,0,0,0.16);
+}
+
+.driver-live-card strong {
+    display: block;
+    font-size: 0.95rem;
+}
+
+.driver-live-card span {
+    display: block;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    margin-top: 0.2rem;
+}
+
+.driver-live-card.selected {
+    border-color: rgba(59,130,246,0.35);
+    background: linear-gradient(90deg, rgba(59,130,246,0.16) 0%, rgba(59,130,246,0.05) 100%);
 }
 
 .sidebar-search {
@@ -209,6 +291,7 @@
     border: 1px solid var(--glass-border);
     backdrop-filter: var(--glass-blur);
     box-shadow: 0 15px 50px rgba(0, 0, 0, 0.32), inset 0 0 1px 1px rgba(255,255,255,0.05);
+    min-height: 560px;
 }
 
 /* LEAFLET POPUP CUSTOM */
@@ -237,13 +320,14 @@
     bottom: 20px;
     left: 20px;
     right: 20px;
-    background: var(--glass-bg);
-    backdrop-filter: var(--glass-blur);
+    background:
+        linear-gradient(180deg, rgba(10, 14, 22, 0.92) 0%, rgba(15, 23, 35, 0.9) 100%);
+    backdrop-filter: blur(18px);
     border-radius: 16px;
     padding: 1.5rem;
-    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.28);
+    box-shadow: 0 18px 42px rgba(0, 0, 0, 0.42);
     z-index: 1000;
-    border: 1px solid var(--glass-border);
+    border: 1px solid rgba(255,255,255,0.12);
 }
 
 .overlay-header {
@@ -256,11 +340,13 @@
 .overlay-header h3 {
     margin: 0;
     font-size: 1.25rem;
+    color: #f8fafc;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
 }
 
 .overlay-header p {
     margin: 0;
-    color: var(--color-text-muted);
+    color: #cbd5e1;
     font-size: 0.9rem;
 }
 
@@ -271,8 +357,13 @@
     height: 28px;
     border-radius: 50%;
     cursor: pointer;
-    font-size: 1.2rem;
+    font-size: 1.1rem;
     color: var(--color-text-main);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    padding: 0;
 }
 
 .overlay-body {
@@ -287,24 +378,24 @@
     align-items: center;
     gap: 0.75rem;
     font-size: 0.9rem;
-    color: var(--color-text-muted);
+    color: #dbe4f0;
 }
 
 .items-preview {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255,255,255,0.05);
     padding: 0.75rem;
     border-radius: 8px;
     font-size: 0.85rem;
-    color: var(--color-text-muted);
-    border: 1px dashed rgba(255,255,255,0.14);
+    color: #e2e8f0;
+    border: 1px dashed rgba(255,255,255,0.18);
 }
 
 .assignment-box {
-    background: rgba(255,255,255,0.04);
+    background: rgba(255,255,255,0.05);
     padding: 1rem;
     border-radius: 12px;
     margin-bottom: 1rem;
-    border: 1px solid rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.12);
 }
 
 .risk-warning-banner {
@@ -339,7 +430,7 @@
 .assignment-box label {
     font-size: 0.75rem;
     font-weight: bold;
-    color: var(--color-text-muted);
+    color: #cbd5e1;
     display: flex;
     align-items: center;
     gap: 4px;
@@ -347,8 +438,38 @@
 }
 
 .assignment-box .neo-input {
-    background: rgba(255,255,255,0.05);
-    color: var(--color-text-main);
+    background: rgba(255,255,255,0.08);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
+    font-weight: 600;
+    -webkit-text-fill-color: #f8fafc;
+    appearance: none;
+    caret-color: #f8fafc;
+}
+
+.assignment-box .neo-input option {
+    color: #0f172a;
+    background: #f8fafc;
+}
+
+.assignment-box select.neo-input,
+.assignment-box select.neo-input:focus,
+.assignment-box select.neo-input:active,
+.assignment-box select.neo-input:hover {
+    color: #f8fafc !important;
+    -webkit-text-fill-color: #f8fafc !important;
+}
+
+.assignment-box select.neo-input {
+    background:
+        linear-gradient(180deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.06) 100%),
+        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath fill='%23f8fafc' d='M6 8L0 0h12z'/%3E%3C/svg%3E") no-repeat right 14px center / 12px 8px;
+    padding-right: 2.5rem;
+}
+
+.assignment-box select.neo-input:focus {
+    border-color: rgba(249, 115, 22, 0.5);
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.18);
 }
 
 .overlay-actions {
@@ -358,24 +479,36 @@
 
 .btn-delivered {
     flex: 2;
-    background: #22c55e;
-    color: white;
-    border: none;
+    background: linear-gradient(180deg, #22c55e 0%, #16a34a 100%);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
     padding: 0.75rem;
     border-radius: 8px;
     font-weight: bold;
     cursor: pointer;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    box-shadow: 0 12px 24px rgba(22, 163, 74, 0.28);
 }
 
 .btn-call {
     flex: 1;
-    background: #3b82f6;
-    color: white;
-    border: none;
+    background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+    color: #f8fafc;
+    border: 1px solid rgba(255,255,255,0.12);
     padding: 0.75rem;
     border-radius: 8px;
     font-weight: bold;
     cursor: pointer;
+    text-shadow: 0 1px 0 rgba(0,0,0,0.18);
+    box-shadow: 0 12px 24px rgba(37, 99, 235, 0.28);
+}
+
+.btn-delivered:hover {
+    filter: brightness(1.06);
+}
+
+.btn-call:hover {
+    filter: brightness(1.06);
 }
 
 /* STATS MINI */
@@ -416,6 +549,10 @@
     color: #cbd5e1;
     text-align: center;
     padding: 2rem;
+}
+
+.empty-delivery.compact {
+    min-height: 180px;
 }
 
 /* DRIVER MODAL STYLES PRO */

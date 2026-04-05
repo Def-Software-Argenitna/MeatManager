@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { db } from '../db';
+import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './ConfiguracionPrecio.css';
 
 const ConfiguracionPrecio = () => {
@@ -9,14 +9,14 @@ const ConfiguracionPrecio = () => {
 
     useEffect(() => {
         const load = async () => {
-            const formato = await db.settings.get('precio_formato');
-            setConfig({ formato: formato?.value || '4d2d' });
+            const formato = await getRemoteSetting('precio_formato');
+            setConfig({ formato: formato || '4d2d' });
         };
         load();
     }, []);
 
     const handleSave = async () => {
-        await db.settings.put({ key: 'precio_formato', value: config.formato });
+        await upsertRemoteSetting('precio_formato', config.formato);
         alert('Configuración guardada');
     };
 

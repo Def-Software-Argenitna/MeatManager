@@ -146,13 +146,13 @@ const styles = StyleSheet.create({
     marginBottom: 18,
   },
   hero: {
-    backgroundColor: theme.colors.text,
+    backgroundColor: theme.colors.surfaceAlt,
     borderRadius: theme.radius.lg,
     padding: 22,
     gap: 6,
   },
   eyebrow: {
-    color: '#cfc4b6',
+    color: theme.colors.accent,
     fontSize: 12,
     fontWeight: '800',
     letterSpacing: 0.8,
@@ -164,7 +164,7 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
   subtitle: {
-    color: '#e1d6c8',
+    color: theme.colors.muted,
     lineHeight: 22,
     fontSize: 15,
   },
@@ -205,7 +205,7 @@ const styles = StyleSheet.create({
     padding: 16,
     backgroundColor: theme.colors.warningSoft,
     borderWidth: 1,
-    borderColor: '#f2cd6b',
+    borderColor: theme.colors.warning,
   },
   warningTitle: {
     color: theme.colors.warning,

@@ -23,13 +23,16 @@ import {
     User,
     Pencil
 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
 import { useUser } from '../context/UserContext';
 import { branchSyncService } from '../utils/BranchSyncService';
+import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import './Sucursales.css';
 
 const normalizeBranchCode = (value) => String(value ?? '').replace(/\D/g, '').slice(0, 4).padStart(4, '0');
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
 
 const normalizeBranchEntry = (entry, fallbackIndex = 0) => {
     if (entry && typeof entry === 'object') {
@@ -118,23 +121,85 @@ const Sucursales = () => {
     const [branchForm, setBranchForm] = useState(EMPTY_BRANCH_FORM);
     const [editingBranchCode, setEditingBranchCode] = useState(null);
     const [branchFilesModal, setBranchFilesModal] = useState(null);
-    const branchSnapshots = useLiveQuery(
-        () => db.branch_stock_snapshots?.orderBy('imported_at').reverse().toArray() || [],
-        [],
-        []
-    );
+    const [branchSnapshots, setBranchSnapshots] = useState([]);
+    const [stockItems, setStockItems] = useState([]);
+    const [salesRows, setSalesRows] = useState([]);
+    const [comprasRows, setComprasRows] = useState([]);
+    const [cashMovementsRows, setCashMovementsRows] = useState([]);
+    const [paymentMethods, setPaymentMethods] = useState([]);
+
+    const refreshSucursalesData = React.useCallback(async () => {
+        const [
+            snapshots,
+            stockRows,
+            ventasRows,
+            comprasRowsResp,
+            cajaRows,
+            paymentRows,
+            profileSetting,
+            branchCodeSetting,
+            masterSetting,
+            branchesSetting,
+        ] = await Promise.all([
+            fetchTable('branch_stock_snapshots', { orderBy: 'imported_at', direction: 'desc' }),
+            fetchTable('stock'),
+            fetchTable('ventas'),
+            fetchTable('compras'),
+            fetchTable('caja_movimientos'),
+            fetchTable('payment_methods'),
+            getRemoteSetting('branch_profile'),
+            getRemoteSetting('branch_code'),
+            getRemoteSetting('is_master_node'),
+            getRemoteSetting('registered_branches'),
+        ]);
+
+        setBranchSnapshots(Array.isArray(snapshots) ? snapshots : []);
+        setStockItems(Array.isArray(stockRows) ? stockRows : []);
+        setSalesRows(Array.isArray(ventasRows) ? ventasRows : []);
+        setComprasRows(Array.isArray(comprasRowsResp) ? comprasRowsResp : []);
+        setCashMovementsRows(Array.isArray(cajaRows) ? cajaRows : []);
+        setPaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+
+        if (profileSetting) {
+            const profile = JSON.parse(profileSetting);
+            const normalizedProfile = {
+                code: normalizeBranchCode(profile.code || branchCodeSetting || 1),
+                name: profile.name || 'Casa Central',
+                address: profile.address || '',
+                locality: profile.locality || '',
+                phone: profile.phone || '',
+                responsible: profile.responsible || '',
+                type: profile.type || 'sucursal'
+            };
+            setBranchProfile(normalizedProfile);
+            setCurrentBranch(normalizedProfile.name);
+        } else {
+            const fallbackCode = normalizeBranchCode(branchCodeSetting || 1);
+            setBranchProfile((prev) => ({ ...prev, code: fallbackCode }));
+        }
+
+        setIsMaster(masterSetting === true || masterSetting === 'true' || masterSetting === 1 || masterSetting === '1');
+
+        if (branchesSetting) {
+            setRegisteredBranches(normalizeRegisteredBranches(JSON.parse(branchesSetting)));
+        }
+    }, []);
+
+    useEffect(() => {
+        refreshSucursalesData().catch((error) => console.error('Error cargando sucursales:', error));
+    }, [refreshSucursalesData]);
 
     const verifyMasterPin = async () => {
         if (!isAdmin) {
             alert('Solo un usuario administrador puede activar el modo Master.');
             return;
         }
-        const storedPin = await db.settings.get('master_pin') || { value: '1234' };
-        if (pinInput === storedPin.value) {
+        const storedPin = await getRemoteSetting('master_pin');
+        if (pinInput === String(storedPin || '1234')) {
             const newProfile = { ...branchProfile, type: 'master' };
             setBranchProfile(newProfile);
-            await db.settings.put({ key: 'branch_profile', value: JSON.stringify(newProfile) });
-            await db.settings.put({ key: 'is_master_node', value: true });
+            await upsertRemoteSetting('branch_profile', JSON.stringify(newProfile));
+            await upsertRemoteSetting('is_master_node', true);
             setIsMaster(true);
             setShowPinDialog(false);
             setPinInput('');
@@ -155,9 +220,11 @@ const Sucursales = () => {
             name: String(branchProfile.name || '').trim() || 'Sucursal'
         };
 
-        await db.settings.put({ key: 'branch_profile', value: JSON.stringify(normalizedProfile) });
-        await db.settings.put({ key: 'branch_name', value: normalizedProfile.name });
-        await db.settings.put({ key: 'branch_code', value: Number(normalizedProfile.code) });
+        await Promise.all([
+            upsertRemoteSetting('branch_profile', JSON.stringify(normalizedProfile)),
+            upsertRemoteSetting('branch_name', normalizedProfile.name),
+            upsertRemoteSetting('branch_code', Number(normalizedProfile.code)),
+        ]);
         setBranchProfile(normalizedProfile);
         setCurrentBranch(normalizedProfile.name);
         setIsEditingProfile(false);
@@ -167,7 +234,7 @@ const Sucursales = () => {
     const persistRegisteredBranches = async (nextBranches) => {
         const normalizedBranches = normalizeRegisteredBranches(nextBranches);
         setRegisteredBranches(normalizedBranches);
-        await db.settings.put({ key: 'registered_branches', value: JSON.stringify(normalizedBranches) });
+        await upsertRemoteSetting('registered_branches', JSON.stringify(normalizedBranches));
     };
 
     const resetBranchForm = () => {
@@ -232,7 +299,7 @@ const Sucursales = () => {
     };
 
     const exportMyStock = async () => {
-        const items = await db.stock.toArray();
+        const items = stockItems;
         const balances = {};
         items.forEach(i => {
             if (!balances[i.name]) balances[i.name] = { name: i.name, quantity: 0, type: i.type };
@@ -246,18 +313,24 @@ const Sucursales = () => {
         endDay.setHours(23, 59, 59, 999);
         const startMonth = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
 
-        const [salesToday, purchasesMonth, cashMovementsToday] = await Promise.all([
-            db.ventas.where('date').between(startDay, endDay).toArray(),
-            db.compras.where('date').aboveOrEqual(`${startMonth.getFullYear()}-${String(startMonth.getMonth() + 1).padStart(2, '0')}-01`).toArray(),
-            db.caja_movimientos.where('date').between(startDay, endDay).toArray()
-        ]);
+        const salesToday = salesRows.filter((sale) => {
+            const date = sale?.date ? new Date(sale.date) : null;
+            return date && date >= startDay && date <= endDay;
+        });
+        const purchasesMonth = comprasRows.filter((purchase) => {
+            const date = purchase?.date ? new Date(purchase.date) : null;
+            return date && date >= startMonth;
+        });
+        const cashMovementsToday = cashMovementsRows.filter((movement) => {
+            const date = movement?.date ? new Date(movement.date) : null;
+            return date && date >= startDay && date <= endDay;
+        });
 
         const salesTotal = salesToday.reduce((sum, sale) => sum + (Number(sale.total) || 0), 0);
         const purchasesTotal = purchasesMonth.reduce((sum, purchase) => sum + (Number(purchase.total) || 0), 0);
         const totalExpenses = cashMovementsToday.filter((m) => m.type === 'egreso').reduce((sum, movement) => sum + (Number(movement.amount) || 0), 0);
         const totalIncomes = cashMovementsToday.filter((m) => m.type === 'ingreso').reduce((sum, movement) => sum + (Number(movement.amount) || 0), 0);
 
-        const paymentMethods = await db.payment_methods.toArray();
         const totalsByMethod = {};
         salesToday.forEach((sale) => {
             if (Array.isArray(sale.payment_breakdown) && sale.payment_breakdown.length > 0) {
@@ -347,50 +420,6 @@ const Sucursales = () => {
         }
     };
 
-    // Load branch name from DB
-    useEffect(() => {
-        const loadName = async () => {
-            const setting = await db.settings.get('branch_profile');
-            const branchCodeSetting = await db.settings.get('branch_code');
-            if (setting) {
-                const profile = JSON.parse(setting.value);
-                const normalizedProfile = {
-                    code: normalizeBranchCode(profile.code || branchCodeSetting?.value || 1),
-                    name: profile.name || 'Casa Central',
-                    address: profile.address || '',
-                    locality: profile.locality || '',
-                    phone: profile.phone || '',
-                    responsible: profile.responsible || '',
-                    type: profile.type || 'sucursal'
-                };
-                setBranchProfile(normalizedProfile);
-                setCurrentBranch(normalizedProfile.name);
-            } else {
-                // Fallback for old versions
-                const legacyName = await db.settings.get('branch_name');
-                const fallbackCode = normalizeBranchCode(branchCodeSetting?.value || 1);
-                if (legacyName) {
-                    setBranchProfile(prev => ({ ...prev, code: fallbackCode, name: legacyName.value }));
-                    setCurrentBranch(legacyName.value);
-                } else {
-                    setBranchProfile(prev => ({ ...prev, code: fallbackCode }));
-                }
-            }
-
-            const masterSetting = await db.settings.get('is_master_node');
-            if (masterSetting) setIsMaster(masterSetting.value);
-
-            const branchesSetting = await db.settings.get('registered_branches');
-            if (branchesSetting) {
-                const normalizedBranches = normalizeRegisteredBranches(JSON.parse(branchesSetting.value));
-                setRegisteredBranches(normalizedBranches);
-                await db.settings.put({ key: 'registered_branches', value: JSON.stringify(normalizedBranches) });
-            }
-        };
-        loadName();
-    }, []);
-
-    const stockItems = useLiveQuery(() => db.stock.toArray());
     const filteredStock = stockItems?.filter(i =>
         i.name.toLowerCase().includes(searchTerm.toLowerCase()) && i.quantity > 0
     ) || [];
@@ -432,16 +461,13 @@ const Sucursales = () => {
                 const summary = summarizeSnapshotStock(stock);
                 const importedSummary = data?.summary || {};
 
-                const existing = await db.branch_stock_snapshots
-                    .where('branch_code')
-                    .equals(branchCode)
-                    .toArray();
+                const existing = branchSnapshots.filter((item) => item.branch_code === branchCode);
 
                 if (existing.length) {
-                    await db.branch_stock_snapshots.bulkDelete(existing.map((item) => item.id));
+                    await Promise.all(existing.map((item) => saveTableRecord('branch_stock_snapshots', 'delete', null, item.id)));
                 }
 
-                await db.branch_stock_snapshots.add({
+                await saveTableRecord('branch_stock_snapshots', 'insert', {
                     branch_code: branchCode,
                     branch_name: branchName || `Sucursal ${branchCode}`,
                     snapshot_at: snapshotAt,
@@ -463,6 +489,7 @@ const Sucursales = () => {
                 });
             }
 
+            await refreshSucursalesData();
             alert('Stock de sucursales importado correctamente.');
         } catch (error) {
             console.error(error);
@@ -479,7 +506,8 @@ const Sucursales = () => {
             return;
         }
         if (!snapshotIds.length) return;
-        await db.branch_stock_snapshots.bulkDelete(snapshotIds);
+        await Promise.all(snapshotIds.map((snapshotId) => saveTableRecord('branch_stock_snapshots', 'delete', null, snapshotId)));
+        await refreshSucursalesData();
         setBranchFilesModal(null);
     };
 
@@ -553,16 +581,17 @@ const Sucursales = () => {
 
         // Update local stock (discount)
         for (const item of transferItems) {
-            await db.stock.add({
+            await saveTableRecord('stock', 'insert', {
                 name: item.name,
                 type: item.type,
                 quantity: -item.transferQty,
-                updated_at: new Date(),
+                updated_at: new Date().toISOString(),
                 reference: `Envío a sucursal ${destinationBranch}`
             });
         }
 
         setTransferItems([]);
+        await refreshSucursalesData();
     };
 
     const handleImportFile = async (e) => {
@@ -575,14 +604,15 @@ const Sucursales = () => {
                 const data = JSON.parse(event.target.result);
                 if (confirm(`¿Recibir ${data.items.length} items de ${data.origin}?`)) {
                     for (const item of data.items) {
-                        await db.stock.add({
+                        await saveTableRecord('stock', 'insert', {
                             name: item.name,
                             type: item.type,
                             quantity: item.quantity,
-                            updated_at: new Date(),
+                            updated_at: new Date().toISOString(),
                             reference: `Recibido de ${data.origin}`
                         });
                     }
+                    await refreshSucursalesData();
                     alert('✅ Stock actualizado correctamente');
                 }
             } catch {
@@ -1013,16 +1043,16 @@ const Sucursales = () => {
                                     {Array.from(new Set(globalStockData.flatMap(b => b.stock.map(i => i.name)))).sort().map(productName => {
                                         const total = globalStockData.reduce((acc, b) => {
                                             const item = b.stock.find(i => i.name === productName);
-                                            return acc + (item ? item.quantity : 0);
+                                            return acc + (item ? toNumber(item.quantity) : 0);
                                         }, 0);
                                         return (
                                             <tr key={productName}>
                                                 <td><strong>{productName}</strong></td>
                                                 {globalStockData.map((b, idx) => {
                                                     const item = b.stock.find(i => i.name === productName);
-                                                    return <td key={idx}>{item ? `${item.quantity.toFixed(1)} kg` : '-'}</td>;
+                                                    return <td key={idx}>{item ? `${toNumber(item.quantity).toFixed(1)} kg` : '-'}</td>;
                                                 })}
-                                                <td className="total-col"><strong>{total.toFixed(1)} kg</strong></td>
+                                                <td className="total-col"><strong>{toNumber(total).toFixed(1)} kg</strong></td>
                                             </tr>
                                         );
                                     })}
