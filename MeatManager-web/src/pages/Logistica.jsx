@@ -107,6 +107,14 @@ const formatOrderItems = (pedido) => {
     return 'Sin items';
 };
 
+const normalizeOrderForLogistics = (pedido) => ({
+    ...pedido,
+    customer_name: typeof pedido?.customer_name === 'string' ? pedido.customer_name : String(pedido?.customer_name || ''),
+    address: typeof pedido?.address === 'string' ? pedido.address : String(pedido?.address || ''),
+    repartidor: typeof pedido?.repartidor === 'string' ? pedido.repartidor : String(pedido?.repartidor || ''),
+    items_preview: formatOrderItems(pedido),
+});
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -152,7 +160,11 @@ const Logistica = () => {
                     fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
                 ]);
                 if (!cancelled) {
-                    setPedidos((Array.isArray(orderRows) ? orderRows : []).filter((pedido) => pedido.delivery_type === 'delivery'));
+                    setPedidos(
+                        (Array.isArray(orderRows) ? orderRows : [])
+                            .filter((pedido) => pedido.delivery_type === 'delivery')
+                            .map(normalizeOrderForLogistics)
+                    );
                     setClients(Array.isArray(clientRows) ? clientRows : []);
                 }
             } catch (error) {
@@ -191,7 +203,11 @@ const Logistica = () => {
             fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
             fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
         ]);
-        setPedidos((Array.isArray(orderRows) ? orderRows : []).filter((pedido) => pedido.delivery_type === 'delivery'));
+        setPedidos(
+            (Array.isArray(orderRows) ? orderRows : [])
+                .filter((pedido) => pedido.delivery_type === 'delivery')
+                .map(normalizeOrderForLogistics)
+        );
         setClients(Array.isArray(clientRows) ? clientRows : []);
     };
 
@@ -281,7 +297,7 @@ const Logistica = () => {
     };
 
     const handleFocusPedido = (pedido) => {
-        setSelectedPedido(pedido);
+        setSelectedPedido(normalizeOrderForLogistics(pedido));
         const coords = getOrderCoordinates(pedido);
         if (coords) {
             setMapCenter(coords);
@@ -327,6 +343,7 @@ const Logistica = () => {
                         assigned_driver_uid: order?.driver?.firebaseUid || driver.firebaseUid || null,
                         assigned_driver_email: order?.driver?.email || driver.email || null,
                         status: order?.status || 'assigned',
+                        items_preview: formatOrderItems(current),
                     }
                     : current
             ));
@@ -564,7 +581,7 @@ const Logistica = () => {
                                 </div>
 
                                 <div className="items-preview" style={{ whiteSpace: 'pre-line' }}>
-                                    {formatOrderItems(selectedPedido)}
+                                    {selectedPedido.items_preview || formatOrderItems(selectedPedido)}
                                 </div>
                             </div>
                             <div className="overlay-actions">
