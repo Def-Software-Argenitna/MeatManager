@@ -74,7 +74,7 @@ const restoreSession = () => {
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const UserProvider = ({ children }) => {
-    const { tenant, loading: loadingTenant } = useTenant();
+    const { tenant, loading: loadingTenant, authToken } = useTenant();
     const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
@@ -200,6 +200,10 @@ export const UserProvider = ({ children }) => {
                 return;
             }
 
+            if (!authToken) {
+                return;
+            }
+
             setLoadingUser(true);
             try {
                 const result = await login({ uid: tenant.uid, email: tenant.email });
@@ -220,7 +224,7 @@ export const UserProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, [tenant, loadingTenant, login, logout]);
+    }, [tenant, loadingTenant, authToken, login, logout]);
 
     useEffect(() => {
         const tenantEmail = String(tenant?.email || '').trim().toLowerCase();
@@ -231,6 +235,7 @@ export const UserProvider = ({ children }) => {
             tenantEmail === currentEmail &&
             currentUser?.role === 'admin' &&
             hasNoLicenses &&
+            Boolean(authToken) &&
             !loadingUser;
 
         if (!needsRecovery) {
@@ -261,7 +266,7 @@ export const UserProvider = ({ children }) => {
         return () => {
             cancelled = true;
         };
-    }, [accessProfile?.licenses, applyResolvedUser, currentUser?.email, currentUser?.role, loadingUser, resolveRemoteUserProfile, tenant?.email, tenant?.uid]);
+    }, [accessProfile?.licenses, applyResolvedUser, authToken, currentUser?.email, currentUser?.role, loadingUser, resolveRemoteUserProfile, tenant?.email, tenant?.uid]);
 
 
     // Admin always true; employee checks permission list
