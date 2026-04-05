@@ -75,6 +75,38 @@ function ChangeView({ center, zoom }) {
     return null;
 }
 
+const toNumber = (value) => {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const formatOrderItems = (pedido) => {
+    if (!pedido) return 'Sin items';
+
+    if (Array.isArray(pedido.items) && pedido.items.length > 0) {
+        return pedido.items.map((item) => {
+            if (typeof item === 'string') return item;
+            const productName = String(item?.product_name || item?.name || 'Item');
+            const quantity = toNumber(item?.quantity);
+            const unit = String(item?.unit || 'un');
+            const quantityLabel = unit === 'kg'
+                ? `${quantity.toFixed(3)} kg`
+                : `${quantity.toFixed(0)} ${unit}`;
+            return `${productName} · ${quantityLabel}`;
+        }).join('\n');
+    }
+
+    if (typeof pedido.items_text === 'string' && pedido.items_text.trim()) {
+        return pedido.items_text;
+    }
+
+    if (typeof pedido.items === 'string' && pedido.items.trim()) {
+        return pedido.items;
+    }
+
+    return 'Sin items';
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -531,8 +563,8 @@ const Logistica = () => {
                                     </div>
                                 </div>
 
-                                <div className="items-preview">
-                                    {selectedPedido.items}
+                                <div className="items-preview" style={{ whiteSpace: 'pre-line' }}>
+                                    {formatOrderItems(selectedPedido)}
                                 </div>
                             </div>
                             <div className="overlay-actions">
