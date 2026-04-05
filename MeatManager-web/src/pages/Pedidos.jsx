@@ -62,7 +62,15 @@ const Pedidos = () => {
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [selectedSuggestion, setSelectedSuggestion] = useState(null);
 
-    const pedidos = useLiveQuery(() => db.pedidos?.orderBy('created_at').reverse().toArray(), []);
+    const pedidos = useLiveQuery(async () => {
+        const rows = await db.pedidos?.toArray();
+        return (rows || []).sort((a, b) => {
+            const left = new Date(b?.created_at || b?.date || 0).getTime();
+            const right = new Date(a?.created_at || a?.date || 0).getTime();
+            if (left !== right) return left - right;
+            return Number(b?.id || 0) - Number(a?.id || 0);
+        });
+    }, []);
     const stockRows = useLiveQuery(() => db.stock?.toArray(), []);
     const prices = useLiveQuery(() => db.prices?.toArray(), []);
     const clients = useLiveQuery(() => db.clients?.toArray(), []);

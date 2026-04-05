@@ -46,11 +46,11 @@ const Sidebar = ({ isCollapsed }) => {
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
   const [isMasterNode, setIsMasterNode] = useState(false);
-  const [isDespostadaOpen, setDespostadaOpen] = useState(true);
+  const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
-    operacion: true,
-    comercial: true,
-    produccion: true,
+    operacion: false,
+    comercial: false,
+    produccion: false,
     configuracion: false,
   });
 
@@ -92,7 +92,19 @@ const Sidebar = ({ isCollapsed }) => {
 
   const toggleGroup = (groupKey) => {
     if (isCollapsed) return;
-    setOpenGroups((prev) => ({ ...prev, [groupKey]: !prev[groupKey] }));
+    setOpenGroups((prev) => {
+      const nextState = !prev[groupKey];
+      return {
+        operacion: false,
+        comercial: false,
+        produccion: false,
+        configuracion: false,
+        [groupKey]: nextState,
+      };
+    });
+    if (groupKey !== 'produccion') {
+      setDespostadaOpen(false);
+    }
   };
 
   const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
@@ -202,7 +214,16 @@ const Sidebar = ({ isCollapsed }) => {
       <div className="nav-group">
         <button
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
-          onClick={() => !isCollapsed && setDespostadaOpen(!isDespostadaOpen)}
+          onClick={() => {
+            if (isCollapsed) return;
+            setOpenGroups({
+              operacion: false,
+              comercial: false,
+              produccion: true,
+              configuracion: false,
+            });
+            setDespostadaOpen((prev) => !prev);
+          }}
         >
           <Utensils className="nav-icon" title="Despostada" />
           {!isCollapsed && <span style={{ flex: 1 }}>Despostada</span>}
