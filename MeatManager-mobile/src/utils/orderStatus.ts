@@ -31,7 +31,7 @@ export const getOrderStatusColors = (status: DeliveryOrderStatus) => {
     case 'delivered':
       return { text: theme.colors.success, background: theme.colors.successSoft };
     case 'failed':
-      return { text: theme.colors.danger, background: '#ffe2d5' };
+      return { text: theme.colors.danger, background: theme.colors.dangerSoft };
     case 'cancelled':
       return { text: theme.colors.danger, background: theme.colors.dangerSoft };
     case 'pending':

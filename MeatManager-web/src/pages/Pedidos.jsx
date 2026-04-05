@@ -4,6 +4,7 @@ import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle,
 import { BRAND_CONFIG } from '../brandConfig';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
+import { saveTableRecord } from '../utils/apiClient';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -20,6 +21,11 @@ const emptyPedido = () => ({
     city: '',
     zip_code: '',
     address: '',
+    phone: '',
+    payment_status: 'pending_driver_collection',
+    payment_method: '',
+    paid: false,
+    amount_due: '',
     items: [],
 });
 
@@ -134,6 +140,7 @@ const Pedidos = () => {
             city: client.city || '',
             zip_code: client.zip_code || '',
             address: client.address || '',
+            phone: client.phone || client.mobile || client.whatsapp || '',
         })).filter((client) => client.label).sort((a, b) => a.label.localeCompare(b.label))
     ), [clients]);
 
@@ -245,6 +252,7 @@ const Pedidos = () => {
             city: client.city || prev.city,
             zip_code: client.zip_code || prev.zip_code,
             address: client.address || prev.address,
+            phone: client.phone || prev.phone,
         }));
     };
 
@@ -306,25 +314,28 @@ const Pedidos = () => {
             }
         }
 
-        await saveTableRecord('pedidos', 'insert', {
+        await db.pedidos.add({
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
-            customer_name: selectedClient.label,
+            customer_name: newPedido.name.trim(),
             items: newPedido.items,
             items_text: newPedido.items.map((item) => item.label).join('\n'),
-            total: Number(newPedido.total) || Math.round(computedTotal) || 0,
+            total,
             status: 'pending',
             delivery_date: newPedido.date,
             address,
             city: newPedido.city || '',
             zip_code: newPedido.zip_code || '',
             delivery_type: newPedido.delivery_type,
+            payment_status: paymentStatus,
+            payment_method: paid ? (newPedido.payment_method || 'Cobrado previamente') : null,
+            paid,
+            amount_due: amountDue,
             latitude: geocoded?.latitude ?? null,
             longitude: geocoded?.longitude ?? null,
             geocoded_at: geocoded?.geocoded_at ?? null,
             created_at: new Date().toISOString(),
             source: 'manual',
         });
-        await refreshPedidosData();
         resetModal();
     };
 
@@ -446,6 +457,16 @@ const Pedidos = () => {
                                 <div className="delivery-info"><Clock size={14} /><span>Entrega: {pedido.delivery_date}</span></div>
                                 {pedido.address && <div className="delivery-info" style={{ color: 'var(--color-primary)', marginTop: '0.4rem' }}><MapPin size={14} /><span style={{ fontSize: '0.85rem' }}>{pedido.address}</span></div>}
                                 <div className="delivery-info" style={{ marginTop: '0.4rem', opacity: 0.8 }}>{pedido.delivery_type === 'delivery' ? <Truck size={14} /> : <ShoppingBag size={14} />}<span style={{ fontSize: '0.8rem', fontWeight: '500' }}>{pedido.delivery_type === 'delivery' ? 'ENVÍO A DOMICILIO' : 'RETIRO LOCAL'}</span></div>
+                                {pedido.delivery_type === 'delivery' && (
+                                    <div className="delivery-info" style={{ marginTop: '0.4rem', opacity: 0.85 }}>
+                                        <Tag size={14} />
+                                        <span style={{ fontSize: '0.8rem', fontWeight: '500' }}>
+                                            {pedido.paid
+                                                ? `COBRADO${pedido.payment_method ? ` · ${pedido.payment_method}` : ''}`
+                                                : `COBRA REPARTIDOR${pedido.amount_due ? ` · $${Number(pedido.amount_due).toLocaleString()}` : ''}`}
+                                        </span>
+                                    </div>
+                                )}
                             </div>
                         </div>
                         <div className="pedido-footer">
@@ -491,6 +512,10 @@ const Pedidos = () => {
                                             </div>
                                         ) : 'Primero seleccioná un cliente cargado'}
                                     </div>
+                                </div>
+                                <div className="field-group">
+                                    <label>Teléfono</label>
+                                    <input type="text" className="neo-input" placeholder="Teléfono de contacto" value={newPedido.phone} onChange={(e) => setNewPedido((prev) => ({ ...prev, phone: e.target.value }))} />
                                 </div>
                             </div>
 
@@ -574,6 +599,36 @@ const Pedidos = () => {
                                         </div>
                                     </div>
                                     {deliveryAddress && <div className="delivery-address-card__preview"><span>Dirección compuesta:</span><strong>{newPedido.address || deliveryAddress}</strong></div>}
+                                    <div className="pedido-form-grid" style={{ marginTop: '1rem' }}>
+                                        <div className="field-group">
+                                            <label>Condición de cobro</label>
+                                            <select
+                                                className="neo-input"
+                                                value={newPedido.payment_status}
+                                                onChange={(e) => setNewPedido((prev) => ({
+                                                    ...prev,
+                                                    payment_status: e.target.value,
+                                                    paid: e.target.value === 'paid',
+                                                    payment_method: e.target.value === 'paid' ? (prev.payment_method || 'Cobrado previamente') : '',
+                                                    amount_due: e.target.value === 'paid' ? '0' : (prev.amount_due || String(Number(prev.total) || Math.round(computedTotal) || 0)),
+                                                }))}
+                                            >
+                                                <option value="pending_driver_collection">Lo cobra el repartidor</option>
+                                                <option value="paid">Ya está cobrado</option>
+                                            </select>
+                                        </div>
+                                        <div className="field-group">
+                                            <label>Monto a cobrar</label>
+                                            <input
+                                                type="number"
+                                                className="neo-input"
+                                                min="0"
+                                                disabled={newPedido.payment_status === 'paid'}
+                                                value={newPedido.payment_status === 'paid' ? '0' : newPedido.amount_due}
+                                                onChange={(e) => setNewPedido((prev) => ({ ...prev, amount_due: e.target.value }))}
+                                            />
+                                        </div>
+                                    </div>
                                 </div>
                             )}
 

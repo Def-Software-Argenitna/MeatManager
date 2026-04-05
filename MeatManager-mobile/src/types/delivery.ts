@@ -23,6 +23,8 @@ export type DeliveryOrder = {
   payment_status?: string;
   paid?: boolean;
   amount_due?: number;
+  requires_collection?: boolean;
+  delivery_date?: string;
 };
 
 export type DriverLocation = {
