@@ -237,6 +237,28 @@
     color: #ffb15c;
 }
 
+.pedido-selected-client-display {
+    display: flex;
+    align-items: center;
+    min-height: 46px;
+    color: var(--color-text-main);
+}
+
+.pedido-selected-client-meta {
+    display: grid;
+    gap: 0.12rem;
+}
+
+.pedido-selected-client-meta strong {
+    font-size: 0.95rem;
+    color: var(--color-text-main);
+}
+
+.pedido-selected-client-meta span {
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
 .field-group--full {
     grid-column: 1 / -1;
 }

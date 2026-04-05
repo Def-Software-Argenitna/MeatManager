@@ -801,3 +801,57 @@ db.settings.hook('creating', function (_pk, obj) {
 db.settings.hook('updating', function (mods, _pk, obj) {
     syncToMysql('settings', 'upsert', { ...obj, ...mods });
 });
+
+db.version(36).stores({
+    settings: '&key',
+    ventas: '++id, date, customer_name, total, synced',
+    ventas_items: '++id, venta_id, product_name, synced',
+    stock: '++id, name, category, quantity, updated_at, synced',
+    prices: '++id, product_id, price, plu, updated_at',
+    clients: '++id, name, first_name, last_name, phone, address, city, latitude, longitude, geocoded_at, dni_cuit, balance, has_current_account, last_updated, synced',
+    suppliers: '++id, name, cuit, city, province, synced',
+    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
+    categories: '++id, name, parent_id, synced',
+    compras: '++id, supplier_name, invoice_number, total, date, internal_use, synced',
+    compras_items: '++id, compra_id, item_name, quantity, subtotal, iva_rate, iva_amount, net_subtotal, synced',
+    caja_movimientos: '++id, date, type, category, amount, receipt_code, payment_method, authorization_id, authorization_verified, authorized_recipient_email, synced',
+    despostada_logs: '++id, timestamp, type, animal_type, synced',
+    repartidores: '++id, name, vehicle, plate, phone, vtv_expiry, license_expiry, insurance_expiry, status',
+    pedidos: '++id, customer_name, status, delivery_date, delivery_type, latitude, longitude, geocoded_at, assigned_driver_uid, assigned_driver_email, status_updated_at, synced',
+    branches: '++id, name, code, active',
+    cash_closures: '++id, &closure_date, closed_at, report_path',
+    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
+    app_logs: '++id, level, message, details, timestamp, synced',
+    users: '++id, username, role, active',
+});
+
+db.version(37).stores({
+    settings: '&key',
+    ventas: '++id, date, customer_name, total, synced',
+    ventas_items: '++id, venta_id, product_name, synced',
+    stock: '++id, name, category, quantity, updated_at, synced',
+    prices: '++id, product_id, price, plu, updated_at',
+    clients: '++id, name, client_type, company_name, contact_first_name, contact_last_name, first_name, last_name, phone, address, city, latitude, longitude, geocoded_at, dni_cuit, balance, has_current_account, last_updated, synced',
+    suppliers: '++id, name, cuit, city, province, synced',
+    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
+    categories: '++id, name, parent_id, synced',
+    compras: '++id, supplier_name, invoice_number, total, date, internal_use, synced',
+    compras_items: '++id, compra_id, item_name, quantity, subtotal, iva_rate, iva_amount, net_subtotal, synced',
+    caja_movimientos: '++id, date, type, category, amount, receipt_code, payment_method, authorization_id, authorization_verified, authorized_recipient_email, synced',
+    despostada_logs: '++id, timestamp, type, animal_type, synced',
+    repartidores: '++id, name, vehicle, plate, phone, vtv_expiry, license_expiry, insurance_expiry, status',
+    pedidos: '++id, customer_name, status, delivery_date, delivery_type, latitude, longitude, geocoded_at, assigned_driver_uid, assigned_driver_email, status_updated_at, synced',
+    branches: '++id, name, code, active',
+    cash_closures: '++id, &closure_date, closed_at, report_path',
+    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
+    app_logs: '++id, level, message, details, timestamp, synced',
+    users: '++id, username, role, active',
+}).upgrade(async (tx) => {
+    await tx.table('clients').toCollection().modify((client) => {
+        if (client.client_type === undefined) client.client_type = 'person';
+        if (client.company_name === undefined) client.company_name = '';
+        if (client.contact_first_name === undefined) client.contact_first_name = '';
+        if (client.contact_last_name === undefined) client.contact_last_name = '';
+        if (client.dni_cuit === undefined) client.dni_cuit = '';
+    });
+});

@@ -105,6 +105,34 @@
     gap: 0.9rem;
 }
 
+.clients-type-switch {
+    display: inline-grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.35rem;
+    padding: 0.35rem;
+    border-radius: 14px;
+    background: rgba(18, 18, 24, 0.92);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    margin-bottom: 1.1rem;
+}
+
+.clients-type-option {
+    min-width: 120px;
+    border: 1px solid transparent;
+    border-radius: 11px;
+    background: transparent;
+    color: var(--color-text-muted);
+    padding: 0.65rem 1rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.clients-type-option.active {
+    background: rgba(255, 150, 52, 0.14);
+    border-color: rgba(255, 150, 52, 0.35);
+    color: var(--color-text-main);
+}
+
 .clients-address-suggestions {
     margin-top: 0.5rem;
     display: grid;

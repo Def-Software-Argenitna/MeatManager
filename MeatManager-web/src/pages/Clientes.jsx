@@ -10,8 +10,13 @@ const currentMonth = () => {
 };
 
 const emptyClientForm = {
+    client_type: 'person',
     first_name: '',
     last_name: '',
+    company_name: '',
+    contact_first_name: '',
+    contact_last_name: '',
+    dni_cuit: '',
     street: '',
     street_number: '',
     zip_code: '',
@@ -63,8 +68,13 @@ const formatAddress = (client) => {
 
 const hasCurrentAccount = (client) => client?.has_current_account !== false;
 const getBalanceValue = (client) => Number(client?.balance) || 0;
+const isCompanyClient = (client) => cleanValue(client.client_type) === 'company';
 const getClientFullName = (client) =>
-    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name);
+    isCompanyClient(client)
+        ? (cleanValue(client.company_name) || cleanValue(client.name))
+        : ([cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name));
+const getClientContactName = (client) =>
+    [cleanValue(client.contact_first_name), cleanValue(client.contact_last_name)].filter(Boolean).join(' ');
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 const getMovementPaymentMethod = (movement) => {
@@ -298,6 +308,17 @@ const Clientes = () => {
             setSelectedSuggestion(null);
         }
         setNewClient((prev) => {
+            if (field === 'client_type') {
+                return {
+                    ...prev,
+                    client_type: value,
+                    first_name: value === 'company' ? '' : prev.first_name,
+                    last_name: value === 'company' ? '' : prev.last_name,
+                    company_name: value === 'company' ? prev.company_name : '',
+                    contact_first_name: value === 'company' ? prev.contact_first_name : '',
+                    contact_last_name: value === 'company' ? prev.contact_last_name : '',
+                };
+            }
             if (field === 'hasCurrentAccount') {
                 return {
                     ...prev,
@@ -330,9 +351,13 @@ const Clientes = () => {
 
     const handleAddClient = async (e) => {
         e.preventDefault();
-        const firstName = cleanValue(newClient.first_name);
-        const lastName = cleanValue(newClient.last_name);
-        const fullName = [firstName, lastName].filter(Boolean).join(' ');
+        const clientType = cleanValue(newClient.client_type) || 'person';
+        const firstName = clientType === 'company' ? cleanValue(newClient.contact_first_name) : cleanValue(newClient.first_name);
+        const lastName = clientType === 'company' ? cleanValue(newClient.contact_last_name) : cleanValue(newClient.last_name);
+        const companyName = cleanValue(newClient.company_name);
+        const fullName = clientType === 'company'
+            ? companyName
+            : [firstName, lastName].filter(Boolean).join(' ');
         if (!fullName) return;
 
         const phone1 = cleanValue(newClient.phone1);
@@ -356,8 +381,13 @@ const Clientes = () => {
 
         await saveTableRecord('clients', 'insert', {
             name: fullName,
-            first_name: firstName,
-            last_name: lastName,
+            client_type: clientType,
+            first_name: clientType === 'company' ? '' : firstName,
+            last_name: clientType === 'company' ? '' : lastName,
+            company_name: clientType === 'company' ? companyName : '',
+            contact_first_name: clientType === 'company' ? firstName : '',
+            contact_last_name: clientType === 'company' ? lastName : '',
+            dni_cuit: cleanValue(newClient.dni_cuit),
             phone: phone1,
             phones,
             phone1,
@@ -477,6 +507,12 @@ const Clientes = () => {
                                     {clientAddress && (
                                         <div className="client-extra-data">{clientAddress}</div>
                                     )}
+                                    {isCompanyClient(client) && getClientContactName(client) && (
+                                        <div className="client-extra-data">Contacto: {getClientContactName(client)}</div>
+                                    )}
+                                    {cleanValue(client.dni_cuit) && (
+                                        <div className="client-extra-data">DNI / CUIT: {cleanValue(client.dni_cuit)}</div>
+                                    )}
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
                                     </div>
@@ -519,30 +555,108 @@ const Clientes = () => {
                         </div>
 
                         <form onSubmit={handleAddClient}>
-                            <div className="clients-form-group">
-                                <div className="clients-form-grid">
-                                    <div className="clients-form-group">
-                                        <label className="clients-form-label">Nombre</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            className="neo-input"
-                                            value={newClient.first_name}
-                                            onChange={(e) => updateNewClient('first_name', e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="clients-form-group">
-                                        <label className="clients-form-label">Apellido</label>
-                                        <input
-                                            type="text"
-                                            required
-                                            className="neo-input"
-                                            value={newClient.last_name}
-                                            onChange={(e) => updateNewClient('last_name', e.target.value)}
-                                        />
-                                    </div>
-                                </div>
+                            <div className="clients-type-switch">
+                                <button
+                                    type="button"
+                                    className={`clients-type-option ${newClient.client_type === 'person' ? 'active' : ''}`}
+                                    onClick={() => updateNewClient('client_type', 'person')}
+                                >
+                                    Persona
+                                </button>
+                                <button
+                                    type="button"
+                                    className={`clients-type-option ${newClient.client_type === 'company' ? 'active' : ''}`}
+                                    onClick={() => updateNewClient('client_type', 'company')}
+                                >
+                                    Empresa
+                                </button>
                             </div>
+
+                            {newClient.client_type === 'company' ? (
+                                <>
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre de la empresa</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.company_name}
+                                                onChange={(e) => updateNewClient('company_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">CUIT</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                placeholder="Ej: 30712345678"
+                                                value={newClient.dni_cuit}
+                                                onChange={(e) => updateNewClient('dni_cuit', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre del contacto</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                value={newClient.contact_first_name}
+                                                onChange={(e) => updateNewClient('contact_first_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Apellido del contacto</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                value={newClient.contact_last_name}
+                                                onChange={(e) => updateNewClient('contact_last_name', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <>
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Nombre</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.first_name}
+                                                onChange={(e) => updateNewClient('first_name', e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">Apellido</label>
+                                            <input
+                                                type="text"
+                                                required
+                                                className="neo-input"
+                                                value={newClient.last_name}
+                                                onChange={(e) => updateNewClient('last_name', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+
+                                    <div className="clients-form-grid">
+                                        <div className="clients-form-group">
+                                            <label className="clients-form-label">DNI / CUIT</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                placeholder="Ej: 30111222333"
+                                                value={newClient.dni_cuit}
+                                                onChange={(e) => updateNewClient('dni_cuit', e.target.value)}
+                                            />
+                                        </div>
+                                    </div>
+                                </>
+                            )}
 
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
@@ -665,9 +779,11 @@ const Clientes = () => {
                             <div>
                                 <h2 style={{ fontSize: '1.2rem', fontWeight: '800', margin: 0 }}>Historial Cta. Cte.</h2>
                                 <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>{getClientFullName(historyClientData)}</p>
-                                {(formatAddress(historyClientData) || getClientPhones(historyClientData).length > 0 || getClientEmails(historyClientData).length > 0) && (
+                                {(formatAddress(historyClientData) || getClientPhones(historyClientData).length > 0 || getClientEmails(historyClientData).length > 0 || cleanValue(historyClientData?.dni_cuit) || (isCompanyClient(historyClientData) && getClientContactName(historyClientData))) && (
                                     <div style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
                                         {formatAddress(historyClientData) && <div>{formatAddress(historyClientData)}</div>}
+                                        {isCompanyClient(historyClientData) && getClientContactName(historyClientData) && <div>Contacto: {getClientContactName(historyClientData)}</div>}
+                                        {cleanValue(historyClientData?.dni_cuit) && <div>DNI / CUIT: {cleanValue(historyClientData.dni_cuit)}</div>}
                                         {getClientPhones(historyClientData).length > 0 && <div>{getClientPhones(historyClientData).join(' | ')}</div>}
                                         {getClientEmails(historyClientData).length > 0 && <div>{getClientEmails(historyClientData).join(' | ')}</div>}
                                     </div>

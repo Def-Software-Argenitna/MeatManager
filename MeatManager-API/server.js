@@ -813,6 +813,11 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
+            await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
+            await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
+            await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
+            await ensureColumn(conn, 'clients', 'contact_last_name', '`contact_last_name` VARCHAR(120) NULL');
+            await ensureColumn(conn, 'clients', 'dni_cuit', '`dni_cuit` VARCHAR(32) NULL');
             await ensureColumn(conn, 'clients', 'latitude', '`latitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'longitude', '`longitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'geocoded_at', '`geocoded_at` DATETIME NULL');

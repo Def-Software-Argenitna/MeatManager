@@ -14,7 +14,6 @@ const getLocalDateStr = () => {
 
 const emptyPedido = () => ({
     customer_id: '',
-    name: '',
     total: '',
     date: getLocalDateStr(),
     delivery_type: 'pickup',
@@ -30,6 +29,9 @@ const slugify = (value) => String(value || '').trim().toLowerCase().replace(/\s+
 const qtyStep = (unit) => (unit === 'kg' ? '0.001' : '1');
 const qtySuffix = (unit) => (unit === 'kg' ? 'kg' : 'un');
 const qtyLabel = (unit) => (unit === 'kg' ? 'Kilos' : 'Cantidad');
+const cleanValue = (value) => String(value || '').trim();
+const isCompanyClient = (client) => cleanValue(client?.client_type) === 'company';
+const getClientContactName = (client) => [cleanValue(client?.contact_first_name), cleanValue(client?.contact_last_name)].filter(Boolean).join(' ');
 
 const parseOrderItems = (pedido) => {
     if (Array.isArray(pedido?.items)) return pedido.items;
@@ -68,7 +70,12 @@ const Pedidos = () => {
     const clientOptions = useMemo(() => (
         (clients || []).map((client) => ({
             id: client.id,
-            label: [client.first_name, client.last_name].filter(Boolean).join(' ').trim() || client.name || '',
+            label: isCompanyClient(client)
+                ? (client.company_name || client.name || '')
+                : ([client.first_name, client.last_name].filter(Boolean).join(' ').trim() || client.name || ''),
+            client_type: client.client_type || 'person',
+            company_name: client.company_name || '',
+            contact_name: getClientContactName(client),
             street: client.street || '',
             city: client.city || '',
             zip_code: client.zip_code || '',
@@ -97,6 +104,7 @@ const Pedidos = () => {
     }, [stockRows, prices]);
 
     const selectedStockItem = useMemo(() => stockOptions.find((item) => item.key === itemDraft.stockKey) || null, [stockOptions, itemDraft.stockKey]);
+    const selectedClient = useMemo(() => clientOptions.find((client) => String(client.id) === String(newPedido.customer_id)) || null, [clientOptions, newPedido.customer_id]);
     const computedTotal = useMemo(() => newPedido.items.reduce((sum, item) => sum + (Number(item.subtotal) || 0), 0), [newPedido.items]);
     const deliveryAddress = useMemo(() => [newPedido.street, newPedido.city, newPedido.zip_code].map((value) => String(value || '').trim()).filter(Boolean).join(', '), [newPedido.street, newPedido.city, newPedido.zip_code]);
 
@@ -155,13 +163,12 @@ const Pedidos = () => {
     const handleSelectClient = (clientId) => {
         const client = clientOptions.find((entry) => String(entry.id) === String(clientId));
         if (!client) {
-            setNewPedido((prev) => ({ ...prev, customer_id: '', name: '' }));
+            setNewPedido((prev) => ({ ...prev, customer_id: '' }));
             return;
         }
         setNewPedido((prev) => ({
             ...prev,
             customer_id: client.id,
-            name: client.label,
             street: client.street || prev.street,
             city: client.city || prev.city,
             zip_code: client.zip_code || prev.zip_code,
@@ -209,7 +216,7 @@ const Pedidos = () => {
     };
 
     const handleSaveOrder = async () => {
-        if (!newPedido.name.trim() || !newPedido.items.length) return;
+        if (!selectedClient || !newPedido.items.length) return;
         const address = newPedido.delivery_type === 'delivery' ? (newPedido.address || deliveryAddress) : '';
         let geocoded = null;
         if (newPedido.delivery_type === 'delivery' && address) {
@@ -229,7 +236,7 @@ const Pedidos = () => {
 
         await db.pedidos.add({
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
-            customer_name: newPedido.name.trim(),
+            customer_name: selectedClient.label,
             items: newPedido.items,
             items_text: newPedido.items.map((item) => item.label).join('\n'),
             total: Number(newPedido.total) || Math.round(computedTotal) || 0,
@@ -398,8 +405,18 @@ const Pedidos = () => {
                                     </button>
                                 </div>
                                 <div className="field-group">
-                                    <label>Nombre del cliente</label>
-                                    <input type="text" className="neo-input" placeholder="Nombre del cliente" value={newPedido.name} onChange={(e) => setNewPedido((prev) => ({ ...prev, name: e.target.value }))} />
+                                    <label>Cliente seleccionado</label>
+                                    <div className="neo-input pedido-selected-client-display">
+                                        {selectedClient ? (
+                                            <div className="pedido-selected-client-meta">
+                                                <strong>{selectedClient.label}</strong>
+                                                <span>{selectedClient.client_type === 'company' ? 'Empresa' : 'Persona'}</span>
+                                                {selectedClient.client_type === 'company' && selectedClient.contact_name && (
+                                                    <span>Contacto: {selectedClient.contact_name}</span>
+                                                )}
+                                            </div>
+                                        ) : 'Primero seleccioná un cliente cargado'}
+                                    </div>
                                 </div>
                             </div>
 
