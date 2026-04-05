@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
 import { db } from '../db';
 import { BRAND_CONFIG } from '../brandConfig';
@@ -49,6 +50,7 @@ const parseOrderItems = (pedido) => {
 const formatOrderItems = (pedido) => parseOrderItems(pedido).map((item) => item.label || '').filter(Boolean).join('\n');
 
 const Pedidos = () => {
+    const navigate = useNavigate();
     const [filter, setFilter] = useState('pending');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -143,6 +145,11 @@ const Pedidos = () => {
         setItemDraft(emptyDraft());
         setAddressSuggestions([]);
         setSelectedSuggestion(null);
+    };
+
+    const goToClients = () => {
+        resetModal();
+        navigate('/clientes');
     };
 
     const handleSelectClient = (clientId) => {
@@ -386,6 +393,9 @@ const Pedidos = () => {
                                         <option value="">Seleccionar cliente</option>
                                         {clientOptions.map((client) => <option key={client.id} value={client.id}>{client.label}</option>)}
                                     </select>
+                                    <button type="button" className="pedido-inline-link" onClick={goToClients}>
+                                        Si no esta cargado, crear cliente
+                                    </button>
                                 </div>
                                 <div className="field-group">
                                     <label>Nombre del cliente</label>

@@ -221,6 +221,22 @@
     color: var(--color-text-muted);
 }
 
+.pedido-inline-link {
+    margin-top: 0.45rem;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--color-primary);
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-align: left;
+    cursor: pointer;
+}
+
+.pedido-inline-link:hover {
+    color: #ffb15c;
+}
+
 .field-group--full {
     grid-column: 1 / -1;
 }

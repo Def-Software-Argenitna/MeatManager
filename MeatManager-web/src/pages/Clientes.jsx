@@ -1,7 +1,7 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
-import { buildClientAddress, geocodeAddress } from '../utils/geocoding';
+import { buildClientAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -86,6 +86,11 @@ const Clientes = () => {
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
+    const [addressSuggestions, setAddressSuggestions] = useState([]);
+    const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+    const [selectedSuggestion, setSelectedSuggestion] = useState(null);
+
+    const clientAddressPreview = useMemo(() => formatAddress(newClient), [newClient]);
 
     const loadCoreData = async () => {
         const [clientsRows, paymentMethodRows] = await Promise.all([
@@ -252,6 +257,33 @@ const Clientes = () => {
         setExpandedLedgerRowId(null);
     }, [historyMonth]);
 
+    useEffect(() => {
+        const query = buildClientAddress(newClient);
+        if (query.length < 8) {
+            setAddressSuggestions([]);
+            setLoadingSuggestions(false);
+            return;
+        }
+
+        let cancelled = false;
+        const timer = setTimeout(async () => {
+            setLoadingSuggestions(true);
+            try {
+                const suggestions = await searchAddressSuggestions(query);
+                if (!cancelled) setAddressSuggestions(suggestions);
+            } catch {
+                if (!cancelled) setAddressSuggestions([]);
+            } finally {
+                if (!cancelled) setLoadingSuggestions(false);
+            }
+        }, 350);
+
+        return () => {
+            cancelled = true;
+            clearTimeout(timer);
+        };
+    }, [newClient.street, newClient.street_number, newClient.city, newClient.zip_code]);
+
     const openHistory = (client) => {
         if (!hasCurrentAccount(client)) return;
         setHistoryClient(client);
@@ -262,6 +294,9 @@ const Clientes = () => {
     };
 
     const updateNewClient = (field, value) => {
+        if (['street', 'street_number', 'city', 'zip_code'].includes(field)) {
+            setSelectedSuggestion(null);
+        }
         setNewClient((prev) => {
             if (field === 'hasCurrentAccount') {
                 return {
@@ -280,6 +315,17 @@ const Clientes = () => {
             }
             return { ...prev, [field]: value };
         });
+    };
+
+    const selectAddressSuggestion = (suggestion) => {
+        setSelectedSuggestion(suggestion);
+        setNewClient((prev) => ({
+            ...prev,
+            street: suggestion.street || prev.street,
+            city: suggestion.city || prev.city,
+            zip_code: suggestion.zip_code || prev.zip_code,
+        }));
+        setAddressSuggestions([]);
     };
 
     const handleAddClient = async (e) => {
@@ -336,6 +382,8 @@ const Clientes = () => {
 
         setIsModalOpen(false);
         setNewClient(emptyClientForm);
+        setAddressSuggestions([]);
+        setSelectedSuggestion(null);
         await loadCoreData();
     };
 
@@ -500,6 +548,22 @@ const Clientes = () => {
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Calle</label>
                                     <input type="text" className="neo-input" value={newClient.street} onChange={(e) => updateNewClient('street', e.target.value)} />
+                                    {(loadingSuggestions || addressSuggestions.length > 0) && (
+                                        <div className="clients-address-suggestions">
+                                            {loadingSuggestions && <div className="clients-address-suggestion muted">Buscando direcciones...</div>}
+                                            {!loadingSuggestions && addressSuggestions.map((suggestion) => (
+                                                <button
+                                                    key={`${suggestion.label}-${suggestion.latitude}`}
+                                                    type="button"
+                                                    className="clients-address-suggestion"
+                                                    onClick={() => selectAddressSuggestion(suggestion)}
+                                                >
+                                                    <strong>{suggestion.street || suggestion.label}</strong>
+                                                    <span>{[suggestion.city, suggestion.zip_code].filter(Boolean).join(' ')}</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
                                 </div>
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Altura</label>
@@ -514,6 +578,13 @@ const Clientes = () => {
                                     <input type="text" className="neo-input" value={newClient.city} onChange={(e) => updateNewClient('city', e.target.value)} />
                                 </div>
                             </div>
+
+                            {clientAddressPreview && (
+                                <div className="clients-address-preview">
+                                    <span>Direccion compuesta:</span>
+                                    <strong>{selectedSuggestion?.label || clientAddressPreview}</strong>
+                                </div>
+                            )}
 
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
