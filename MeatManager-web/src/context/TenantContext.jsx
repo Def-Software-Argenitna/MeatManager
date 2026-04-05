@@ -37,18 +37,20 @@ export const TenantProvider = ({ children }) => {
                 return;
             }
 
-            const nextTenant = mapFirebaseUserToTenant(user);
-            setTenant(nextTenant);
-            sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
-
             try {
                 const token = await user.getIdToken();
                 if (token) {
                     sessionStorage.setItem(TOKEN_KEY, token);
                 }
+                const nextTenant = mapFirebaseUserToTenant(user);
+                setTenant(nextTenant);
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
                 await bootstrapTenantData();
             } catch (error) {
                 console.error('[TENANT BOOTSTRAP ERROR]', error);
+                const nextTenant = mapFirebaseUserToTenant(user);
+                setTenant(nextTenant);
+                sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
             } finally {
                 setLoading(false);
             }
