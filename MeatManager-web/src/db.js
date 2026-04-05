@@ -540,6 +540,49 @@ db.version(33).stores({
     }
 });
 
+db.version(34).stores({
+    ventas: '++id, date, total, payment_method, payment_method_id, clientId, receipt_number, receipt_code, synced, qendra_ticket_id, source',
+    stock: '++id, name, type, quantity, updated_at, synced',
+    despostada_logs: '++id, type, date, supplier, total_weight, lot_id, synced',
+    payment_methods: '++id, name, type, enabled',
+    prices: '++id, product_id, price, plu, updated_at',
+    clients: '++id, name, first_name, last_name, phone, address, city, balance, has_current_account, last_updated, synced',
+    suppliers: '++id, name, cuit, city, province, synced',
+    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
+    categories: '++id, name, parent_id, synced',
+    animal_lots: '++id, purchase_id, supplier, date, status, synced',
+    compras: '++id, date, supplier, invoice_num, total, synced',
+    pedidos: '++id, customer_id, customer_name, status, delivery_date, created_at, source, sync_cloud',
+    repartidores: '++id, name, vehicle, status, synced',
+    menu_digital: '++id, product_name, category, is_offer, synced',
+    ventas_items: '++id, venta_id, product_name, quantity, price, subtotal, synced',
+    compras_items: '++id, purchase_id, product_name, quantity, weight, unit_price, subtotal, destination, iva_rate, iva_amount, net_subtotal, synced',
+    caja_movimientos: '++id, type, amount, category, description, date, receipt_number, receipt_code, synced',
+    cash_closures: '++id, &closure_date, closed_at, report_path',
+    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
+    app_logs: '++id, level, message, details, timestamp, synced',
+    users: '++id, username, role, active',
+    user_permissions: '++id, user_id, path',
+    branch_stock_snapshots: '++id, branch_code, branch_name, snapshot_at, imported_at',
+    deleted_sales_history: '++id, deleted_at, deleted_by_user_id, sale_id, receipt_code, sale_date, payment_method, clientId',
+    settings: 'key, value'
+}).upgrade(async (tx) => {
+    const inferPurchaseItemIvaRate = (item) => {
+        const species = String(item?.species || '').trim().toLowerCase();
+        const type = String(item?.type || '').trim().toLowerCase();
+        if (type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(species)) {
+            return 10.5;
+        }
+        return 21;
+    };
+
+    await tx.table('purchase_items').toCollection().modify((item) => {
+        if (item.default_iva_rate == null) {
+            item.default_iva_rate = inferPurchaseItemIvaRate(item);
+        }
+    });
+});
+
 // Helper to check sync status
 export const getUnsyncedCount = async () => {
     const tables = ['ventas', 'ventas_items', 'stock', 'clients', 'suppliers', 'compras', 'compras_items', 'despostada_logs', 'caja_movimientos'];

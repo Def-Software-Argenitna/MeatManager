@@ -5,6 +5,43 @@ import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, Ar
 import { useLicense } from '../context/LicenseContext';
 import './Compras.css';
 
+const IVA_OPTIONS = [10.5, 21];
+
+const normalizeLookupValue = (value) => String(value || '').trim().toLowerCase();
+
+const getCategoryNameById = (categories, categoryId) => {
+    if (!categoryId || !categories?.length) return '';
+    return categories.find((category) => category.id === categoryId)?.name || '';
+};
+
+const inferDefaultIvaRate = ({ item, categories }) => {
+    const species = normalizeLookupValue(item?.species);
+    const type = normalizeLookupValue(item?.type);
+    const categoryName = normalizeLookupValue(getCategoryNameById(categories, item?.category_id));
+    const itemName = normalizeLookupValue(item?.name);
+
+    if (Number(item?.default_iva_rate) > 0) {
+        return Number(item.default_iva_rate);
+    }
+
+    if (type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(species)) {
+        return 10.5;
+    }
+
+    if (categoryName.includes('pre') || categoryName.includes('elabor') || itemName.includes('prep') || itemName.includes('milanesa') || itemName.includes('hamburg')) {
+        return 21;
+    }
+
+    return 21;
+};
+
+const calculateIvaAmount = (grossAmount, ivaRate) => {
+    const gross = Number(grossAmount) || 0;
+    const rate = Number(ivaRate) || 0;
+    if (gross <= 0 || rate <= 0) return 0;
+    return gross - (gross / (1 + (rate / 100)));
+};
+
 const getPurchaseBreakdown = (compra) => {
     const items = compra.items_detail || [];
 
@@ -66,6 +103,14 @@ const Compras = () => {
         () => db.payment_methods?.toArray()
     );
 
+    const categories = useLiveQuery(
+        () => db.categories?.toArray()
+    );
+
+    const supplierTaxProfiles = useLiveQuery(
+        () => db.supplier_item_tax_profiles?.toArray()
+    );
+
     // Form state now includes a list of items instead of a text blob
     const getLocalDateStr = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; };
     const [newPurchase, setNewPurchase] = useState({
@@ -88,7 +133,9 @@ const Compras = () => {
         unit: 'kg',
         type: 'directo',
         species: 'vaca',
-        destination: 'venta'
+        destination: 'venta',
+        iva_rate: 10.5,
+        iva_manual: false
     });
 
     const [suggestions, setSuggestions] = useState([]);
@@ -114,8 +161,33 @@ const Compras = () => {
         }
     }, [isMixedPurchase, newPurchase.destination]);
 
+    const getSuggestedIvaRate = (productName, fallbackItem = null) => {
+        const supplierKey = normalizeLookupValue(newPurchase.supplier);
+        const productKey = normalizeLookupValue(productName);
+        const supplierProfile = supplierTaxProfiles?.find((profile) => (
+            normalizeLookupValue(profile.supplier_name) === supplierKey
+            && normalizeLookupValue(profile.product_name) === productKey
+        ));
+
+        if (supplierProfile?.last_iva_rate != null) {
+            return Number(supplierProfile.last_iva_rate);
+        }
+
+        const matchedCatalogItem = fallbackItem || purchaseItems?.find((pi) => normalizeLookupValue(pi.name) === productKey);
+        return inferDefaultIvaRate({ item: matchedCatalogItem, categories });
+    };
+
+    useEffect(() => {
+        if (!currentItem.name || currentItem.iva_manual) return;
+        const suggestedRate = getSuggestedIvaRate(currentItem.name);
+        if (Number(suggestedRate) > 0 && Number(currentItem.iva_rate) !== Number(suggestedRate)) {
+            setCurrentItem((prev) => ({ ...prev, iva_rate: suggestedRate }));
+        }
+    }, [newPurchase.supplier, currentItem.name, currentItem.iva_manual, purchaseItems, supplierTaxProfiles, categories]);
+
     // Helper: Select item from suggestions
     const selectSuggestion = (item) => {
+        const suggestedIvaRate = getSuggestedIvaRate(item.name, item);
         setCurrentItem({
             ...currentItem,
             name: item.name,
@@ -123,7 +195,9 @@ const Compras = () => {
             type: item.type || 'directo', // Track if it goes to despostada
             species: item.species || 'vaca', // NEW: Take species from catalog
             destination: item.usage || 'venta',
-            unit_price: item.last_price || '' // Optional: auto-fill last price
+            unit_price: item.last_price || '', // Optional: auto-fill last price
+            iva_rate: suggestedIvaRate,
+            iva_manual: false
         });
         setShowSuggestions(false);
     };
@@ -141,6 +215,7 @@ const Compras = () => {
         let itemDestination = isMixedPurchase
             ? (currentItem.destination || 'venta')
             : newPurchase.destination;
+        let itemIvaRate = Number(currentItem.iva_rate) || 0;
 
         if (!itemType || itemType === 'directo') {
             const matched = purchaseItems?.find(pi => pi.name.toLowerCase() === currentItem.name.toLowerCase());
@@ -148,7 +223,14 @@ const Compras = () => {
                 itemType = matched.type;
                 itemSpecies = matched.species;
                 itemDestination = isMixedPurchase ? (matched.usage || itemDestination) : newPurchase.destination;
+                if (!currentItem.iva_manual) {
+                    itemIvaRate = getSuggestedIvaRate(currentItem.name, matched);
+                }
             }
+        }
+
+        if (!itemIvaRate) {
+            itemIvaRate = getSuggestedIvaRate(currentItem.name);
         }
 
         // Calculate Subtotal based on unit type
@@ -172,6 +254,7 @@ const Compras = () => {
                 quantity: qty,
                 weight: weight,
                 unit_price: price,
+                iva_rate: itemIvaRate,
                 subtotal: subtotal,
                 id: Date.now()
             }];
@@ -195,7 +278,9 @@ const Compras = () => {
             unit: 'kg',
             type: 'directo',
             species: 'vaca',
-            destination: isMixedPurchase ? currentItem.destination : newPurchase.destination
+            destination: isMixedPurchase ? currentItem.destination : newPurchase.destination,
+            iva_rate: 10.5,
+            iva_manual: false
         });
     };
 
@@ -258,6 +343,9 @@ const Compras = () => {
                 weight: i.weight || 0,
                 unit_price: i.unit_price,
                 subtotal: i.subtotal,
+                iva_rate: Number(i.iva_rate) || 0,
+                iva_amount: calculateIvaAmount(i.subtotal, i.iva_rate),
+                net_subtotal: (Number(i.subtotal) || 0) - calculateIvaAmount(i.subtotal, i.iva_rate),
                 destination: i.destination || 'venta',
                 unit: i.unit
             }));
@@ -270,9 +358,17 @@ const Compras = () => {
                 if (catalogItem && item.unit_price > 0) {
                     await db.purchase_items.update(catalogItem.id, {
                         last_price: item.unit_price,
-                        usage: item.destination || 'venta'
+                        usage: item.destination || 'venta',
+                        default_iva_rate: Number(item.iva_rate) || catalogItem.default_iva_rate || 10.5
                     });
                 }
+
+                await db.supplier_item_tax_profiles.put({
+                    supplier_name: newPurchase.supplier,
+                    product_name: item.name,
+                    last_iva_rate: Number(item.iva_rate) || 0,
+                    updated_at: new Date()
+                });
 
                 // IF FOR DESPOSTADA -> CREATE ANIMAL_LOTS (ONLY IF PRO)
                 // This must happen regardless of sale/internal destination, otherwise
@@ -778,10 +874,10 @@ const Compras = () => {
                                     </div>
 
                                     {/* 4. PRICE (Per Unit or Per KG) */}
-                                    <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>
-                                            {['kg', 'l'].includes(currentItem.unit) ? '$ Precio x Kg' : '$ Precio Unit.'}
-                                        </label>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>
+                                                {['kg', 'l'].includes(currentItem.unit) ? '$ Precio x Kg' : '$ Precio Unit.'}
+                                            </label>
                                         <input
                                             type="number"
                                             placeholder="0.00"
@@ -792,6 +888,20 @@ const Compras = () => {
                                             onChange={(e) => setCurrentItem({ ...currentItem, unit_price: e.target.value })}
                                             onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItemToPurchase(); } }}
                                         />
+                                        </div>
+
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>IVA compra</label>
+                                        <select
+                                            className="neo-input"
+                                            style={{ marginBottom: 0 }}
+                                            value={currentItem.iva_rate}
+                                            onChange={(e) => setCurrentItem({ ...currentItem, iva_rate: parseFloat(e.target.value), iva_manual: true })}
+                                        >
+                                            {IVA_OPTIONS.map((rate) => (
+                                                <option key={rate} value={rate}>{rate}%</option>
+                                            ))}
+                                        </select>
                                     </div>
 
                                     {/* ADD BUTTON */}
@@ -816,6 +926,7 @@ const Compras = () => {
                                             <th style={{ padding: '0.75rem' }}>Cant.</th>
                                             <th style={{ padding: '0.75rem' }}>Peso</th>
                                             <th style={{ padding: '0.75rem' }}>Precio Base</th>
+                                            <th style={{ padding: '0.75rem' }}>IVA</th>
                                             <th style={{ padding: '0.75rem' }}>Subtotal</th>
                                             <th style={{ padding: '0.75rem', width: '40px' }}></th>
                                         </tr>
@@ -823,7 +934,7 @@ const Compras = () => {
                                     <tbody>
                                         {newPurchase.selectedItems.length === 0 ? (
                                             <tr>
-                                                <td colSpan="7" style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                                                <td colSpan="8" style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
                                                     Ingresa los ítems del remito arriba ⬆️
                                                 </td>
                                             </tr>
@@ -857,6 +968,11 @@ const Compras = () => {
                                                     <td style={{ padding: '0.75rem' }}>
                                                         ${item.unit_price} <span style={{ fontSize: '0.8em', color: 'var(--color-text-muted)' }}>/ {['kg', 'l'].includes(item.unit) ? 'kg' : 'un'}</span>
                                                     </td>
+                                                    <td style={{ padding: '0.75rem' }}>
+                                                        <span className="purchase-item-chip">
+                                                            {Number(item.iva_rate || 0).toFixed(1)}%
+                                                        </span>
+                                                    </td>
                                                     <td style={{ padding: '0.75rem', fontWeight: 'bold' }}>
                                                         ${item.subtotal.toLocaleString()}
                                                     </td>
@@ -877,7 +993,7 @@ const Compras = () => {
                                     {newPurchase.selectedItems.length > 0 && (
                                         <tfoot style={{ borderTop: '2px solid var(--color-border)', background: 'var(--color-bg-card)' }}>
                                             <tr>
-                                                <td colSpan="5" style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold' }}>TOTAL CALCULADO:</td>
+                                                <td colSpan="6" style={{ padding: '0.75rem', textAlign: 'right', fontWeight: 'bold' }}>TOTAL CALCULADO:</td>
                                                 <td colSpan="2" style={{ padding: '0.75rem', fontWeight: 'bold', fontSize: '1.1rem', color: 'var(--color-primary)' }}>
                                                     ${newPurchase.total.toLocaleString()}
                                                 </td>
