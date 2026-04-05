@@ -107,6 +107,31 @@ const formatOrderItems = (pedido) => {
     return 'Sin items';
 };
 
+const formatDriverLastSeen = (value) => {
+    if (!value) return 'Sin dato';
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return 'Sin dato';
+    return parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const getOrderPaymentLabel = (pedido) => {
+    const paymentMethod = String(pedido?.payment_method || pedido?.paymentMethod || '').trim();
+    return paymentMethod || 'Sin informar';
+};
+
+const getOrderPaidLabel = (pedido) => {
+    if (pedido?.paid === true || pedido?.is_paid === true || pedido?.payment_status === 'paid') return 'Sí';
+    if (pedido?.paid === false || pedido?.is_paid === false || pedido?.payment_status === 'pending') return 'No';
+    return 'Pendiente';
+};
+
+const escapeHtml = (value) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+
 const normalizeOrderForLogistics = (pedido) => ({
     ...pedido,
     customer_name: typeof pedido?.customer_name === 'string' ? pedido.customer_name : String(pedido?.customer_name || ''),
@@ -394,6 +419,48 @@ const Logistica = () => {
         alert('Link del Portal de Repartidores copiado! Envialo por WhatsApp.');
     };
 
+    const printOrderTicket = (pedido) => {
+        const printWindow = window.open('', '_blank', 'width=360,height=640');
+        if (!printWindow) return;
+
+        const createdAt = pedido?.created_at ? new Date(pedido.created_at) : new Date();
+        const dateLabel = Number.isNaN(createdAt.getTime())
+            ? 'Sin fecha'
+            : createdAt.toLocaleString('es-AR');
+
+        const itemsText = formatOrderItems(pedido)
+            .split('\n')
+            .filter(Boolean)
+            .map((line) => `• ${escapeHtml(line)}`)
+            .join('<br/>');
+
+        printWindow.document.write(`
+            <html>
+                <head>
+                    <title>Pedido #${escapeHtml(pedido?.id)}</title>
+                </head>
+                <body style="font-family: Arial, sans-serif; padding: 16px; color: #111827;">
+                    <h2 style="margin: 0 0 12px;">Pedido #${escapeHtml(pedido?.id)}</h2>
+                    <p style="margin: 0 0 6px;"><strong>Cliente:</strong> ${escapeHtml(pedido?.customer_name)}</p>
+                    <p style="margin: 0 0 6px;"><strong>Fecha:</strong> ${escapeHtml(dateLabel)}</p>
+                    <p style="margin: 0 0 6px;"><strong>Dirección:</strong> ${escapeHtml(pedido?.address || 'Sin dirección')}</p>
+                    <p style="margin: 0 0 12px;"><strong>Estado:</strong> ${escapeHtml(getStatusLabel(pedido?.status))}</p>
+                    <p style="margin: 0 0 6px;"><strong>Medio de pago:</strong> ${escapeHtml(getOrderPaymentLabel(pedido))}</p>
+                    <p style="margin: 0 0 12px;"><strong>Cobrado:</strong> ${escapeHtml(getOrderPaidLabel(pedido))}</p>
+                    <div style="border-top: 1px solid #d1d5db; padding-top: 12px;">
+                        <strong>Items</strong><br/>
+                        <div style="margin-top: 8px; line-height: 1.5;">${itemsText || 'Sin items'}</div>
+                    </div>
+                </body>
+            </html>
+        `);
+        printWindow.document.close();
+        setTimeout(() => {
+            printWindow.print();
+            printWindow.close();
+        }, 300);
+    };
+
     return (
         <div className="logistica-container animate-fade-in">
             <header className="page-header">
@@ -496,7 +563,7 @@ const Logistica = () => {
                             <Marker key={loc.firebaseUid || loc.email || loc.repartidor} position={[loc.lat, loc.lng]} icon={truckIcon}>
                                 <Popup>
                                     <strong>Repartidor: {loc.repartidor}</strong><br />
-                                    Última vez: {new Date(loc.time).toLocaleTimeString()}
+                                    Última vez: {formatDriverLastSeen(loc.time || loc.updatedAt || loc.timestamp)}
                                 </Popup>
                             </Marker>
                         ))}
@@ -524,7 +591,10 @@ const Logistica = () => {
                                                 }}>
                                                     <Navigation2 size={14} /> GPS
                                                 </button>
-                                                <button className="popup-btn" style={{ background: '#f1f5f9', color: '#334155' }}>
+                                                <button className="popup-btn" style={{ background: '#f1f5f9', color: '#334155' }} onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    printOrderTicket(p);
+                                                }}>
                                                     <Printer size={14} /> Ticket
                                                 </button>
                                             </div>
