@@ -1,11 +1,11 @@
 .top-bar {
-    height: 70px;
+    height: 52px;
     background-color: var(--color-bg-card);
     border-bottom: 1px solid var(--color-border);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 2rem;
+    padding: 0 1rem;
     z-index: 1000;
     backdrop-filter: blur(10px);
 }
@@ -22,13 +22,13 @@
     border: none;
     color: var(--color-text-muted);
     cursor: pointer;
-    padding: 10px;
-    border-radius: 10px;
+    padding: 8px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     transition: all 0.2s;
-    margin-right: 1rem;
+    margin-right: 0.5rem;
 }
 
 .sidebar-toggle:hover {
@@ -56,13 +56,14 @@
 }
 
 .logo-main {
-    font-size: 1.15rem;
+    font-size: 0.95rem;
     font-weight: 950;
     margin: 0;
     color: var(--color-text-main);
-    letter-spacing: 0.15rem;
+    letter-spacing: 0.08rem;
     text-transform: uppercase;
     text-shadow: 0 0 10px rgba(255,255,255,0.1);
+    line-height: 1;
 }
 
 .logo-sub {
@@ -75,11 +76,12 @@
 
 @media (max-width: 768px) {
     .top-bar {
-        padding: 0 1rem;
+        height: 48px;
+        padding: 0 0.75rem;
     }
 
     .logo-main {
-        font-size: 0.9rem;
-        letter-spacing: 0.05rem;
+        font-size: 0.82rem;
+        letter-spacing: 0.04rem;
     }
 }
