@@ -11,6 +11,8 @@ on:
 jobs:
   publish-update:
     runs-on: ubuntu-latest
+    env:
+      EXPO_PUBLIC_API_URL: https://meatmanager.demo.def-software.com
 
     defaults:
       run:
