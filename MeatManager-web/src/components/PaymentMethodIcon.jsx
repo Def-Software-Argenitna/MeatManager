@@ -1,4 +1,6 @@
 import React from 'react';
+import mercadoPagoLogo from '../assets/mercado-pago.svg';
+import cuentaDniLogo from '../assets/cuenta-dni.svg';
 
 const BRAND_MAP = {
     cash: { label: '$', bg: '#166534', color: '#ffffff' },
@@ -21,6 +23,11 @@ const BRAND_MAP = {
     ethereum: { label: 'ETH', bg: '#475569', color: '#ffffff' },
     usdt: { label: 'USDT', bg: '#059669', color: '#ffffff' },
     dai: { label: 'DAI', bg: '#eab308', color: '#111827' },
+};
+
+const LOGO_MAP = {
+    mercado_pago: mercadoPagoLogo,
+    cuenta_dni: cuentaDniLogo,
 };
 
 function getBrandKey(method = {}) {
@@ -58,7 +65,27 @@ function getBrandKey(method = {}) {
 const PaymentMethodIcon = ({ method, size = 42, compact = false }) => {
     const key = getBrandKey(method);
     const brand = BRAND_MAP[key] || BRAND_MAP.cash;
+    const logoSrc = LOGO_MAP[key] || null;
     const fontSize = compact ? Math.max(10, Math.round(size * 0.26)) : Math.max(11, Math.round(size * 0.24));
+
+    if (logoSrc) {
+        return (
+            <img
+                src={logoSrc}
+                alt={method?.name || brand.label}
+                title={method?.name || brand.label}
+                style={{
+                    width: size,
+                    height: size,
+                    minWidth: size,
+                    objectFit: 'contain',
+                    borderRadius: compact ? 10 : 12,
+                    boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.12)',
+                    background: 'transparent',
+                }}
+            />
+        );
+    }
 
     return (
         <div

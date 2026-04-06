@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { Settings, CreditCard, Wallet, DollarSign, TrendingUp, TrendingDown, Save, ChevronDown, Trash2 } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, initializePaymentMethods } from '../db';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
-import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './ConfiguracionPagos.css';
 
+// Initialize payment methods once when module loads
+initializePaymentMethods();
 const ALLOWED_PAYMENT_METHODS = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia', 'Cuenta Corriente'];
 const DEFAULT_PAYMENT_METHODS = [
     { name: 'Posnet', type: 'card', percentage: 0, enabled: true, icon: '💳', bank: 'posnet' },
@@ -18,23 +21,15 @@ const ConfiguracionPagos = () => {
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
     const [collapsedGroups, setCollapsedGroups] = useState({});
-    const [paymentMethods, setPaymentMethods] = useState([]);
 
-    const loadPaymentMethods = React.useCallback(async () => {
-        let methods = await fetchTable('payment_methods');
-        methods = (Array.isArray(methods) ? methods : []).filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name));
-
-        if (methods.length === 0) {
-            await Promise.all(DEFAULT_PAYMENT_METHODS.map((method) => saveTableRecord('payment_methods', 'insert', method)));
-            methods = await fetchTable('payment_methods');
-        }
-
-        setPaymentMethods((Array.isArray(methods) ? methods : []).filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name)));
-    }, []);
-
-    React.useEffect(() => {
-        loadPaymentMethods().catch((error) => console.error('Error cargando medios de pago:', error));
-    }, [loadPaymentMethods]);
+    // Load payment methods
+    const paymentMethods = useLiveQuery(
+        async () => {
+            const methods = await db.payment_methods.toArray();
+            return methods.filter((method) => ALLOWED_PAYMENT_METHODS.includes(method.name));
+        },
+        []
+    );
 
     const handleEdit = (method) => {
         setEditingId(method.id);
@@ -42,19 +37,17 @@ const ConfiguracionPagos = () => {
     };
 
     const handleSave = async (id) => {
-        await saveTableRecord('payment_methods', 'update', {
+        await db.payment_methods.update(id, {
             percentage: parseFloat(editValue)
-        }, id);
-        await loadPaymentMethods();
+        });
         setEditingId(null);
         setEditValue('');
     };
 
     const handleToggle = async (id, currentState) => {
-        await saveTableRecord('payment_methods', 'update', {
+        await db.payment_methods.update(id, {
             enabled: !currentState
-        }, id);
-        await loadPaymentMethods();
+        });
     };
 
     const toggleGroup = (type) => {
@@ -66,9 +59,8 @@ const ConfiguracionPagos = () => {
 
     const handleResetPayments = async () => {
         if (confirm('¿Estás seguro? Esto eliminará todos los métodos de pago y los reiniciará.')) {
-            await Promise.all(paymentMethods.map((method) => saveTableRecord('payment_methods', 'delete', null, method.id)));
-            await Promise.all(DEFAULT_PAYMENT_METHODS.map((method) => saveTableRecord('payment_methods', 'insert', method)));
-            await loadPaymentMethods();
+            await db.payment_methods.clear();
+            await db.payment_methods.bulkAdd(DEFAULT_PAYMENT_METHODS);
             alert('✅ Métodos de pago reiniciados correctamente');
         }
     };
@@ -94,8 +86,8 @@ const ConfiguracionPagos = () => {
 
     return (
         <div className="config-pagos-container animate-fade-in">
-            <header className="page-header">
-                <div className="page-header-main">
+            <header className="page-header config-pagos-header">
+                <div className="config-pagos-header-main">
                     <h1 className="page-title">
                         <Settings size={32} />
                         Configuración de Métodos de Pago
@@ -104,7 +96,6 @@ const ConfiguracionPagos = () => {
                         Gestiona los recargos y descuentos para cada método de pago
                     </p>
                 </div>
-                <div className="page-header-actions">
                 <button
                     className="reset-btn"
                     onClick={handleResetPayments}
@@ -113,7 +104,6 @@ const ConfiguracionPagos = () => {
                     <Trash2 size={18} />
                     Reiniciar Métodos
                 </button>
-                </div>
             </header>
 
             <div className="info-banner">

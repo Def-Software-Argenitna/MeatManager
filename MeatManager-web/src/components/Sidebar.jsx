@@ -273,14 +273,18 @@ const Sidebar = ({ isCollapsed }) => {
 
   return (
     <div className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
-      <div className="sidebar-header" style={{ borderBottom: (isPro || isMasterNode) ? "1.5px solid gold" : "1px solid var(--glass-border)", paddingBottom: "1.25rem", marginBottom: "1rem" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: "0.8rem" }}>
-           {(isPro || isMasterNode) ? <Crown className="logo-icon" style={{ color: "gold" }} /> : <Beef className="logo-icon" />}
-           {!isCollapsed && <span className="brand-name" style={{ fontSize: "1.2rem", fontWeight: 950, letterSpacing: "-0.02em", background: "linear-gradient(to bottom, #fff, #999)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent" }}>MeatManager</span>}
+      <div className={`sidebar-header ${(isPro || isMasterNode) ? 'premium' : ''}`}>
+        <div className="sidebar-brand-row">
+          {(isPro || isMasterNode) ? <Crown className="logo-icon premium-icon" /> : <Beef className="logo-icon" />}
+          {!isCollapsed && (
+            <div className="sidebar-brand-copy">
+              <span className="brand-name">MeatManager</span>
+              {(isPro || isMasterNode) && (
+                <span className="brand-badge">{isMasterNode ? 'Control Center' : 'Premium Pro'}</span>
+              )}
+            </div>
+          )}
         </div>
-        {!isCollapsed && (isPro || isMasterNode) && (
-          <span style={{ display: "block", marginTop: "0.4rem", color: "gold", fontSize: "0.6rem", fontWeight: 950, textTransform: "uppercase", letterSpacing: "0.15rem", opacity: 0.8 }}>{isMasterNode ? "CONTROL CENTER" : "PREMIUM PRO"}</span>
-        )}
       </div>
 
       <nav className="sidebar-nav">

@@ -1,106 +1,63 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db, formatReceiptCode } from '../db';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { useUser } from '../context/UserContext';
-import { fetchTable } from '../utils/apiClient';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
-
-const toNumber = (value) => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : 0;
-};
-
-const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
-    `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 
 const Dashboard = () => {
     const navigate = useNavigate();
     const { currentUser } = useUser();
     const isAdmin = currentUser?.role === 'admin';
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
-    const [ventasDia, setVentasDia] = useState([]);
-    const [allVentas, setAllVentas] = useState([]);
-    const [comprasMes, setComprasMes] = useState([]);
-    const [stockItems, setStockItems] = useState([]);
-    const [clients, setClients] = useState([]);
-    const [proLogs, setProLogs] = useState([]);
-    const [branchSnapshots, setBranchSnapshots] = useState([]);
 
-    useEffect(() => {
+    // Queries
+    const ventasDia = useLiveQuery(() => {
         const start = new Date();
         start.setHours(0, 0, 0, 0);
         const end = new Date();
         end.setHours(23, 59, 59, 999);
+        return db.ventas.where('date').between(start, end).toArray();
+    });
 
-        const monthStart = new Date();
-        monthStart.setDate(1);
-        monthStart.setHours(0, 0, 0, 0);
+    const allVentas = useLiveQuery(async () => {
+        const sales = await db.ventas.orderBy('date').reverse().limit(5).toArray();
+        return Promise.all(sales.map(async v => {
+            if (v.items) return v;
+            const items = await db.ventas_items.where('venta_id').equals(v.id).toArray();
+            return { ...v, items };
+        }));
+    });
 
-        let cancelled = false;
+    // Generate local date string for Compras filtering (YYYY-MM-DD)
+    const _sm = new Date();
+    _sm.setDate(1);
+    const dateStr = `${_sm.getFullYear()}-${String(_sm.getMonth() + 1).padStart(2, '0')}-01`;
 
-        const loadDashboard = async () => {
-            try {
-                const [ventasRows, ventasItemsRows, comprasRows, stockRows, clientRows, logRows, snapshotRows] = await Promise.all([
-                    fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
-                    fetchTable('ventas_items', { limit: 10000, orderBy: 'id', direction: 'DESC' }),
-                    fetchTable('compras', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
-                    fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
-                    fetchTable('clients', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
-                    fetchTable('despostada_logs', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
-                    fetchTable('branch_stock_snapshots', { limit: 5000, orderBy: 'snapshot_at', direction: 'DESC' }),
-                ]);
+    const comprasMes = useLiveQuery(
+        () => db.compras.where('date').aboveOrEqual(dateStr).toArray(),
+        [dateStr]
+    );
 
-                if (cancelled) return;
+    const stockItems = useLiveQuery(
+        () => db.stock.toArray()
+    );
 
-                const salesList = Array.isArray(ventasRows) ? ventasRows : [];
-                const saleItems = Array.isArray(ventasItemsRows) ? ventasItemsRows : [];
-                const itemsBySaleId = new Map();
-                saleItems.forEach((item) => {
-                    const key = Number(item.venta_id);
-                    const list = itemsBySaleId.get(key) || [];
-                    list.push(item);
-                    itemsBySaleId.set(key, list);
-                });
+    const clients = useLiveQuery(
+        () => db.clients.toArray()
+    );
 
-                setVentasDia(salesList.filter((sale) => {
-                    const saleDate = new Date(sale.date);
-                    return saleDate >= start && saleDate <= end;
-                }));
-                setAllVentas(
-                    salesList
-                        .slice()
-                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
-                        .slice(0, 5)
-                        .map((sale) => ({
-                            ...sale,
-                            items: sale.items || itemsBySaleId.get(Number(sale.id)) || [],
-                        }))
-                );
-                setComprasMes((Array.isArray(comprasRows) ? comprasRows : []).filter((compra) => new Date(compra.date) >= monthStart));
-                setStockItems(Array.isArray(stockRows) ? stockRows : []);
-                setClients(Array.isArray(clientRows) ? clientRows : []);
-                setProLogs(Array.isArray(logRows) ? logRows : []);
-                setBranchSnapshots(Array.isArray(snapshotRows) ? snapshotRows : []);
-            } catch (error) {
-                if (!cancelled) {
-                    console.error('[DASHBOARD] No se pudieron cargar métricas desde la API', error);
-                    setVentasDia([]);
-                    setAllVentas([]);
-                    setComprasMes([]);
-                    setStockItems([]);
-                    setClients([]);
-                    setProLogs([]);
-                    setBranchSnapshots([]);
-                }
-            }
-        };
+    const proLogs = useLiveQuery(
+        () => db.despostada_logs.toArray()
+    );
 
-        loadDashboard();
-        return () => {
-            cancelled = true;
-        };
-    }, []);
+    const branchSnapshots = useLiveQuery(
+        () => db.branch_stock_snapshots?.orderBy('snapshot_at').reverse().toArray() || [],
+        [],
+        []
+    );
 
     const { hasModule } = useLicense();
 
@@ -110,19 +67,18 @@ const Dashboard = () => {
     const totalComprasMes = comprasMes?.reduce((acc, c) => acc + (parseFloat(c.total) || 0), 0) || 0;
 
     const totalStockKg = stockItems?.reduce((acc, item) => {
-        return item.unit === 'kg' ? acc + toNumber(item.quantity) : acc;
+        return item.unit === 'kg' ? acc + item.quantity : acc;
     }, 0) || 0;
 
     const lowStockCount = stockItems?.filter(item => item.quantity < 10).length || 0; // Warning threshold < 10
 
     // Calculate Total Debts (Negative balances)
     const totalDeudaCalle = clients?.reduce((acc, client) => {
-        const balance = toNumber(client.balance);
-        return balance < 0 ? acc + Math.abs(balance) : acc;
+        return client.balance < 0 ? acc + Math.abs(client.balance) : acc;
     }, 0) || 0;
 
     const avgYield = proLogs?.length > 0
-        ? (proLogs.reduce((acc, log) => acc + toNumber(log.yield_percentage), 0) / proLogs.length).toFixed(1)
+        ? (proLogs.reduce((acc, log) => acc + log.yield_percentage, 0) / proLogs.length).toFixed(1)
         : 0;
 
     const filteredBranchSnapshots = (branchSnapshots || []).filter((snapshot) => selectedRemoteBranch === 'all' || snapshot.branch_code === selectedRemoteBranch);
@@ -169,7 +125,7 @@ const Dashboard = () => {
                 />
                 <StatCard
                     title="Stock Kilos"
-                    value={`${toNumber(totalStockKg).toFixed(1)} kg`}
+                    value={`${totalStockKg.toFixed(1)} kg`}
                     icon={TrendingUp}
                     trend="Total Carne"
                 />
@@ -196,7 +152,7 @@ const Dashboard = () => {
                         title="Sucursales Remotas"
                         value={`${remoteBranchCount}`}
                         icon={BarChart3}
-                        trend={`${toNumber(remoteTotalKg).toFixed(1)} kg informados`}
+                        trend={`${remoteTotalKg.toFixed(1)} kg informados`}
                         isWarning={remoteLowStock > 0}
                     />
                 )}
@@ -379,7 +335,7 @@ const Dashboard = () => {
                                         {(snapshot.stock || []).slice(0, 5).map((item, idx) => (
                                             <div key={`${snapshot.id}-${idx}`} style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.88rem' }}>
                                                 <span style={{ color: 'var(--color-text-main)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                                <span style={{ color: toNumber(item.quantity) < 10 ? '#f59e0b' : 'var(--color-text-muted)', fontWeight: 600 }}>{toNumber(item.quantity).toFixed(1)} kg</span>
+                                                <span style={{ color: Number(item.quantity) < 10 ? '#f59e0b' : 'var(--color-text-muted)', fontWeight: 600 }}>{Number(item.quantity || 0).toFixed(1)} kg</span>
                                             </div>
                                         ))}
                                         {(snapshot.stock || []).length > 5 && (

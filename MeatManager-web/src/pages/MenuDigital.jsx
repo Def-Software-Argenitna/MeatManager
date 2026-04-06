@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db';
 import {
     LayoutGrid,
     Plus,
@@ -15,10 +17,9 @@ import {
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { BRAND_CONFIG } from '../brandConfig';
-import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import './MenuDigital.css';
 
-const toNumber = (value) => Number(value) || 0;
+const formatFullPrice = (value) => `$${Number(value || 0).toLocaleString('es-AR')} /kg`;
 
 const MenuDigital = () => {
     const navigate = useNavigate();
@@ -27,42 +28,20 @@ const MenuDigital = () => {
     const [copiedBot, setCopiedBot] = useState(false);
     const [copiedPortal, setCopiedPortal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [menuItems, setMenuItems] = useState([]);
-    const [catalogItems, setCatalogItems] = useState([]);
-    const [stockItems, setStockItems] = useState([]);
-    const [shopName, setShopName] = useState('Nuestra Carnicería');
-    const [whatsappNumber, setWhatsappNumber] = useState('');
-    const [shopAddress, setShopAddress] = useState('');
 
     const { hasModule, supportNumber, installationId } = useLicense();
     const hasMenuDigital = hasModule('menu-digital');
 
-    const loadMenuData = React.useCallback(async () => {
-        const [menuRows, catalogRows, stockRows, remoteShopName, remoteWhatsapp, remoteAddress] = await Promise.all([
-            fetchTable('menu_digital'),
-            fetchTable('purchase_items'),
-            fetchTable('stock'),
-            getRemoteSetting('shop_name'),
-            getRemoteSetting('whatsapp_number'),
-            getRemoteSetting('shop_address'),
-        ]);
-        setMenuItems(Array.isArray(menuRows) ? menuRows : []);
-        setCatalogItems(Array.isArray(catalogRows) ? catalogRows : []);
-        setStockItems(Array.isArray(stockRows) ? stockRows : []);
-        setShopName(remoteShopName || 'Nuestra Carnicería');
-        setWhatsappNumber(remoteWhatsapp || '');
-        setShopAddress(remoteAddress || '');
-    }, []);
+    const menuItems = useLiveQuery(() => db.menu_digital.toArray());
+    const catalogItems = useLiveQuery(() => db.purchase_items.toArray());
+    const stockItems = useLiveQuery(() => db.stock.toArray());
+    const settingsArr = useLiveQuery(() => db.settings.toArray());
 
-    React.useEffect(() => {
-        loadMenuData().catch((error) => console.error('Error cargando menú digital:', error));
-    }, [loadMenuData]);
+    const shopName = settingsArr?.find(s => s.key === 'shop_name')?.value || 'Nuestra Carnicería';
+    const whatsappNumber = settingsArr?.find(s => s.key === 'whatsapp_number')?.value || '';
 
     const updateSetting = async (key, value) => {
-        await upsertRemoteSetting(key, value);
-        if (key === 'shop_name') setShopName(value);
-        if (key === 'whatsapp_number') setWhatsappNumber(value);
-        if (key === 'shop_address') setShopAddress(value);
+        await db.settings.put({ key, value });
     };
 
     const getStockForItem = (name) => {
@@ -70,29 +49,25 @@ const MenuDigital = () => {
     };
 
     const addToMenu = async (item) => {
-        await saveTableRecord('menu_digital', 'insert', {
+        await db.menu_digital.add({
             product_name: item.name,
             price: item.last_price || 0,
             category: 'General',
             is_offer: false
         });
-        await loadMenuData();
         setIsAdding(false);
     };
 
     const removeFromMenu = async (id) => {
-        await saveTableRecord('menu_digital', 'delete', null, id);
-        await loadMenuData();
+        await db.menu_digital.delete(id);
     };
 
     const toggleOffer = async (item) => {
-        await saveTableRecord('menu_digital', 'update', { is_offer: !item.is_offer }, item.id);
-        await loadMenuData();
+        await db.menu_digital.update(item.id, { is_offer: !item.is_offer });
     };
 
     const updatePrice = async (id, newPrice) => {
-        await saveTableRecord('menu_digital', 'update', { price: parseFloat(newPrice) || 0 }, id);
-        await loadMenuData();
+        await db.menu_digital.update(id, { price: parseFloat(newPrice) || 0 });
     };
 
     const generateCatalogLink = () => {
@@ -104,7 +79,7 @@ const MenuDigital = () => {
         text += `*PRODUCTOS DISPONIBLES:*\n`;
 
         availableItems.forEach((item, index) => {
-            text += `${index + 1}. ${item.product_name} -> *$${toNumber(item.price).toLocaleString()}/kg* ${item.is_offer ? '🔥' : ''}\n`;
+            text += `${index + 1}. ${item.product_name} -> *$${item.price.toLocaleString()}/kg* ${item.is_offer ? '🔥' : ''}\n`;
         });
 
         text += `\n--- \n`;
@@ -159,7 +134,7 @@ const MenuDigital = () => {
                         type="text"
                         className="blank-input"
                         placeholder="Ej: Av. Rivadavia 1234, CABA"
-                        value={shopAddress}
+                        value={settingsArr?.find(s => s.key === 'shop_address')?.value || ''}
                         onChange={(e) => updateSetting('shop_address', e.target.value)}
                         style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
                     />
@@ -181,8 +156,8 @@ const MenuDigital = () => {
             </div>
 
             {hasMenuDigital ? (
-                <div className="bot-config-area animate-fade-in" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
-                    <div className="neo-card" style={{ padding: '1.25rem', borderLeft: '4px solid #25D366' }}>
+                <div className="bot-config-area animate-fade-in">
+                    <div className="neo-card bot-card bot-card-whatsapp">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                             <MessageCircle size={20} color="#25D366" />
                             <h3 style={{ margin: 0 }}>Mensaje del "Bot" (Auto-respuesta) <span className="pro-badge-small">PRO</span></h3>
@@ -190,11 +165,10 @@ const MenuDigital = () => {
                         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
                             Copiá este mensaje y pegalo en tu aplicación de "Respuesta Automática" de WhatsApp:
                         </p>
-                        <div className="code-box" style={{ background: '#f1f5f9', padding: '1rem', borderRadius: '8px', fontSize: '0.9rem', whiteSpace: 'pre-wrap', position: 'relative' }}>
+                        <div className="code-box">
                             {`¡Hola! 👋 Bienvenido a *${shopName}*.\n\n¿En qué podemos ayudarte?\n\n1️⃣ *Realizar un Pedido Online* (Ver precios y stock)\n2️⃣ *Hacer una consulta* (Hablar con un humano)\n\n_Respondé con el número de tu opción._`}
                             <button
-                                className="icon-btn"
-                                style={{ position: 'absolute', top: '5px', right: '5px', color: copiedBot ? '#22c55e' : 'inherit' }}
+                                className={`menu-copy-btn ${copiedBot ? 'copied' : ''}`}
                                 onClick={() => {
                                     navigator.clipboard.writeText(`¡Hola! 👋 Bienvenido a *${shopName}*.\n\n¿En qué podemos ayudarte?\n\n1️⃣ *Realizar un Pedido Online* (Ver precios y stock)\n2️⃣ *Hacer una consulta* (Hablar con un humano)\n\n_Respondé con el número de tu opción._`);
                                     setCopiedBot(true);
@@ -206,7 +180,7 @@ const MenuDigital = () => {
                         </div>
                     </div>
 
-                    <div className="neo-card" style={{ padding: '1.25rem', borderLeft: '4px solid var(--color-primary)' }}>
+                    <div className="neo-card bot-card bot-card-portal">
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                             <LayoutGrid size={20} color="var(--color-primary)" />
                             <h3 style={{ margin: 0 }}>Link de tu Portal de Clientes <span className="pro-badge-small">PRO</span></h3>
@@ -303,7 +277,7 @@ const MenuDigital = () => {
                                                     {!hasStock && <span style={{ fontSize: '0.6rem', color: '#ef4444', fontWeight: 'bold' }}>SIN STOCK</span>}
                                                 </div>
                                                 <span className="item-price">
-                                                    {hasStock ? `$${(toNumber(item.price) / 1000).toFixed(1)}k /kg` : '---'}
+                                                    {hasStock ? formatFullPrice(item.price) : '---'}
                                                 </span>
                                             </div>
                                         );
@@ -359,7 +333,7 @@ const MenuDigital = () => {
                                                         fontWeight: 'bold',
                                                         fontSize: '0.9rem'
                                                     }}>
-                                                        {toNumber(stock).toFixed(1)} kg
+                                                        {stock.toFixed(1)} kg
                                                     </span>
                                                 </td>
                                                 <td>

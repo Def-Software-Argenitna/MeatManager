@@ -848,7 +848,9 @@ const Logistica = () => {
                             <h1 style={{ margin: 0, fontSize: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                                 <Users color="var(--color-primary)" /> Repartidores habilitados del tenant
                             </h1>
-                            <button className="icon-btn" onClick={() => setIsDriverModalOpen(false)}><X /></button>
+                            <button className="logistica-modal-close" onClick={() => setIsDriverModalOpen(false)} aria-label="Cerrar modal">
+                                <X size={18} />
+                            </button>
                         </div>
 
                         <div style={{ marginBottom: '1rem', color: '#94a3b8', fontSize: '0.95rem', lineHeight: 1.5 }}>

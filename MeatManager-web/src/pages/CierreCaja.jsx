@@ -9,24 +9,23 @@ import {
     AlertCircle,
     Wallet,
 } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
+import { db } from '../db';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
-import { desktopApi } from '../utils/desktopApi';
-import { fetchTable, requestCashWithdrawalAuthorization, saveTableRecord, upsertRemoteSetting, verifyCashWithdrawalAuthorization, getRemoteSetting } from '../utils/apiClient';
 import './CierreCaja.css';
 
 const OUTFLOW_CATEGORIES = [
     'Retiro de caja',
-    'Retiro Socios',
+    'Proveedor',
+    'Mercadería Pilar',
     'Inter-Sucursal',
-    'Ajuste negativo',
+    'Sueldos/Adelantos',
+    'Servicios (Luz, Agua, etc)',
+    'Impuestos',
+    'Gastos Generales',
+    'Retiro Socios',
     'Otros'
 ];
-
-const WITHDRAWAL_CATEGORIES = new Set([
-    'Retiro de caja',
-    'Retiro Socios',
-    'Inter-Sucursal',
-]);
 
 const INFLOW_CATEGORIES = [
     'Cobro Pendientes',
@@ -49,7 +48,6 @@ const isCurrentAccount = (name, type) => {
 };
 
 const toNumber = (value) => Number(value) || 0;
-const formatCurrency = (value) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 2 }).format(toNumber(value));
 
 const getMovementSign = (movement) => {
     if (movement.type === 'apertura' || movement.type === 'ingreso' || movement.type === 'venta') return 1;
@@ -85,13 +83,6 @@ const buildSaleParts = (sale) => {
     }];
 };
 
-const escapeHtml = (value) => String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
 const CierreCaja = () => {
     const now = new Date();
     const [selectedDate, setSelectedDate] = useState(
@@ -101,107 +92,19 @@ const CierreCaja = () => {
     const [showOpeningForm, setShowOpeningForm] = useState(false);
     const [movementType, setMovementType] = useState('retiro');
     const [movementAmount, setMovementAmount] = useState('');
-    const [movementCategory, setMovementCategory] = useState('Retiro Socios');
+    const [movementCategory, setMovementCategory] = useState(OUTFLOW_CATEGORIES[0]);
     const [movementDesc, setMovementDesc] = useState('');
     const [movementPaymentMethod, setMovementPaymentMethod] = useState('Efectivo');
     const [openingDraft, setOpeningDraft] = useState({});
-    const [countedCash, setCountedCash] = useState('');
-    const [closureNotes, setClosureNotes] = useState('');
-    const [closingDay, setClosingDay] = useState(false);
-    const [requestingWithdrawalCode, setRequestingWithdrawalCode] = useState(false);
-    const [verifyingWithdrawalCode, setVerifyingWithdrawalCode] = useState(false);
-    const [withdrawalAuthorization, setWithdrawalAuthorization] = useState(null);
-    const [withdrawalCodeInput, setWithdrawalCodeInput] = useState('');
     const [feedback, setFeedback] = useState(null);
-    const [sales, setSales] = useState([]);
-    const [allSalesUntilDate, setAllSalesUntilDate] = useState([]);
-    const [allSalesBeforeDate, setAllSalesBeforeDate] = useState([]);
-    const [movements, setMovements] = useState([]);
-    const [allMovementsUntilDate, setAllMovementsUntilDate] = useState([]);
-    const [allMovementsBeforeDate, setAllMovementsBeforeDate] = useState([]);
-    const [paymentMethods, setPaymentMethods] = useState([]);
-    const [closureRecord, setClosureRecord] = useState(null);
-    const [reportFolderPath, setReportFolderPath] = useState('');
-    const [branchCode, setBranchCode] = useState(null);
 
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
-    const previousDayEnd = useMemo(() => {
-        const previous = new Date(start);
-        previous.setMilliseconds(previous.getMilliseconds() - 1);
-        return previous;
-    }, [start]);
 
-    const refreshCashData = async () => {
-        const [salesRows, movementRows, paymentMethodsRows, closureRows, folderSetting, branchCodeSetting] = await Promise.all([
-            fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('caja_movimientos', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
-            fetchTable('cash_closures', { limit: 1000, orderBy: 'closure_date', direction: 'DESC' }).catch(() => []),
-            getRemoteSetting('cash_closure_reports_folder').catch(() => ''),
-            getRemoteSetting('branch_code').catch(() => null),
-        ]);
-
-        const salesList = Array.isArray(salesRows) ? salesRows : [];
-        const movementList = Array.isArray(movementRows) ? movementRows : [];
-        const closureList = Array.isArray(closureRows) ? closureRows : [];
-
-        setSales(salesList.filter((sale) => {
-            const saleDate = new Date(sale.date);
-            return saleDate >= start && saleDate <= end;
-        }));
-        setAllSalesUntilDate(salesList.filter((sale) => new Date(sale.date) <= end));
-        setAllSalesBeforeDate(salesList.filter((sale) => new Date(sale.date) <= previousDayEnd));
-        setMovements(movementList.filter((movement) => {
-            const movementDate = new Date(movement.date);
-            return movementDate >= start && movementDate <= end;
-        }));
-        setAllMovementsUntilDate(movementList.filter((movement) => new Date(movement.date) <= end));
-        setAllMovementsBeforeDate(movementList.filter((movement) => new Date(movement.date) <= previousDayEnd));
-        setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
-        const normalizedBranchCode = Number(branchCodeSetting);
-        const activeBranchId = Number.isFinite(normalizedBranchCode) && normalizedBranchCode > 0 ? normalizedBranchCode : null;
-        setBranchCode(activeBranchId);
-        setClosureRecord(
-            closureList.find((closure) => (
-                String(closure.closure_date || '') === selectedDate
-                && (
-                    activeBranchId == null
-                    || Number(closure.branch_id || 0) === activeBranchId
-                    || closure.branch_id == null
-                )
-            )) || null
-        );
-        setReportFolderPath(String(folderSetting || ''));
-    };
-
-    useEffect(() => {
-        let cancelled = false;
-
-        const loadCashData = async () => {
-            try {
-                await refreshCashData();
-                if (cancelled) return;
-            } catch (error) {
-                if (!cancelled) {
-                    console.error('[CAJA] No se pudieron cargar datos desde la API', error);
-                    setSales([]);
-                    setAllSalesUntilDate([]);
-                    setAllSalesBeforeDate([]);
-                    setMovements([]);
-                    setAllMovementsUntilDate([]);
-                    setAllMovementsBeforeDate([]);
-                    setPaymentMethods([]);
-                    setClosureRecord(null);
-                    setReportFolderPath('');
-                }
-            }
-        };
-
-        loadCashData();
-        return () => {
-            cancelled = true;
-        };
-    }, [selectedDate, start, end, previousDayEnd]);
+    const sales = useLiveQuery(() => db.ventas.where('date').between(start, end).toArray(), [start, end]);
+    const allSalesUntilDate = useLiveQuery(() => db.ventas.where('date').belowOrEqual(end).toArray(), [end]);
+    const movements = useLiveQuery(() => db.caja_movimientos.where('date').between(start, end).toArray(), [start, end]);
+    const allMovementsUntilDate = useLiveQuery(() => db.caja_movimientos.where('date').belowOrEqual(end).toArray(), [end]);
+    const paymentMethods = useLiveQuery(() => db.payment_methods.toArray(), []);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -292,14 +195,6 @@ const CierreCaja = () => {
         return isCurrentAccount(sale.payment_method) ? sum + toNumber(sale.total) : sum;
     }, 0);
 
-    const withdrawalsTotal = manualMovements
-        .filter((movement) => movement.type !== 'ingreso' && WITHDRAWAL_CATEGORIES.has(movement.category))
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-
-    const expensesOnlyTotal = manualMovements
-        .filter((movement) => movement.type !== 'ingreso' && !WITHDRAWAL_CATEGORIES.has(movement.category))
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
@@ -322,29 +217,6 @@ const CierreCaja = () => {
 
         return totals;
     }, [activePaymentMethods, allSalesUntilDate, allMovementsUntilDate]);
-
-    const previousCloseByMethod = useMemo(() => {
-        const totals = {};
-
-        activePaymentMethods.forEach((method) => {
-            totals[method.name] = 0;
-        });
-
-        (allSalesBeforeDate || []).forEach((sale) => {
-            buildSaleParts(sale).forEach((part) => {
-                totals[part.name] = (totals[part.name] || 0) + part.amount;
-            });
-        });
-
-        (allMovementsBeforeDate || []).forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
-        });
-
-        return totals;
-    }, [activePaymentMethods, allSalesBeforeDate, allMovementsBeforeDate]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
@@ -370,47 +242,6 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
 
-    const countedCashValue = parseFloat(countedCash) || 0;
-    const cashDifference = countedCash ? countedCashValue - cashInDrawer : 0;
-    const cashDifferenceState = !countedCash
-        ? 'neutral'
-        : Math.abs(cashDifference) < 0.01
-            ? 'match'
-            : cashDifference > 0
-                ? 'surplus'
-                : 'shortage';
-
-    const previousCloseTotal = Object.values(previousCloseByMethod).reduce((sum, amount) => sum + toNumber(amount), 0);
-    const previousCashClose = activePaymentMethods
-        .filter((method) => method.type === 'cash')
-        .reduce((sum, method) => sum + toNumber(previousCloseByMethod[method.name]), 0);
-    const isPartnerWithdrawal = movementType === 'retiro' && movementCategory === 'Retiro Socios';
-    const withdrawalPayloadKey = `${movementType}|${movementCategory}|${Number(movementAmount || 0).toFixed(2)}|${movementPaymentMethod}|${movementDesc.trim()}`;
-
-    useEffect(() => {
-        if (!withdrawalAuthorization) return;
-        if (withdrawalAuthorization.payloadKey !== withdrawalPayloadKey) {
-            setWithdrawalAuthorization(null);
-            setWithdrawalCodeInput('');
-        }
-    }, [withdrawalPayloadKey, withdrawalAuthorization]);
-
-    useEffect(() => {
-        if (openingMovements.length > 0) return;
-        setOpeningDraft((prev) => {
-            const next = { ...prev };
-            let changed = false;
-            activePaymentMethods.forEach((method) => {
-                const suggestedAmount = toNumber(previousCloseByMethod[method.name]);
-                if (!next[method.name] && suggestedAmount > 0) {
-                    next[method.name] = String(suggestedAmount);
-                    changed = true;
-                }
-            });
-            return changed ? next : prev;
-        });
-    }, [activePaymentMethods, openingMovements.length, previousCloseByMethod]);
-
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
             ...prev,
@@ -425,7 +256,7 @@ const CierreCaja = () => {
                 method,
                 amount: parseFloat(openingDraft[method.name]) || 0,
             }))
-            .filter((row) => row.amount > 0 || toNumber(previousCloseByMethod[row.method.name]) > 0);
+            .filter((row) => row.amount > 0);
 
         if (rows.length === 0) {
             setFeedback({ type: 'warning', text: 'Ingresá al menos un monto de apertura para registrar la caja.' });
@@ -433,47 +264,20 @@ const CierreCaja = () => {
         }
 
         const openingDate = new Date(`${selectedDate}T08:00:00`);
-        const records = [];
-
-        rows.forEach(({ method, amount }) => {
-            const previousAmount = toNumber(previousCloseByMethod[method.name]);
-            const actualAmount = toNumber(amount);
-            const difference = actualAmount - previousAmount;
-
-            records.push({
-                type: 'apertura',
-                amount: actualAmount,
-                category: 'Apertura de caja',
-                description: `Apertura inicial ${method.name}`,
-                payment_method: method.name,
-                payment_method_type: method.type,
-                date: openingDate,
-                synced: 0,
-            });
-
-            if (difference !== 0) {
-                records.push({
-                    type: difference > 0 ? 'ingreso' : 'retiro',
-                    amount: Math.abs(difference),
-                    category: difference > 0 ? 'Sobrante de apertura' : 'Faltante de apertura',
-                    description: `Diferencia contra cierre anterior de ${method.name}`,
-                    payment_method: method.name,
-                    payment_method_type: method.type,
-                    date: openingDate,
-                    synced: 0,
-                });
-            }
-        });
-
-        await Promise.all(records.map((record) => saveTableRecord('caja_movimientos', 'insert', {
-            ...record,
-            date: record.date instanceof Date ? record.date.toISOString() : record.date,
+        await db.caja_movimientos.bulkAdd(rows.map(({ method, amount }) => ({
+            type: 'apertura',
+            amount,
+            category: 'Apertura de caja',
+            description: `Apertura inicial ${method.name}`,
+            payment_method: method.name,
+            payment_method_type: method.type,
+            date: openingDate,
+            synced: 0,
         })));
 
         setFeedback({ type: 'success', text: 'Apertura de caja registrada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft({});
-        await refreshCashData();
     };
 
     const handleAddMovement = async (e) => {
@@ -483,304 +287,26 @@ const CierreCaja = () => {
             return;
         }
 
-        if (isPartnerWithdrawal) {
-            if (!withdrawalAuthorization?.verified) {
-                setFeedback({ type: 'warning', text: 'Antes de guardar el retiro de socios tenés que solicitar y validar el código enviado por mail.' });
-                return;
-            }
-        }
-
-        await saveTableRecord('caja_movimientos', 'insert', {
+        await db.caja_movimientos.add({
             type: movementType,
             amount: parseFloat(movementAmount),
             category: movementCategory,
             description: movementDesc,
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
-            authorization_id: withdrawalAuthorization?.authorizationId || null,
-            authorization_verified: withdrawalAuthorization?.verified ? 1 : 0,
-            authorized_recipient_email: withdrawalAuthorization?.recipient || null,
-            date: new Date().toISOString(),
+            date: new Date(),
             synced: 0,
         });
 
         setMovementAmount('');
         setMovementDesc('');
-        setWithdrawalAuthorization(null);
-        setWithdrawalCodeInput('');
         setShowMovementForm(false);
         setFeedback({ type: 'success', text: 'Movimiento de caja guardado correctamente.' });
-        await refreshCashData();
-    };
-
-    const handleRequestWithdrawalCode = async () => {
-        if (!movementAmount || parseFloat(movementAmount) <= 0) {
-            setFeedback({ type: 'warning', text: 'Ingresá primero el monto del retiro societario.' });
-            return;
-        }
-
-        setRequestingWithdrawalCode(true);
-        try {
-            const response = await requestCashWithdrawalAuthorization({
-                amount: parseFloat(movementAmount),
-                paymentMethod: movementPaymentMethod,
-                category: movementCategory,
-                description: movementDesc,
-            });
-            setWithdrawalAuthorization({
-                authorizationId: response.authorizationId,
-                expiresAt: response.expiresAt,
-                recipient: response.recipient,
-                payloadKey: withdrawalPayloadKey,
-                verified: false,
-            });
-            setWithdrawalCodeInput('');
-            setFeedback({ type: 'success', text: `Código enviado a ${response.recipient}. Ingresalo para autorizar el retiro.` });
-        } catch (error) {
-            setFeedback({ type: 'error', text: error.message });
-        } finally {
-            setRequestingWithdrawalCode(false);
-        }
-    };
-
-    const handleVerifyWithdrawalCode = async () => {
-        if (!withdrawalAuthorization?.authorizationId) {
-            setFeedback({ type: 'warning', text: 'Primero solicitá el código de autorización.' });
-            return;
-        }
-
-        if (!withdrawalCodeInput.trim()) {
-            setFeedback({ type: 'warning', text: 'Ingresá el código que llegó por mail.' });
-            return;
-        }
-
-        setVerifyingWithdrawalCode(true);
-        try {
-            const response = await verifyCashWithdrawalAuthorization({
-                authorizationId: withdrawalAuthorization.authorizationId,
-                code: withdrawalCodeInput.trim(),
-                amount: parseFloat(movementAmount),
-                paymentMethod: movementPaymentMethod,
-                category: movementCategory,
-            });
-            setWithdrawalAuthorization((prev) => ({
-                ...prev,
-                verified: true,
-                recipient: response.recipient || prev?.recipient || null,
-            }));
-            setFeedback({ type: 'success', text: 'Retiro societario autorizado correctamente.' });
-        } catch (error) {
-            setFeedback({ type: 'error', text: error.message });
-        } finally {
-            setVerifyingWithdrawalCode(false);
-        }
     };
 
     const handleDeleteMovement = async (movementId) => {
-        await saveTableRecord('caja_movimientos', 'delete', null, movementId);
+        await db.caja_movimientos.delete(movementId);
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
-        await refreshCashData();
-    };
-
-    const handleChooseReportFolder = async () => {
-        try {
-            const result = await desktopApi.chooseDirectory();
-            if (!result?.ok) return;
-            await upsertRemoteSetting('cash_closure_reports_folder', result.path);
-            setReportFolderPath(result.path);
-            setFeedback({ type: 'success', text: `Carpeta de cierres configurada: ${result.path}` });
-        } catch (error) {
-            setFeedback({ type: 'warning', text: `No se pudo seleccionar la carpeta: ${error.message}` });
-        }
-    };
-
-    const buildClosureReportHtml = (closure) => {
-        const rowsHtml = closure.methods.map((method) => `
-            <tr>
-                <td>${escapeHtml(method.name)}</td>
-                <td>${escapeHtml(formatCurrency(method.previousClose))}</td>
-                <td>${escapeHtml(formatCurrency(method.opening))}</td>
-                <td>${escapeHtml(formatCurrency(method.sales))}</td>
-                <td>${escapeHtml(formatCurrency(method.manualNet))}</td>
-                <td>${escapeHtml(formatCurrency(method.accumulated))}</td>
-            </tr>
-        `).join('');
-
-        const movementsHtml = closure.movements.map((movement) => `
-            <tr>
-                <td>${escapeHtml(movement.category)}</td>
-                <td>${escapeHtml(movement.payment_method || 'Efectivo')}</td>
-                <td>${escapeHtml(movement.description || '-')}</td>
-                <td>${escapeHtml(movement.type)}</td>
-                <td>${escapeHtml(formatCurrency(movement.amount))}</td>
-            </tr>
-        `).join('');
-
-        return `
-            <html>
-            <head>
-                <meta charset="utf-8" />
-                <title>Cierre de Caja ${escapeHtml(closure.closureDate)}</title>
-                <style>
-                    body { font-family: Arial, sans-serif; color: #111; padding: 24px; }
-                    h1, h2 { margin: 0 0 10px; }
-                    .meta, .summary { margin-bottom: 18px; }
-                    .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 14px 0 18px; }
-                    .box { border: 1px solid #ddd; border-radius: 10px; padding: 10px 12px; }
-                    .label { font-size: 11px; text-transform: uppercase; color: #666; margin-bottom: 6px; }
-                    .value { font-size: 18px; font-weight: 700; }
-                    table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-                    th, td { border: 1px solid #ddd; padding: 8px; font-size: 12px; text-align: left; }
-                    th { background: #f5f5f5; }
-                    .notes { margin-top: 16px; padding: 12px; border: 1px solid #ddd; border-radius: 10px; }
-                </style>
-            </head>
-            <body>
-                <h1>Cierre de Caja</h1>
-                <div class="meta">
-                    <div><strong>Fecha:</strong> ${escapeHtml(closure.closureDate)}</div>
-                    <div><strong>Generado:</strong> ${escapeHtml(new Date(closure.closedAt).toLocaleString('es-AR'))}</div>
-                    <div><strong>Carpeta:</strong> ${escapeHtml(reportFolderPath || 'No configurada')}</div>
-                </div>
-                <div class="summary-grid">
-                    <div class="box"><div class="label">Cierre anterior</div><div class="value">${escapeHtml(formatCurrency(closure.previousCloseTotal))}</div></div>
-                    <div class="box"><div class="label">Apertura del día</div><div class="value">${escapeHtml(formatCurrency(closure.openingTotal))}</div></div>
-                    <div class="box"><div class="label">Ventas del día</div><div class="value">${escapeHtml(formatCurrency(closure.totalSales))}</div></div>
-                    <div class="box"><div class="label">Efectivo teórico</div><div class="value">${escapeHtml(formatCurrency(closure.cashInDrawer))}</div></div>
-                </div>
-                <div class="summary-grid">
-                    <div class="box"><div class="label">Efectivo contado</div><div class="value">${escapeHtml(formatCurrency(closure.countedCash))}</div></div>
-                    <div class="box"><div class="label">Diferencia</div><div class="value">${escapeHtml(formatCurrency(closure.cashDifference))}</div></div>
-                    <div class="box"><div class="label">Retiros</div><div class="value">${escapeHtml(formatCurrency(closure.withdrawalsTotal))}</div></div>
-                    <div class="box"><div class="label">Gastos</div><div class="value">${escapeHtml(formatCurrency(closure.expensesOnlyTotal))}</div></div>
-                </div>
-
-                <h2>Detalle por medio de pago</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Medio</th>
-                            <th>Cierre anterior</th>
-                            <th>Apertura</th>
-                            <th>Ventas</th>
-                            <th>Mov. manuales</th>
-                            <th>Saldo actual</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
-
-                <h2>Movimientos manuales del día</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Categoría</th>
-                            <th>Medio</th>
-                            <th>Descripción</th>
-                            <th>Tipo</th>
-                            <th>Importe</th>
-                        </tr>
-                    </thead>
-                    <tbody>${movementsHtml || '<tr><td colspan="5">Sin movimientos manuales.</td></tr>'}</tbody>
-                </table>
-
-                <div class="notes">
-                    <strong>Observaciones de cierre:</strong><br />
-                    ${escapeHtml(closure.notes || 'Sin observaciones')}
-                </div>
-            </body>
-            </html>
-        `;
-    };
-
-    const handleCloseDay = async () => {
-        if (!openingMovements.length) {
-            setFeedback({ type: 'warning', text: 'No podés cerrar el día sin registrar primero la apertura de caja.' });
-            return;
-        }
-
-        if (!countedCash) {
-            setFeedback({ type: 'warning', text: 'Ingresá el efectivo contado para poder cerrar la caja.' });
-            return;
-        }
-
-        if (!reportFolderPath) {
-            setFeedback({ type: 'warning', text: 'Primero elegí la carpeta donde se van a guardar los PDF de cierre.' });
-            return;
-        }
-
-        if (closureRecord) {
-            setFeedback({ type: 'warning', text: 'Este día ya tiene un cierre registrado.' });
-            return;
-        }
-
-        setClosingDay(true);
-        try {
-            const closurePayload = {
-                closureDate: selectedDate,
-                closedAt: new Date().toISOString(),
-                previousCloseTotal,
-                openingTotal: openingMovements.reduce((sum, movement) => sum + toNumber(movement.amount), 0),
-                totalSales,
-                totalIncomes,
-                totalExpenses,
-                withdrawalsTotal,
-                expensesOnlyTotal,
-                cashInDrawer,
-                countedCash: countedCashValue,
-                cashDifference,
-                notes: closureNotes,
-                methods: methodCards.map((method) => ({
-                    name: method.name,
-                    previousClose: toNumber(previousCloseByMethod[method.name]),
-                    opening: method.opening,
-                    sales: method.sales,
-                    manualNet: method.manualNet,
-                    accumulated: method.accumulated,
-                })),
-                movements: manualMovements.map((movement) => ({
-                    category: movement.category,
-                    payment_method: movement.payment_method,
-                    description: movement.description,
-                    type: movement.type,
-                    amount: toNumber(movement.amount),
-                })),
-            };
-
-            const fileName = `cierre_caja_${selectedDate}.pdf`;
-            const html = buildClosureReportHtml(closurePayload);
-            const pdfResult = await desktopApi.saveHtmlPdf({
-                html,
-                folderPath: reportFolderPath,
-                fileName,
-            });
-
-            if (!pdfResult?.ok) {
-                throw new Error(pdfResult?.error || 'No se pudo generar el PDF del cierre');
-            }
-
-            await saveTableRecord('cash_closures', 'insert', {
-                closure_date: selectedDate,
-                branch_id: branchCode,
-                closed_at: closurePayload.closedAt,
-                theoretical_cash: cashInDrawer,
-                counted_cash: countedCashValue,
-                difference: cashDifference,
-                total_sales: totalSales,
-                total_incomes: totalIncomes,
-                total_expenses: totalExpenses,
-                notes: closureNotes,
-                report_path: pdfResult.path,
-                snapshot: closurePayload,
-            });
-
-            setFeedback({ type: 'success', text: `Cierre guardado correctamente y PDF generado en ${pdfResult.path}` });
-            await refreshCashData();
-        } catch (error) {
-            setFeedback({ type: 'warning', text: `No se pudo cerrar la caja: ${error.message}` });
-        } finally {
-            setClosingDay(false);
-        }
     };
 
     return (
@@ -808,41 +334,22 @@ const CierreCaja = () => {
                 </div>
             )}
 
-            <div className="cash-report-bar neo-card">
-                <div>
-                    <div className="cash-report-title">Carpeta de cierres PDF</div>
-                    <div className="cash-report-path">
-                        {reportFolderPath || 'Todavía no hay una carpeta configurada para guardar los cierres.'}
-                    </div>
-                </div>
-                <div className="cash-report-actions">
-                    <button className="cierre-add-btn" type="button" onClick={handleChooseReportFolder}>
-                        {reportFolderPath ? 'Cambiar carpeta' : 'Elegir carpeta'}
-                    </button>
-                    {closureRecord?.report_path && (
-                        <button className="cierre-secondary-btn" type="button" onClick={() => desktopApi.openPath(closureRecord.report_path)}>
-                            Abrir PDF
-                        </button>
-                    )}
-                </div>
-            </div>
-
             <div className="cash-overview-grid">
                 <div className="stat-box result">
                     <span className="label">Efectivo acumulado en caja</span>
-                    <span className="val">${toNumber(cashInDrawer).toLocaleString('es-AR')}</span>
+                    <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
-                    <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
+                    <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box expense">
-                    <span className="label">Retiros y gastos del día</span>
-                    <span className="val">-${toNumber(totalExpenses).toLocaleString('es-AR')}</span>
+                    <span className="label">Retiros / gastos del día</span>
+                    <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
-                    <span className="val">${toNumber(currentAccountSales).toLocaleString('es-AR')}</span>
+                    <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
             </div>
 
@@ -863,15 +370,15 @@ const CierreCaja = () => {
                                         <div className="method-balance-text">
                                             <span className="method-name">{item.name}</span>
                                             <div className="method-breakdown">
-                                                <span>Apertura: ${toNumber(item.opening).toLocaleString('es-AR')}</span>
-                                                <span>Ventas hoy: ${toNumber(item.sales).toLocaleString('es-AR')}</span>
-                                                <span>Mov. manuales: {(toNumber(item.manualNet) >= 0 ? '+' : '-')}${Math.abs(toNumber(item.manualNet)).toLocaleString('es-AR')}</span>
+                                                <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
+                                                <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
+                                                <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
                                     </div>
                                     <div className="method-balance-total">
                                         <Icon size={16} />
-                                        <span>${toNumber(item.accumulated).toLocaleString('es-AR')}</span>
+                                        <span>${item.accumulated.toLocaleString('es-AR')}</span>
                                     </div>
                                 </div>
                             );
@@ -881,7 +388,7 @@ const CierreCaja = () => {
                     <div className="card-footer">
                         <div className="total-row">
                             <span>Ventas brutas del día</span>
-                            <span className="total-val">${toNumber(totalSales).toLocaleString('es-AR')}</span>
+                            <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
                 </div>
@@ -894,61 +401,16 @@ const CierreCaja = () => {
 
                     <div className="cash-stats">
                         <div className="stat-box">
-                            <span className="label">Cierre anterior</span>
-                            <span className="val">${toNumber(previousCloseTotal).toLocaleString('es-AR')}</span>
-                        </div>
-                        <div className="stat-box">
-                            <span className="label">Efectivo cierre anterior</span>
-                            <span className="val">${toNumber(previousCashClose).toLocaleString('es-AR')}</span>
-                        </div>
-                        <div className="stat-box">
                             <span className="label">Apertura registrada</span>
                             <span className="val">${openingMovements.reduce((sum, movement) => sum + toNumber(movement.amount), 0).toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box income">
                             <span className="label">Ingresos extra</span>
-                            <span className="val">+${toNumber(totalIncomes).toLocaleString('es-AR')}</span>
+                            <span className="val">+${totalIncomes.toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box expense">
-                            <span className="label">Retiros</span>
-                            <span className="val">-${toNumber(withdrawalsTotal).toLocaleString('es-AR')}</span>
-                        </div>
-                        <div className="stat-box expense">
-                            <span className="label">Gastos</span>
-                            <span className="val">-${toNumber(expensesOnlyTotal).toLocaleString('es-AR')}</span>
-                        </div>
-                    </div>
-
-                    <div className="cash-reconciliation-card">
-                        <div className="cash-reconciliation-header">
-                            <h3>Arqueo de efectivo</h3>
-                            <span>Compará lo contado con lo teórico del sistema</span>
-                        </div>
-                        <div className="cash-reconciliation-grid">
-                            <div className="reconciliation-box">
-                                <span className="label">Efectivo teórico</span>
-                                <strong>${toNumber(cashInDrawer).toLocaleString('es-AR')}</strong>
-                            </div>
-                            <label className="reconciliation-box reconciliation-input-box">
-                                <span className="label">Efectivo contado</span>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step="0.01"
-                                    value={countedCash}
-                                    onChange={(e) => setCountedCash(e.target.value)}
-                                    placeholder="0.00"
-                                    className="neo-input"
-                                />
-                            </label>
-                            <div className={`reconciliation-box difference ${cashDifferenceState}`}>
-                                <span className="label">Diferencia</span>
-                                <strong>
-                                    {countedCash
-                                        ? `${cashDifference > 0 ? '+' : ''}$${toNumber(cashDifference).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                        : 'Esperando arqueo'}
-                                </strong>
-                            </div>
+                            <span className="label">Retiros y gastos</span>
+                            <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
 
@@ -960,18 +422,12 @@ const CierreCaja = () => {
                             </button>
                         </div>
 
-                        {!showOpeningForm && (
-                            <div className="opening-hint">
-                                <strong>Sugerencia:</strong> abrí la caja con el saldo que cerró el día anterior y ajustá solo si hubo cambios reales antes de arrancar.
-                            </div>
-                        )}
-
                         {openingMovements.length > 0 && !showOpeningForm && (
                             <div className="opening-preview">
                                 {methodCards.map((item) => (
                                     <div key={item.name} className="opening-chip">
                                         <span>{item.name}</span>
-                                        <strong>${toNumber(item.opening).toLocaleString('es-AR')}</strong>
+                                        <strong>${item.opening.toLocaleString('es-AR')}</strong>
                                     </div>
                                 ))}
                             </div>
@@ -989,12 +445,9 @@ const CierreCaja = () => {
                                                 step="0.01"
                                                 value={openingDraft[method.name] || ''}
                                                 onChange={(e) => handleOpeningChange(method.name, e.target.value)}
-                                                placeholder={toNumber(previousCloseByMethod[method.name]) > 0 ? previousCloseByMethod[method.name].toFixed(2) : '0.00'}
+                                                placeholder="0.00"
                                                 className="neo-input"
                                             />
-                                            <small style={{ color: 'var(--color-text-muted)', fontSize: '0.74rem' }}>
-                                                Cierre anterior: ${toNumber(previousCloseByMethod[method.name]).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                            </small>
                                         </div>
                                     ))}
                                 </div>
@@ -1005,14 +458,10 @@ const CierreCaja = () => {
                         )}
 
                         <div className="section-header section-header-secondary">
-                            <h3>Movimientos manuales y societarios</h3>
+                            <h3>Retiros e ingresos manuales</h3>
                             <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
                             </button>
-                        </div>
-
-                        <div className="opening-hint">
-                            <strong>Importante:</strong> los gastos o compras internas del negocio deben cargarse desde <strong>Compras</strong>. En esta sección dejá solo retiros societarios, ajustes e ingresos manuales.
                         </div>
 
                         {showMovementForm && (
@@ -1025,10 +474,10 @@ const CierreCaja = () => {
                                                 className={movementType === 'retiro' ? 'active' : ''}
                                                 onClick={() => {
                                                     setMovementType('retiro');
-                                                    setMovementCategory('Retiro Socios');
+                                                    setMovementCategory(OUTFLOW_CATEGORIES[0]);
                                                 }}
                                             >
-                                                Retiro / Ajuste (-)
+                                                Retiro / Gasto (-)
                                             </button>
                                             <button
                                                 type="button"
@@ -1083,54 +532,11 @@ const CierreCaja = () => {
                                             type="text"
                                             value={movementDesc}
                                             onChange={(e) => setMovementDesc(e.target.value)}
-                                            placeholder="Ej: retiro de socios, diferencia de caja, ingreso por ajuste, etc."
+                                            placeholder="Ej: retiro para gastos chicos, ingreso por ajuste, etc."
                                             className="neo-input"
                                         />
                                     </div>
                                 </div>
-
-                                {isPartnerWithdrawal && (
-                                    <div className="cash-authorization-box">
-                                        <div className="cash-authorization-copy">
-                                            <strong>Autorización requerida</strong>
-                                            <span>
-                                                El retiro de socios envía un código temporal por mail y no se puede guardar hasta validarlo.
-                                            </span>
-                                            {withdrawalAuthorization?.recipient && (
-                                                <small>
-                                                    Destino: {withdrawalAuthorization.recipient}
-                                                    {withdrawalAuthorization.expiresAt ? ` · vence ${new Date(withdrawalAuthorization.expiresAt).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}` : ''}
-                                                </small>
-                                            )}
-                                        </div>
-                                        <div className="cash-authorization-actions">
-                                            <button
-                                                type="button"
-                                                className="cierre-secondary-btn"
-                                                onClick={handleRequestWithdrawalCode}
-                                                disabled={requestingWithdrawalCode}
-                                            >
-                                                {requestingWithdrawalCode ? 'Enviando...' : withdrawalAuthorization?.authorizationId ? 'Reenviar código' : 'Enviar código por mail'}
-                                            </button>
-                                            <input
-                                                type="text"
-                                                className="neo-input"
-                                                value={withdrawalCodeInput}
-                                                onChange={(e) => setWithdrawalCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                                placeholder="Código"
-                                                maxLength={6}
-                                            />
-                                            <button
-                                                type="button"
-                                                className="cierre-secondary-btn"
-                                                onClick={handleVerifyWithdrawalCode}
-                                                disabled={verifyingWithdrawalCode || !withdrawalAuthorization?.authorizationId}
-                                            >
-                                                {verifyingWithdrawalCode ? 'Validando...' : withdrawalAuthorization?.verified ? 'Código validado' : 'Validar código'}
-                                            </button>
-                                        </div>
-                                    </div>
-                                )}
                                 <button type="submit" className="save-btn">
                                     <Save size={16} /> Guardar movimiento
                                 </button>
@@ -1139,50 +545,22 @@ const CierreCaja = () => {
 
                         <div className="movements-list">
                             {manualMovements.length === 0 && (
-                                <div className="empty-state">No hay retiros, ajustes ni ingresos manuales registrados para esta fecha.</div>
+                                <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
                             {manualMovements.map((movement) => (
-                                <div
-                                    key={movement.id}
-                                    className={`movement-item ${movement.type} ${WITHDRAWAL_CATEGORIES.has(movement.category) ? 'withdrawal' : movement.type !== 'ingreso' ? 'expense' : ''}`}
-                                >
+                                <div key={movement.id} className={`movement-item ${movement.type}`}>
                                     <div className="m-info">
                                         <span className="m-cat">{movement.category}</span>
                                         <span className="m-desc">
                                             {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
-                                            {movement.purchase_id ? ' · Registrado desde Compras' : ''}
                                         </span>
                                     </div>
                                     <span className="m-amount">
                                         {movement.type === 'ingreso' ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                     </span>
-                                    {!movement.purchase_id && (
-                                        <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
-                                    )}
+                                    <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
                                 </div>
                             ))}
-                        </div>
-
-                        <div className="cash-close-panel">
-                            <div className="cash-close-header">
-                                <h3>Cierre del día</h3>
-                                {closureRecord && <span className="cash-closed-badge">Cerrado</span>}
-                            </div>
-                            <textarea
-                                value={closureNotes}
-                                onChange={(e) => setClosureNotes(e.target.value)}
-                                placeholder="Observaciones de cierre, diferencias detectadas, retiros extraordinarios, etc."
-                                className="neo-input cash-close-notes"
-                                disabled={Boolean(closureRecord)}
-                            />
-                            <button
-                                type="button"
-                                className="save-btn"
-                                onClick={handleCloseDay}
-                                disabled={closingDay || Boolean(closureRecord)}
-                            >
-                                <Save size={16} /> {closureRecord ? 'Día ya cerrado' : closingDay ? 'Cerrando...' : 'Cerrar día y generar PDF'}
-                            </button>
                         </div>
                     </div>
                 </div>
@@ -1190,7 +568,7 @@ const CierreCaja = () => {
 
             <div className="cierre-tips">
                 <AlertCircle size={20} />
-                <p><strong>Tip de conciliación:</strong> la caja acumulada por medio te muestra cuánto debería haber disponible hoy, sumando aperturas, ventas y movimientos manuales, y restando retiros societarios, ajustes y compras internas registradas desde Compras.</p>
+                <p><strong>Tip de conciliación:</strong> la caja acumulada por medio te muestra cuánto debería haber disponible hoy, sumando aperturas, ventas y movimientos manuales, y restando retiros o gastos.</p>
             </div>
         </div>
     );

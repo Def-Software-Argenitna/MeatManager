@@ -1,0 +1,8 @@
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="28" fill="#173EA5"/>
+  <circle cx="32" cy="36" r="12" fill="#F6C400"/>
+  <path d="M22 36H42" stroke="#173EA5" stroke-width="3" stroke-linecap="round"/>
+  <path d="M32 26V46" stroke="#173EA5" stroke-width="3" stroke-linecap="round"/>
+  <text x="64" y="60" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Cuenta</text>
+  <text x="64" y="90" text-anchor="middle" fill="#F6C400" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">DNI</text>
+</svg>

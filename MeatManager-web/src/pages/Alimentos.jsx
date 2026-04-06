@@ -107,8 +107,10 @@ const Alimentos = () => {
                             {PRODUCT_TYPES.map(type => (
                                 <button
                                     key={type.id}
+                                    type="button"
                                     className={`product-type-btn ${selectedProductType === type.id ? 'active' : ''}`}
                                     onClick={() => setSelectedProductType(type.id)}
+                                    aria-pressed={selectedProductType === type.id}
                                 >
                                     <span className="product-icon">{type.icon}</span>
                                     <span>{type.name}</span>
@@ -124,6 +126,7 @@ const Alimentos = () => {
                             {MEAT_TYPES.map(meat => (
                                 <button
                                     key={meat.id}
+                                    type="button"
                                     className={`meat-type-btn ${selectedMeatType === meat.id ? 'active' : ''}`}
                                     onClick={() => setSelectedMeatType(meat.id)}
                                     style={{
@@ -142,12 +145,14 @@ const Alimentos = () => {
                         <label className="form-label">Unidad de Medida</label>
                         <div className="unit-toggle">
                             <button
+                                type="button"
                                 className={`unit-btn ${unitType === 'unidades' ? 'active' : ''}`}
                                 onClick={() => setUnitType('unidades')}
                             >
                                 Unidades
                             </button>
                             <button
+                                type="button"
                                 className={`unit-btn ${unitType === 'peso' ? 'active' : ''}`}
                                 onClick={() => setUnitType('peso')}
                             >
