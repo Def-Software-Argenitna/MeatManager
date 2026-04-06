@@ -87,7 +87,17 @@ export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> 
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(deliveryPayload.error || payload.error || 'No se pudo leer el perfil actual.');
+    const deliveryError = String(deliveryPayload?.error || '').trim();
+    const profileError = String(payload?.error || '').trim();
+    const reasons = [
+      deliveryError ? `delivery/me: ${deliveryError}` : null,
+      profileError ? `firebase-users/me: ${profileError}` : null,
+      `api: ${apiBaseUrl}`,
+    ].filter(Boolean);
+
+    throw new Error(
+      reasons.length > 0 ? reasons.join(' | ') : 'No se pudo leer el perfil actual.',
+    );
   }
 
   return normalizeMobileProfile(payload.user);
