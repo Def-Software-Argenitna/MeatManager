@@ -15,12 +15,13 @@ import type { MobileAccessProfile } from '../types/session';
 
 type Props = {
   profile: MobileAccessProfile;
+  onLogout: () => Promise<void> | void;
 };
 
 const currency = (value: number) =>
   value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
 
-export function AdminDashboardScreen({ profile }: Props) {
+export function AdminDashboardScreen({ profile, onLogout }: Props) {
   const {
     isLoading,
     error,
@@ -55,9 +56,16 @@ export function AdminDashboardScreen({ profile }: Props) {
       ListHeaderComponent={
         <View style={styles.headerBlock}>
           <View style={styles.hero}>
-            <Text style={styles.eyebrow}>Panel admin</Text>
-            <Text style={styles.title}>{profile.username || 'Administracion'}</Text>
-            <Text style={styles.subtitle}>Caja, ventas y seguimiento del tenant en un solo lugar.</Text>
+            <View style={styles.heroHeader}>
+              <View style={styles.heroText}>
+                <Text style={styles.eyebrow}>Panel admin</Text>
+                <Text style={styles.title}>{profile.username || 'Administracion'}</Text>
+                <Text style={styles.subtitle}>Caja, ventas y seguimiento del tenant en un solo lugar.</Text>
+              </View>
+              <Pressable style={styles.logoutButton} onPress={onLogout}>
+                <Text style={styles.logoutButtonText}>Salir</Text>
+              </Pressable>
+            </View>
             <View style={styles.branchSelector}>
               {branchOptions.map((branch) => (
                 <Pressable
@@ -178,6 +186,16 @@ const styles = StyleSheet.create({
     padding: 22,
     gap: 6,
   },
+  heroHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  heroText: {
+    flex: 1,
+    gap: 6,
+  },
   eyebrow: {
     color: theme.colors.accent,
     fontSize: 12,
@@ -194,6 +212,20 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     lineHeight: 22,
     fontSize: 15,
+  },
+  logoutButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  logoutButtonText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '800',
   },
   branchSelector: {
     flexDirection: 'row',

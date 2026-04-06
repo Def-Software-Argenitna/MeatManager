@@ -60,7 +60,7 @@ export function DeliveryDashboardScreen() {
   if (appMode === 'admin' && profile) {
     return (
       <SafeAreaView style={styles.screen}>
-        <AdminDashboardScreen profile={profile} />
+        <AdminDashboardScreen profile={profile} onLogout={logout} />
       </SafeAreaView>
     );
   }
