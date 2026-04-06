@@ -48,8 +48,39 @@ app.use(cors({
 }));
 app.use(express.json());
 
-const limiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100 });
-app.use(limiter);
+const readHeavyPaths = [
+    '/api/health',
+    '/api/firebase-users/me',
+];
+
+const shouldSkipGeneralRateLimit = (req) => {
+    const method = String(req.method || 'GET').toUpperCase();
+    const requestPath = String(req.path || req.originalUrl || '');
+
+    if (method === 'GET' && requestPath.startsWith('/api/table/')) {
+        return true;
+    }
+
+    if (method === 'GET' && requestPath.startsWith('/api/settings/')) {
+        return true;
+    }
+
+    if (method === 'GET' && readHeavyPaths.includes(requestPath)) {
+        return true;
+    }
+
+    return false;
+};
+
+const generalLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 1000,
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: shouldSkipGeneralRateLimit,
+});
+
+app.use(generalLimiter);
 
 // ── MySQL pool de provisioning (usuario con permisos CREATE DATABASE) ───────
 const provisionPool = mysql.createPool({
