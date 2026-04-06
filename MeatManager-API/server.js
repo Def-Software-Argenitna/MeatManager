@@ -351,7 +351,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ]);
 
@@ -359,7 +359,7 @@ const TENANT_ID_TABLES = [
     'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
 
@@ -555,7 +555,7 @@ const TABLES_WITH_NUMERIC_ID = [
     'caja_movimientos', 'prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
-const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos']);
+const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures']);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -899,6 +899,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
+            await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
@@ -1993,6 +1994,26 @@ function getSchemaTables() {
             UNIQUE KEY uniq_branch_stock_snapshots_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_branch_stock_snapshots_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS cash_closures (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            closure_date    DATE,
+            branch_id       INT,
+            closed_at       DATETIME,
+            theoretical_cash DECIMAL(12,2),
+            counted_cash    DECIMAL(12,2),
+            difference      DECIMAL(12,2),
+            total_sales     DECIMAL(12,2),
+            total_incomes   DECIMAL(12,2),
+            total_expenses  DECIMAL(12,2),
+            notes           TEXT,
+            report_path     VARCHAR(255),
+            snapshot        LONGTEXT,
+            UNIQUE KEY uniq_cash_closures_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_cash_closures_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_cash_closures_date (\`${TENANT_COLUMN}\`, closure_date),
+            INDEX idx_cash_closures_branch (\`${TENANT_COLUMN}\`, branch_id, closure_date)
+        )`,
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -2549,7 +2570,7 @@ const ALLOWED_TABLES = new Set([
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
 const AUTO_COLS = new Set(['created_at', 'updated_at']);
-const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot']);
+const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot']);
 
 function deserializeRow(row) {
     const out = {};

@@ -122,6 +122,7 @@ const CierreCaja = () => {
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [closureRecord, setClosureRecord] = useState(null);
     const [reportFolderPath, setReportFolderPath] = useState('');
+    const [branchCode, setBranchCode] = useState(null);
 
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
     const previousDayEnd = useMemo(() => {
@@ -131,12 +132,13 @@ const CierreCaja = () => {
     }, [start]);
 
     const refreshCashData = async () => {
-        const [salesRows, movementRows, paymentMethodsRows, closureRows, folderSetting] = await Promise.all([
+        const [salesRows, movementRows, paymentMethodsRows, closureRows, folderSetting, branchCodeSetting] = await Promise.all([
             fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
             fetchTable('caja_movimientos', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
             fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
             fetchTable('cash_closures', { limit: 1000, orderBy: 'closure_date', direction: 'DESC' }).catch(() => []),
             getRemoteSetting('cash_closure_reports_folder').catch(() => ''),
+            getRemoteSetting('branch_code').catch(() => null),
         ]);
 
         const salesList = Array.isArray(salesRows) ? salesRows : [];
@@ -156,7 +158,19 @@ const CierreCaja = () => {
         setAllMovementsUntilDate(movementList.filter((movement) => new Date(movement.date) <= end));
         setAllMovementsBeforeDate(movementList.filter((movement) => new Date(movement.date) <= previousDayEnd));
         setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
-        setClosureRecord(closureList.find((closure) => String(closure.closure_date || '') === selectedDate) || null);
+        const normalizedBranchCode = Number(branchCodeSetting);
+        const activeBranchId = Number.isFinite(normalizedBranchCode) && normalizedBranchCode > 0 ? normalizedBranchCode : null;
+        setBranchCode(activeBranchId);
+        setClosureRecord(
+            closureList.find((closure) => (
+                String(closure.closure_date || '') === selectedDate
+                && (
+                    activeBranchId == null
+                    || Number(closure.branch_id || 0) === activeBranchId
+                    || closure.branch_id == null
+                )
+            )) || null
+        );
         setReportFolderPath(String(folderSetting || ''));
     };
 
@@ -747,6 +761,7 @@ const CierreCaja = () => {
 
             await saveTableRecord('cash_closures', 'insert', {
                 closure_date: selectedDate,
+                branch_id: branchCode,
                 closed_at: closurePayload.closedAt,
                 theoretical_cash: cashInDrawer,
                 counted_cash: countedCashValue,

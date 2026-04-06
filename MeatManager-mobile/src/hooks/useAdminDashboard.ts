@@ -32,6 +32,20 @@ type PaymentMethodRow = {
   type?: string;
 };
 
+type CashClosureRow = {
+  id: number;
+  closure_date?: string | null;
+  branch_id?: number | null;
+  closed_at?: string | null;
+  theoretical_cash?: number | string | null;
+  counted_cash?: number | string | null;
+  difference?: number | string | null;
+  total_sales?: number | string | null;
+  total_incomes?: number | string | null;
+  total_expenses?: number | string | null;
+  notes?: string | null;
+};
+
 type PedidoRow = {
   id: number;
   branch_id?: number | null;
@@ -71,6 +85,7 @@ type DriverLocationRow = {
   repartidor?: string | null;
   lat?: number;
   lng?: number;
+  lastSeenAt?: string;
   updatedAt?: string;
 };
 
@@ -82,6 +97,21 @@ type DriverSummary = {
   activeOrderCount: number;
   online: boolean;
   locationText: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  lastSyncText: string | null;
+};
+
+type CashClosureSummary = {
+  id: number;
+  branchName: string;
+  closureDate: string;
+  closedAtText: string | null;
+  theoreticalCash: number;
+  countedCash: number;
+  difference: number;
+  totalSales: number;
+  notes: string | null;
 };
 
 type AdminDashboardState = {
@@ -98,6 +128,7 @@ type AdminDashboardState = {
   pendingDeliveries: number;
   deliveredOrders: number;
   drivers: DriverSummary[];
+  cashClosures: CashClosureSummary[];
   reload: () => void;
 };
 
@@ -116,6 +147,26 @@ const normalizeBranchCode = (value: unknown) => {
 const extractBranchCodeFromReceipt = (value: unknown) => {
   const match = String(value || '').trim().match(/^(\d{4})-/);
   return match ? normalizeBranchCode(match[1]) : null;
+};
+const formatLastSync = (value: unknown) => {
+  const date = value ? new Date(String(value)) : null;
+  if (!date || Number.isNaN(date.getTime())) return null;
+
+  return `Ultima sync: ${date.toLocaleString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`;
+};
+const formatClosureDate = (value: unknown) => {
+  const date = value ? new Date(String(value)) : null;
+  if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
+  return date.toLocaleDateString('es-AR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  });
 };
 
 const isCashPayment = (methodName: string, paymentMethods: PaymentMethodRow[]) => {
@@ -141,6 +192,7 @@ export function useAdminDashboard(): AdminDashboardState {
   const [pendingDeliveries, setPendingDeliveries] = useState(0);
   const [deliveredOrders, setDeliveredOrders] = useState(0);
   const [drivers, setDrivers] = useState<DriverSummary[]>([]);
+  const [cashClosures, setCashClosures] = useState<CashClosureSummary[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -150,7 +202,7 @@ export function useAdminDashboard(): AdminDashboardState {
       setError(null);
 
       try {
-        const [ventas, cajaMovimientos, paymentMethods, pedidos, repartidores, locations, branches] = await Promise.all([
+        const [ventas, cajaMovimientos, paymentMethods, pedidos, repartidores, locations, branches, closures] = await Promise.all([
           fetchTableRows<VentaRow>('ventas', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
           fetchTableRows<CajaMovimientoRow>('caja_movimientos', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
           fetchTableRows<PaymentMethodRow>('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' }),
@@ -158,6 +210,7 @@ export function useAdminDashboard(): AdminDashboardState {
           fetchLogisticsDrivers(),
           fetchDriverLocations(),
           fetchClientBranches(),
+          fetchTableRows<CashClosureRow>('cash_closures', { limit: 30, orderBy: 'closed_at', direction: 'DESC' }).catch(() => []),
         ]);
 
         if (cancelled) return;
@@ -196,6 +249,7 @@ export function useAdminDashboard(): AdminDashboardState {
         const filteredDrivers = repartidores.filter((driver) => (
           selectedCode === 'all' || String(driver.branchId || '') === selectedCode
         ));
+        const filteredClosures = closures.filter((closure) => matchesSelectedBranch(closure.branch_id));
         const branchDriverNames = new Set(filteredDrivers.map((driver) => normalizeName(driver.name)).filter(Boolean));
         const branchDriverEmails = new Set(filteredDrivers.map((driver) => normalizeName(driver.email)).filter(Boolean));
         const branchDriverUids = new Set(filteredDrivers.map((driver) => String(driver.firebaseUid || '').trim()).filter(Boolean));
@@ -249,7 +303,14 @@ export function useAdminDashboard(): AdminDashboardState {
 
         const locationMap = new Map<string, DriverLocationRow>();
         (locations as DriverLocationRow[]).forEach((location) => {
-          const keys = [location.repartidor, location.email].map(normalizeName).filter(Boolean);
+          const keys = [
+            location.repartidor,
+            location.email,
+            location.firebaseUid,
+          ]
+            .map((value) => String(value || '').trim())
+            .map(normalizeName)
+            .filter(Boolean);
           keys.forEach((key) => locationMap.set(key, location));
         });
 
@@ -266,10 +327,13 @@ export function useAdminDashboard(): AdminDashboardState {
               deliveredCount: 0,
               activeOrderCount: 0,
               online: Boolean(liveLocation),
+              latitude: Number.isFinite(liveLocation?.lat) ? Number(liveLocation?.lat) : null,
+              longitude: Number.isFinite(liveLocation?.lng) ? Number(liveLocation?.lng) : null,
               locationText:
                 liveLocation && Number.isFinite(liveLocation.lat) && Number.isFinite(liveLocation.lng)
                   ? `${Number(liveLocation.lat).toFixed(4)}, ${Number(liveLocation.lng).toFixed(4)}`
                   : null,
+              lastSyncText: formatLastSync(liveLocation?.lastSeenAt || liveLocation?.updatedAt),
             };
           }
 
@@ -296,10 +360,13 @@ export function useAdminDashboard(): AdminDashboardState {
               deliveredCount: 0,
               activeOrderCount: 0,
               online: Boolean(liveLocation),
+              latitude: Number.isFinite(liveLocation?.lat) ? Number(liveLocation?.lat) : null,
+              longitude: Number.isFinite(liveLocation?.lng) ? Number(liveLocation?.lng) : null,
               locationText:
                 liveLocation && Number.isFinite(liveLocation.lat) && Number.isFinite(liveLocation.lng)
                   ? `${Number(liveLocation.lat).toFixed(4)}, ${Number(liveLocation.lng).toFixed(4)}`
                   : null,
+              lastSyncText: formatLastSync(liveLocation?.lastSeenAt || liveLocation?.updatedAt),
             };
           } else if (!orderGroups[key].vehicle) {
             orderGroups[key].vehicle = driver.vehicle || null;
@@ -312,6 +379,28 @@ export function useAdminDashboard(): AdminDashboardState {
           }
           return left.name.localeCompare(right.name);
         });
+        const branchNameById = new Map(nextBranchOptions.map((branch) => [branch.code, branch.name]));
+        const activeBranchName =
+          nextBranchOptions.find((branch) => branch.code === selectedCode)?.name || 'Sucursal general';
+        const latestClosures = filteredClosures
+          .map((closure) => {
+            const closureBranchName =
+              branchNameById.get(String(closure.branch_id || ''))
+              || (selectedCode === 'all' ? 'Sucursal general' : activeBranchName);
+
+            return {
+              id: closure.id,
+              branchName: closureBranchName,
+              closureDate: formatClosureDate(closure.closure_date || closure.closed_at),
+              closedAtText: formatLastSync(closure.closed_at)?.replace('Ultima sync: ', 'Cerrado: ') || null,
+              theoreticalCash: toNumber(closure.theoretical_cash),
+              countedCash: toNumber(closure.counted_cash),
+              difference: toNumber(closure.difference),
+              totalSales: toNumber(closure.total_sales),
+              notes: String(closure.notes || '').trim() || null,
+            };
+          })
+          .slice(0, 8);
 
         setSalesTodayTotal(salesToday.reduce((sum, sale) => sum + toNumber(sale.total), 0));
         setSalesMonthTotal(salesMonth.reduce((sum, sale) => sum + toNumber(sale.total), 0));
@@ -320,6 +409,7 @@ export function useAdminDashboard(): AdminDashboardState {
         setPendingDeliveries(filteredPedidos.filter((pedido) => pedido.status && pedido.status !== 'delivered').length);
         setDeliveredOrders(filteredPedidos.filter((pedido) => pedido.status === 'delivered').length);
         setDrivers(sortedDrivers);
+        setCashClosures(latestClosures);
       } catch (nextError) {
         if (cancelled) return;
         const message = nextError instanceof Error ? nextError.message : 'No se pudo cargar el panel admin.';
@@ -353,6 +443,7 @@ export function useAdminDashboard(): AdminDashboardState {
       pendingDeliveries,
       deliveredOrders,
       drivers,
+      cashClosures,
       reload: () => setRefreshTick((value) => value + 1),
     }),
     [
@@ -360,6 +451,7 @@ export function useAdminDashboard(): AdminDashboardState {
       branchOptions,
       deliveredOrders,
       drivers,
+      cashClosures,
       error,
       isLoading,
       pendingDeliveries,

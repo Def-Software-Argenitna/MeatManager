@@ -46,10 +46,10 @@ export function LoginScreen({ onSubmit }: Props) {
       behavior={Platform.select({ ios: 'padding', android: undefined })}
     >
       <View style={styles.heroCard}>
-        <Text style={styles.kicker}>MeatManager Mobile</Text>
-        <Text style={styles.title}>MeatManager Mobile</Text>
+        <Text style={styles.kicker}>Acceso seguro</Text>
+        <Text style={styles.title}>MeatManager</Text>
         <Text style={styles.description}>
-          Ingresá con la misma cuenta Firebase del negocio para acceder a tu panel móvil según tu rol y licencias.
+          Ingresá con tus credenciales para acceder a tu espacio de trabajo móvil según tu cuenta y permisos habilitados.
         </Text>
 
         <TextInput
