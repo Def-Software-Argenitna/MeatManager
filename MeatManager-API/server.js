@@ -1077,10 +1077,18 @@ async function getClientAccessContext({ uid, email }) {
                 c.taxId,
                 c.billingEmail,
                 c.cashAuthorizationEmail,
-                c.status AS clientStatus
+                c.status AS clientStatus,
+                b.id AS branchRecordId,
+                b.name AS branchName,
+                b.internalCode AS branchInternalCode,
+                b.address AS branchAddress,
+                b.status AS branchStatus
              FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
              INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
                 ON c.id = cu.clientId
+             LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                ON b.id = cu.branchId
+               AND b.clientId = cu.clientId
              WHERE (cu.firebaseUid = ? OR LOWER(cu.email) = ?)
              ORDER BY CASE WHEN cu.firebaseUid = ? THEN 0 ELSE 1 END, cu.id ASC
              LIMIT 1`,
@@ -1310,6 +1318,13 @@ function buildAccessResponse(accessContext) {
         perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
         clientId: accessContext.client.id,
         clientStatus: accessContext.client.status,
+        branch: accessContext.user?.branchRecordId ? {
+            id: accessContext.user.branchRecordId,
+            name: accessContext.user.branchName || '',
+            internalCode: accessContext.user.branchInternalCode || '',
+            address: accessContext.user.branchAddress || '',
+            status: accessContext.user.branchStatus || '',
+        } : null,
         tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
         licenses: accessContext.effectiveLicenses,
     };
