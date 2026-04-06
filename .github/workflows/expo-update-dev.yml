@@ -1,0 +1,41 @@
+name: Expo Update Dev
+
+on:
+  push:
+    branches:
+      - dev
+    paths:
+      - 'MeatManager-mobile/**'
+      - '.github/workflows/expo-update-dev.yml'
+
+jobs:
+  publish-update:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: MeatManager-mobile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: MeatManager-mobile/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          expo-version: latest
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Publish OTA update to dev
+        run: npx eas-cli update --branch dev --message "${{ github.event.head_commit.message }}"
