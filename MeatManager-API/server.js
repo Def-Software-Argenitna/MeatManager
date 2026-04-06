@@ -574,10 +574,30 @@ async function hasColumn(conn, dbName, tableName, columnName) {
 
 async function ensureColumn(conn, tableName, columnName, definitionSql) {
     if (await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, columnName)) return;
-    await conn.query(
-        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
-         ADD COLUMN ${definitionSql}`
-    );
+    try {
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+             ADD COLUMN ${definitionSql}`
+        );
+    } catch (error) {
+        const fallbackDefinition = String(definitionSql || '')
+            .replace(/\s+AFTER\s+`[^`]+`\s*$/i, '')
+            .trim();
+
+        const canRetryWithoutAfter =
+            error?.code === 'ER_BAD_FIELD_ERROR'
+            && fallbackDefinition
+            && fallbackDefinition !== String(definitionSql || '').trim();
+
+        if (!canRetryWithoutAfter) {
+            throw error;
+        }
+
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+             ADD COLUMN ${fallbackDefinition}`
+        );
+    }
 }
 
 async function getColumnType(conn, dbName, tableName, columnName) {
