@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
