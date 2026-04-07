@@ -79,6 +79,7 @@ const normalizeLiveDriver = (driver) => {
         ?? driver?.updatedAt
         ?? driver?.updated_at
         ?? driver?.timestamp
+        ?? driver?.lastSeenAt
         ?? driver?.lastSeen
         ?? driver?.last_seen
         ?? null;
