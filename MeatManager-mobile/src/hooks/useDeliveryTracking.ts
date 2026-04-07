@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import * as Location from 'expo-location';
 
+import { ensureDriverLocationTracking, stopDriverLocationTracking } from '../services/backgroundLocationTask';
 import { subscribeToAssignedOrders, updateDriverLocation } from '../services/deliveryService';
 import type { DeliveryOrder } from '../types/delivery';
 
@@ -52,6 +53,8 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
     if (!driverName) {
       setIsTracking(false);
       setLocationText('Sesion cerrada');
+      setLocationError(null);
+      void stopDriverLocationTracking().catch(() => {});
       return;
     }
 
@@ -60,18 +63,24 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
     let subscription: Location.LocationSubscription | null = null;
 
     async function startTracking() {
-      const permission = await Location.requestForegroundPermissionsAsync();
+      const trackingSetup = await ensureDriverLocationTracking();
 
       if (!mounted) return;
 
-      if (permission.status !== 'granted') {
-        setLocationError('La app necesita permiso de ubicacion para rastrear entregas.');
-        setLocationText('Permiso de ubicacion denegado');
+      if (!trackingSetup.ok) {
+        setLocationError(trackingSetup.error);
+        setLocationText('Tracking en segundo plano deshabilitado');
         setIsTracking(false);
         return;
       }
 
       setLocationError(null);
+      setIsTracking(true);
+
+      const lastKnownPosition = await Location.getLastKnownPositionAsync();
+      if (mounted && lastKnownPosition) {
+        setLocationText(`${lastKnownPosition.coords.latitude.toFixed(5)}, ${lastKnownPosition.coords.longitude.toFixed(5)}`);
+      }
 
       subscription = await Location.watchPositionAsync(
         {
