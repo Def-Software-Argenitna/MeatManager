@@ -20,7 +20,7 @@ import { AdminDashboardScreen } from './AdminDashboardScreen';
 
 export function DeliveryDashboardScreen() {
   const { user, profile, appMode, driverName, login, logout, isLoading, sessionError } = useAuthSession();
-  const { orders, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
+  const { orders, isTracking, syncError, locationError, isRefreshing, lastSyncText, reload } =
     useDeliveryTracking(appMode === 'driver' ? driverName || null : null);
   const deliveredOrders = useMemo(() => orders.filter((order) => order.status === 'delivered'), [orders]);
   const pendingOrders = useMemo(() => orders.filter((order) => order.status !== 'delivered' && order.status !== 'cancelled'), [orders]);
@@ -122,13 +122,23 @@ export function DeliveryDashboardScreen() {
               </View>
             </View>
 
-            {permissionError ? (
+            {syncError ? (
               <Pressable
                 style={styles.warningCard}
-                onPress={() => Alert.alert('Seguimiento', permissionError || '')}
+                onPress={() => Alert.alert('Sincronizacion', syncError)}
               >
                 <Text style={styles.warningTitle}>Atencion con la sincronizacion</Text>
-                <Text style={styles.warningText}>{permissionError}</Text>
+                <Text style={styles.warningText}>{syncError}</Text>
+              </Pressable>
+            ) : null}
+
+            {locationError ? (
+              <Pressable
+                style={styles.warningCard}
+                onPress={() => Alert.alert('Ubicacion', locationError)}
+              >
+                <Text style={styles.warningTitle}>Permiso o rastreo de ubicacion</Text>
+                <Text style={styles.warningText}>{locationError}</Text>
               </Pressable>
             ) : null}
 
