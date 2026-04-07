@@ -61,7 +61,16 @@ export default defineConfig({
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
 
-          if (id.includes('react') || id.includes('react-dom') || id.includes('react-router')) {
+          if (
+            id.includes('react') ||
+            id.includes('react-dom') ||
+            id.includes('react-router') ||
+            id.includes('framer-motion') ||
+            id.includes('motion-dom') ||
+            id.includes('motion-utils') ||
+            id.includes('react-leaflet') ||
+            id.includes('dexie-react-hooks')
+          ) {
             return 'vendor-react';
           }
 
