@@ -1402,6 +1402,7 @@ async function listEligibleLogisticsDrivers(clientId) {
                 cu.email,
                 cu.role,
                 cu.status,
+                b.name AS branchName,
                 cl.id AS clientLicenseId,
                 cl.licenseId,
                 cl.branchId AS licenseBranchId,
@@ -1411,6 +1412,9 @@ async function listEligibleLogisticsDrivers(clientId) {
                 l.category,
                 l.featureFlags
              FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
+             LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                ON b.id = cu.branchId
+               AND b.clientId = cu.clientId
              INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
                 ON cl.clientId = cu.clientId
                AND cl.userId = cu.id
@@ -1432,6 +1436,7 @@ async function listEligibleLogisticsDrivers(clientId) {
                 id: row.id,
                 clientId: row.clientId,
                 branchId: row.branchId,
+                branchName: row.branchName || '',
                 firebaseUid: row.firebaseUid || null,
                 email: normalizeEmail(row.email || ''),
                 role: row.role === 'admin' ? 'admin' : 'employee',

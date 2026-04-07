@@ -164,6 +164,16 @@ const getDriverDisplayName = (driver) => {
     return String(driver?.email || driver?.name || 'Repartidor').trim();
 };
 
+const getDriverBranchLabel = (driver) => {
+    const branchName = String(driver?.branchName || driver?.branch_name || '').trim();
+    if (branchName) return branchName;
+
+    const branchId = String(driver?.branchId || driver?.branch_id || '').trim();
+    if (branchId) return `Sucursal #${branchId}`;
+
+    return 'Sucursal general';
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -923,7 +933,7 @@ const getOrderCoordinates = (pedido) => {
                                                     <div className="driver-staff-meta">
                                                         <Mail size={12} /> {driver.email}
                                                     </div>
-                                                    <div className="driver-staff-branch">Sucursal #{driver.branchId || 'General'}</div>
+                                                    <div className="driver-staff-branch">{getDriverBranchLabel(driver)}</div>
                                                 </td>
                                                 <td>
                                                     <div className="compliance-grid">
