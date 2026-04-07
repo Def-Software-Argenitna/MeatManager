@@ -21,6 +21,14 @@ type Props = {
 
 const currency = (value: number) =>
   value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const statusLabel = (value: string) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'delivered') return 'Entregado';
+  if (normalized === 'assigned') return 'Asignado';
+  if (normalized === 'on_route') return 'En reparto';
+  if (normalized === 'arrived') return 'Llegó';
+  return normalized || 'Pendiente';
+};
 
 const openDriverMap = async (latitude: number | null, longitude: number | null) => {
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
@@ -223,6 +231,42 @@ export function AdminDashboardScreen({ profile, onLogout }: Props) {
           ) : (
             <Text style={styles.driverLocationValue}>Sin tracking reciente</Text>
           )}
+
+          <View style={styles.ordersColumns}>
+            <View style={styles.ordersBlock}>
+              <Text style={styles.ordersBlockTitle}>Pendientes</Text>
+              {item.pendingOrders.length > 0 ? (
+                item.pendingOrders.map((order) => (
+                  <View key={`pending-${order.id}`} style={styles.orderRow}>
+                    <View style={styles.orderRowText}>
+                      <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                      <Text style={styles.orderMeta}>#{order.id} · {statusLabel(order.status)}</Text>
+                    </View>
+                    <Text style={styles.orderAmount}>{currency(order.total)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.ordersEmptyText}>Sin pedidos pendientes</Text>
+              )}
+            </View>
+
+            <View style={styles.ordersBlock}>
+              <Text style={styles.ordersBlockTitle}>Entregados</Text>
+              {item.deliveredOrders.length > 0 ? (
+                item.deliveredOrders.map((order) => (
+                  <View key={`delivered-${order.id}`} style={styles.orderRow}>
+                    <View style={styles.orderRowText}>
+                      <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                      <Text style={styles.orderMeta}>#{order.id} · {statusLabel(order.status)}</Text>
+                    </View>
+                    <Text style={styles.orderAmount}>{currency(order.total)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.ordersEmptyText}>Sin pedidos entregados</Text>
+              )}
+            </View>
+          </View>
         </View>
       )}
       ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
@@ -554,6 +598,51 @@ const styles = StyleSheet.create({
     color: theme.colors.primary,
     fontSize: 13,
     fontWeight: '800',
+  },
+  ordersColumns: {
+    gap: 10,
+  },
+  ordersBlock: {
+    backgroundColor: theme.colors.surfaceAlt,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    gap: 10,
+  },
+  ordersBlockTitle: {
+    color: theme.colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  orderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    alignItems: 'center',
+  },
+  orderRowText: {
+    flex: 1,
+  },
+  orderCustomer: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  orderMeta: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  orderAmount: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  ordersEmptyText: {
+    color: theme.colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
   },
   emptyCard: {
     backgroundColor: theme.colors.surface,

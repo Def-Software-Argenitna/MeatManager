@@ -57,6 +57,13 @@ type PedidoRow = {
   total?: number | string;
 };
 
+type DriverOrderSummary = {
+  id: number;
+  customerName: string;
+  status: string;
+  total: number;
+};
+
 type BranchOption = {
   code: string;
   name: string;
@@ -100,6 +107,8 @@ type DriverSummary = {
   latitude: number | null;
   longitude: number | null;
   lastSyncText: string | null;
+  pendingOrders: DriverOrderSummary[];
+  deliveredOrders: DriverOrderSummary[];
 };
 
 type CashClosureSummary = {
@@ -334,14 +343,25 @@ export function useAdminDashboard(): AdminDashboardState {
                   ? `${Number(liveLocation.lat).toFixed(4)}, ${Number(liveLocation.lng).toFixed(4)}`
                   : null,
               lastSyncText: formatLastSync(liveLocation?.lastSeenAt || liveLocation?.updatedAt),
+              pendingOrders: [],
+              deliveredOrders: [],
             };
           }
 
+          const orderSummary = {
+            id: pedido.id,
+            customerName: String(pedido.customer_name || `Pedido #${pedido.id}`).trim(),
+            status: String(pedido.status || 'pending').trim(),
+            total: toNumber(pedido.total),
+          };
+
           if (pedido.status === 'delivered') {
             acc[key].deliveredCount += 1;
+            acc[key].deliveredOrders.push(orderSummary);
           } else {
             acc[key].pendingCount += 1;
             acc[key].activeOrderCount += 1;
+            acc[key].pendingOrders.push(orderSummary);
           }
 
           return acc;
@@ -367,6 +387,8 @@ export function useAdminDashboard(): AdminDashboardState {
                   ? `${Number(liveLocation.lat).toFixed(4)}, ${Number(liveLocation.lng).toFixed(4)}`
                   : null,
               lastSyncText: formatLastSync(liveLocation?.lastSeenAt || liveLocation?.updatedAt),
+              pendingOrders: [],
+              deliveredOrders: [],
             };
           } else if (!orderGroups[key].vehicle) {
             orderGroups[key].vehicle = driver.vehicle || null;
