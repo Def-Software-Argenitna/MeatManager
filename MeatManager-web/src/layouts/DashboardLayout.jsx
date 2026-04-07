@@ -111,6 +111,19 @@ const DashboardLayout = () => {
         if (!root) return undefined;
 
         const candidates = root.querySelectorAll(`
+            .dashboard-stat-card,
+            .dashboard-panel,
+            .dashboard-mini-metric,
+            .dashboard-quick-action,
+            .pos-products-area,
+            .pos-ticket,
+            .product-card,
+            .ticket-item,
+            .ticket-footer,
+            .action-buttons,
+            .products-grid,
+            .dashboard-main-grid,
+            .dashboard-stats-grid,
             .neo-card,
             .card,
             .panel,
@@ -170,8 +183,10 @@ const DashboardLayout = () => {
         });
 
         const raf = window.requestAnimationFrame(() => {
-            animated.forEach((element) => {
-                element.setAttribute('data-mm-entered', 'true');
+            window.requestAnimationFrame(() => {
+                animated.forEach((element) => {
+                    element.setAttribute('data-mm-entered', 'true');
+                });
             });
         });
 
