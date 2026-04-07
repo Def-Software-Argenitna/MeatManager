@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,6 +12,8 @@ import {
 } from 'react-native';
 
 import { theme } from '../theme';
+
+const meatManagerLogo = require('../../assets/branding/meatmanager-icon.png');
 
 type Props = {
   onSubmit: (email: string, password: string) => Promise<{ ok: boolean; error?: string } | void>;
@@ -46,6 +49,9 @@ export function LoginScreen({ onSubmit }: Props) {
       behavior={Platform.select({ ios: 'padding', android: undefined })}
     >
       <View style={styles.heroCard}>
+        <View style={styles.logoWrap}>
+          <Image source={meatManagerLogo} style={styles.logo} resizeMode="contain" />
+        </View>
         <Text style={styles.kicker}>Acceso seguro</Text>
         <Text style={styles.title}>MeatManager</Text>
         <Text style={styles.description}>
@@ -107,6 +113,21 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: theme.colors.border,
     ...theme.shadow,
+  },
+  logoWrap: {
+    alignSelf: 'center',
+    width: 132,
+    height: 132,
+    borderRadius: 28,
+    backgroundColor: '#120e0c',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 132, 0, 0.22)',
+  },
+  logo: {
+    width: 108,
+    height: 108,
   },
   kicker: {
     alignSelf: 'flex-start',
