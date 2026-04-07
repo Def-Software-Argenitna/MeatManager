@@ -22,7 +22,7 @@ import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useLicense } from '../context/LicenseContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
-import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
+import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
 import './Logistica.css';
 
@@ -332,17 +332,7 @@ const Logistica = () => {
         return 'Sin Asignar';
     };
 
-    const getPaymentLabel = (pedido) => {
-        if (pedido?.paid) {
-            return `Cobrado${pedido.payment_method ? ` · ${pedido.payment_method}` : ''}`;
-        }
-        if (pedido?.payment_status === 'pending_driver_collection') {
-            return `Cobra repartidor${pedido?.amount_due ? ` · $${Number(pedido.amount_due).toLocaleString()}` : ''}`;
-        }
-        return 'Cobro no definido';
-    };
-
-    const getOrderCoordinates = (pedido) => {
+const getOrderCoordinates = (pedido) => {
         const stored = getStoredCoordinates(pedido);
         if (stored) return [stored.latitude, stored.longitude];
 

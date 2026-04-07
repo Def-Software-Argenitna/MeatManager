@@ -43,18 +43,7 @@ const InformesPro = () => {
         loadReportData().catch((error) => console.error('Error cargando informes PRO:', error));
     }, []);
 
-    if (!hasModule('informes-pro')) {
-        return (
-            <div className="pro-locked-container animate-fade-in">
-                <Crown size={64} color="gold" />
-                <h2>Módulo de Informes Avanzados</h2>
-                <p>El análisis de rendimiento y costos es exclusivo para usuarios **PRO**.</p>
-                <button className="neo-button pro-btn" onClick={() => window.location.hash = '#/config/licencia'}>
-                    Ver Planes de Activación
-                </button>
-            </div>
-        );
-    }
+    const hasInformesProModule = hasModule('informes-pro');
 
     const filteredLogs = useMemo(() => {
         const days = parseInt(filterDays, 10);
@@ -560,6 +549,19 @@ const InformesPro = () => {
 
     const worstSupplier = ranking.length > 0 ? ranking[ranking.length - 1] : null;
     const avgCowYield = ranking.length > 0 ? (ranking.reduce((acc, r) => acc + parseFloat(r.avgYield), 0) / ranking.length).toFixed(1) : 0;
+
+    if (!hasInformesProModule) {
+        return (
+            <div className="pro-locked-container animate-fade-in">
+                <Crown size={64} color="gold" />
+                <h2>Módulo de Informes Avanzados</h2>
+                <p>El análisis de rendimiento y costos es exclusivo para usuarios **PRO**.</p>
+                <button className="neo-button pro-btn" onClick={() => window.location.hash = '#/config/licencia'}>
+                    Ver Planes de Activación
+                </button>
+            </div>
+        );
+    }
 
     return (
         <div className="informes-pro-container animate-fade-in">

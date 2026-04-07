@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
@@ -174,7 +174,7 @@ const Compras = () => {
         }
     }, [isMixedPurchase, newPurchase.destination]);
 
-    const getSuggestedIvaRate = (productName, fallbackItem = null) => {
+    const getSuggestedIvaRate = useCallback((productName, fallbackItem = null) => {
         const supplierKey = normalizeLookupValue(newPurchase.supplier);
         const productKey = normalizeLookupValue(productName);
         const supplierProfile = supplierTaxProfiles?.find((profile) => (
@@ -188,7 +188,7 @@ const Compras = () => {
 
         const matchedCatalogItem = fallbackItem || purchaseItems?.find((pi) => normalizeLookupValue(pi.name) === productKey);
         return inferDefaultIvaRate({ item: matchedCatalogItem, categories });
-    };
+    }, [categories, newPurchase.supplier, purchaseItems, supplierTaxProfiles]);
 
     useEffect(() => {
         if (!currentItem.name || currentItem.iva_manual) return;
@@ -196,7 +196,7 @@ const Compras = () => {
         if (Number(suggestedRate) > 0 && Number(currentItem.iva_rate) !== Number(suggestedRate)) {
             setCurrentItem((prev) => ({ ...prev, iva_rate: suggestedRate }));
         }
-    }, [newPurchase.supplier, currentItem.name, currentItem.iva_manual, purchaseItems, supplierTaxProfiles, categories]);
+    }, [currentItem.iva_manual, currentItem.iva_rate, currentItem.name, getSuggestedIvaRate]);
 
     // Helper: Select item from suggestions
     const selectSuggestion = (item) => {
