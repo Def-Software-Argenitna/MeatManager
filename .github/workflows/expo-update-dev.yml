@@ -1,4 +1,4 @@
-name: Expo Update Dev
+name: Expo Update Preview
 
 on:
   push:
@@ -39,5 +39,5 @@ jobs:
           eas-version: latest
           token: ${{ secrets.EXPO_TOKEN }}
 
-      - name: Publish OTA update to dev
-        run: npx eas-cli update --branch dev --message "${{ github.event.head_commit.message }}"
+      - name: Publish OTA update to preview
+        run: npx eas-cli update --branch preview --message "${{ github.event.head_commit.message }}"
