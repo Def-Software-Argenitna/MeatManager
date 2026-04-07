@@ -211,6 +211,88 @@
     box-shadow: 0 15px 50px rgba(0, 0, 0, 0.32), inset 0 0 1px 1px rgba(255,255,255,0.05);
 }
 
+.gm-map-shell,
+.gm-map-canvas {
+    height: 100%;
+    width: 100%;
+}
+
+.gm-map-shell {
+    position: relative;
+}
+
+.gm-map-canvas {
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.gm-map-loading,
+.gm-map-fallback {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 0.5rem;
+    border-radius: 12px;
+    background: linear-gradient(180deg, rgba(15, 23, 42, 0.88) 0%, rgba(30, 41, 59, 0.92) 100%);
+    color: #e2e8f0;
+    z-index: 2;
+    padding: 1.5rem;
+    text-align: center;
+}
+
+.gm-map-fallback strong {
+    color: #fff;
+}
+
+.gm-popup-card {
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    color: #0f172a;
+}
+
+.gm-popup-card h4 {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.gm-popup-card p,
+.gm-popup-card span {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #334155;
+}
+
+.map-popup-card {
+    min-width: 180px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    color: #f8fafc;
+}
+
+.map-popup-card h4 {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.map-popup-card p,
+.map-popup-card span {
+    margin: 0;
+    font-size: 0.8rem;
+    color: #cbd5e1;
+}
+
+.map-popup-actions {
+    display: flex;
+    gap: 0.45rem;
+    margin-top: 0.2rem;
+}
+
 .map-expand-btn {
     position: absolute;
     top: 10px;
