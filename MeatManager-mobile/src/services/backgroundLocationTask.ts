@@ -70,12 +70,25 @@ export async function ensureDriverLocationTracking(): Promise<TrackingBootstrapR
     return { ok: false, error: 'Activa la ubicacion del dispositivo para compartir tu posicion.' };
   }
 
-  const foreground = await Location.requestForegroundPermissionsAsync();
+  let foreground = await Location.getForegroundPermissionsAsync();
   if (foreground.status !== 'granted') {
-    return { ok: false, error: 'La app necesita permiso de ubicacion para rastrear entregas.' };
+    foreground = await Location.requestForegroundPermissionsAsync();
   }
 
-  const background = await Location.requestBackgroundPermissionsAsync();
+  if (foreground.status !== 'granted') {
+    return {
+      ok: false,
+      error: foreground.canAskAgain === false
+        ? 'La ubicacion esta bloqueada para esta app. Habilitala desde los ajustes del dispositivo.'
+        : 'La app necesita permiso de ubicacion para rastrear entregas.',
+    };
+  }
+
+  let background = await Location.getBackgroundPermissionsAsync();
+  if (background.status !== 'granted' && background.canAskAgain !== false) {
+    background = await Location.requestBackgroundPermissionsAsync();
+  }
+
   if (background.status !== 'granted') {
     await AsyncStorage.setItem(TRACKING_ENABLED_KEY, 'false');
     return {

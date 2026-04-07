@@ -551,6 +551,27 @@
     border-bottom: 1px solid #f1f5f9;
 }
 
+.driver-staff-name {
+    font-weight: 700;
+    font-size: 1rem;
+    color: #0f172a;
+}
+
+.driver-staff-meta {
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: #475569;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.driver-staff-branch {
+    margin-top: 0.15rem;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
 @media (max-width: 768px) {
     .add-driver-form-pro {
         grid-template-columns: 1fr 1fr;

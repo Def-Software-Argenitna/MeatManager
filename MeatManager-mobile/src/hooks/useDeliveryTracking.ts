@@ -17,6 +17,7 @@ type TrackingState = {
   isRefreshing: boolean;
   lastSyncText: string;
   reload: () => void;
+  retryTracking: () => void;
 };
 
 export function useDeliveryTracking(driverName: string | null): TrackingState {
@@ -28,6 +29,7 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [lastSyncText, setLastSyncText] = useState('Sincronizacion pendiente');
+  const [trackingTick, setTrackingTick] = useState(0);
 
   useEffect(() => {
     if (!driverName) {
@@ -66,47 +68,37 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
     let subscription: Location.LocationSubscription | null = null;
 
     async function startTracking() {
-      const trackingSetup = await ensureDriverLocationTracking();
+      try {
+        const trackingSetup = await ensureDriverLocationTracking();
 
-      if (!mounted) return;
+        if (!mounted) return;
 
-      if (!trackingSetup.ok) {
-        setLocationError(trackingSetup.error);
-        setLocationText('Tracking en segundo plano deshabilitado');
-        setIsTracking(false);
-        return;
-      }
+        if (!trackingSetup.ok) {
+          setLocationError(trackingSetup.error);
+          setLocationText('Tracking en segundo plano deshabilitado');
+          setIsTracking(false);
+          return;
+        }
 
-      setLocationError(trackingSetup.warning || null);
-      setIsTracking(true);
+        setLocationError(trackingSetup.warning || null);
+        setIsTracking(true);
 
-      const lastKnownPosition = await Location.getLastKnownPositionAsync();
-      if (mounted && lastKnownPosition) {
-        setLocationText(`${lastKnownPosition.coords.latitude.toFixed(5)}, ${lastKnownPosition.coords.longitude.toFixed(5)}`);
-      }
-
-      subscription = await Location.watchPositionAsync(
-        {
+        const currentPosition = await Location.getCurrentPositionAsync({
           accuracy: Location.Accuracy.High,
-          timeInterval: FOREGROUND_TRACKING_TIME_INTERVAL_MS,
-          distanceInterval: FOREGROUND_TRACKING_DISTANCE_INTERVAL_METERS,
-        },
-        async (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
+        }).catch(() => null);
 
-          if (!mounted) return;
-
+        if (mounted && currentPosition) {
+          const lat = currentPosition.coords.latitude;
+          const lng = currentPosition.coords.longitude;
           setLocationText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
-          setIsTracking(true);
 
           try {
             await updateDriverLocation({
               lat,
               lng,
-              accuracy: position.coords.accuracy ?? null,
-              speed: position.coords.speed ?? null,
-              heading: position.coords.heading ?? null,
+              accuracy: currentPosition.coords.accuracy ?? null,
+              speed: currentPosition.coords.speed ?? null,
+              heading: currentPosition.coords.heading ?? null,
               repartidor: currentDriverName,
               time: new Date().toISOString(),
             });
@@ -114,8 +106,50 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
             const message = error instanceof Error ? error.message : 'No se pudo sincronizar ubicacion.';
             setLocationError(message);
           }
-        },
-      );
+        } else {
+          const lastKnownPosition = await Location.getLastKnownPositionAsync();
+          if (mounted && lastKnownPosition) {
+            setLocationText(`${lastKnownPosition.coords.latitude.toFixed(5)}, ${lastKnownPosition.coords.longitude.toFixed(5)}`);
+          }
+        }
+
+        subscription = await Location.watchPositionAsync(
+          {
+            accuracy: Location.Accuracy.High,
+            timeInterval: FOREGROUND_TRACKING_TIME_INTERVAL_MS,
+            distanceInterval: FOREGROUND_TRACKING_DISTANCE_INTERVAL_METERS,
+          },
+          async (position) => {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+
+            if (!mounted) return;
+
+            setLocationText(`${lat.toFixed(5)}, ${lng.toFixed(5)}`);
+            setIsTracking(true);
+
+            try {
+              await updateDriverLocation({
+                lat,
+                lng,
+                accuracy: position.coords.accuracy ?? null,
+                speed: position.coords.speed ?? null,
+                heading: position.coords.heading ?? null,
+                repartidor: currentDriverName,
+                time: new Date().toISOString(),
+              });
+            } catch (error) {
+              const message = error instanceof Error ? error.message : 'No se pudo sincronizar ubicacion.';
+              setLocationError(message);
+            }
+          },
+        );
+      } catch (error) {
+        if (!mounted) return;
+        setLocationError(error instanceof Error ? error.message : 'No se pudo iniciar el seguimiento.');
+        setLocationText('Tracking en segundo plano deshabilitado');
+        setIsTracking(false);
+      }
     }
 
     startTracking();
@@ -124,7 +158,7 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
       mounted = false;
       subscription?.remove();
     };
-  }, [driverName]);
+  }, [driverName, trackingTick]);
 
   return useMemo(
     () => ({
@@ -138,6 +172,10 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
       reload: () => {
         setIsRefreshing(true);
         setRefreshTick((value) => value + 1);
+      },
+      retryTracking: () => {
+        setLocationError(null);
+        setTrackingTick((value) => value + 1);
       },
     }),
     [isRefreshing, isTracking, lastSyncText, locationError, locationText, orders, syncError],

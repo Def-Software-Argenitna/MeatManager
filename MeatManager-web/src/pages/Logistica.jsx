@@ -919,11 +919,11 @@ const getOrderCoordinates = (pedido) => {
                                         return (
                                             <tr key={driver.id}>
                                                 <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{getDriverDisplayName(driver)}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                    <div className="driver-staff-name">{getDriverDisplayName(driver)}</div>
+                                                    <div className="driver-staff-meta">
                                                         <Mail size={12} /> {driver.email}
                                                     </div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Sucursal #{driver.branchId || 'General'}</div>
+                                                    <div className="driver-staff-branch">Sucursal #{driver.branchId || 'General'}</div>
                                                 </td>
                                                 <td>
                                                     <div className="compliance-grid">
