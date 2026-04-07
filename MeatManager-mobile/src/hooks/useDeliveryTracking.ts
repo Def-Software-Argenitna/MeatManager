@@ -8,6 +8,20 @@ import type { DeliveryOrder } from '../types/delivery';
 const FOREGROUND_TRACKING_TIME_INTERVAL_MS = 5000;
 const FOREGROUND_TRACKING_DISTANCE_INTERVAL_METERS = 10;
 
+const normalizeLocationError = (error: unknown) => {
+  const rawMessage = error instanceof Error ? error.message : String(error || 'Error desconocido');
+
+  if (/NSLocation.*UsageDescription/i.test(rawMessage)) {
+    return 'Esta version de la app no tiene habilitados correctamente los permisos nativos de ubicacion. Instalá una build nueva y volvé a probar.';
+  }
+
+  if (/denied|permission/i.test(rawMessage)) {
+    return 'La app necesita permiso de ubicacion para compartir tu posicion.';
+  }
+
+  return 'No se pudo iniciar o sincronizar la ubicacion.';
+};
+
 type TrackingState = {
   orders: DeliveryOrder[];
   locationText: string;
@@ -103,7 +117,8 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
               time: new Date().toISOString(),
             });
           } catch (error) {
-            const message = error instanceof Error ? error.message : 'No se pudo sincronizar ubicacion.';
+            console.warn('[delivery-tracking] immediate location sync failed', error);
+            const message = normalizeLocationError(error);
             setLocationError(message);
           }
         } else {
@@ -139,14 +154,16 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
                 time: new Date().toISOString(),
               });
             } catch (error) {
-              const message = error instanceof Error ? error.message : 'No se pudo sincronizar ubicacion.';
+              console.warn('[delivery-tracking] watch location sync failed', error);
+              const message = normalizeLocationError(error);
               setLocationError(message);
             }
           },
         );
       } catch (error) {
         if (!mounted) return;
-        setLocationError(error instanceof Error ? error.message : 'No se pudo iniciar el seguimiento.');
+        console.warn('[delivery-tracking] tracking bootstrap failed', error);
+        setLocationError(normalizeLocationError(error));
         setLocationText('Tracking en segundo plano deshabilitado');
         setIsTracking(false);
       }
