@@ -144,9 +144,29 @@ const GoogleLogisticsMap = ({
     const mapRef = useRef(null);
     const infoWindowRef = useRef(null);
     const markersRef = useRef([]);
+    const onDriverSelectRef = useRef(onDriverSelect);
+    const onOrderSelectRef = useRef(onOrderSelect);
+    const getOrderCoordinatesRef = useRef(getOrderCoordinates);
+    const formatDriverLastSeenRef = useRef(formatDriverLastSeen);
     const [mapError, setMapError] = useState('');
     const [isReady, setIsReady] = useState(false);
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+
+    useEffect(() => {
+        onDriverSelectRef.current = onDriverSelect;
+    }, [onDriverSelect]);
+
+    useEffect(() => {
+        onOrderSelectRef.current = onOrderSelect;
+    }, [onOrderSelect]);
+
+    useEffect(() => {
+        getOrderCoordinatesRef.current = getOrderCoordinates;
+    }, [getOrderCoordinates]);
+
+    useEffect(() => {
+        formatDriverLastSeenRef.current = formatDriverLastSeen;
+    }, [formatDriverLastSeen]);
 
     useEffect(() => {
         let cancelled = false;
@@ -206,10 +226,12 @@ const GoogleLogisticsMap = ({
             });
 
             marker.addListener('click', () => {
-                if (onDriverSelect) onDriverSelect(driver);
                 if (infoWindow) {
-                    infoWindow.setContent(formatDriverPopup(driver, formatDriverLastSeen));
+                    infoWindow.setContent(formatDriverPopup(driver, formatDriverLastSeenRef.current));
                     infoWindow.open({ map: mapRef.current, anchor: marker });
+                }
+                if (onDriverSelectRef.current) {
+                    window.setTimeout(() => onDriverSelectRef.current(driver), 0);
                 }
             });
 
@@ -217,7 +239,7 @@ const GoogleLogisticsMap = ({
         });
 
         orders.forEach((order) => {
-            const coords = getOrderCoordinates(order);
+            const coords = getOrderCoordinatesRef.current(order);
             if (!coords) return;
 
             const marker = new maps.Marker({
@@ -228,10 +250,12 @@ const GoogleLogisticsMap = ({
             });
 
             marker.addListener('click', () => {
-                if (onOrderSelect) onOrderSelect(order);
                 if (infoWindow) {
                     infoWindow.setContent(formatOrderPopup(order));
                     infoWindow.open({ map: mapRef.current, anchor: marker });
+                }
+                if (onOrderSelectRef.current) {
+                    window.setTimeout(() => onOrderSelectRef.current(order), 0);
                 }
             });
 
@@ -242,7 +266,7 @@ const GoogleLogisticsMap = ({
             markersRef.current.forEach((marker) => marker.setMap(null));
             markersRef.current = [];
         };
-    }, [drivers, orders, getOrderCoordinates, formatDriverLastSeen, onDriverSelect, onOrderSelect]);
+    }, [drivers, orders]);
 
     if (mapError) {
         return (

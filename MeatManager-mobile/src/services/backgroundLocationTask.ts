@@ -3,10 +3,11 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 
 import { auth } from '../config/firebase';
-import { updateDriverLocation } from './deliveryService';
+import { getCachedDriverLabel, updateDriverLocation } from './deliveryService';
 
 const DRIVER_LOCATION_TASK = 'meatmanager-driver-location-task';
 const TRACKING_ENABLED_KEY = 'meatmanager.driverTracking.enabled';
+const TRACKING_DRIVER_LABEL_KEY = 'meatmanager.driverTracking.driverLabel';
 const TRACKING_TIME_INTERVAL_MS = 5000;
 const TRACKING_DISTANCE_INTERVAL_METERS = 10;
 
@@ -33,24 +34,28 @@ if (!(globalThis as { __mmDriverLocationTaskDefined?: boolean }).__mmDriverLocat
       return;
     }
 
-    const currentUser = auth.currentUser;
-    if (!currentUser) {
-      return;
-    }
-
     const latestLocation = getLatestLocation(data as { locations?: Location.LocationObject[] } | null | undefined);
     if (!latestLocation) {
       return;
     }
 
     try {
+      const currentUser = auth.currentUser;
+      const cachedLabel = await AsyncStorage.getItem(TRACKING_DRIVER_LABEL_KEY);
+      const fallbackLabel = await getCachedDriverLabel();
+      const repartidor = currentUser?.displayName
+        || currentUser?.email
+        || cachedLabel
+        || fallbackLabel
+        || 'Repartidor';
+
       await updateDriverLocation({
         lat: latestLocation.coords.latitude,
         lng: latestLocation.coords.longitude,
         accuracy: latestLocation.coords.accuracy ?? null,
         speed: latestLocation.coords.speed ?? null,
         heading: latestLocation.coords.heading ?? null,
-        repartidor: currentUser.displayName || currentUser.email || 'Repartidor',
+        repartidor,
         time: latestLocation.timestamp ? new Date(latestLocation.timestamp).toISOString() : new Date().toISOString(),
       });
     } catch (taskError) {
@@ -98,6 +103,11 @@ export async function ensureDriverLocationTracking(): Promise<TrackingBootstrapR
   }
 
   await AsyncStorage.setItem(TRACKING_ENABLED_KEY, 'true');
+  const currentUser = auth.currentUser;
+  await AsyncStorage.setItem(
+    TRACKING_DRIVER_LABEL_KEY,
+    currentUser?.displayName || currentUser?.email || 'Repartidor',
+  );
 
   const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
   if (!alreadyStarted) {

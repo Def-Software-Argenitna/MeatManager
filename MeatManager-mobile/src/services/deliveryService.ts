@@ -1,9 +1,12 @@
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { apiBaseUrl } from '../config/env';
 import { auth } from '../config/firebase';
 import type { DeliveryOrder, DeliveryOrderStatus, DriverLocation } from '../types/delivery';
 
 const CURRENT_SHIFT_DELIVERY_STATUSES = ['pending', 'assigned', 'on_route', 'arrived', 'delivered'];
 const DRIVER_ORDERS_REFRESH_INTERVAL_MS = 10000;
+const CACHED_AUTH_TOKEN_KEY = 'meatmanager.authToken';
+const CACHED_DRIVER_LABEL_KEY = 'meatmanager.driverLabel';
 
 const isSameLocalDay = (value?: string) => {
   if (!value) return false;
@@ -123,11 +126,23 @@ const mapApiOrderToMobileOrder = (order: any): DeliveryOrder => ({
 
 async function getAuthHeaders() {
   const currentUser = auth.currentUser;
-  if (!currentUser) {
+  if (currentUser) {
+    const token = await currentUser.getIdToken();
+    await AsyncStorage.setItem(CACHED_AUTH_TOKEN_KEY, token);
+    await AsyncStorage.setItem(
+      CACHED_DRIVER_LABEL_KEY,
+      currentUser.displayName || currentUser.email || 'Repartidor',
+    );
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  }
+
+  const token = await AsyncStorage.getItem(CACHED_AUTH_TOKEN_KEY);
+  if (!token) {
     throw new Error('No hay una sesion autenticada para usar logística.');
   }
 
-  const token = await currentUser.getIdToken();
   return {
     Authorization: `Bearer ${token}`,
   };
@@ -214,6 +229,10 @@ export async function updateDriverLocation(
     const error = await response.json().catch(() => ({}));
     throw new Error(error.error || 'No se pudo sincronizar ubicacion con la API.');
   }
+}
+
+export async function getCachedDriverLabel() {
+  return AsyncStorage.getItem(CACHED_DRIVER_LABEL_KEY);
 }
 
 export async function markOrderAsDelivered(orderId: string) {
