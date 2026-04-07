@@ -150,6 +150,20 @@ const normalizeLiveDriver = (driver) => {
     };
 };
 
+const getDriverDisplayName = (driver) => {
+    const fullName = [driver?.firstName, driver?.lastName]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join(' ');
+
+    if (fullName) return fullName;
+
+    const directName = String(driver?.name || '').trim();
+    if (directName && !directName.includes('@')) return directName;
+
+    return String(driver?.email || driver?.name || 'Repartidor').trim();
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -905,7 +919,7 @@ const getOrderCoordinates = (pedido) => {
                                         return (
                                             <tr key={driver.id}>
                                                 <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{driver.name}</div>
+                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{getDriverDisplayName(driver)}</div>
                                                     <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
                                                         <Mail size={12} /> {driver.email}
                                                     </div>

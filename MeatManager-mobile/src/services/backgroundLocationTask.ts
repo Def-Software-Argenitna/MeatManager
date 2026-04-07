@@ -11,7 +11,7 @@ const TRACKING_TIME_INTERVAL_MS = 5000;
 const TRACKING_DISTANCE_INTERVAL_METERS = 10;
 
 type TrackingBootstrapResult =
-  | { ok: true }
+  | { ok: true; warning?: string | null }
   | { ok: false; error: string };
 
 const getLatestLocation = (data: Location.LocationTaskOptions | { locations?: Location.LocationObject[] } | null | undefined) => {
@@ -77,7 +77,11 @@ export async function ensureDriverLocationTracking(): Promise<TrackingBootstrapR
 
   const background = await Location.requestBackgroundPermissionsAsync();
   if (background.status !== 'granted') {
-    return { ok: false, error: 'Hace falta habilitar la ubicacion en segundo plano para compartir el tracking.' };
+    await AsyncStorage.setItem(TRACKING_ENABLED_KEY, 'false');
+    return {
+      ok: true,
+      warning: 'La app comparte ubicacion mientras esta abierta. Para seguir rastreando en segundo plano, habilita el permiso "Permitir siempre".',
+    };
   }
 
   await AsyncStorage.setItem(TRACKING_ENABLED_KEY, 'true');
@@ -99,7 +103,7 @@ export async function ensureDriverLocationTracking(): Promise<TrackingBootstrapR
     });
   }
 
-  return { ok: true };
+  return { ok: true, warning: null };
 }
 
 export async function stopDriverLocationTracking() {

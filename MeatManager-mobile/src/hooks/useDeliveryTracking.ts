@@ -77,7 +77,7 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
         return;
       }
 
-      setLocationError(null);
+      setLocationError(trackingSetup.warning || null);
       setIsTracking(true);
 
       const lastKnownPosition = await Location.getLastKnownPositionAsync();
