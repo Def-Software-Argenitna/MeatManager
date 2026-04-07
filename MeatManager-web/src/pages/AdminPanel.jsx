@@ -1,10 +1,12 @@
 import React from 'react';
 import { ShieldCheck, RefreshCw, ArrowRightLeft } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import './AdminPanel.css';
 
 const AdminPanel = () => {
     return (
         <div className="admin-panel-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="admin-header">
                 <div className="admin-brand">
                     <ShieldCheck size={32} color="gold" />
@@ -14,9 +16,10 @@ const AdminPanel = () => {
                     </div>
                 </div>
             </header>
+            </DirectionalReveal>
 
             <main className="admin-content">
-                <section className="admin-card table-card">
+                <DirectionalReveal className="admin-card table-card" from="down" delay={0.1}>
                     <div className="table-header" style={{ alignItems: 'center' }}>
                         <h3><RefreshCw size={20} /> Flujo Nuevo de Licencias</h3>
                     </div>
@@ -36,7 +39,7 @@ const AdminPanel = () => {
                             </div>
                         </div>
                     </div>
-                </section>
+                </DirectionalReveal>
             </main>
         </div>
     );

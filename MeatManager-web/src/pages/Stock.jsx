@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import { Package, Search, Filter, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet, Pencil } from 'lucide-react';
 import { scaleService, SCALE_PROTOCOLS } from '../utils/SerialScaleService';
 import { desktopApi } from '../utils/desktopApi';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css';
 
@@ -576,6 +577,7 @@ const Stock = () => {
                 </div>
             )}
 
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title">
@@ -620,9 +622,10 @@ const Stock = () => {
                     </button>
                 </div>
             </header>
+            </DirectionalReveal>
 
             {/* Stats Cards */}
-            <div className="stats-grid">
+            <DirectionalReveal className="stats-grid" from="left" delay={0.1}>
                 <div className="stat-card">
                     <div className="stat-icon" style={{ backgroundColor: 'rgba(34, 197, 94, 0.1)', color: '#22c55e' }}>
                         <Package size={24} />
@@ -652,10 +655,10 @@ const Stock = () => {
                         <div className="stat-value">{Number(totalUnits || 0).toFixed(0)} <span className="stat-unit">un</span></div>
                     </div>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             {/* Filters */}
-            <div className="filters-bar">
+            <DirectionalReveal className="filters-bar" from="right" delay={0.16}>
                 <div className="search-box">
                     <Search size={20} />
                     <input
@@ -683,10 +686,10 @@ const Stock = () => {
                         </button>
                     ))}
                 </div>
-            </div>
+            </DirectionalReveal>
 
             {/* Stock List */}
-            <div className="stock-content">
+            <DirectionalReveal className="stock-content" from="down" delay={0.22}>
                 {filteredStock.length === 0 ? (
                     <div className="empty-state">
                         <Package size={64} style={{ opacity: 0.3 }} />
@@ -698,7 +701,7 @@ const Stock = () => {
                         {Object.entries(stockByType).map(([type, items]) => {
                             const typeInfo = getTypeInfo(type);
                             return (
-                                <div key={type} className="stock-group">
+                                <DirectionalReveal key={type} className="stock-group" from={Object.keys(stockByType).indexOf(type) % 2 === 0 ? 'left' : 'right'} delay={0.28 + (Object.keys(stockByType).indexOf(type) * 0.04)}>
                                     <div className="group-header">
                                         <span className="group-icon">{typeInfo.icon}</span>
                                         <span className="group-name">{typeInfo.name}</span>
@@ -756,12 +759,12 @@ const Stock = () => {
                                             </div>
                                         ))}
                                     </div>
-                                </div>
+                                </DirectionalReveal>
                             );
                         })}
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
             {/* MODAL ADJUSTMENT */}
             {isModalOpen && (

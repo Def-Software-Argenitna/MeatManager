@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
 import './Clientes.css';
 
@@ -386,6 +387,7 @@ const Clientes = () => {
 
     return (
         <div className="clients-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title">Clientes y Cuentas</h1>
@@ -396,8 +398,9 @@ const Clientes = () => {
                     Nuevo Cliente
                 </button>
             </header>
+            </DirectionalReveal>
 
-            <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
+            <DirectionalReveal className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }} from="left" delay={0.1}>
                 <div style={{ position: 'relative' }}>
                     <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
                     <input
@@ -409,7 +412,7 @@ const Clientes = () => {
                         onChange={(e) => setSearchTerm(e.target.value)}
                     />
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="clients-grid">
                 {filteredClients?.map((client) => {
@@ -417,7 +420,12 @@ const Clientes = () => {
                     const clientAddress = formatAddress(client);
                     const clientBalance = getBalanceValue(client);
                     return (
-                        <div key={client.id} className={`client-card ${clientBalance < 0 ? 'debt' : (clientBalance > 0 ? 'credit' : '')}`}>
+                        <DirectionalReveal
+                            key={client.id}
+                            className={`client-card ${clientBalance < 0 ? 'debt' : (clientBalance > 0 ? 'credit' : '')}`}
+                            from={filteredClients.indexOf(client) % 2 === 0 ? 'left' : 'right'}
+                            delay={0.16 + (filteredClients.indexOf(client) * 0.025)}
+                        >
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
                                 <div>
                                     <h3 className="client-name">{getClientFullName(client)}</h3>
@@ -459,7 +467,7 @@ const Clientes = () => {
                             ) : (
                                 <div className="client-disabled-note">Este cliente queda guardado sin cuenta corriente.</div>
                             )}
-                        </div>
+                        </DirectionalReveal>
                     );
                 })}
             </div>

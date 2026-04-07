@@ -7,6 +7,7 @@ import {
     AlertCircle,
     CheckCircle2,
 } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './AiSettings.css';
 
@@ -52,6 +53,7 @@ const AiSettings = () => {
 
     return (
         <div className="ai-settings-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="ai-settings-header">
                 <div className="header-icon">
                     <Cpu size={32} />
@@ -62,10 +64,11 @@ const AiSettings = () => {
                     <p>Configura tu asistente personal basado en Llama 3 para reportes y Telegram</p>
                 </div>
             </header>
+            </DirectionalReveal>
 
             <div className="ai-grid">
                 {/* AI Model Config */}
-                <section className="settings-card">
+                <DirectionalReveal className="settings-card" from="left" delay={0.1}>
                     <h3><Zap size={20} className="text-primary" /> IA en versión web</h3>
                     <p className="description">
                         Esta versión funciona como cliente web. Si usás Ollama local o un backend de IA, el navegador debe poder acceder a ese endpoint.
@@ -97,10 +100,10 @@ const AiSettings = () => {
                             <span className="slider"></span>
                         </label>
                     </div>
-                </section>
+                </DirectionalReveal>
 
                 {/* Telegram Config */}
-                <section className="settings-card">
+                <DirectionalReveal className="settings-card" from="right" delay={0.16}>
                     <h3><Bot size={20} className="text-info" /> Token de integración</h3>
                     <p className="description">
                         El token queda guardado para una futura integración backend. En navegador no se inicia ningún bot local.
@@ -125,10 +128,10 @@ const AiSettings = () => {
                             <li>La IA de la app sigue disponible como cliente web.</li>
                         </ol>
                     </div>
-                </section>
+                </DirectionalReveal>
             </div>
 
-            <footer className="ai-footer">
+            <DirectionalReveal className="ai-footer" from="down" delay={0.22}>
                 {status === 'success' && <div className="status-msg success"><CheckCircle2 size={16} /> Configuración guardada</div>}
                 {status === 'error' && <div className="status-msg error"><AlertCircle size={16} /> Error al guardar</div>}
 
@@ -136,7 +139,7 @@ const AiSettings = () => {
                     {status === 'saving' ? <Settings2 className="animate-spin" /> : <CheckCircle2 size={18} />}
                     Guardar Configuración Web
                 </button>
-            </footer>
+            </DirectionalReveal>
         </div>
     );
 };

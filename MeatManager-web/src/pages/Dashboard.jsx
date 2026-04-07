@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
 import { useUser } from '../context/UserContext';
 import { fetchTable } from '../utils/apiClient';
@@ -13,6 +14,42 @@ const toNumber = (value) => {
 
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
+
+const revealVariants = {
+    left: {
+        initial: { opacity: 0, x: -90, scale: 0.88 },
+        animate: { opacity: 1, x: 0, scale: 1 },
+    },
+    right: {
+        initial: { opacity: 0, x: 90, scale: 0.88 },
+        animate: { opacity: 1, x: 0, scale: 1 },
+    },
+    up: {
+        initial: { opacity: 0, y: -70, scale: 0.9 },
+        animate: { opacity: 1, y: 0, scale: 1 },
+    },
+    down: {
+        initial: { opacity: 0, y: 70, scale: 0.9 },
+        animate: { opacity: 1, y: 0, scale: 1 },
+    },
+};
+
+const DashboardReveal = ({ from = 'up', delay = 0, className = '', children, style = {} }) => (
+    <motion.div
+        data-mm-local-motion="true"
+        className={className}
+        style={style}
+        initial={revealVariants[from].initial}
+        animate={revealVariants[from].animate}
+        transition={{
+            duration: 0.52,
+            delay,
+            ease: [0.22, 1, 0.36, 1],
+        }}
+    >
+        {children}
+    </motion.div>
+);
 
 const Dashboard = () => {
     const navigate = useNavigate();
@@ -138,8 +175,8 @@ const Dashboard = () => {
             </header>
 
             <div className="dashboard-stats-grid">
-                <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" />
-                <StatCard title="Compras (Mes)" value={formatCurrency(totalComprasMes)} icon={ShoppingCart} trend="Mensual" isNegative />
+                <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" delay={0.02} from="left" />
+                <StatCard title="Compras (Mes)" value={formatCurrency(totalComprasMes)} icon={ShoppingCart} trend="Mensual" isNegative delay={0.08} from="up" />
                 <StatCard
                     title="Fiado en Calle"
                     value={formatCurrency(totalDeudaCalle)}
@@ -147,8 +184,10 @@ const Dashboard = () => {
                     trend="Por Cobrar"
                     isWarning={totalDeudaCalle > 0}
                     onClick={() => navigate('/clientes')}
+                    delay={0.14}
+                    from="right"
                 />
-                <StatCard title="Stock Kilos" value={`${totalStockKg.toFixed(1)} kg`} icon={TrendingUp} trend="Total Carne" />
+                <StatCard title="Stock Kilos" value={`${totalStockKg.toFixed(1)} kg`} icon={TrendingUp} trend="Total Carne" delay={0.2} from="down" />
                 <StatCard
                     title="Alertas Stock"
                     value={`${lowStockCount} Items`}
@@ -156,6 +195,8 @@ const Dashboard = () => {
                     isWarning={lowStockCount > 0}
                     trend="Stock Bajo (<10)"
                     isNegative={lowStockCount > 5}
+                    delay={0.26}
+                    from="left"
                 />
                 {hasModule('informes-pro') && (
                     <StatCard
@@ -165,6 +206,8 @@ const Dashboard = () => {
                         trend="Análisis PRO"
                         isWarning={avgYield < 70}
                         onClick={() => navigate('/informes-pro')}
+                        delay={0.32}
+                        from="right"
                     />
                 )}
                 {isAdmin && remoteBranchCount > 0 && (
@@ -174,21 +217,23 @@ const Dashboard = () => {
                         icon={BarChart3}
                         trend={`${remoteTotalKg.toFixed(1)} kg informados`}
                         isWarning={remoteLowStock > 0}
+                        delay={0.38}
+                        from="up"
                     />
                 )}
                 {isAdmin && remoteBranchCount > 0 && (
-                    <StatCard title="Ventas Remotas" value={formatCurrency(remoteSalesToday)} icon={Banknote} trend="Informadas por archivo" />
+                    <StatCard title="Ventas Remotas" value={formatCurrency(remoteSalesToday)} icon={Banknote} trend="Informadas por archivo" delay={0.44} from="down" />
                 )}
                 {isAdmin && remoteBranchCount > 0 && (
-                    <StatCard title="Compras Remotas" value={formatCurrency(remotePurchasesMonth)} icon={ShoppingCart} trend="Informadas por archivo" isNegative />
+                    <StatCard title="Compras Remotas" value={formatCurrency(remotePurchasesMonth)} icon={ShoppingCart} trend="Informadas por archivo" isNegative delay={0.5} from="left" />
                 )}
                 {isAdmin && remoteBranchCount > 0 && (
-                    <StatCard title="Caja Remota" value={formatCurrency(remoteCashInDrawer)} icon={Wallet} trend="Cierre informado" />
+                    <StatCard title="Caja Remota" value={formatCurrency(remoteCashInDrawer)} icon={Wallet} trend="Cierre informado" delay={0.56} from="right" />
                 )}
             </div>
 
             <div className="dashboard-main-grid">
-                <div className="dashboard-panel">
+                <DashboardReveal className="dashboard-panel" from="left" delay={0.18}>
                     <div className="dashboard-panel-header">
                         <h3 className="dashboard-section-title">Últimas Ventas</h3>
                         <button onClick={() => navigate('/ventas/historial')} className="dashboard-link-btn">Ver todas</button>
@@ -248,9 +293,9 @@ const Dashboard = () => {
                             </tbody>
                         </table>
                     )}
-                </div>
+                </DashboardReveal>
 
-                <div className="dashboard-panel">
+                <DashboardReveal className="dashboard-panel" from="right" delay={0.24}>
                     <h3 className="dashboard-section-title" style={{ marginBottom: '1rem' }}>Accesos Rápidos</h3>
                     <div className="dashboard-actions-grid">
                         <QuickAction label="Nueva Venta" onClick={() => navigate('/ventas')} color="var(--color-primary)" />
@@ -259,11 +304,11 @@ const Dashboard = () => {
                         <QuickAction label="Caja" onClick={() => navigate('/caja')} color="#22c55e" />
                         <QuickAction label="Ver Inventario" onClick={() => navigate('/stock')} color="#8b5cf6" />
                     </div>
-                </div>
+                </DashboardReveal>
             </div>
 
             {isAdmin && (
-                <div className="dashboard-panel dashboard-remote-panel">
+                <DashboardReveal className="dashboard-panel dashboard-remote-panel" from="down" delay={0.3}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', marginBottom: '1rem', flexWrap: 'wrap' }}>
                         <div>
                             <h3 style={{ fontSize: '1.2rem', margin: 0 }}>Dashboard de Sucursales</h3>
@@ -290,8 +335,13 @@ const Dashboard = () => {
                         <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: '1.5rem 0' }}>Todavía no hay stock importado de otras sucursales.</p>
                     ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
-                            {filteredBranchSnapshots.map((snapshot) => (
-                                <div key={snapshot.id} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '1rem', background: 'rgba(255,255,255,0.03)' }}>
+                            {filteredBranchSnapshots.map((snapshot, index) => (
+                                <DashboardReveal
+                                    key={snapshot.id}
+                                    from={index % 2 === 0 ? 'left' : 'right'}
+                                    delay={0.34 + (index * 0.04)}
+                                    style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius-lg)', padding: '1rem', background: 'rgba(255,255,255,0.03)' }}
+                                >
                                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
                                         <div>
                                             <div style={{ fontSize: '0.78rem', color: '#93c5fd', fontWeight: 700 }}>{snapshot.branch_code}</div>
@@ -332,31 +382,33 @@ const Dashboard = () => {
                                             <span style={{ color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>+ {(snapshot.stock || []).length - 5} productos más</span>
                                         )}
                                     </div>
-                                </div>
+                                </DashboardReveal>
                             ))}
                         </div>
                     )}
-                </div>
+                </DashboardReveal>
             )}
         </div>
     );
 };
 
-const StatCard = ({ title, value, icon, trend, isNegative, isWarning, onClick }) => (
-    <div className="dashboard-stat-card" onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>{title}</span>
-            <div className="dashboard-stat-icon">
-                {icon ? React.createElement(icon, { size: 20, color: isWarning ? '#f59e0b' : 'var(--color-primary)' }) : null}
+const StatCard = ({ title, value, icon, trend, isNegative, isWarning, onClick, delay = 0, from = 'up' }) => (
+    <DashboardReveal className="dashboard-stat-card" from={from} delay={delay}>
+        <div onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>{title}</span>
+                <div className="dashboard-stat-icon">
+                    {icon ? React.createElement(icon, { size: 20, color: isWarning ? '#f59e0b' : 'var(--color-primary)' }) : null}
+                </div>
             </div>
+            <div style={{ fontSize: '1.75rem', fontWeight: '700' }}>{value}</div>
+            {trend && (
+                <div style={{ fontSize: '0.85rem', color: isNegative ? '#ef4444' : (isWarning ? '#f59e0b' : '#22c55e') }}>
+                    {trend}
+                </div>
+            )}
         </div>
-        <div style={{ fontSize: '1.75rem', fontWeight: '700' }}>{value}</div>
-        {trend && (
-            <div style={{ fontSize: '0.85rem', color: isNegative ? '#ef4444' : (isWarning ? '#f59e0b' : '#22c55e') }}>
-                {trend}
-            </div>
-        )}
-    </div>
+    </DashboardReveal>
 );
 
 const QuickAction = ({ label, onClick, color }) => (

@@ -36,10 +36,21 @@
         0 8px 18px rgba(0, 0, 0, 0.18);
 }
 
-.sidebar-toggle svg {
+.hamburger-icon {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
     width: 20px;
-    height: 20px;
-    stroke-width: 2.35;
+    height: 14px;
+}
+
+.hamburger-icon span {
+    display: block;
+    height: 2px;
+    width: 100%;
+    background-color: #ffffff;
+    border-radius: 2px;
+    transition: all 0.2s ease;
 }
 
 .sidebar-toggle:hover {
@@ -47,6 +58,10 @@
     color: var(--color-primary);
     border-color: rgba(255, 126, 0, 0.34);
     transform: translateY(-1px);
+}
+
+.sidebar-toggle:hover .hamburger-icon span {
+    background-color: var(--color-primary);
 }
 
 .top-bar-right {

@@ -21,6 +21,7 @@ import {
 import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import { useLicense } from '../context/LicenseContext';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import 'leaflet/dist/leaflet.css';
@@ -552,7 +553,7 @@ const Logistica = () => {
 
     return (
         <div className="logistica-container animate-fade-in">
-            <div className="logistica-toolbar neo-card">
+            <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
                 <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
                     <Users size={18} /> Staff Repartidores
                 </button>
@@ -574,10 +575,10 @@ const Logistica = () => {
                         </span>
                     </div>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="logistica-content">
-                <div className="map-view neo-card">
+                <DirectionalReveal className="map-view neo-card" from="left" delay={0.1}>
                     <MapContainer center={mapCenter} zoom={mapZoom} style={{ height: '100%', width: '100%', borderRadius: '12px' }}>
                         <ChangeView center={mapCenter} zoom={mapZoom} />
                         <TileLayer
@@ -740,10 +741,10 @@ const Logistica = () => {
                             </div>
                         </div>
                     )}
-                </div>
+                </DirectionalReveal>
 
                 <div className="logistica-panels">
-                    <div className="logistica-panel neo-card drivers-panel">
+                    <DirectionalReveal className="logistica-panel neo-card drivers-panel" from="up" delay={0.16}>
                         <div className="panel-header-row">
                             <h3>Repartidores</h3>
                             <span>{driversLocations.length} con tracking</span>
@@ -780,9 +781,9 @@ const Logistica = () => {
                                 })}
                             </div>
                         )}
-                    </div>
+                    </DirectionalReveal>
 
-                    <div className="logistica-panel logistica-sidebar neo-card">
+                    <DirectionalReveal className="logistica-panel logistica-sidebar neo-card" from="right" delay={0.22}>
                     <div className="sidebar-search">
                         <Search size={18} />
                         <input
@@ -836,7 +837,7 @@ const Logistica = () => {
                             ))
                         )}
                     </div>
-                </div>
+                    </DirectionalReveal>
                 </div>
                 </div>
 

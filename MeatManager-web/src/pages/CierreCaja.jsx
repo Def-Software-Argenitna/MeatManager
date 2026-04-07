@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../db';
+import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './CierreCaja.css';
 
@@ -311,6 +312,7 @@ const CierreCaja = () => {
 
     return (
         <div className="cierre-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="cierre-header">
                 <div>
                     <h1>Caja y Cierre Diario</h1>
@@ -326,6 +328,7 @@ const CierreCaja = () => {
                     />
                 </div>
             </header>
+            </DirectionalReveal>
 
             {feedback && (
                 <div className={`cash-feedback ${feedback.type}`}>
@@ -334,7 +337,7 @@ const CierreCaja = () => {
                 </div>
             )}
 
-            <div className="cash-overview-grid">
+            <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className="stat-box result">
                     <span className="label">Efectivo acumulado en caja</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
@@ -351,10 +354,10 @@ const CierreCaja = () => {
                     <span className="label">Ventas a cuenta corriente</span>
                     <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="cierre-grid">
-                <div className="cierre-card summary-card neo-card">
+                <DirectionalReveal className="cierre-card summary-card neo-card" from="left" delay={0.16}>
                     <div className="card-header">
                         <Wallet size={24} color="var(--color-primary)" />
                         <h2>Saldos por Medio de Pago</h2>
@@ -391,9 +394,9 @@ const CierreCaja = () => {
                             <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
-                </div>
+                </DirectionalReveal>
 
-                <div className="cierre-card cash-card neo-card">
+                <DirectionalReveal className="cierre-card cash-card neo-card" from="right" delay={0.22}>
                     <div className="card-header">
                         <DollarSign size={24} color="#22c55e" />
                         <h2>Apertura y Movimientos</h2>
@@ -563,13 +566,13 @@ const CierreCaja = () => {
                             ))}
                         </div>
                     </div>
-                </div>
+                </DirectionalReveal>
             </div>
 
-            <div className="cierre-tips">
+            <DirectionalReveal className="cierre-tips" from="down" delay={0.28}>
                 <AlertCircle size={20} />
                 <p><strong>Tip de conciliación:</strong> la caja acumulada por medio te muestra cuánto debería haber disponible hoy, sumando aperturas, ventas y movimientos manuales, y restando retiros o gastos.</p>
-            </div>
+            </DirectionalReveal>
         </div>
     );
 };

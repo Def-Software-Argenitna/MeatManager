@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
@@ -50,7 +50,6 @@ const DashboardLayout = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const location = useLocation();
     const prefersReducedMotion = useReducedMotion();
-    const routeShellRef = useRef(null);
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
 
     const toggleSidebar = () => {
@@ -104,97 +103,6 @@ const DashboardLayout = () => {
             },
         };
 
-    useEffect(() => {
-        if (prefersReducedMotion) return undefined;
-
-        const root = routeShellRef.current;
-        if (!root) return undefined;
-
-        const candidates = root.querySelectorAll(`
-            .dashboard-stat-card,
-            .dashboard-panel,
-            .dashboard-mini-metric,
-            .dashboard-quick-action,
-            .pos-products-area,
-            .pos-ticket,
-            .product-card,
-            .ticket-item,
-            .ticket-footer,
-            .action-buttons,
-            .products-grid,
-            .dashboard-main-grid,
-            .dashboard-stats-grid,
-            .neo-card,
-            .card,
-            .panel,
-            .page-header,
-            .top-bar,
-            .sidebar,
-            .user-profile,
-            .user-info,
-            .status-indicator-mini,
-            table,
-            form,
-            section,
-            article,
-            aside,
-            [class*="card"],
-            [class*="panel"],
-            [class*="widget"],
-            [class*="grid-item"],
-            [class*="table-container"],
-            [class*="chart"],
-            [class*="summary"],
-            [class*="stats"]
-        `);
-
-        const animated = [];
-        const viewportWidth = window.innerWidth;
-        const viewportHeight = window.innerHeight;
-
-        candidates.forEach((element, index) => {
-            if (!(element instanceof HTMLElement)) return;
-            if (element.closest('[data-mm-animated-parent]')) return;
-
-            const rect = element.getBoundingClientRect();
-            if (rect.width < 36 || rect.height < 24) return;
-
-            const centerX = rect.left + (rect.width / 2);
-            const centerY = rect.top + (rect.height / 2);
-            const distances = [
-                { axis: 'x', value: -1, distance: centerX },
-                { axis: 'x', value: 1, distance: viewportWidth - centerX },
-                { axis: 'y', value: -1, distance: centerY },
-                { axis: 'y', value: 1, distance: viewportHeight - centerY },
-            ];
-
-            distances.sort((a, b) => a.distance - b.distance);
-            const nearest = distances[0];
-
-            const offsetX = nearest.axis === 'x' ? nearest.value * Math.min(72, Math.max(28, rect.width * 0.18)) : 0;
-            const offsetY = nearest.axis === 'y' ? nearest.value * Math.min(58, Math.max(22, rect.height * 0.22)) : 0;
-            const delay = Math.min(index * 0.028, 0.38);
-
-            element.style.setProperty('--mm-enter-x', `${offsetX}px`);
-            element.style.setProperty('--mm-enter-y', `${offsetY}px`);
-            element.style.setProperty('--mm-enter-delay', `${delay}s`);
-            element.setAttribute('data-mm-animated', 'true');
-            animated.push(element);
-        });
-
-        const raf = window.requestAnimationFrame(() => {
-            window.requestAnimationFrame(() => {
-                animated.forEach((element) => {
-                    element.setAttribute('data-mm-entered', 'true');
-                });
-            });
-        });
-
-        return () => {
-            window.cancelAnimationFrame(raf);
-        };
-    }, [location.pathname, prefersReducedMotion]);
-
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
     }
@@ -209,7 +117,6 @@ const DashboardLayout = () => {
                         <AnimatePresence mode="wait" initial={false}>
                             <motion.div
                                 key={location.pathname}
-                                ref={routeShellRef}
                                 className="route-shell"
                                 initial="initial"
                                 animate="animate"

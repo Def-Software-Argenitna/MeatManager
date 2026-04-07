@@ -275,13 +275,10 @@ const Sidebar = ({ isCollapsed }) => {
     <div className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
       <div className={`sidebar-header ${(isPro || isMasterNode) ? 'premium' : ''}`}>
         <div className="sidebar-brand-row">
-          {(isPro || isMasterNode) ? <Crown className="logo-icon premium-icon" /> : <Beef className="logo-icon" />}
+          <Beef className="logo-icon" />
           {!isCollapsed && (
             <div className="sidebar-brand-copy">
               <span className="brand-name">MeatManager</span>
-              {(isPro || isMasterNode) && (
-                <span className="brand-badge">{isMasterNode ? 'Control Center' : 'Premium Pro'}</span>
-              )}
             </div>
           )}
         </div>

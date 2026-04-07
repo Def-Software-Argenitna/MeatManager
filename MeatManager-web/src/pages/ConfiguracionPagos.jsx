@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Settings, CreditCard, Wallet, DollarSign, TrendingUp, TrendingDown, Save, ChevronDown, Trash2 } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, initializePaymentMethods } from '../db';
+import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './ConfiguracionPagos.css';
 
@@ -86,6 +87,7 @@ const ConfiguracionPagos = () => {
 
     return (
         <div className="config-pagos-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header config-pagos-header">
                 <div className="config-pagos-header-main">
                     <h1 className="page-title">
@@ -105,8 +107,9 @@ const ConfiguracionPagos = () => {
                     Reiniciar Métodos
                 </button>
             </header>
+            </DirectionalReveal>
 
-            <div className="info-banner">
+            <DirectionalReveal className="info-banner" from="left" delay={0.1}>
                 <div className="banner-icon">ℹ️</div>
                 <div>
                     <div className="banner-title">Porcentajes de Ajuste</div>
@@ -116,15 +119,16 @@ const ConfiguracionPagos = () => {
                         • Valor <strong>0</strong> no aplica ajuste (precio de lista)
                     </div>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="payment-groups">
                 {Object.entries(groupedMethods).map(([type, methods]) => {
                     const typeInfo = typeLabels[type] || { name: type, icon: '💰', color: '#6b7280' };
                     const isCollapsed = collapsedGroups[type];
+                    const groupIndex = Object.keys(groupedMethods).indexOf(type);
 
                     return (
-                        <div key={type} className="payment-group">
+                        <DirectionalReveal key={type} className="payment-group" from={groupIndex % 2 === 0 ? 'left' : 'right'} delay={0.16 + (groupIndex * 0.04)}>
                             <div
                                 className="group-header clickable"
                                 style={{ borderLeftColor: typeInfo.color }}
@@ -219,7 +223,7 @@ const ConfiguracionPagos = () => {
                                     ))}
                                 </div>
                             </div>
-                        </div>
+                        </DirectionalReveal>
                     );
                 })}
             </div>

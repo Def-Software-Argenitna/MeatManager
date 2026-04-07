@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Save, RotateCcw, Check, ShieldCheck, TrendingUp, DollarSign } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { scaleService } from '../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
@@ -235,7 +236,7 @@ const DespostadaVaca = () => {
         <div className="despostada-container animate-fade-in">
 
             {/* HEADER: Configuration & Status */}
-            <div className="session-setup">
+            <DirectionalReveal className="session-setup" from="up" delay={0.04}>
                 <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', flex: 1 }}>
                     <div className="weight-input-group">
                         <label>Seleccionar de Stock (Media Res)</label>
@@ -316,12 +317,12 @@ const DespostadaVaca = () => {
                         </div>
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
             <div className="workspace-area" style={{ gridTemplateColumns: '280px 1fr 350px' }}>
 
                 {/* NEW LEFT PANEL: Cuts List */}
-                <div className="cuts-list-panel" style={{
+                <DirectionalReveal className="cuts-list-panel" from="left" delay={0.1} style={{
                     backgroundColor: 'var(--color-bg-card)',
                     borderRadius: 'var(--radius-lg)',
                     border: '1px solid var(--color-border)',
@@ -374,10 +375,10 @@ const DespostadaVaca = () => {
                             );
                         })}
                     </div>
-                </div>
+                </DirectionalReveal>
 
                 {/* MIDDLE: Static Reference Image Only */}
-                <div className="visual-map-container" style={{ backgroundColor: '#111', padding: 0 }}>
+                <DirectionalReveal className="visual-map-container" from="up" delay={0.16} style={{ backgroundColor: '#111', padding: 0 }}>
                     <img
                         src="/vaca_argentina.png"
                         alt="Mapa de Cortes Argentinos"
@@ -401,7 +402,7 @@ const DespostadaVaca = () => {
                             </span>
                         </div>
                     )}
-                </div>
+                </DirectionalReveal>
 
                 {/* RIGHT: High Contrast Work Panel */}
                 <div className="control-panel">

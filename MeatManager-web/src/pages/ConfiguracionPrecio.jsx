@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './ConfiguracionPrecio.css';
 
@@ -22,12 +23,14 @@ const ConfiguracionPrecio = () => {
 
     return (
         <div className="config-precio-page animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <h1 className="page-title">Formato de Precio</h1>
                 <p className="page-description">Definí cómo interpreta y muestra los precios el sistema.</p>
             </header>
+            </DirectionalReveal>
 
-            <div className="neo-card config-precio-card">
+            <DirectionalReveal className="neo-card config-precio-card" from="down" delay={0.1}>
                 <h2 className="config-precio-title">Configuración de Precio</h2>
                 <div className="config-precio-field">
                     <label>Formato de precio</label>
@@ -45,7 +48,7 @@ const ConfiguracionPrecio = () => {
                 </div>
 
                 <button className="neo-button config-precio-btn" onClick={handleSave}>Guardar</button>
-            </div>
+            </DirectionalReveal>
         </div>
     );
 };

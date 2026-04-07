@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Compras.css';
 
@@ -520,6 +521,7 @@ const Compras = () => {
 
     return (
         <div className="compras-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="compras-header">
                 <div>
                     <h1 className="page-title">Compras</h1>
@@ -530,8 +532,9 @@ const Compras = () => {
                     Registrar Compra
                 </button>
             </header>
+            </DirectionalReveal>
 
-            <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
+            <DirectionalReveal className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }} from="left" delay={0.1}>
                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
                     <div style={{ position: 'relative', flex: 1 }}>
                         <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
@@ -592,9 +595,9 @@ const Compras = () => {
                         </div>
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
-            <div className="purchase-views">
+            <DirectionalReveal className="purchase-views" from="right" delay={0.16}>
                 <button type="button" className={`purchase-view-chip ${destinationFilter === 'all' ? 'active' : ''}`} onClick={() => setDestinationFilter('all')}>
                     Todas
                 </button>
@@ -607,9 +610,9 @@ const Compras = () => {
                 <button type="button" className={`purchase-view-chip ${destinationFilter === 'mixto' ? 'active' : ''}`} onClick={() => setDestinationFilter('mixto')}>
                     Mixtas
                 </button>
-            </div>
+            </DirectionalReveal>
 
-            <div className="purchase-summary-grid">
+            <DirectionalReveal className="purchase-summary-grid" from="down" delay={0.22}>
                 <div className="neo-card purchase-summary-card">
                     <span className="purchase-summary-label">Total general</span>
                     <strong className="purchase-summary-value">${Number(purchasesSummary.total || 0).toLocaleString()}</strong>
@@ -630,7 +633,7 @@ const Compras = () => {
                     <strong className="purchase-summary-value">{purchasesSummary.mixedCount}</strong>
                     <span className="purchase-summary-meta">Con ambos destinos</span>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="compras-grid">
                 {filteredCompras?.map(compra => {
@@ -642,7 +645,12 @@ const Compras = () => {
                             : 'venta';
 
                     return (
-                    <div key={compra.id} className="neo-card purchase-card">
+                    <DirectionalReveal
+                        key={compra.id}
+                        className="neo-card purchase-card"
+                        from={filteredCompras.indexOf(compra) % 2 === 0 ? 'left' : 'right'}
+                        delay={0.28 + (filteredCompras.indexOf(compra) * 0.025)}
+                    >
                         <div className="purchase-header">
                             <div className="purchase-supplier">
                                 {compra.supplier}
@@ -690,7 +698,7 @@ const Compras = () => {
                                 <strong>${Number(breakdown.internal || 0).toLocaleString()}</strong>
                             </div>
                         </div>
-                    </div>
+                    </DirectionalReveal>
                 )})}
             </div>
 

@@ -4,6 +4,7 @@ import { useLicense } from '../context/LicenseContext';
 import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { fetchTable } from '../utils/apiClient';
+import DirectionalReveal from '../components/DirectionalReveal';
 import './InformesPro.css';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
@@ -563,6 +564,7 @@ const InformesPro = () => {
 
     return (
         <div className="informes-pro-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title"><Crown size={24} color="gold" style={{ marginRight: '0.5rem' }} /> Informes de Rendimiento PRO</h1>
@@ -579,8 +581,9 @@ const InformesPro = () => {
                     </button>
                 </div>
             </header>
+            </DirectionalReveal>
 
-            <div className="executive-grid">
+            <DirectionalReveal className="executive-grid" from="left" delay={0.1}>
                 <div className="neo-card executive-card">
                     <span className="executive-label">Lotes Analizados</span>
                     <strong className="executive-value">{executiveMetrics.totalLots}</strong>
@@ -601,9 +604,9 @@ const InformesPro = () => {
                     <strong className="executive-value" style={{ color: executiveMetrics.alertCount === 0 ? '#22c55e' : '#f59e0b' }}>{executiveMetrics.alertCount}</strong>
                     <span className="executive-meta">cosas para revisar hoy</span>
                 </div>
-            </div>
+            </DirectionalReveal>
 
-            <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
+            <DirectionalReveal className="neo-card" from="right" delay={0.16} style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
                 <div className="card-header" style={{ marginBottom: '1rem' }}>
                     <ShieldCheck size={20} color="var(--color-primary)" />
                     <h3>Resumen Ejecutivo</h3>
@@ -625,7 +628,7 @@ const InformesPro = () => {
                         Margen bruto estimado promedio del período: <strong style={{ color: executiveMetrics.avgEstimatedMargin >= 0 ? '#22c55e' : '#ef4444' }}>{formatCurrency(executiveMetrics.avgEstimatedMargin)}</strong>
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
             {selectedLog && (
                 <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1.25rem' }}>
@@ -916,7 +919,7 @@ const InformesPro = () => {
                 </div>
             )}
 
-            <div className="pro-grid">
+            <DirectionalReveal className="pro-grid" from="left" delay={0.22}>
                 {/* SUPPLIER RANKING CARD */}
                 <div className="neo-card ranking-card">
                     <div className="card-header">
@@ -988,7 +991,7 @@ const InformesPro = () => {
                         </div>
                     )}
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1.1fr 1fr', gap: '1.5rem', marginTop: '1.5rem' }}>
                 <div className="neo-card" style={{ padding: '1.25rem' }}>
@@ -1139,7 +1142,7 @@ const InformesPro = () => {
 
             {/* RECENT DETAILED LOGS */}
             <h2 style={{ marginTop: '2.5rem', marginBottom: '1rem', fontSize: '1.2rem' }}>Últimas Despostadas Detalladas</h2>
-            <div className="logs-grid">
+            <DirectionalReveal className="logs-grid" from="down" delay={0.28}>
                 {filteredLogs?.slice(0, 10).map(log => (
                     <button
                         key={log.id}
@@ -1169,7 +1172,7 @@ const InformesPro = () => {
                         </div>
                     </button>
                 ))}
-            </div>
+            </DirectionalReveal>
         </div>
     );
 };

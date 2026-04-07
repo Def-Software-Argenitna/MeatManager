@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Package, Plus, Search, Trash2 } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
 
@@ -40,14 +41,16 @@ const OtrosItems = () => {
 
     return (
         <div className="stock-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title">Otros Items e Insumos</h1>
                     <p className="page-description">Carbón, leña, especias y descartables</p>
                 </div>
             </header>
+            </DirectionalReveal>
 
-            <div className="neo-card" style={{ padding: '1.5rem', marginBottom: '2rem' }}>
+            <DirectionalReveal className="neo-card" from="left" delay={0.1} style={{ padding: '1.5rem', marginBottom: '2rem' }}>
                 <h3 style={{ marginBottom: '1rem' }}>Agregar Nuevo Insumo</h3>
                 <form onSubmit={handleAddItem} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                     <input
@@ -70,11 +73,11 @@ const OtrosItems = () => {
                         <Plus size={18} /> Agregar
                     </button>
                 </form>
-            </div>
+            </DirectionalReveal>
 
             <div className="stock-grid">
-                {items?.map(item => (
-                    <div key={item.id} className="stock-card neo-card">
+                {items?.map((item, index) => (
+                    <DirectionalReveal key={item.id} className="stock-card neo-card" from={index % 2 === 0 ? 'left' : 'right'} delay={0.16 + (index * 0.03)}>
                         <div className="stock-icon-wrapper" style={{ backgroundColor: 'var(--color-bg-main)' }}>
                             <Package size={24} color="var(--color-primary)" />
                         </div>
@@ -90,7 +93,7 @@ const OtrosItems = () => {
                         >
                             <Trash2 size={16} />
                         </button>
-                    </div>
+                    </DirectionalReveal>
                 ))}
             </div>
 

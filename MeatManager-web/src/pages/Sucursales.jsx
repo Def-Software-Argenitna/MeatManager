@@ -1,5 +1,6 @@
 import React from 'react';
 import { ArrowLeftRight, Building2, MapPin, Phone, ShieldCheck, User } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { useTenant } from '../context/TenantContext';
 import { useUser } from '../context/UserContext';
 import './Sucursales.css';
@@ -11,6 +12,7 @@ const Sucursales = () => {
 
     return (
         <div className="sucursales-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header sucursales-readonly-header">
                 <div>
                     <h1 className="page-title">Sucursal Asignada</h1>
@@ -19,9 +21,10 @@ const Sucursales = () => {
                     </p>
                 </div>
             </header>
+            </DirectionalReveal>
 
             <div className="sucursal-readonly-grid">
-                <section className="neo-card sucursal-readonly-card">
+                <DirectionalReveal className="neo-card sucursal-readonly-card" from="left" delay={0.12}>
                     <div className="sucursal-readonly-card-head">
                         <div className="sucursal-readonly-icon">
                             <ArrowLeftRight size={22} />
@@ -60,9 +63,9 @@ const Sucursales = () => {
                             </span>
                         </div>
                     </div>
-                </section>
+                </DirectionalReveal>
 
-                <section className="neo-card sucursal-readonly-card sucursal-readonly-info">
+                <DirectionalReveal className="neo-card sucursal-readonly-card sucursal-readonly-info" from="right" delay={0.18}>
                     <h3>Contexto actual</h3>
                     <div className="sucursal-info-list">
                         <div className="sucursal-info-item">
@@ -101,7 +104,7 @@ const Sucursales = () => {
                             </div>
                         </div>
                     </div>
-                </section>
+                </DirectionalReveal>
             </div>
         </div>
     );

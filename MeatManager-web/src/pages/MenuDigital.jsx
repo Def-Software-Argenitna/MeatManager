@@ -16,6 +16,7 @@ import {
     Headset
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { BRAND_CONFIG } from '../brandConfig';
 import './MenuDigital.css';
 
@@ -98,6 +99,7 @@ const MenuDigital = () => {
 
     return (
         <div className="menu-digital-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title">Configuración Menú Digital</h1>
@@ -115,8 +117,9 @@ const MenuDigital = () => {
                     </button>
                 </div>
             </header>
+            </DirectionalReveal>
 
-            <div className="menu-settings-bar neo-card animate-fade-in" style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+            <DirectionalReveal className="menu-settings-bar neo-card animate-fade-in" from="left" delay={0.1} style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
                 <div style={{ flex: 1 }}>
                     <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>Nombre del Local</label>
                     <input
@@ -153,11 +156,11 @@ const MenuDigital = () => {
                         />
                     </div>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             {hasMenuDigital ? (
                 <div className="bot-config-area animate-fade-in">
-                    <div className="neo-card bot-card bot-card-whatsapp">
+                    <DirectionalReveal className="neo-card bot-card bot-card-whatsapp" from="left" delay={0.16}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                             <MessageCircle size={20} color="#25D366" />
                             <h3 style={{ margin: 0 }}>Mensaje del "Bot" (Auto-respuesta) <span className="pro-badge-small">PRO</span></h3>
@@ -178,9 +181,9 @@ const MenuDigital = () => {
                                 {copiedBot ? <Check size={16} /> : <Copy size={16} />}
                             </button>
                         </div>
-                    </div>
+                    </DirectionalReveal>
 
-                    <div className="neo-card bot-card bot-card-portal">
+                    <DirectionalReveal className="neo-card bot-card bot-card-portal" from="right" delay={0.22}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
                             <LayoutGrid size={20} color="var(--color-primary)" />
                             <h3 style={{ margin: 0 }}>Link de tu Portal de Clientes <span className="pro-badge-small">PRO</span></h3>
@@ -225,10 +228,10 @@ const MenuDigital = () => {
                                 <Headset size={18} /> Solicitar Configuración Online
                             </button>
                         </div>
-                    </div>
+                    </DirectionalReveal>
                 </div>
             ) : (
-                <div className="neo-card pro-locked-banner" style={{ marginBottom: '1.5rem', padding: '1.5rem', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '12px' }}>
+                <DirectionalReveal className="neo-card pro-locked-banner" from="down" delay={0.16} style={{ marginBottom: '1.5rem', padding: '1.5rem', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '12px' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                         <div style={{ background: 'gold', padding: '0.75rem', borderRadius: '50%' }}>
                             <Crown color="#000" size={24} />
@@ -245,12 +248,12 @@ const MenuDigital = () => {
                     >
                         Conocer Planes PRO
                     </button>
-                </div>
+                </DirectionalReveal>
             )}
 
             <div className="pro-grid-layout">
                 {/* PREVIEW PANEL */}
-                <div className="menu-preview-panel neo-card">
+                <DirectionalReveal className="menu-preview-panel neo-card" from="left" delay={0.28}>
                     <div className="phone-mockup">
                         <div className="phone-screen">
                             <div className="whatsapp-header">
@@ -292,11 +295,11 @@ const MenuDigital = () => {
                             </div>
                         </div>
                     </div>
-                </div>
+                </DirectionalReveal>
 
                 {/* MANAGEMENT PANEL */}
                 <div className="menu-mgmt-panel">
-                    <div className="neo-card" style={{ padding: '1.5rem' }}>
+                    <DirectionalReveal className="neo-card" from="right" delay={0.34} style={{ padding: '1.5rem' }}>
                         <h3>Productos en el Menú</h3>
                         <div className="items-table-scroll">
                             <table className="menu-table">
@@ -357,7 +360,7 @@ const MenuDigital = () => {
                                 </tbody>
                             </table>
                         </div>
-                    </div>
+                    </DirectionalReveal>
                 </div>
             </div>
 
