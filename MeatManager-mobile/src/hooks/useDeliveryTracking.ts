@@ -5,6 +5,9 @@ import { ensureDriverLocationTracking, stopDriverLocationTracking } from '../ser
 import { subscribeToAssignedOrders, updateDriverLocation } from '../services/deliveryService';
 import type { DeliveryOrder } from '../types/delivery';
 
+const FOREGROUND_TRACKING_TIME_INTERVAL_MS = 5000;
+const FOREGROUND_TRACKING_DISTANCE_INTERVAL_METERS = 10;
+
 type TrackingState = {
   orders: DeliveryOrder[];
   locationText: string;
@@ -84,9 +87,9 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
 
       subscription = await Location.watchPositionAsync(
         {
-          accuracy: Location.Accuracy.Balanced,
-          timeInterval: 15000,
-          distanceInterval: 25,
+          accuracy: Location.Accuracy.High,
+          timeInterval: FOREGROUND_TRACKING_TIME_INTERVAL_MS,
+          distanceInterval: FOREGROUND_TRACKING_DISTANCE_INTERVAL_METERS,
         },
         async (position) => {
           const lat = position.coords.latitude;

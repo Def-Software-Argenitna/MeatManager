@@ -7,6 +7,8 @@ import { updateDriverLocation } from './deliveryService';
 
 const DRIVER_LOCATION_TASK = 'meatmanager-driver-location-task';
 const TRACKING_ENABLED_KEY = 'meatmanager.driverTracking.enabled';
+const TRACKING_TIME_INTERVAL_MS = 5000;
+const TRACKING_DISTANCE_INTERVAL_METERS = 10;
 
 type TrackingBootstrapResult =
   | { ok: true }
@@ -83,9 +85,9 @@ export async function ensureDriverLocationTracking(): Promise<TrackingBootstrapR
   const alreadyStarted = await Location.hasStartedLocationUpdatesAsync(DRIVER_LOCATION_TASK);
   if (!alreadyStarted) {
     await Location.startLocationUpdatesAsync(DRIVER_LOCATION_TASK, {
-      accuracy: Location.Accuracy.Balanced,
-      timeInterval: 15000,
-      distanceInterval: 25,
+      accuracy: Location.Accuracy.High,
+      timeInterval: TRACKING_TIME_INTERVAL_MS,
+      distanceInterval: TRACKING_DISTANCE_INTERVAL_METERS,
       pausesUpdatesAutomatically: false,
       showsBackgroundLocationIndicator: true,
       foregroundService: {

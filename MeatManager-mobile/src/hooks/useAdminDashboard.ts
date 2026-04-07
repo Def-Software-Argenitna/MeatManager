@@ -7,6 +7,8 @@ import {
   fetchTableRows,
 } from '../services/mobileApi';
 
+const ADMIN_DASHBOARD_REFRESH_INTERVAL_MS = 10000;
+
 type VentaRow = {
   id: number;
   date?: string;
@@ -501,9 +503,11 @@ export function useAdminDashboard(): AdminDashboardState {
     }
 
     loadDashboard();
+    const interval = setInterval(loadDashboard, ADMIN_DASHBOARD_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [refreshTick, selectedBranchCode]);
 

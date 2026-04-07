@@ -3,6 +3,7 @@ import { auth } from '../config/firebase';
 import type { DeliveryOrder, DeliveryOrderStatus, DriverLocation } from '../types/delivery';
 
 const CURRENT_SHIFT_DELIVERY_STATUSES = ['pending', 'assigned', 'on_route', 'arrived', 'delivered'];
+const DRIVER_ORDERS_REFRESH_INTERVAL_MS = 10000;
 
 const isSameLocalDay = (value?: string) => {
   if (!value) return false;
@@ -181,7 +182,7 @@ export function subscribeToAssignedOrders(
   };
 
   load();
-  const interval = setInterval(load, 15000);
+  const interval = setInterval(load, DRIVER_ORDERS_REFRESH_INTERVAL_MS);
 
   return () => {
     active = false;

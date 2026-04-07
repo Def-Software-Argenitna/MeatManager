@@ -64,6 +64,7 @@ const GMAPS_OPTIONS = {
     mapTypeControl: false,
     fullscreenControl: false,
 };
+const LIVE_DRIVERS_REFRESH_INTERVAL_MS = 5000;
 
 const toNumber = (value) => {
     const numeric = Number(value);
@@ -291,7 +292,7 @@ const Logistica = () => {
         };
 
         loadLiveDrivers();
-        const interval = window.setInterval(loadLiveDrivers, 15000);
+        const interval = window.setInterval(loadLiveDrivers, LIVE_DRIVERS_REFRESH_INTERVAL_MS);
 
         return () => {
             cancelled = true;
