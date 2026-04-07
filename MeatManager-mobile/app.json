@@ -5,8 +5,11 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/branding/meatmanager-icon.png",
     "splash": {
-      "backgroundColor": "#f7f4ee"
+      "image": "./assets/branding/meatmanager-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#120b08"
     },
     "assetBundlePatterns": [
       "**/*"
@@ -21,6 +24,10 @@
     },
     "android": {
       "package": "com.meatmanager.mobile",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/meatmanager-icon.png",
+        "backgroundColor": "#120b08"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
