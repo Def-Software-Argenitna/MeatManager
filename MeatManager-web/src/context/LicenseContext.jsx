@@ -71,6 +71,14 @@ const isSuperUserLicense = (license) => {
     ));
 };
 
+const hasScopedSuperUserLicense = (license, options = {}) => {
+    if (!isSuperUserLicense(license)) return false;
+    if (options.role === 'admin') return true;
+    if (options.isOwnerFallback) return true;
+
+    return String(license?.assignedUserId || '') === String(options.currentUserId || '');
+};
+
 const extractFeatureTokens = (value) => {
     if (!value) return [];
     if (Array.isArray(value)) return value.flatMap(extractFeatureTokens);
@@ -184,11 +192,20 @@ export const LicenseProvider = ({ children }) => {
     const [machineId, setMachineId] = useState('');
     const [supportNumber, setSupportNumber] = useState(DEFAULT_SUPPORT);
     const licenses = useMemo(() => normalizeVisibleLicenses(accessProfile?.licenses || []), [accessProfile]);
+    const scopedLicenses = useMemo(() => (
+        licenses.filter((license) => (
+            !isSuperUserLicense(license) || hasScopedSuperUserLicense(license, {
+                role: accessProfile?.role,
+                currentUserId: accessProfile?.id,
+                isOwnerFallback: accessProfile?.isOwnerFallback,
+            })
+        ))
+    ), [accessProfile?.id, accessProfile?.isOwnerFallback, accessProfile?.role, licenses]);
     const capabilities = useMemo(
-        () => buildLicenseCapabilities(licenses, {
+        () => buildLicenseCapabilities(scopedLicenses, {
             tenantHasDeliveryLicense: Boolean(accessProfile?.tenantHasDeliveryLicense),
         }),
-        [accessProfile?.tenantHasDeliveryLicense, licenses],
+        [accessProfile?.tenantHasDeliveryLicense, scopedLicenses],
     );
     const licenseMode = capabilities.isPro ? 'pro' : 'base';
 
@@ -239,7 +256,7 @@ export const LicenseProvider = ({ children }) => {
             machineId,
             isBlocked: false,
             supportNumber,
-            licenses,
+            licenses: scopedLicenses,
             featureFlags: capabilities.featureFlags,
             modules: capabilities.modules,
             isSuperUser: capabilities.isSuperUser,

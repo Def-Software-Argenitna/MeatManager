@@ -75,6 +75,35 @@ const normalizeMobileProfile = (profile: any): MobileAccessProfile => ({
   licenses: Array.isArray(profile?.licenses) ? profile.licenses : [],
 });
 
+const extractApiError = (payload: any) => String(payload?.error || '').trim();
+
+const toUserFacingSessionError = (deliveryPayload: any, profilePayload: any) => {
+  const deliveryError = extractApiError(deliveryPayload).toLowerCase();
+  const profileError = extractApiError(profilePayload).toLowerCase();
+
+  if (deliveryError.includes('usuario inactivo') || profileError.includes('usuario inactivo')) {
+    return 'Tu usuario esta inactivo. Pedi a un administrador que revise tu acceso.';
+  }
+
+  if (deliveryError.includes('cliente sin acceso') || profileError.includes('cliente sin acceso')) {
+    return 'Tu cliente no tiene acceso activo en este momento. Contacta a soporte o al administrador.';
+  }
+
+  if (
+    deliveryError.includes('licencias activas asignadas')
+    || profileError.includes('licencias activas asignadas')
+    || deliveryError.includes('acceso al modulo logistica')
+  ) {
+    return 'Tu cuenta todavia no tiene acceso habilitado para esta app. Pedi a un administrador que te asigne la licencia correcta.';
+  }
+
+  if (deliveryError.includes('usuario no encontrado en gestionclientes') || profileError.includes('usuario no encontrado en gestionclientes')) {
+    return 'Tu cuenta todavia no termino de sincronizarse. Cerra sesion e intenta nuevamente en unos minutos.';
+  }
+
+  return 'No pudimos validar tu acceso en este momento. Intenta nuevamente en unos minutos.';
+};
+
 export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> {
   const deliveryResponse = await apiFetch('/api/delivery/me');
   const deliveryPayload = await deliveryResponse.json().catch(() => ({}));
@@ -87,17 +116,15 @@ export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> 
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const deliveryError = String(deliveryPayload?.error || '').trim();
-    const profileError = String(payload?.error || '').trim();
-    const reasons = [
-      deliveryError ? `delivery/me: ${deliveryError}` : null,
-      profileError ? `firebase-users/me: ${profileError}` : null,
-      `api: ${apiBaseUrl}`,
-    ].filter(Boolean);
+    console.warn('[mobile access]', {
+      apiBaseUrl,
+      deliveryStatus: deliveryResponse.status,
+      deliveryError: extractApiError(deliveryPayload),
+      profileStatus: response.status,
+      profileError: extractApiError(payload),
+    });
 
-    throw new Error(
-      reasons.length > 0 ? reasons.join(' | ') : 'No se pudo leer el perfil actual.',
-    );
+    throw new Error(toUserFacingSessionError(deliveryPayload, payload));
   }
 
   return normalizeMobileProfile(payload.user);

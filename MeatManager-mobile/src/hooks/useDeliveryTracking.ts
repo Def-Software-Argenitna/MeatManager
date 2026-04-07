@@ -8,7 +8,8 @@ type TrackingState = {
   orders: DeliveryOrder[];
   locationText: string;
   isTracking: boolean;
-  permissionError: string | null;
+  syncError: string | null;
+  locationError: string | null;
   isRefreshing: boolean;
   lastSyncText: string;
   reload: () => void;
@@ -18,7 +19,8 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
   const [orders, setOrders] = useState<DeliveryOrder[]>([]);
   const [locationText, setLocationText] = useState('Esperando permiso de ubicacion...');
   const [isTracking, setIsTracking] = useState(false);
-  const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
   const [lastSyncText, setLastSyncText] = useState('Sincronizacion pendiente');
@@ -33,11 +35,12 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
       driverName,
       (nextOrders) => {
         setOrders(nextOrders);
+        setSyncError(null);
         setLastSyncText(`Actualizado ${new Date().toLocaleTimeString()}`);
         setIsRefreshing(false);
       },
       (error) => {
-        setPermissionError(error.message);
+        setSyncError(error.message);
         setIsRefreshing(false);
       },
     );
@@ -62,13 +65,13 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
       if (!mounted) return;
 
       if (permission.status !== 'granted') {
-        setPermissionError('La app necesita permiso de ubicacion para rastrear entregas.');
+        setLocationError('La app necesita permiso de ubicacion para rastrear entregas.');
         setLocationText('Permiso de ubicacion denegado');
         setIsTracking(false);
         return;
       }
 
-      setPermissionError(null);
+      setLocationError(null);
 
       subscription = await Location.watchPositionAsync(
         {
@@ -97,7 +100,7 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : 'No se pudo sincronizar ubicacion.';
-            setPermissionError(message);
+            setLocationError(message);
           }
         },
       );
@@ -116,7 +119,8 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
       orders,
       locationText,
       isTracking,
-      permissionError,
+      syncError,
+      locationError,
       isRefreshing,
       lastSyncText,
       reload: () => {
@@ -124,6 +128,6 @@ export function useDeliveryTracking(driverName: string | null): TrackingState {
         setRefreshTick((value) => value + 1);
       },
     }),
-    [isRefreshing, isTracking, lastSyncText, locationText, orders, permissionError],
+    [isRefreshing, isTracking, lastSyncText, locationError, locationText, orders, syncError],
   );
 }

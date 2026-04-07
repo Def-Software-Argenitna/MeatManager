@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -11,6 +12,8 @@ import {
 } from 'react-native';
 
 import { theme } from '../theme';
+
+const meatManagerLogo = require('../../assets/branding/meatmanager-icon.png');
 
 type Props = {
   onSubmit: (email: string, password: string) => Promise<{ ok: boolean; error?: string } | void>;
@@ -46,10 +49,12 @@ export function LoginScreen({ onSubmit }: Props) {
       behavior={Platform.select({ ios: 'padding', android: undefined })}
     >
       <View style={styles.heroCard}>
-        <Text style={styles.kicker}>Acceso seguro</Text>
+        <View style={styles.logoWrap}>
+          <Image source={meatManagerLogo} style={styles.logo} resizeMode="contain" />
+        </View>
         <Text style={styles.title}>MeatManager</Text>
         <Text style={styles.description}>
-          Ingresá con tus credenciales para acceder a tu espacio de trabajo móvil según tu cuenta y permisos habilitados.
+          Ingresá tus credenciales para acceder a la aplicacion.
         </Text>
 
         <TextInput
@@ -108,17 +113,18 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     ...theme.shadow,
   },
-  kicker: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.surfaceAlt,
-    color: theme.colors.primary,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+  logoWrap: {
+    alignSelf: 'center',
+    width: 132,
+    height: 132,
+    borderRadius: 28,
+    backgroundColor: '#120e0c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logo: {
+    width: 108,
+    height: 108,
   },
   title: {
     fontSize: 34,

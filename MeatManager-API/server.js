@@ -488,6 +488,41 @@ function hasSuperLicense(licenses = []) {
     return licenses.some((license) => isSuperLicenseMatch(license));
 }
 
+function licenseHasAdminCapability(license) {
+    const tokens = [
+        normalizeLicenseKey(license?.internalCode),
+        normalizeLicenseKey(license?.commercialName),
+        normalizeLicenseKey(license?.category),
+        ...parseLicenseTokens(license?.featureFlags).map(normalizeLicenseKey),
+    ].filter(Boolean);
+
+    return tokens.some((token) => (
+        token === 'superuser'
+        || token === 'su'
+        || token.includes('superuser')
+        || token === 'adminpanel'
+        || token === 'mobileadmin'
+    ));
+}
+
+function hasAdminPanelAccess(accessContext) {
+    if (!accessContext?.user) return false;
+    if (accessContext.user.role === 'admin') return true;
+
+    const licenses = [
+        ...(Array.isArray(accessContext.effectiveLicenses) ? accessContext.effectiveLicenses : []),
+        ...(Array.isArray(accessContext.deliveryLicenses) ? accessContext.deliveryLicenses : []),
+    ];
+
+    return licenses.some((license) => (
+        licenseHasAdminCapability(license)
+        && (
+            accessContext.user.isOwnerFallback
+            || String(license.assignedUserId || '') === String(accessContext.user.id)
+        )
+    ));
+}
+
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
     if (accessContext.user.role === 'admin') return true;
@@ -1247,6 +1282,8 @@ async function getClientAccessContext({ uid, email }) {
             internalCode: license.internalCode,
             category: license.category,
             billingScope: license.billingScope,
+            assignedUserId: license.userId ?? null,
+            assignedBranchId: license.branchId ?? null,
             appliesToWebapp: licenseAppliesToWebapp(license),
             featureFlags: parseFeatureFlags(license.featureFlags),
         });
@@ -1287,7 +1324,9 @@ async function getClientAccessContext({ uid, email }) {
     }
 }
 
-function assertClientAccess(accessContext) {
+function assertClientAccess(accessContext, options = {}) {
+    const allowDeliveryOnly = options?.allowDeliveryOnly === true;
+
     if (!accessContext?.user) {
         const error = new Error('Usuario no encontrado en GestionClientes');
         error.statusCode = 404;
@@ -1303,7 +1342,12 @@ function assertClientAccess(accessContext) {
         error.statusCode = 403;
         throw error;
     }
-    if (!Array.isArray(accessContext.effectiveLicenses) || accessContext.effectiveLicenses.length === 0) {
+    const effectiveLicenses = Array.isArray(accessContext.effectiveLicenses) ? accessContext.effectiveLicenses : [];
+    const deliveryLicenses = Array.isArray(accessContext.deliveryLicenses) ? accessContext.deliveryLicenses : [];
+    const hasEffectiveAccess = effectiveLicenses.length > 0;
+    const hasDeliveryOnlyAccess = allowDeliveryOnly && deliveryLicenses.length > 0;
+
+    if (!hasEffectiveAccess && !hasDeliveryOnlyAccess) {
         const error = new Error('El usuario no tiene licencias activas asignadas');
         error.statusCode = 403;
         throw error;
@@ -1327,6 +1371,7 @@ function buildAccessResponse(accessContext) {
         email: accessContext.user.email,
         username: fullName || accessContext.user.email || 'Usuario',
         role: accessContext.user.role === 'admin' ? 'admin' : 'employee',
+        isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
         active: isActiveStatus(accessContext.user.userStatus, false) ? 1 : 0,
         perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
         clientId: accessContext.client.id,
@@ -2158,14 +2203,14 @@ const tenantPools     = new Map();   // dbName → Pool
 const tableColCache   = new Map();   // "dbName.table" → [colNames]
 const tableDescCache  = new Map();   // "dbName.table" → Map(colName, sqlType)
 
-async function getTenantInfo(authUser) {
+async function getTenantInfo(authUser, options = {}) {
     const uid = typeof authUser === 'string' ? authUser : authUser?.uid;
     const email = typeof authUser === 'string' ? '' : authUser?.email;
     tenantInfoCache.delete(uid);
 
     const accessContext = await getClientAccessContext({ uid, email });
     if (accessContext) {
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, options);
         const info = {
             dbName: OPERATIONAL_DB_NAME,
             cuit: accessContext.client.taxId,
@@ -3489,7 +3534,7 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
 
         const driverIdentity = buildDriverIdentity(accessContext);
@@ -3509,6 +3554,7 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
                 name: driverIdentity.name,
                 username: driverIdentity.name,
                 role: accessContext.user.role,
+                isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
                 active: isActiveStatus(accessContext.user.userStatus, false) ? 1 : 0,
                 perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
                 clientId: accessContext.client.id,
@@ -3532,25 +3578,26 @@ app.get('/api/delivery/orders', verifyFirebaseToken, async (req, res) => {
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
 
-        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const tenantInfo = await getTenantInfo(req.firebaseUser, { allowDeliveryOnly: true });
         const pool = getTenantPool(tenantInfo.dbName);
         const driverIdentity = buildDriverIdentity(accessContext);
         const scope = String(req.query.scope || '').trim().toLowerCase();
         const status = req.query.status ? String(req.query.status).split(',') : null;
+        const canViewAllDeliveries = hasAdminPanelAccess(accessContext);
 
         const rows = await listDeliveryOrders(pool, tenantInfo.tenantId, {
             limit: req.query.limit,
             status,
-            driverIdentity: accessContext.user.role === 'admin' && scope === 'all' ? null : driverIdentity,
+            driverIdentity: canViewAllDeliveries && scope === 'all' ? null : driverIdentity,
         });
 
         return res.json({
             ok: true,
             count: rows.length,
-            scope: accessContext.user.role === 'admin' && scope === 'all' ? 'all' : 'assigned',
+            scope: canViewAllDeliveries && scope === 'all' ? 'all' : 'assigned',
             orders: rows,
         });
     } catch (err) {
@@ -3570,7 +3617,7 @@ app.get('/api/logistics/drivers', verifyFirebaseToken, async (req, res) => {
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
 
-        if (accessContext.user.role !== 'admin') {
+        if (!hasAdminPanelAccess(accessContext)) {
             return res.status(403).json({ error: 'Solo un administrador puede listar repartidores' });
         }
 
@@ -3621,7 +3668,7 @@ app.post('/api/logistics/orders/:id/assign', verifyFirebaseToken, async (req, re
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
 
-        if (accessContext.user.role !== 'admin') {
+        if (!hasAdminPanelAccess(accessContext)) {
             return res.status(403).json({ error: 'Solo un administrador puede asignar repartos' });
         }
 
@@ -3676,10 +3723,10 @@ app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
 
-        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const tenantInfo = await getTenantInfo(req.firebaseUser, { allowDeliveryOnly: true });
         const pool = getTenantPool(tenantInfo.dbName);
         const orderId = Number(req.params.id);
         const status = normalizeDeliveryStatus(req.body?.status);
@@ -3756,10 +3803,10 @@ app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
 
-        const tenantInfo = await getTenantInfo(req.firebaseUser);
+        const tenantInfo = await getTenantInfo(req.firebaseUser, { allowDeliveryOnly: true });
         const tenantId = Number(tenantInfo.tenantId || accessContext.client?.id || DEFAULT_OPERATIONAL_TENANT_ID);
         const firebaseUid = String(accessContext.user?.firebaseUid || req.firebaseUser?.uid || '').trim();
         const lat = Number(req.body?.lat);
@@ -3830,7 +3877,7 @@ app.get('/api/delivery/locations', verifyFirebaseToken, async (req, res) => {
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
-        assertClientAccess(accessContext);
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
         const tenantId = Number(accessContext.client?.id || DEFAULT_OPERATIONAL_TENANT_ID);
         const locations = await getActiveDriverLocations(tenantId);
