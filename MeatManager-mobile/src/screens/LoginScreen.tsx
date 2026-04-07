@@ -52,10 +52,9 @@ export function LoginScreen({ onSubmit }: Props) {
         <View style={styles.logoWrap}>
           <Image source={meatManagerLogo} style={styles.logo} resizeMode="contain" />
         </View>
-        <Text style={styles.kicker}>Acceso seguro</Text>
         <Text style={styles.title}>MeatManager</Text>
         <Text style={styles.description}>
-          Ingresá con tus credenciales para acceder a tu espacio de trabajo móvil según tu cuenta y permisos habilitados.
+          Ingresá tus credenciales para acceder a la aplicacion.
         </Text>
 
         <TextInput
@@ -122,24 +121,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#120e0c',
     alignItems: 'center',
     justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(255, 132, 0, 0.22)',
   },
   logo: {
     width: 108,
     height: 108,
-  },
-  kicker: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.surfaceAlt,
-    color: theme.colors.primary,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
   },
   title: {
     fontSize: 34,
