@@ -50,6 +50,14 @@ const mapFirebaseError = (code?: string) => {
 };
 
 const normalizeToken = (value: unknown) => String(value || '').trim().toLowerCase();
+const normalizeLicenseKey = (value: unknown) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
+
+const hasAdminAccessToken = (token: string) =>
+  token === 'su' ||
+  token === 'superuser' ||
+  token.includes('superuser') ||
+  token === 'adminpanel' ||
+  token === 'mobileadmin';
 
 const hasLogisticsToken = (token: string) =>
   token === 'logistica' ||
@@ -96,6 +104,29 @@ const hasLogisticsAccess = (profile: MobileAccessProfile | null) => {
   });
 };
 
+const hasAdminAccess = (profile: MobileAccessProfile | null) => {
+  if (!profile) return false;
+  if (profile.role === 'admin') return true;
+
+  const currentUserId = String(profile.id || '');
+  const isOwnerFallback = Boolean(profile.isOwnerFallback);
+
+  return (Array.isArray(profile.licenses) ? profile.licenses : []).some((license) => {
+    const tokens = [
+      normalizeLicenseKey(license.internalCode),
+      normalizeLicenseKey(license.commercialName),
+      normalizeLicenseKey(license.category),
+      ...extractFeatureTokens(license.featureFlags).map(normalizeLicenseKey),
+    ].filter(Boolean);
+
+    return tokens.some(hasAdminAccessToken)
+      && (
+        isOwnerFallback
+        || String(license.assignedUserId || '') === currentUserId
+      );
+  });
+};
+
 const getDriverName = (user: User | null, profile: MobileAccessProfile | null) => {
   const profileName = String(profile?.username || '').trim();
   if (profileName) return profileName;
@@ -111,7 +142,7 @@ const getDriverName = (user: User | null, profile: MobileAccessProfile | null) =
 
 const getAppMode = (profile: MobileAccessProfile | null): MobileAppMode => {
   if (!profile) return 'restricted';
-  if (profile.role === 'admin') return 'admin';
+  if (hasAdminAccess(profile)) return 'admin';
   if (hasLogisticsAccess(profile)) return 'driver';
   return 'restricted';
 };
