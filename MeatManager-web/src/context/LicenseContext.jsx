@@ -49,6 +49,7 @@ const FEATURE_ALIASES = {
 };
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
+const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
 
 const isBaseLicense = (license) => {
     const code = normalizeToken(license?.internalCode);
@@ -57,10 +58,17 @@ const isBaseLicense = (license) => {
 };
 
 const isSuperUserLicense = (license) => {
-    const code = normalizeToken(license?.internalCode);
-    const name = normalizeToken(license?.commercialName);
-    const category = normalizeToken(license?.category);
-    return ['superuser', 'su'].includes(code) || name === 'superuser' || category === 'superuser';
+    const candidates = [
+        normalizeLicenseKey(license?.internalCode),
+        normalizeLicenseKey(license?.commercialName),
+        normalizeLicenseKey(license?.category),
+    ].filter(Boolean);
+
+    return candidates.some((token) => (
+        token === 'su' ||
+        token === 'superuser' ||
+        token.includes('superuser')
+    ));
 };
 
 const extractFeatureTokens = (value) => {
@@ -95,7 +103,6 @@ const buildLicenseCapabilities = (licenses, options = {}) => {
         }
 
         const code = normalizeToken(license?.internalCode);
-        const name = normalizeToken(license?.commercialName);
         const category = normalizeToken(license?.category);
 
         if (isSuperUserLicense(license)) {
