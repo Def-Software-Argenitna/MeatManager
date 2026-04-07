@@ -2,7 +2,7 @@
   "expo": {
     "name": "MeatManager Mobile",
     "slug": "meatmanager",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/branding/meatmanager-icon.png",
