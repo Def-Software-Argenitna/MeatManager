@@ -1,32 +1,78 @@
 {
   "expo": {
-    "name": "MeatManager Delivery",
-    "slug": "meatmanager-delivery",
-    "version": "1.0.0",
+    "name": "MeatManager Mobile",
+    "slug": "meatmanager",
+    "version": "1.0.1",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "icon": "./assets/branding/meatmanager-icon.png",
     "splash": {
-      "backgroundColor": "#f7f4ee"
+      "image": "./assets/branding/meatmanager-splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#120b08"
     },
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.meatmanager.delivery",
+      "bundleIdentifier": "com.meatmanager.mobile",
+      "config": {
+        "googleMapsApiKey": "AIzaSyA2nHqLS-f6rBPc51pPjMNt_LHRE7T8uFs"
+      },
       "infoPlist": {
-        "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real."
+        "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "MeatManager necesita compartir tu ubicacion incluso en segundo plano para mantener el tracking de entregas activo.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
-      "package": "com.meatmanager.delivery",
+      "package": "com.meatmanager.mobile",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyA2nHqLS-f6rBPc51pPjMNt_LHRE7T8uFs"
+        }
+      },
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/branding/meatmanager-icon.png",
+        "backgroundColor": "#120b08"
+      },
       "permissions": [
         "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION"
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION"
       ]
     },
     "plugins": [
-      "expo-location"
-    ]
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real.",
+          "locationAlwaysAndWhenInUsePermission": "MeatManager necesita compartir tu ubicacion incluso en segundo plano para mantener el tracking de entregas activo.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "217d824d-37fa-42e3-b3cc-acac32e5e3fb"
+      }
+    },
+    "owner": "def-software-organization",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/217d824d-37fa-42e3-b3cc-acac32e5e3fb"
+    }
   }
 }

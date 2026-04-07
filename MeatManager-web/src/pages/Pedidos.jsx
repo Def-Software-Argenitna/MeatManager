@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
 import { BRAND_CONFIG } from '../brandConfig';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import './Pedidos.css';
@@ -297,6 +299,10 @@ const Pedidos = () => {
     const handleSaveOrder = async () => {
         if (!selectedClient || !newPedido.items.length) return;
         const address = newPedido.delivery_type === 'delivery' ? (newPedido.address || deliveryAddress) : '';
+        const total = Number(newPedido.total) || Math.round(computedTotal) || 0;
+        const paymentStatus = newPedido.payment_status || 'pending_driver_collection';
+        const paid = paymentStatus === 'paid';
+        const amountDue = paid ? 0 : (Number(newPedido.amount_due) || total);
         let geocoded = null;
         if (newPedido.delivery_type === 'delivery' && address) {
             geocoded = selectedSuggestion ? {
@@ -313,9 +319,9 @@ const Pedidos = () => {
             }
         }
 
-        await db.pedidos.add({
+        await saveTableRecord('pedidos', 'insert', {
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
-            customer_name: newPedido.name.trim(),
+            customer_name: selectedClient.label,
             items: newPedido.items,
             items_text: newPedido.items.map((item) => item.label).join('\n'),
             total,
@@ -335,6 +341,7 @@ const Pedidos = () => {
             created_at: new Date().toISOString(),
             source: 'manual',
         });
+        await refreshPedidosData();
         resetModal();
     };
 
@@ -410,6 +417,7 @@ const Pedidos = () => {
 
     return (
         <div className="pedidos-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div>
                     <h1 className="page-title">Pedidos y Reservas</h1>
@@ -424,8 +432,9 @@ const Pedidos = () => {
                     </button>
                 </div>
             </header>
+            </DirectionalReveal>
 
-            <div className="pedidos-filters neo-card">
+            <DirectionalReveal className="pedidos-filters neo-card" from="left" delay={0.1}>
                 <div className="search-bar">
                     <Search size={18} />
                     <input type="text" placeholder="Buscar por cliente o N° de pedido..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
@@ -436,12 +445,18 @@ const Pedidos = () => {
                     <button className={filter === 'delivered' ? 'active' : ''} onClick={() => setFilter('delivered')}>Entregados</button>
                     <button className={filter === 'all' ? 'active' : ''} onClick={() => setFilter('all')}>Todos</button>
                 </div>
-            </div>
+            </DirectionalReveal>
 
             <div className="pedidos-grid">
                 {filteredPedidos?.length === 0 && <div className="empty-state"><ShoppingBag size={48} /><p>No se encontraron pedidos.</p></div>}
                 {filteredPedidos?.map((pedido) => (
-                    <div key={pedido.id} className="pedido-card neo-card" style={{ borderLeftColor: getStatusColor(pedido.status) }}>
+                    <DirectionalReveal
+                        key={pedido.id}
+                        className="pedido-card neo-card"
+                        style={{ borderLeftColor: getStatusColor(pedido.status) }}
+                        from={filteredPedidos.indexOf(pedido) % 2 === 0 ? 'left' : 'right'}
+                        delay={0.16 + (filteredPedidos.indexOf(pedido) * 0.03)}
+                    >
                         <div className="pedido-header">
                             <div className="customer-info">
                                 <span className="status-dot" style={{ backgroundColor: getStatusColor(pedido.status) }}></span>
@@ -478,11 +493,11 @@ const Pedidos = () => {
                                 <button className="icon-btn" style={{ background: '#fdf2f8', color: '#db2777' }} title="Imprimir Etiqueta" onClick={() => printLabel(pedido)}><Tag size={18} /></button>
                             </div>
                         </div>
-                    </div>
+                    </DirectionalReveal>
                 ))}
             </div>
 
-            {isModalOpen && (
+            {isModalOpen && ReactDOM.createPortal(
                 <div className="modal-overlay" onClick={resetModal}>
                     <div className="modal-content neo-card pedidos-modal" onClick={(e) => e.stopPropagation()}>
                         <h2>Nuevo Pedido Manual</h2>
@@ -635,7 +650,7 @@ const Pedidos = () => {
                         </div>
                     </div>
                 </div>
-            )}
+            , document.body)}
         </div>
     );
 };

@@ -64,3 +64,4 @@ Si cambiás de servidor, actualizá ese valor y reiniciá Expo.
 - El login ya usa Firebase Auth.
 - La ubicacion online ya no depende de Firestore: se envía a la API para persistencia en Redis.
 - El tracking hoy queda en primer plano. El siguiente paso natural es fondo/background tracking.
+

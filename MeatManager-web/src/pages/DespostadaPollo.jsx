@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Save, RotateCcw, Check } from 'lucide-react';
 import { scaleService } from '../utils/SerialScaleService';
 import { useLicense } from '../context/LicenseContext';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaPollo.css';
@@ -60,13 +61,13 @@ const DespostadaPollo = () => {
 
     if (!hasModule('despostada')) {
         return (
-            <div className="pro-locked-container animate-fade-in">
+            <DirectionalReveal className="pro-locked-container animate-fade-in" from="down" delay={0.04}>
                 <h2>Módulo de Despostada</h2>
                 <p>La despostada se habilita desde Gestión de Clientes, no por código local.</p>
                 <button className="neo-button pro-btn" onClick={() => window.location.hash = '#/config/licencia'}>
                     Ver estado de licencias
                 </button>
-            </div>
+            </DirectionalReveal>
         );
     }
 
@@ -207,7 +208,7 @@ const DespostadaPollo = () => {
         <div className="despostada-container animate-fade-in">
 
             {/* HEADER: Configuration & Status */}
-            <div className="session-setup">
+            <DirectionalReveal className="session-setup" from="up" delay={0.04}>
                 <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', flex: 1 }}>
                     <div className="weight-input-group">
                         <label>Stock Disponible (Cajón/Pollo Entero)</label>
@@ -288,12 +289,12 @@ const DespostadaPollo = () => {
                         </div>
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
             <div className="workspace-area" style={{ gridTemplateColumns: '280px 1fr 350px' }}>
 
                 {/* LEFT PANEL: Cuts List */}
-                <div className="cuts-list-panel" style={{
+                <DirectionalReveal className="cuts-list-panel" from="left" delay={0.1} style={{
                     backgroundColor: 'var(--color-bg-card)',
                     borderRadius: 'var(--radius-lg)',
                     border: '1px solid var(--color-border)',
@@ -346,10 +347,10 @@ const DespostadaPollo = () => {
                             );
                         })}
                     </div>
-                </div>
+                </DirectionalReveal>
 
                 {/* MIDDLE: Static Reference Image Only */}
-                <div className="visual-map-container" style={{ backgroundColor: '#111', padding: 0 }}>
+                <DirectionalReveal className="visual-map-container" from="up" delay={0.16} style={{ backgroundColor: '#111', padding: 0 }}>
                     <img
                         src="/pollo_argentino.png"
                         alt="Mapa de Cortes de Pollo"
@@ -373,7 +374,7 @@ const DespostadaPollo = () => {
                             </span>
                         </div>
                     )}
-                </div>
+                </DirectionalReveal>
 
                 {/* RIGHT: High Contrast Work Panel */}
                 <div className="control-panel">

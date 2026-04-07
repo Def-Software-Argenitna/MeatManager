@@ -197,6 +197,12 @@
 
 .pedidos-modal {
     max-width: 860px;
+    width: calc(100vw - 2rem);
+    max-height: 85vh;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    padding: 1.5rem;
 }
 
 .pedido-form-grid {

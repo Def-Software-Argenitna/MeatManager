@@ -2,27 +2,54 @@ import React from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  Linking,
+  Pressable,
   RefreshControl,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
 
+import { AdminLogisticsMap } from '../components/AdminLogisticsMap';
 import { useAdminDashboard } from '../hooks/useAdminDashboard';
 import { theme } from '../theme';
 import type { MobileAccessProfile } from '../types/session';
 
 type Props = {
   profile: MobileAccessProfile;
+  onLogout: () => Promise<void> | void;
 };
 
 const currency = (value: number) =>
   value.toLocaleString('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 });
+const statusLabel = (value: string) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (normalized === 'delivered') return 'Entregado';
+  if (normalized === 'assigned') return 'Asignado';
+  if (normalized === 'on_route') return 'En reparto';
+  if (normalized === 'arrived') return 'Llegó';
+  return normalized || 'Pendiente';
+};
 
-export function AdminDashboardScreen({ profile }: Props) {
+const openDriverMap = async (latitude: number | null, longitude: number | null) => {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return;
+  }
+
+  const lat = Number(latitude);
+  const lng = Number(longitude);
+  const url = `https://www.google.com/maps/search/?api=1&query=${lat},${lng}`;
+  await Linking.openURL(url);
+};
+
+export function AdminDashboardScreen({ profile, onLogout }: Props) {
   const {
     isLoading,
     error,
+    selectedBranchCode,
+    selectedBranchName,
+    branchOptions,
+    setSelectedBranchCode,
     salesTodayTotal,
     salesMonthTotal,
     salesTodayCount,
@@ -30,6 +57,9 @@ export function AdminDashboardScreen({ profile }: Props) {
     pendingDeliveries,
     deliveredOrders,
     drivers,
+    driverMapMarkers,
+    orderMapMarkers,
+    cashClosures,
     reload,
   } = useAdminDashboard();
 
@@ -50,15 +80,44 @@ export function AdminDashboardScreen({ profile }: Props) {
       ListHeaderComponent={
         <View style={styles.headerBlock}>
           <View style={styles.hero}>
-            <Text style={styles.eyebrow}>Panel admin</Text>
-            <Text style={styles.title}>{profile.username || 'Administracion'}</Text>
-            <Text style={styles.subtitle}>Caja, ventas y seguimiento de repartidores en un solo lugar.</Text>
+            <View style={styles.heroHeader}>
+              <View style={styles.heroText}>
+                <Text style={styles.eyebrow}>Panel admin</Text>
+                <Text style={styles.title}>{profile.username || 'Administracion'}</Text>
+                <Text style={styles.subtitle}>Caja, ventas y seguimiento del tenant en un solo lugar.</Text>
+              </View>
+              <Pressable style={styles.logoutButton} onPress={onLogout}>
+                <Text style={styles.logoutButtonText}>Salir</Text>
+              </Pressable>
+            </View>
+            <View style={styles.branchSelector}>
+              {branchOptions.map((branch) => (
+                <Pressable
+                  key={branch.code}
+                  style={[
+                    styles.branchPill,
+                    selectedBranchCode === branch.code && styles.branchPillActive,
+                  ]}
+                  onPress={() => setSelectedBranchCode(branch.code)}
+                >
+                  <Text
+                    style={[
+                      styles.branchPillText,
+                      selectedBranchCode === branch.code && styles.branchPillTextActive,
+                    ]}
+                  >
+                    {branch.name}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
           </View>
 
           <View style={styles.metricsGrid}>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>Caja actual</Text>
               <Text style={styles.metricValue}>{currency(cashInDrawerTotal)}</Text>
+              <Text style={styles.metricHint}>{selectedBranchName}</Text>
             </View>
             <View style={styles.metricCard}>
               <Text style={styles.metricLabel}>Ventas hoy</Text>
@@ -76,12 +135,57 @@ export function AdminDashboardScreen({ profile }: Props) {
             </View>
           </View>
 
+          <AdminLogisticsMap
+            driverMarkers={driverMapMarkers}
+            orderMarkers={orderMapMarkers}
+          />
+
           {error ? (
             <View style={styles.warningCard}>
               <Text style={styles.warningTitle}>Atencion</Text>
               <Text style={styles.warningText}>{error}</Text>
             </View>
           ) : null}
+
+          <Text style={styles.sectionTitle}>Ultimos cierres de caja</Text>
+          <View style={styles.closuresList}>
+            {cashClosures.length > 0 ? (
+              cashClosures.map((closure) => (
+                <View key={closure.id} style={styles.closureCard}>
+                  <View style={styles.closureHeader}>
+                    <View>
+                      <Text style={styles.closureTitle}>{closure.branchName}</Text>
+                      <Text style={styles.closureMeta}>{closure.closureDate}</Text>
+                      {closure.closedAtText ? <Text style={styles.closureMeta}>{closure.closedAtText}</Text> : null}
+                    </View>
+                    <Text style={[styles.closureDiff, closure.difference >= 0 ? styles.closureDiffPositive : styles.closureDiffNegative]}>
+                      {closure.difference >= 0 ? '+' : ''}{currency(closure.difference)}
+                    </Text>
+                  </View>
+                  <View style={styles.closureStatsRow}>
+                    <View style={styles.closureStat}>
+                      <Text style={styles.closureStatLabel}>Teorico</Text>
+                      <Text style={styles.closureStatValue}>{currency(closure.theoreticalCash)}</Text>
+                    </View>
+                    <View style={styles.closureStat}>
+                      <Text style={styles.closureStatLabel}>Contado</Text>
+                      <Text style={styles.closureStatValue}>{currency(closure.countedCash)}</Text>
+                    </View>
+                    <View style={styles.closureStat}>
+                      <Text style={styles.closureStatLabel}>Ventas</Text>
+                      <Text style={styles.closureStatValue}>{currency(closure.totalSales)}</Text>
+                    </View>
+                  </View>
+                  {closure.notes ? <Text style={styles.closureNotes}>{closure.notes}</Text> : null}
+                </View>
+              ))
+            ) : (
+              <View style={styles.emptyCard}>
+                <Text style={styles.emptyTitle}>Sin cierres recientes</Text>
+                <Text style={styles.emptyText}>Los nuevos cierres de caja se van a listar aca segun la sucursal seleccionada.</Text>
+              </View>
+            )}
+          </View>
 
           <Text style={styles.sectionTitle}>Repartidores</Text>
         </View>
@@ -116,7 +220,61 @@ export function AdminDashboardScreen({ profile }: Props) {
           </View>
 
           <Text style={styles.driverLocationLabel}>Ultima ubicacion</Text>
-          <Text style={styles.driverLocationValue}>{item.locationText || 'Sin tracking reciente'}</Text>
+          {item.locationText ? (
+            <Pressable
+              style={styles.mapCard}
+              onPress={() => openDriverMap(item.latitude, item.longitude)}
+            >
+              <View style={styles.mapCardRow}>
+                <View style={styles.mapPin} />
+                <View style={styles.mapTextBlock}>
+                  <Text style={styles.driverLocationValue}>{item.locationText}</Text>
+                  <Text style={styles.driverLocationMeta}>
+                    {item.lastSyncText || 'Sin horario de sincronizacion'}
+                  </Text>
+                </View>
+                <Text style={styles.mapAction}>Ver mapa</Text>
+              </View>
+            </Pressable>
+          ) : (
+            <Text style={styles.driverLocationValue}>Sin tracking reciente</Text>
+          )}
+
+          <View style={styles.ordersColumns}>
+            <View style={styles.ordersBlock}>
+              <Text style={styles.ordersBlockTitle}>Pendientes</Text>
+              {item.pendingOrders.length > 0 ? (
+                item.pendingOrders.map((order) => (
+                  <View key={`pending-${order.id}`} style={styles.orderRow}>
+                    <View style={styles.orderRowText}>
+                      <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                      <Text style={styles.orderMeta}>#{order.id} · {statusLabel(order.status)}</Text>
+                    </View>
+                    <Text style={styles.orderAmount}>{currency(order.total)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.ordersEmptyText}>Sin pedidos pendientes</Text>
+              )}
+            </View>
+
+            <View style={styles.ordersBlock}>
+              <Text style={styles.ordersBlockTitle}>Entregados</Text>
+              {item.deliveredOrders.length > 0 ? (
+                item.deliveredOrders.map((order) => (
+                  <View key={`delivered-${order.id}`} style={styles.orderRow}>
+                    <View style={styles.orderRowText}>
+                      <Text style={styles.orderCustomer}>{order.customerName}</Text>
+                      <Text style={styles.orderMeta}>#{order.id} · {statusLabel(order.status)}</Text>
+                    </View>
+                    <Text style={styles.orderAmount}>{currency(order.total)}</Text>
+                  </View>
+                ))
+              ) : (
+                <Text style={styles.ordersEmptyText}>Sin pedidos entregados</Text>
+              )}
+            </View>
+          </View>
         </View>
       )}
       ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
@@ -151,6 +309,16 @@ const styles = StyleSheet.create({
     padding: 22,
     gap: 6,
   },
+  heroHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  heroText: {
+    flex: 1,
+    gap: 6,
+  },
   eyebrow: {
     color: theme.colors.accent,
     fontSize: 12,
@@ -167,6 +335,46 @@ const styles = StyleSheet.create({
     color: theme.colors.muted,
     lineHeight: 22,
     fontSize: 15,
+  },
+  logoutButton: {
+    alignSelf: 'flex-start',
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  logoutButtonText: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  branchSelector: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  branchPill: {
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: theme.radius.pill,
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  branchPillActive: {
+    backgroundColor: theme.colors.primary,
+    borderColor: theme.colors.primary,
+  },
+  branchPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: theme.colors.text,
+  },
+  branchPillTextActive: {
+    color: theme.colors.white,
   },
   metricsGrid: {
     flexDirection: 'row',
@@ -221,6 +429,71 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: theme.colors.text,
     marginTop: 4,
+  },
+  closuresList: {
+    gap: 12,
+  },
+  closureCard: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.radius.lg,
+    padding: 16,
+    gap: 12,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    ...theme.shadow,
+  },
+  closureHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 16,
+    alignItems: 'flex-start',
+  },
+  closureTitle: {
+    color: theme.colors.text,
+    fontSize: 17,
+    fontWeight: '800',
+  },
+  closureMeta: {
+    color: theme.colors.muted,
+    fontSize: 13,
+    marginTop: 4,
+  },
+  closureDiff: {
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  closureDiffPositive: {
+    color: theme.colors.success,
+  },
+  closureDiffNegative: {
+    color: theme.colors.danger,
+  },
+  closureStatsRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  closureStat: {
+    flex: 1,
+    backgroundColor: theme.colors.surfaceAlt,
+    borderRadius: theme.radius.md,
+    padding: 12,
+  },
+  closureStatLabel: {
+    color: theme.colors.muted,
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  closureStatValue: {
+    color: theme.colors.text,
+    fontSize: 15,
+    fontWeight: '800',
+    marginTop: 6,
+  },
+  closureNotes: {
+    color: theme.colors.muted,
+    lineHeight: 20,
   },
   driverCard: {
     backgroundColor: theme.colors.surface,
@@ -296,6 +569,88 @@ const styles = StyleSheet.create({
   driverLocationValue: {
     color: theme.colors.text,
     lineHeight: 21,
+  },
+  driverLocationMeta: {
+    color: theme.colors.muted,
+    lineHeight: 18,
+    marginTop: 4,
+    fontSize: 13,
+  },
+  mapCard: {
+    backgroundColor: theme.colors.surfaceAlt,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+  },
+  mapCardRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  mapPin: {
+    width: 12,
+    height: 12,
+    borderRadius: 999,
+    backgroundColor: theme.colors.primary,
+    shadowColor: theme.colors.primary,
+    shadowOpacity: 0.45,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 3,
+  },
+  mapTextBlock: {
+    flex: 1,
+  },
+  mapAction: {
+    color: theme.colors.primary,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  ordersColumns: {
+    gap: 10,
+  },
+  ordersBlock: {
+    backgroundColor: theme.colors.surfaceAlt,
+    borderRadius: theme.radius.md,
+    padding: 14,
+    gap: 10,
+  },
+  ordersBlockTitle: {
+    color: theme.colors.primary,
+    fontSize: 12,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+  },
+  orderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    gap: 12,
+    alignItems: 'center',
+  },
+  orderRowText: {
+    flex: 1,
+  },
+  orderCustomer: {
+    color: theme.colors.text,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  orderMeta: {
+    color: theme.colors.muted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  orderAmount: {
+    color: theme.colors.text,
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  ordersEmptyText: {
+    color: theme.colors.muted,
+    fontSize: 13,
+    lineHeight: 19,
   },
   emptyCard: {
     backgroundColor: theme.colors.surface,

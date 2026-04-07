@@ -38,6 +38,7 @@ export const ALL_ROUTES = [
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
     { path: '/config/licencia',         label: 'Licencia',          group: 'Configuración' },
     { path: '/config/seguridad',        label: 'Seguridad/Usuarios',group: 'Configuración' },
+    { path: '/admin-pablo-control-master', label: 'Panel Administración', group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];
 
@@ -46,13 +47,35 @@ const ALL_PATHS = ALL_ROUTES.map(r => r.path);
 const UserContext = createContext(null);
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
+const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
 
-const hasSuperUserLicense = (licenses) => {
+const isSuperUserLicense = (license) => {
+    const candidates = [
+        normalizeLicenseKey(license?.internalCode),
+        normalizeLicenseKey(license?.commercialName),
+        normalizeLicenseKey(license?.category),
+    ].filter(Boolean);
+
+    return candidates.some((token) => (
+        token === 'su' ||
+        token === 'superuser' ||
+        token.includes('superuser')
+    ));
+};
+
+const hasSuperUserLicense = (licenses, options = {}) => {
     const list = Array.isArray(licenses) ? licenses : [];
+    if (options.role === 'admin') return true;
+
+    const currentUserId = String(options.currentUserId || '');
+    const isOwnerFallback = Boolean(options.isOwnerFallback);
+
     return list.some((license) => (
-        ['superuser', 'su'].includes(normalizeToken(license?.internalCode)) ||
-        normalizeToken(license?.commercialName) === 'superuser' ||
-        normalizeToken(license?.category) === 'superuser'
+        isSuperUserLicense(license)
+        && (
+            isOwnerFallback
+            || String(license?.assignedUserId || '') === currentUserId
+        )
     ));
 };
 
@@ -84,7 +107,11 @@ export const UserProvider = ({ children }) => {
     const profileRecoveryRef = useRef('');
 
     const applyResolvedUser = useCallback((userData) => {
-        const superUser = hasSuperUserLicense(userData?.licenses);
+        const superUser = hasSuperUserLicense(userData?.licenses, {
+            role: userData?.role,
+            currentUserId: userData?.id,
+            isOwnerFallback: userData?.isOwnerFallback,
+        });
         const perms = (userData?.role === 'admin' || superUser) ? ALL_PATHS : (userData?.perms || []);
         const sessionUser = {
             id: userData?.id || userData?.uid || userData?.email,
@@ -272,7 +299,11 @@ export const UserProvider = ({ children }) => {
     // Admin always true; employee checks permission list
     const hasAccess = (path) => {
         if (!currentUser) return false;
-        if (hasSuperUserLicense(accessProfile?.licenses)) return true;
+        if (hasSuperUserLicense(accessProfile?.licenses, {
+            role: currentUser?.role,
+            currentUserId: currentUser?.id,
+            isOwnerFallback: accessProfile?.isOwnerFallback,
+        })) return true;
         if (currentUser.role === 'admin') return true;
         return userPerms.includes(path);
     };

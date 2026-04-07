@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useLicense } from '../context/LicenseContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { Save, RotateCcw, Check, ShieldCheck, TrendingUp, DollarSign } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { buildDespostadaLogPayload } from '../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './DespostadaCerdo.css';
@@ -218,7 +219,7 @@ const DespostadaCerdo = () => {
         <div className="despostada-container animate-fade-in">
 
             {/* HEADER: Configuration & Status */}
-            <div className="session-setup">
+            <DirectionalReveal className="session-setup" from="up" delay={0.04}>
                 <div style={{ display: 'flex', gap: '2rem', alignItems: 'center', flex: 1 }}>
                     <div className="weight-input-group">
                         <label>Stock Disponible (Cerdos Enteros)</label>
@@ -299,12 +300,12 @@ const DespostadaCerdo = () => {
                         </div>
                     </div>
                 )}
-            </div>
+            </DirectionalReveal>
 
             <div className="workspace-area" style={{ gridTemplateColumns: '280px 1fr 350px' }}>
 
                 {/* LEFT PANEL: Cuts List */}
-                <div className="cuts-list-panel" style={{
+                <DirectionalReveal className="cuts-list-panel" from="left" delay={0.1} style={{
                     backgroundColor: 'var(--color-bg-card)',
                     borderRadius: 'var(--radius-lg)',
                     border: '1px solid var(--color-border)',
@@ -357,10 +358,10 @@ const DespostadaCerdo = () => {
                             );
                         })}
                     </div>
-                </div>
+                </DirectionalReveal>
 
                 {/* MIDDLE: Static Reference Image Only */}
-                <div className="visual-map-container" style={{ backgroundColor: '#111', padding: 0 }}>
+                <DirectionalReveal className="visual-map-container" from="up" delay={0.16} style={{ backgroundColor: '#111', padding: 0 }}>
                     <img
                         src="/cerdo_argentino.png"
                         alt="Mapa de Cortes de Cerdo"
@@ -384,7 +385,7 @@ const DespostadaCerdo = () => {
                             </span>
                         </div>
                     )}
-                </div>
+                </DirectionalReveal>
 
                 {/* RIGHT: High Contrast Work Panel */}
                 <div className="control-panel">

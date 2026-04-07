@@ -11,7 +11,6 @@ import {
     ShieldCheck,
     Calculator,
     DownloadCloud,
-    ExternalLink,
     Database,
     ArrowLeftRight
 } from 'lucide-react';
@@ -48,8 +47,10 @@ const Manual = () => {
                     steps: [
                         'Buscá el producto por nombre o usá el escáner.',
                         'Ingresá el peso (o se carga solo si la balanza está conectada).',
+                        'Si la venta es para un cliente habitual, seleccioná el cliente antes de cobrar.',
                         'Tocá "Cobrar TICKET" (botón verde).',
-                        'Elegí Efectivo, Tarjeta o Mercado Pago.',
+                        'Elegí el medio de pago correspondiente: Efectivo, Tarjeta, Mercado Pago, Cuenta DNI u otros medios configurados.',
+                        'Si el cliente paga después, podés registrar la operación en cuenta corriente.',
                         'Confirmá y escuchá la campana 🔔.'
                     ]
                 }
@@ -82,10 +83,10 @@ const Manual = () => {
                     subtitle: 'Cuadrar el día',
                     steps: [
                         'En "Caja", registrá la apertura del día por cada medio de pago.',
-                        'Cargá retiros, gastos e ingresos manuales para que el saldo quede conciliado.',
+                        'Cargá retiros, gastos, ingresos manuales y movimientos extraordinarios para que el saldo quede conciliado.',
                         'El sistema te muestra el saldo acumulado por cada medio de pago.',
-                        'Revisá el historial de ventas para detectar errores.',
-                        'Hacé el arqueo físico y compará con el total del sistema.'
+                        'Revisá ventas y cobros antes de cerrar para detectar diferencias.',
+                        'Hacé el arqueo físico y compará con el total del sistema antes de confirmar el cierre.'
                     ]
                 }
             ]
@@ -117,9 +118,10 @@ const Manual = () => {
                     subtitle: 'Vender mientras dormís',
                     steps: [
                         'Configurá tu Local y tu WhatsApp.',
-                        'Activá el Portal de Clientes para que vean tus ofertas.',
-                        'Cuando recibís un pedido por WhatsApp, copialo.',
-                        'En Ventas, tocas "Importar Pedido" y se carga solo.'
+                        'Completá el mensaje del Bot y copiá el texto sugerido en tu respuesta automática de WhatsApp.',
+                        'Compartí el link del Portal de Clientes para que vean precios, stock y ofertas.',
+                        'Cuando el cliente hace un pedido desde WhatsApp o el portal, podés importarlo directamente en Pedidos.',
+                        'La vista previa del celular te muestra cómo verá el cliente el menú antes de publicarlo.'
                     ]
                 }
             ]
@@ -134,25 +136,26 @@ const Manual = () => {
                     subtitle: 'Control total de envíos',
                     steps: [
                         'Asigná cada pedido a un repartidor.',
-                        'Mirá en el mapa por dónde anda tu flota en tiempo real.',
-                        'El sistema te avisa si se les vence el registro o el seguro.'
+                        'Mirá en el mapa por dónde anda tu flota en tiempo real y seleccioná repartidores para centrar la vista.',
+                        'Abrí un pedido para ver dirección, items, estado y datos del cliente.',
+                        'Desde el detalle podés confirmar la entrega, llamar al repartidor e imprimir el ticket del pedido.'
                     ]
                 }
             ]
         },
         {
             id: 'sucursales',
-            title: 'Sucursales y Stock Global',
+            title: 'Sucursales',
             icon: <ArrowLeftRight size={24} />,
             color: '#3498db',
             content: [
                 {
-                    subtitle: 'Control Multi-Local (Modo Master)',
+                    subtitle: 'Consulta de sucursal asignada',
                     steps: [
-                        'Configurá el Perfil del Local (📍) en cada computadora.',
-                        'Activá el "Modo Master" con el PIN 1234 solo en la PC de administración.',
-                        'Vinculá una carpeta de Google Drive para compartir archivos entre locales.',
-                        'Consultá el archivo "GUIA_SUCURSALES.md" en la carpeta del programa para ver el paso a paso detallado y profesional.'
+                        'La gestión de sucursales se realiza desde la administración central.',
+                        'En MeatManager solo se visualiza la sucursal asignada al usuario o al tenant.',
+                        'Si necesitás cambiar nombre, dirección, código interno o estado de una sucursal, hacelo desde el panel de administración correspondiente.',
+                        'Los datos visibles en esta pantalla se actualizan según la configuración central definida para tu cuenta.'
                     ]
                 }
             ]
@@ -164,12 +167,12 @@ const Manual = () => {
             color: '#7f8c8d',
             content: [
                 {
-                    subtitle: 'Copias de Seguridad (Backups)',
+                    subtitle: 'Buenas prácticas operativas',
                     steps: [
-                        'Ve al menú "Configuración" > "Mantenimiento".',
-                        'Backup Manual: Toca "Exportar" para guardar toda tu base de datos en un archivo.',
-                        'Restaurar: Si cambias de PC, toca "Importar" y selecciona tu archivo guardado.',
-                        'Backup PRO: Si eres usuario PRO, tus datos se sincronizan solos en la nube cada vez que tienes internet.'
+                        'Verificá siempre que estés trabajando con conexión y sesión iniciada correctamente.',
+                        'Antes de cerrar el día, revisá ventas, caja, pedidos y movimientos pendientes.',
+                        'Si necesitás soporte, usá el acceso de ayuda o contactá al equipo técnico.',
+                        'Las configuraciones sensibles y datos operativos deben mantenerse actualizados en el servidor y no depender de una PC puntual.'
                     ]
                 }
             ]

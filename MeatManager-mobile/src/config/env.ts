@@ -9,6 +9,7 @@ const fallbackFirebaseConfig = {
 };
 
 const trimSlash = (value: string) => value.replace(/\/$/, '');
+const fallbackApiUrl = 'https://meatmanager.demo.def-software.com';
 
 export const firebaseConfig = {
   apiKey: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || fallbackFirebaseConfig.apiKey,
@@ -22,4 +23,4 @@ export const firebaseConfig = {
     process.env.EXPO_PUBLIC_FIREBASE_MEASUREMENT_ID || fallbackFirebaseConfig.measurementId,
 };
 
-export const apiBaseUrl = trimSlash(process.env.EXPO_PUBLIC_API_URL || 'http://127.0.0.1:3001');
+export const apiBaseUrl = trimSlash(process.env.EXPO_PUBLIC_API_URL || fallbackApiUrl);

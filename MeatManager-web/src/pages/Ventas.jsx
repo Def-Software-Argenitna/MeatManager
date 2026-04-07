@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { formatPrice } from '../utils/priceFormat';
@@ -1507,7 +1508,7 @@ const Ventas = () => {
                 <ShoppingBag size={24} />
             </button>
             {/* PRODUCTS_SECTION */}
-            <div className="pos-products-area">
+            <DirectionalReveal className="pos-products-area" from="left" delay={0.06}>
                 <div style={{ marginBottom: '1.25rem', padding: '0.2rem' }}>
                     <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
                         <div style={{ position: 'relative', flex: 1 }}>
@@ -1683,8 +1684,8 @@ const Ventas = () => {
                         ))
                     )}
                 </div>
-            </div>
-            <div className="pos-ticket">
+            </DirectionalReveal>
+            <DirectionalReveal className="pos-ticket" from="right" delay={0.12}>
                 <div className="ticket-header" style={{ padding: '1rem', borderBottom: '1px solid var(--glass-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h2 style={{ fontSize: '1rem', fontWeight: '950', margin: 0, display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--color-primary)', letterSpacing: '0.05em' }}>
                         <ShoppingBag size={18} />
@@ -1854,7 +1855,7 @@ const Ventas = () => {
                         </button>
                     </div>
                 </div>
-            </div>
+            </DirectionalReveal>
         </div>
 
         {showWeightModal && (

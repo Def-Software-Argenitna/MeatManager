@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, Package } from 'lucide-react';
+import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Alimentos.css';
 
@@ -84,6 +85,7 @@ const Alimentos = () => {
 
     return (
         <div className="alimentos-container animate-fade-in">
+            <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 <div className="page-header-main">
                     <h1 className="page-title">
@@ -93,11 +95,12 @@ const Alimentos = () => {
                     <p className="page-description">Carga de productos preparados (milanesas, hamburguesas, etc.)</p>
                 </div>
             </header>
+            </DirectionalReveal>
 
             <div className="alimentos-workspace">
 
                 {/* LEFT: Formulario de carga */}
-                <div className="product-form-card">
+                <DirectionalReveal className="product-form-card" from="left" delay={0.1}>
                     <h2 className="card-title">Nuevo Producto</h2>
 
                     {/* Selector de tipo de producto */}
@@ -107,8 +110,10 @@ const Alimentos = () => {
                             {PRODUCT_TYPES.map(type => (
                                 <button
                                     key={type.id}
+                                    type="button"
                                     className={`product-type-btn ${selectedProductType === type.id ? 'active' : ''}`}
                                     onClick={() => setSelectedProductType(type.id)}
+                                    aria-pressed={selectedProductType === type.id}
                                 >
                                     <span className="product-icon">{type.icon}</span>
                                     <span>{type.name}</span>
@@ -124,6 +129,7 @@ const Alimentos = () => {
                             {MEAT_TYPES.map(meat => (
                                 <button
                                     key={meat.id}
+                                    type="button"
                                     className={`meat-type-btn ${selectedMeatType === meat.id ? 'active' : ''}`}
                                     onClick={() => setSelectedMeatType(meat.id)}
                                     style={{
@@ -142,12 +148,14 @@ const Alimentos = () => {
                         <label className="form-label">Unidad de Medida</label>
                         <div className="unit-toggle">
                             <button
+                                type="button"
                                 className={`unit-btn ${unitType === 'unidades' ? 'active' : ''}`}
                                 onClick={() => setUnitType('unidades')}
                             >
                                 Unidades
                             </button>
                             <button
+                                type="button"
                                 className={`unit-btn ${unitType === 'peso' ? 'active' : ''}`}
                                 onClick={() => setUnitType('peso')}
                             >
@@ -214,10 +222,10 @@ const Alimentos = () => {
                         <Plus size={20} />
                         Agregar Producto
                     </button>
-                </div>
+                </DirectionalReveal>
 
                 {/* RIGHT: Lista de productos cargados */}
-                <div className="products-list-card">
+                <DirectionalReveal className="products-list-card" from="right" delay={0.16}>
                     <h2 className="card-title">
                         Productos Cargados
                         <span className="products-count">
@@ -281,8 +289,7 @@ const Alimentos = () => {
                             })
                         )}
                     </div>
-                </div>
-
+                </DirectionalReveal>
             </div>
         </div>
     );

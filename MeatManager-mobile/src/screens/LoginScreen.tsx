@@ -1,16 +1,21 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
+  Image,
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { theme } from '../theme';
+
+const meatManagerLogo = require('../../assets/branding/meatmanager-icon.png');
 
 type Props = {
   onSubmit: (email: string, password: string) => Promise<{ ok: boolean; error?: string } | void>;
@@ -41,63 +46,83 @@ export function LoginScreen({ onSubmit }: Props) {
   };
 
   return (
-    <KeyboardAvoidingView
-      style={styles.screen}
-      behavior={Platform.select({ ios: 'padding', android: undefined })}
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.kicker}>MeatManager Mobile</Text>
-        <Text style={styles.title}>MeatManager Mobile</Text>
-        <Text style={styles.description}>
-          Ingresá con la misma cuenta Firebase del negocio para acceder a tu panel móvil según tu rol y licencias.
-        </Text>
-
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="email-address"
-          onChangeText={setEmail}
-          placeholder="tu@email.com"
-          placeholderTextColor={theme.colors.muted}
-          style={styles.input}
-          value={email}
-        />
-
-        <TextInput
-          autoCapitalize="none"
-          autoCorrect={false}
-          onChangeText={setPassword}
-          placeholder="Contrasena"
-          placeholderTextColor={theme.colors.muted}
-          secureTextEntry
-          style={styles.input}
-          value={password}
-        />
-
-        {error ? <Text style={styles.errorText}>{error}</Text> : null}
-
-        <Pressable
-          style={({ pressed }) => [styles.button, (pressed || isSubmitting) && styles.buttonPressed]}
-          onPress={handleSubmit}
-          disabled={isSubmitting}
+    <SafeAreaView style={styles.screen}>
+      <KeyboardAvoidingView
+        style={styles.keyboardShell}
+        behavior={Platform.select({ ios: 'padding', android: 'height' })}
+        keyboardVerticalOffset={Platform.select({ ios: 18, android: 0 })}
+      >
+        <ScrollView
+          contentContainerStyle={styles.scrollContent}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          {isSubmitting ? (
-            <ActivityIndicator color={theme.colors.white} />
-          ) : (
-            <Text style={styles.buttonText}>Ingresar</Text>
-          )}
-        </Pressable>
-      </View>
-    </KeyboardAvoidingView>
+          <View style={styles.heroCard}>
+            <View style={styles.logoWrap}>
+              <Image source={meatManagerLogo} style={styles.logo} resizeMode="contain" />
+            </View>
+            <Text style={styles.title}>MeatManager</Text>
+            <Text style={styles.description}>
+              Ingresá tus credenciales para acceder a la aplicacion.
+            </Text>
+
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              keyboardType="email-address"
+              onChangeText={setEmail}
+              placeholder="tu@email.com"
+              placeholderTextColor={theme.colors.muted}
+              style={styles.input}
+              value={email}
+              returnKeyType="next"
+            />
+
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setPassword}
+              placeholder="Contrasena"
+              placeholderTextColor={theme.colors.muted}
+              secureTextEntry
+              style={styles.input}
+              value={password}
+              returnKeyType="done"
+              onSubmitEditing={handleSubmit}
+            />
+
+            {error ? <Text style={styles.errorText}>{error}</Text> : null}
+
+            <Pressable
+              style={({ pressed }) => [styles.button, (pressed || isSubmitting) && styles.buttonPressed]}
+              onPress={handleSubmit}
+              disabled={isSubmitting}
+            >
+              {isSubmitting ? (
+                <ActivityIndicator color={theme.colors.white} />
+              ) : (
+                <Text style={styles.buttonText}>Ingresar</Text>
+              )}
+            </Pressable>
+          </View>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   screen: {
     flex: 1,
+    backgroundColor: theme.colors.background,
+  },
+  keyboardShell: {
+    flex: 1,
+  },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
     padding: 24,
-    backgroundColor: theme.colors.background,
   },
   heroCard: {
     backgroundColor: theme.colors.surface,
@@ -108,17 +133,18 @@ const styles = StyleSheet.create({
     borderColor: theme.colors.border,
     ...theme.shadow,
   },
-  kicker: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 10,
-    paddingVertical: 6,
-    borderRadius: theme.radius.pill,
-    backgroundColor: theme.colors.surfaceAlt,
-    color: theme.colors.primary,
-    fontSize: 12,
-    fontWeight: '800',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
+  logoWrap: {
+    alignSelf: 'center',
+    width: 132,
+    height: 132,
+    borderRadius: 28,
+    backgroundColor: '#120e0c',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  logo: {
+    width: 108,
+    height: 108,
   },
   title: {
     fontSize: 34,

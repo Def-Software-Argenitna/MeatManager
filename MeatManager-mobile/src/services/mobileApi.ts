@@ -9,6 +9,31 @@ type TableFetchOptions = {
   direction?: 'ASC' | 'DESC';
 };
 
+type LogisticsDriver = {
+  id: number;
+  clientId?: number;
+  branchId?: number | null;
+  firebaseUid?: string | null;
+  email?: string | null;
+  role?: string | null;
+  name?: string | null;
+  firstName?: string | null;
+  lastName?: string | null;
+  vehicle?: string | null;
+  status?: string | null;
+  licenses?: unknown[];
+};
+
+type ClientBranch = {
+  id: number;
+  clientId?: number;
+  name?: string | null;
+  internalCode?: string | null;
+  address?: string | null;
+  isBillable?: boolean;
+  status?: string | null;
+};
+
 async function getAuthHeaders() {
   const currentUser = auth.currentUser;
   if (!currentUser) {
@@ -50,6 +75,35 @@ const normalizeMobileProfile = (profile: any): MobileAccessProfile => ({
   licenses: Array.isArray(profile?.licenses) ? profile.licenses : [],
 });
 
+const extractApiError = (payload: any) => String(payload?.error || '').trim();
+
+const toUserFacingSessionError = (deliveryPayload: any, profilePayload: any) => {
+  const deliveryError = extractApiError(deliveryPayload).toLowerCase();
+  const profileError = extractApiError(profilePayload).toLowerCase();
+
+  if (deliveryError.includes('usuario inactivo') || profileError.includes('usuario inactivo')) {
+    return 'Tu usuario esta inactivo. Pedi a un administrador que revise tu acceso.';
+  }
+
+  if (deliveryError.includes('cliente sin acceso') || profileError.includes('cliente sin acceso')) {
+    return 'Tu cliente no tiene acceso activo en este momento. Contacta a soporte o al administrador.';
+  }
+
+  if (
+    deliveryError.includes('licencias activas asignadas')
+    || profileError.includes('licencias activas asignadas')
+    || deliveryError.includes('acceso al modulo logistica')
+  ) {
+    return 'Tu cuenta todavia no tiene acceso habilitado para esta app. Pedi a un administrador que te asigne la licencia correcta.';
+  }
+
+  if (deliveryError.includes('usuario no encontrado en gestionclientes') || profileError.includes('usuario no encontrado en gestionclientes')) {
+    return 'Tu cuenta todavia no termino de sincronizarse. Cerra sesion e intenta nuevamente en unos minutos.';
+  }
+
+  return 'No pudimos validar tu acceso en este momento. Intenta nuevamente en unos minutos.';
+};
+
 export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> {
   const deliveryResponse = await apiFetch('/api/delivery/me');
   const deliveryPayload = await deliveryResponse.json().catch(() => ({}));
@@ -62,7 +116,15 @@ export async function fetchCurrentMobileProfile(): Promise<MobileAccessProfile> 
   const payload = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(deliveryPayload.error || payload.error || 'No se pudo leer el perfil actual.');
+    console.warn('[mobile access]', {
+      apiBaseUrl,
+      deliveryStatus: deliveryResponse.status,
+      deliveryError: extractApiError(deliveryPayload),
+      profileStatus: response.status,
+      profileError: extractApiError(payload),
+    });
+
+    throw new Error(toUserFacingSessionError(deliveryPayload, payload));
   }
 
   return normalizeMobileProfile(payload.user);
@@ -95,4 +157,26 @@ export async function fetchDriverLocations() {
   }
 
   return Array.isArray(payload.locations) ? payload.locations : [];
+}
+
+export async function fetchLogisticsDrivers(): Promise<LogisticsDriver[]> {
+  const response = await apiFetch('/api/logistics/drivers');
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudieron leer los repartidores habilitados.');
+  }
+
+  return Array.isArray(payload.drivers) ? (payload.drivers as LogisticsDriver[]) : [];
+}
+
+export async function fetchClientBranches(): Promise<ClientBranch[]> {
+  const response = await apiFetch('/api/client/branches');
+  const payload = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(payload.error || 'No se pudieron leer las sucursales del cliente.');
+  }
+
+  return Array.isArray(payload.branches) ? (payload.branches as ClientBranch[]) : [];
 }

@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Linking,
   RefreshControl,
   StyleSheet,
   Text,
@@ -20,7 +21,7 @@ import { AdminDashboardScreen } from './AdminDashboardScreen';
 
 export function DeliveryDashboardScreen() {
   const { user, profile, appMode, driverName, login, logout, isLoading, sessionError } = useAuthSession();
-  const { orders, isTracking, permissionError, isRefreshing, lastSyncText, reload } =
+  const { orders, isTracking, syncError, locationError, isRefreshing, lastSyncText, reload, retryTracking } =
     useDeliveryTracking(appMode === 'driver' ? driverName || null : null);
   const deliveredOrders = useMemo(() => orders.filter((order) => order.status === 'delivered'), [orders]);
   const pendingOrders = useMemo(() => orders.filter((order) => order.status !== 'delivered' && order.status !== 'cancelled'), [orders]);
@@ -60,7 +61,7 @@ export function DeliveryDashboardScreen() {
   if (appMode === 'admin' && profile) {
     return (
       <SafeAreaView style={styles.screen}>
-        <AdminDashboardScreen profile={profile} />
+        <AdminDashboardScreen profile={profile} onLogout={logout} />
       </SafeAreaView>
     );
   }
@@ -122,14 +123,31 @@ export function DeliveryDashboardScreen() {
               </View>
             </View>
 
-            {permissionError ? (
+            {syncError ? (
               <Pressable
                 style={styles.warningCard}
-                onPress={() => Alert.alert('Seguimiento', permissionError || '')}
+                onPress={() => Alert.alert('Sincronizacion', syncError)}
               >
                 <Text style={styles.warningTitle}>Atencion con la sincronizacion</Text>
-                <Text style={styles.warningText}>{permissionError}</Text>
+                <Text style={styles.warningText}>{syncError}</Text>
               </Pressable>
+            ) : null}
+
+            {locationError ? (
+              <View style={styles.warningCard}>
+                <Pressable onPress={() => Alert.alert('Ubicacion', locationError)}>
+                  <Text style={styles.warningTitle}>Permiso o rastreo de ubicacion</Text>
+                  <Text style={styles.warningText}>{locationError}</Text>
+                </Pressable>
+                <View style={styles.warningActions}>
+                  <Pressable style={styles.warningButton} onPress={retryTracking}>
+                    <Text style={styles.warningButtonText}>Reintentar</Text>
+                  </Pressable>
+                  <Pressable style={styles.warningButtonSecondary} onPress={() => Linking.openSettings()}>
+                    <Text style={styles.warningButtonSecondaryText}>Abrir ajustes</Text>
+                  </Pressable>
+                </View>
+              </View>
             ) : null}
 
             <Text style={styles.sectionTitle}>Pedidos para entregar</Text>
@@ -251,6 +269,7 @@ const styles = StyleSheet.create({
     backgroundColor: theme.colors.warningSoft,
     borderWidth: 1,
     borderColor: theme.colors.warning,
+    gap: 12,
   },
   warningTitle: {
     color: theme.colors.warning,
@@ -260,6 +279,32 @@ const styles = StyleSheet.create({
   warningText: {
     color: theme.colors.text,
     lineHeight: 21,
+  },
+  warningActions: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  warningButton: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+  },
+  warningButtonText: {
+    color: theme.colors.white,
+    fontWeight: '800',
+  },
+  warningButtonSecondary: {
+    borderRadius: theme.radius.pill,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: theme.colors.warning,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  warningButtonSecondaryText: {
+    color: theme.colors.warning,
+    fontWeight: '800',
   },
   sectionTitle: {
     fontSize: 22,

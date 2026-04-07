@@ -10,7 +10,6 @@ import {
     Trash2
 } from 'lucide-react';
 import { exportFullBackup, importFullBackup } from '../utils/backupService';
-import { desktopApi } from '../utils/desktopApi';
 import './Maintenance.css';
 
 const Maintenance = () => {

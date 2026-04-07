@@ -508,121 +508,6 @@ db.version(32).stores({
     }
 });
 
-db.version(33).stores({
-    ventas: '++id, date, total, payment_method, payment_method_id, clientId, receipt_number, receipt_code, synced, qendra_ticket_id, source',
-    stock: '++id, name, type, quantity, updated_at, synced',
-    despostada_logs: '++id, type, date, supplier, total_weight, lot_id, synced',
-    payment_methods: '++id, name, type, enabled',
-    prices: '++id, product_id, price, plu, updated_at',
-    clients: '++id, name, first_name, last_name, phone, address, city, balance, has_current_account, last_updated, synced',
-    suppliers: '++id, name, cuit, city, province, synced',
-    purchase_items: '++id, name, category_id, type, species, usage, synced',
-    categories: '++id, name, parent_id, synced',
-    animal_lots: '++id, purchase_id, supplier, date, status, synced',
-    compras: '++id, date, supplier, invoice_num, total, synced',
-    pedidos: '++id, customer_id, customer_name, status, delivery_date, created_at, source, sync_cloud',
-    repartidores: '++id, name, vehicle, status, synced',
-    menu_digital: '++id, product_name, category, is_offer, synced',
-    ventas_items: '++id, venta_id, product_name, quantity, price, subtotal, synced',
-    compras_items: '++id, purchase_id, product_name, quantity, weight, unit_price, subtotal, destination, synced',
-    caja_movimientos: '++id, type, amount, category, description, date, receipt_number, receipt_code, synced',
-    cash_closures: '++id, &closure_date, closed_at, report_path',
-    app_logs: '++id, level, message, details, timestamp, synced',
-    users: '++id, username, role, active',
-    user_permissions: '++id, user_id, path',
-    branch_stock_snapshots: '++id, branch_code, branch_name, snapshot_at, imported_at',
-    deleted_sales_history: '++id, deleted_at, deleted_by_user_id, sale_id, receipt_code, sale_date, payment_method, clientId',
-    settings: 'key, value'
-}).upgrade(async (tx) => {
-    const reportFolder = await tx.table('settings').get('cash_closure_reports_folder');
-    if (!reportFolder) {
-        await tx.table('settings').put({ key: 'cash_closure_reports_folder', value: '' });
-    }
-});
-
-db.version(34).stores({
-    ventas: '++id, date, total, payment_method, payment_method_id, clientId, receipt_number, receipt_code, synced, qendra_ticket_id, source',
-    stock: '++id, name, type, quantity, updated_at, synced',
-    despostada_logs: '++id, type, date, supplier, total_weight, lot_id, synced',
-    payment_methods: '++id, name, type, enabled',
-    prices: '++id, product_id, price, plu, updated_at',
-    clients: '++id, name, first_name, last_name, phone, address, city, balance, has_current_account, last_updated, synced',
-    suppliers: '++id, name, cuit, city, province, synced',
-    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
-    categories: '++id, name, parent_id, synced',
-    animal_lots: '++id, purchase_id, supplier, date, status, synced',
-    compras: '++id, date, supplier, invoice_num, total, synced',
-    pedidos: '++id, customer_id, customer_name, status, delivery_date, created_at, source, sync_cloud',
-    repartidores: '++id, name, vehicle, status, synced',
-    menu_digital: '++id, product_name, category, is_offer, synced',
-    ventas_items: '++id, venta_id, product_name, quantity, price, subtotal, synced',
-    compras_items: '++id, purchase_id, product_name, quantity, weight, unit_price, subtotal, destination, iva_rate, iva_amount, net_subtotal, synced',
-    caja_movimientos: '++id, type, amount, category, description, date, receipt_number, receipt_code, synced',
-    cash_closures: '++id, &closure_date, closed_at, report_path',
-    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
-    app_logs: '++id, level, message, details, timestamp, synced',
-    users: '++id, username, role, active',
-    user_permissions: '++id, user_id, path',
-    branch_stock_snapshots: '++id, branch_code, branch_name, snapshot_at, imported_at',
-    deleted_sales_history: '++id, deleted_at, deleted_by_user_id, sale_id, receipt_code, sale_date, payment_method, clientId',
-    settings: 'key, value'
-}).upgrade(async (tx) => {
-    const inferPurchaseItemIvaRate = (item) => {
-        const species = String(item?.species || '').trim().toLowerCase();
-        const type = String(item?.type || '').trim().toLowerCase();
-        if (type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(species)) {
-            return 10.5;
-        }
-        return 21;
-    };
-
-    await tx.table('purchase_items').toCollection().modify((item) => {
-        if (item.default_iva_rate == null) {
-            item.default_iva_rate = inferPurchaseItemIvaRate(item);
-        }
-    });
-});
-
-db.version(35).stores({
-    ventas: '++id, date, total, payment_method, payment_method_id, clientId, receipt_number, receipt_code, synced, qendra_ticket_id, source',
-    stock: '++id, name, type, quantity, updated_at, synced',
-    despostada_logs: '++id, type, date, supplier, total_weight, lot_id, synced',
-    payment_methods: '++id, name, type, enabled',
-    prices: '++id, product_id, price, plu, updated_at',
-    clients: '++id, name, first_name, last_name, phone, address, city, latitude, longitude, geocoded_at, has_current_account, last_updated, synced',
-    suppliers: '++id, name, cuit, city, province, synced',
-    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
-    categories: '++id, name, parent_id, synced',
-    animal_lots: '++id, purchase_id, supplier, date, status, synced',
-    compras: '++id, date, supplier, invoice_num, total, synced',
-    pedidos: '++id, customer_id, customer_name, status, delivery_date, created_at, source, sync_cloud, latitude, longitude, geocoded_at',
-    repartidores: '++id, name, vehicle, status, synced',
-    menu_digital: '++id, product_name, category, is_offer, synced',
-    ventas_items: '++id, venta_id, product_name, quantity, price, subtotal, synced',
-    compras_items: '++id, purchase_id, product_name, quantity, weight, unit_price, subtotal, destination, iva_rate, iva_amount, net_subtotal, synced',
-    caja_movimientos: '++id, type, amount, category, description, date, receipt_number, receipt_code, synced',
-    cash_closures: '++id, &closure_date, closed_at, report_path',
-    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
-    app_logs: '++id, level, message, details, timestamp, synced',
-    users: '++id, username, role, active',
-    user_permissions: '++id, user_id, path',
-    branch_stock_snapshots: '++id, branch_code, branch_name, snapshot_at, imported_at',
-    deleted_sales_history: '++id, deleted_at, deleted_by_user_id, sale_id, receipt_code, sale_date, payment_method, clientId',
-    settings: 'key, value'
-}).upgrade(async (tx) => {
-    await tx.table('clients').toCollection().modify((client) => {
-        if (client.latitude === undefined) client.latitude = null;
-        if (client.longitude === undefined) client.longitude = null;
-        if (client.geocoded_at === undefined) client.geocoded_at = null;
-    });
-
-    await tx.table('pedidos').toCollection().modify((pedido) => {
-        if (pedido.latitude === undefined) pedido.latitude = null;
-        if (pedido.longitude === undefined) pedido.longitude = null;
-        if (pedido.geocoded_at === undefined) pedido.geocoded_at = null;
-    });
-});
-
 // Helper to check sync status
 export const getUnsyncedCount = async () => {
     const tables = ['ventas', 'ventas_items', 'stock', 'clients', 'suppliers', 'compras', 'compras_items', 'despostada_logs', 'caja_movimientos'];
@@ -724,15 +609,10 @@ export const initializeSettings = async () => {
         await db.settings.put({ key: 'master_pin', value: '1234' });
         await db.settings.put({ key: 'branch_code', value: 1 });
         await db.settings.put({ key: 'ticket_delete_authorization_code', value: '' });
-        await db.settings.put({ key: 'cash_closure_reports_folder', value: '' });
     } else {
         const deleteCode = await db.settings.get('ticket_delete_authorization_code');
         if (!deleteCode) {
             await db.settings.put({ key: 'ticket_delete_authorization_code', value: '' });
-        }
-        const closureFolder = await db.settings.get('cash_closure_reports_folder');
-        if (!closureFolder) {
-            await db.settings.put({ key: 'cash_closure_reports_folder', value: '' });
         }
     }
 };
@@ -800,58 +680,4 @@ db.settings.hook('creating', function (_pk, obj) {
 
 db.settings.hook('updating', function (mods, _pk, obj) {
     syncToMysql('settings', 'upsert', { ...obj, ...mods });
-});
-
-db.version(36).stores({
-    settings: '&key',
-    ventas: '++id, date, customer_name, total, synced',
-    ventas_items: '++id, venta_id, product_name, synced',
-    stock: '++id, name, category, quantity, updated_at, synced',
-    prices: '++id, product_id, price, plu, updated_at',
-    clients: '++id, name, first_name, last_name, phone, address, city, latitude, longitude, geocoded_at, dni_cuit, balance, has_current_account, last_updated, synced',
-    suppliers: '++id, name, cuit, city, province, synced',
-    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
-    categories: '++id, name, parent_id, synced',
-    compras: '++id, supplier_name, invoice_number, total, date, internal_use, synced',
-    compras_items: '++id, compra_id, item_name, quantity, subtotal, iva_rate, iva_amount, net_subtotal, synced',
-    caja_movimientos: '++id, date, type, category, amount, receipt_code, payment_method, authorization_id, authorization_verified, authorized_recipient_email, synced',
-    despostada_logs: '++id, timestamp, type, animal_type, synced',
-    repartidores: '++id, name, vehicle, plate, phone, vtv_expiry, license_expiry, insurance_expiry, status',
-    pedidos: '++id, customer_name, status, delivery_date, delivery_type, latitude, longitude, geocoded_at, assigned_driver_uid, assigned_driver_email, status_updated_at, synced',
-    branches: '++id, name, code, active',
-    cash_closures: '++id, &closure_date, closed_at, report_path',
-    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
-    app_logs: '++id, level, message, details, timestamp, synced',
-    users: '++id, username, role, active',
-});
-
-db.version(37).stores({
-    settings: '&key',
-    ventas: '++id, date, customer_name, total, synced',
-    ventas_items: '++id, venta_id, product_name, synced',
-    stock: '++id, name, category, quantity, updated_at, synced',
-    prices: '++id, product_id, price, plu, updated_at',
-    clients: '++id, name, client_type, company_name, contact_first_name, contact_last_name, first_name, last_name, phone, address, city, latitude, longitude, geocoded_at, dni_cuit, balance, has_current_account, last_updated, synced',
-    suppliers: '++id, name, cuit, city, province, synced',
-    purchase_items: '++id, name, category_id, type, species, usage, default_iva_rate, synced',
-    categories: '++id, name, parent_id, synced',
-    compras: '++id, supplier_name, invoice_number, total, date, internal_use, synced',
-    compras_items: '++id, compra_id, item_name, quantity, subtotal, iva_rate, iva_amount, net_subtotal, synced',
-    caja_movimientos: '++id, date, type, category, amount, receipt_code, payment_method, authorization_id, authorization_verified, authorized_recipient_email, synced',
-    despostada_logs: '++id, timestamp, type, animal_type, synced',
-    repartidores: '++id, name, vehicle, plate, phone, vtv_expiry, license_expiry, insurance_expiry, status',
-    pedidos: '++id, customer_name, status, delivery_date, delivery_type, latitude, longitude, geocoded_at, assigned_driver_uid, assigned_driver_email, status_updated_at, synced',
-    branches: '++id, name, code, active',
-    cash_closures: '++id, &closure_date, closed_at, report_path',
-    supplier_item_tax_profiles: '++id, supplier_name, product_name, last_iva_rate, updated_at, [supplier_name+product_name]',
-    app_logs: '++id, level, message, details, timestamp, synced',
-    users: '++id, username, role, active',
-}).upgrade(async (tx) => {
-    await tx.table('clients').toCollection().modify((client) => {
-        if (client.client_type === undefined) client.client_type = 'person';
-        if (client.company_name === undefined) client.company_name = '';
-        if (client.contact_first_name === undefined) client.contact_first_name = '';
-        if (client.contact_last_name === undefined) client.contact_last_name = '';
-        if (client.dni_cuit === undefined) client.dni_cuit = '';
-    });
 });
