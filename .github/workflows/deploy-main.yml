@@ -33,7 +33,9 @@ jobs:
           context: ./MeatManager-web
           file: ./MeatManager-web/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:main
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:main
+            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:sha-${{ github.sha }}
           build-args: |
             VITE_API_URL=/api
 
@@ -42,7 +44,9 @@ jobs:
           context: ./MeatManager-API
           file: ./MeatManager-API/Dockerfile
           push: true
-          tags: ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:main
+          tags: |
+            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:main
+            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:sha-${{ github.sha }}
 
       - name: Deploy main stack on self-hosted runner
         env:
@@ -58,15 +62,19 @@ jobs:
           cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
           cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
           cp deploy/nginx/meatmanager.demo.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.demo.def-software.com.conf"
-          printf "GHCR_NAMESPACE=%s\nMAIN_DOMAIN=%s\nDEMO_DOMAIN=%s\n" \
+          printf "GHCR_NAMESPACE=%s\nMAIN_DOMAIN=%s\nDEMO_DOMAIN=%s\nWEB_MAIN_TAG=%s\nAPI_MAIN_TAG=%s\nWEB_DEV_TAG=%s\nAPI_DEV_TAG=%s\n" \
             "${GHCR_NAMESPACE}" \
             "${MAIN_DOMAIN}" \
-            "${DEMO_DOMAIN}" > "${DEPLOY_PATH}/.env"
+            "${DEMO_DOMAIN}" \
+            "sha-${{ github.sha }}" \
+            "sha-${{ github.sha }}" \
+            "dev" \
+            "dev" > "${DEPLOY_PATH}/.env"
           printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
           printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
           printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           cd "${DEPLOY_PATH}"
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main
-          docker compose -f docker-compose.cloud.yml --env-file .env up -d web-main api-main
+          docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-main api-main

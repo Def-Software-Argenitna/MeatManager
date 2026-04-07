@@ -44,7 +44,7 @@ El JSON de Firebase Admin ahora se escribe automaticamente desde el secret `FIRE
 ```bash
 cd /opt/meatmanager
 docker compose -f docker-compose.cloud.yml --env-file .env pull
-docker compose -f docker-compose.cloud.yml --env-file .env up -d
+docker compose -f docker-compose.cloud.yml --env-file .env up -d --wait
 ```
 
 ## Bootstrap inicial
@@ -66,6 +66,25 @@ Los servicios quedan asi:
 - main api: `127.0.0.1:4101`
 - dev web: `127.0.0.1:4200`
 - dev api: `127.0.0.1:4201`
+
+## Estrategia de deploy
+
+El deploy de GitHub Actions ahora hace esto:
+
+- build y push de imagenes con tag de rama (`main` / `dev`)
+- build y push de la misma imagen con tag inmutable por commit: `sha-<commit>`
+- el compose del servidor levanta exactamente esa version `sha-*`
+- `docker compose up -d --force-recreate --wait` espera a que web y API queden sanos antes de dar el deploy por terminado
+
+Esto reduce dos problemas comunes:
+
+- que el servidor quede usando una imagen vieja por una tag mutable
+- que el proxy apunte a un contenedor nuevo todavia no listo
+
+Importante:
+
+- el frontend sigue pudiendo tener usuarios con una pestaña vieja abierta; por eso conviene mantener el manejo de recarga de chunks en la app
+- si necesitás rollback, podés volver a poner en `.env` el tag `sha-<commit>` anterior y correr `docker compose ... up -d --force-recreate --wait`
 
 Usá estas configs de referencia en el nginx del host:
 

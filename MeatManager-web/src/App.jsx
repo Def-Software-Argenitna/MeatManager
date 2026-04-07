@@ -5,36 +5,63 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
 
-const Login = lazy(() => import('./pages/Login'));
-const Dashboard = lazy(() => import('./pages/Dashboard'));
-const HistorialVentas = lazy(() => import('./pages/HistorialVentas'));
-const DespostadaVaca = lazy(() => import('./pages/DespostadaVaca'));
-const DespostadaCerdo = lazy(() => import('./pages/DespostadaCerdo'));
-const DespostadaPollo = lazy(() => import('./pages/DespostadaPollo'));
-const DespostadaPescado = lazy(() => import('./pages/DespostadaPescado'));
-const Ventas = lazy(() => import('./pages/Ventas'));
-const Alimentos = lazy(() => import('./pages/Alimentos'));
-const Stock = lazy(() => import('./pages/Stock'));
-const ConfiguracionPagos = lazy(() => import('./pages/ConfiguracionPagos'));
-const Compras = lazy(() => import('./pages/Compras'));
-const OtrosItems = lazy(() => import('./pages/OtrosItems'));
-const Clientes = lazy(() => import('./pages/Clientes'));
-const Categorias = lazy(() => import('./pages/Categorias'));
-const ProductosCompra = lazy(() => import('./pages/ProductosCompra'));
-const Proveedores = lazy(() => import('./pages/Proveedores'));
-const Licencia = lazy(() => import('./pages/Licencia'));
-const InformesPro = lazy(() => import('./pages/InformesPro'));
-const Pedidos = lazy(() => import('./pages/Pedidos'));
-const MenuDigital = lazy(() => import('./pages/MenuDigital'));
-const CustomerPortal = lazy(() => import('./pages/CustomerPortal'));
-const Logistica = lazy(() => import('./pages/Logistica'));
-const AdminPanel = lazy(() => import('./pages/AdminPanel'));
-const Sucursales = lazy(() => import('./pages/Sucursales'));
-const CierreCaja = lazy(() => import('./pages/CierreCaja'));
-const Maintenance = lazy(() => import('./pages/Maintenance'));
-const Manual = lazy(() => import('./pages/Manual'));
-const Security = lazy(() => import('./pages/Security'));
-const ConfiguracionPrecio = lazy(() => import('./pages/ConfiguracionPrecio'));
+const CHUNK_RELOAD_KEY = 'mm-chunk-reload-attempted';
+
+function lazyWithRecovery(importer) {
+  return lazy(async () => {
+    try {
+      const module = await importer();
+      sessionStorage.removeItem(CHUNK_RELOAD_KEY);
+      return module;
+    } catch (error) {
+      const message = String(error?.message || error || '');
+      const isChunkLoadError =
+        message.includes('Failed to fetch dynamically imported module') ||
+        message.includes('Importing a module script failed') ||
+        message.includes('Unable to preload CSS') ||
+        message.includes('ChunkLoadError');
+
+      if (isChunkLoadError && !sessionStorage.getItem(CHUNK_RELOAD_KEY)) {
+        sessionStorage.setItem(CHUNK_RELOAD_KEY, '1');
+        window.location.reload();
+        return new Promise(() => {});
+      }
+
+      throw error;
+    }
+  });
+}
+
+const Login = lazyWithRecovery(() => import('./pages/Login'));
+const Dashboard = lazyWithRecovery(() => import('./pages/Dashboard'));
+const HistorialVentas = lazyWithRecovery(() => import('./pages/HistorialVentas'));
+const DespostadaVaca = lazyWithRecovery(() => import('./pages/DespostadaVaca'));
+const DespostadaCerdo = lazyWithRecovery(() => import('./pages/DespostadaCerdo'));
+const DespostadaPollo = lazyWithRecovery(() => import('./pages/DespostadaPollo'));
+const DespostadaPescado = lazyWithRecovery(() => import('./pages/DespostadaPescado'));
+const Ventas = lazyWithRecovery(() => import('./pages/Ventas'));
+const Alimentos = lazyWithRecovery(() => import('./pages/Alimentos'));
+const Stock = lazyWithRecovery(() => import('./pages/Stock'));
+const ConfiguracionPagos = lazyWithRecovery(() => import('./pages/ConfiguracionPagos'));
+const Compras = lazyWithRecovery(() => import('./pages/Compras'));
+const OtrosItems = lazyWithRecovery(() => import('./pages/OtrosItems'));
+const Clientes = lazyWithRecovery(() => import('./pages/Clientes'));
+const Categorias = lazyWithRecovery(() => import('./pages/Categorias'));
+const ProductosCompra = lazyWithRecovery(() => import('./pages/ProductosCompra'));
+const Proveedores = lazyWithRecovery(() => import('./pages/Proveedores'));
+const Licencia = lazyWithRecovery(() => import('./pages/Licencia'));
+const InformesPro = lazyWithRecovery(() => import('./pages/InformesPro'));
+const Pedidos = lazyWithRecovery(() => import('./pages/Pedidos'));
+const MenuDigital = lazyWithRecovery(() => import('./pages/MenuDigital'));
+const CustomerPortal = lazyWithRecovery(() => import('./pages/CustomerPortal'));
+const Logistica = lazyWithRecovery(() => import('./pages/Logistica'));
+const AdminPanel = lazyWithRecovery(() => import('./pages/AdminPanel'));
+const Sucursales = lazyWithRecovery(() => import('./pages/Sucursales'));
+const CierreCaja = lazyWithRecovery(() => import('./pages/CierreCaja'));
+const Maintenance = lazyWithRecovery(() => import('./pages/Maintenance'));
+const Manual = lazyWithRecovery(() => import('./pages/Manual'));
+const Security = lazyWithRecovery(() => import('./pages/Security'));
+const ConfiguracionPrecio = lazyWithRecovery(() => import('./pages/ConfiguracionPrecio'));
 
 const PUBLIC_PATHS = ['/catalogo'];
 
