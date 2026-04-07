@@ -17,6 +17,9 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.meatmanager.mobile",
+      "config": {
+        "googleMapsApiKey": "AIzaSyA2nHqLS-f6rBPc51pPjMNt_LHRE7T8uFs"
+      },
       "infoPlist": {
         "NSLocationWhenInUseUsageDescription": "MeatManager necesita tu ubicacion para informar el seguimiento de entregas en tiempo real.",
         "ITSAppUsesNonExemptEncryption": false
@@ -24,15 +27,16 @@
     },
     "android": {
       "package": "com.meatmanager.mobile",
+      "config": {
+        "googleMaps": {
+          "apiKey": "AIzaSyA2nHqLS-f6rBPc51pPjMNt_LHRE7T8uFs"
+        }
+      },
       "adaptiveIcon": {
         "foregroundImage": "./assets/branding/meatmanager-icon.png",
         "backgroundColor": "#120b08"
       },
       "permissions": [
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "android.permission.ACCESS_COARSE_LOCATION",
