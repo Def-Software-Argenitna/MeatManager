@@ -234,6 +234,8 @@ tr:hover td {
     justify-content: center;
     z-index: 10000;
     animation: fadeIn 0.3s ease-out;
+    padding: 1rem;
+    overflow: hidden;
 }
 
 @keyframes fadeIn {

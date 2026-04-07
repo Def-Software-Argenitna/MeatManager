@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
 import { BRAND_CONFIG } from '../brandConfig';
@@ -496,7 +497,7 @@ const Pedidos = () => {
                 ))}
             </div>
 
-            {isModalOpen && (
+            {isModalOpen && ReactDOM.createPortal(
                 <div className="modal-overlay" onClick={resetModal}>
                     <div className="modal-content neo-card pedidos-modal" onClick={(e) => e.stopPropagation()}>
                         <h2>Nuevo Pedido Manual</h2>
@@ -649,7 +650,7 @@ const Pedidos = () => {
                         </div>
                     </div>
                 </div>
-            )}
+            , document.body)}
         </div>
     );
 };
