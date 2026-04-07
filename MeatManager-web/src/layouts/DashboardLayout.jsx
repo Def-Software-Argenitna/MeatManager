@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
@@ -50,6 +50,7 @@ const DashboardLayout = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const location = useLocation();
     const prefersReducedMotion = useReducedMotion();
+    const routeShellRef = useRef(null);
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
 
     const toggleSidebar = () => {
@@ -76,13 +77,10 @@ const DashboardLayout = () => {
         : {
             initial: {
                 opacity: 0,
-                x: routeMotion.x,
-                y: routeMotion.y,
-                scale: 0.985,
-                filter: 'blur(10px)',
-                rotateX: routeMotion.rotateX,
-                rotateY: routeMotion.rotateY,
-                transformPerspective: 1400,
+                x: routeMotion.x * 0.2,
+                y: routeMotion.y * 0.2,
+                scale: 0.996,
+                filter: 'blur(3px)',
             },
             animate: {
                 opacity: 1,
@@ -90,24 +88,97 @@ const DashboardLayout = () => {
                 y: 0,
                 scale: 1,
                 filter: 'blur(0px)',
-                rotateX: 0,
-                rotateY: 0,
-                transformPerspective: 1400,
                 transition: {
-                    duration: 0.52,
+                    duration: 0.3,
                     ease: [0.22, 1, 0.36, 1],
                 },
             },
             exit: {
                 opacity: 0,
-                scale: 0.992,
-                filter: 'blur(8px)',
+                scale: 0.998,
+                filter: 'blur(2px)',
                 transition: {
-                    duration: 0.2,
+                    duration: 0.12,
                     ease: 'easeInOut',
                 },
             },
         };
+
+    useEffect(() => {
+        if (prefersReducedMotion) return undefined;
+
+        const root = routeShellRef.current;
+        if (!root) return undefined;
+
+        const candidates = root.querySelectorAll(`
+            .neo-card,
+            .card,
+            .panel,
+            .page-header,
+            .top-bar,
+            .sidebar,
+            .user-profile,
+            .user-info,
+            .status-indicator-mini,
+            table,
+            form,
+            section,
+            article,
+            aside,
+            [class*="card"],
+            [class*="panel"],
+            [class*="widget"],
+            [class*="grid-item"],
+            [class*="table-container"],
+            [class*="chart"],
+            [class*="summary"],
+            [class*="stats"]
+        `);
+
+        const animated = [];
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        candidates.forEach((element, index) => {
+            if (!(element instanceof HTMLElement)) return;
+            if (element.closest('[data-mm-animated-parent]')) return;
+
+            const rect = element.getBoundingClientRect();
+            if (rect.width < 36 || rect.height < 24) return;
+
+            const centerX = rect.left + (rect.width / 2);
+            const centerY = rect.top + (rect.height / 2);
+            const distances = [
+                { axis: 'x', value: -1, distance: centerX },
+                { axis: 'x', value: 1, distance: viewportWidth - centerX },
+                { axis: 'y', value: -1, distance: centerY },
+                { axis: 'y', value: 1, distance: viewportHeight - centerY },
+            ];
+
+            distances.sort((a, b) => a.distance - b.distance);
+            const nearest = distances[0];
+
+            const offsetX = nearest.axis === 'x' ? nearest.value * Math.min(72, Math.max(28, rect.width * 0.18)) : 0;
+            const offsetY = nearest.axis === 'y' ? nearest.value * Math.min(58, Math.max(22, rect.height * 0.22)) : 0;
+            const delay = Math.min(index * 0.028, 0.38);
+
+            element.style.setProperty('--mm-enter-x', `${offsetX}px`);
+            element.style.setProperty('--mm-enter-y', `${offsetY}px`);
+            element.style.setProperty('--mm-enter-delay', `${delay}s`);
+            element.setAttribute('data-mm-animated', 'true');
+            animated.push(element);
+        });
+
+        const raf = window.requestAnimationFrame(() => {
+            animated.forEach((element) => {
+                element.setAttribute('data-mm-entered', 'true');
+            });
+        });
+
+        return () => {
+            window.cancelAnimationFrame(raf);
+        };
+    }, [location.pathname, prefersReducedMotion]);
 
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
@@ -123,6 +194,7 @@ const DashboardLayout = () => {
                         <AnimatePresence mode="wait" initial={false}>
                             <motion.div
                                 key={location.pathname}
+                                ref={routeShellRef}
                                 className="route-shell"
                                 initial="initial"
                                 animate="animate"
