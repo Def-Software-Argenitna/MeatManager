@@ -144,6 +144,7 @@ const GoogleLogisticsMap = ({
     const mapRef = useRef(null);
     const infoWindowRef = useRef(null);
     const markersRef = useRef([]);
+    const pendingInfoWindowRef = useRef(null);
     const onDriverSelectRef = useRef(onDriverSelect);
     const onOrderSelectRef = useRef(onOrderSelect);
     const getOrderCoordinatesRef = useRef(getOrderCoordinates);
@@ -206,6 +207,16 @@ const GoogleLogisticsMap = ({
         if (!mapRef.current || !window.google?.maps) return;
         mapRef.current.setCenter({ lat: center[0], lng: center[1] });
         mapRef.current.setZoom(zoom);
+
+        if (pendingInfoWindowRef.current) {
+            const { marker, content } = pendingInfoWindowRef.current;
+            window.setTimeout(() => {
+                if (infoWindowRef.current && mapRef.current) {
+                    infoWindowRef.current.setContent(content);
+                    infoWindowRef.current.open({ map: mapRef.current, anchor: marker });
+                }
+            }, 120);
+        }
     }, [center, zoom]);
 
     useEffect(() => {
@@ -226,10 +237,18 @@ const GoogleLogisticsMap = ({
             });
 
             marker.addListener('click', () => {
+                const content = formatDriverPopup(driver, formatDriverLastSeenRef.current);
+                pendingInfoWindowRef.current = { marker, content };
+
                 if (infoWindow) {
-                    infoWindow.setContent(formatDriverPopup(driver, formatDriverLastSeenRef.current));
+                    infoWindow.setContent(content);
                     infoWindow.open({ map: mapRef.current, anchor: marker });
                 }
+
+                if (infoWindow) {
+                    infoWindow.setContent(content);
+                }
+
                 if (onDriverSelectRef.current) {
                     window.setTimeout(() => onDriverSelectRef.current(driver), 0);
                 }
@@ -250,8 +269,11 @@ const GoogleLogisticsMap = ({
             });
 
             marker.addListener('click', () => {
+                const content = formatOrderPopup(order);
+                pendingInfoWindowRef.current = { marker, content };
+
                 if (infoWindow) {
-                    infoWindow.setContent(formatOrderPopup(order));
+                    infoWindow.setContent(content);
                     infoWindow.open({ map: mapRef.current, anchor: marker });
                 }
                 if (onOrderSelectRef.current) {
