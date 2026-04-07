@@ -249,3 +249,60 @@ tr:hover td {
     from { transform: translateY(20px); opacity: 0; }
     to { transform: translateY(0); opacity: 1; }
 }
+
+.app-update-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    background:
+        radial-gradient(circle at top, rgba(249, 115, 22, 0.18), transparent 35%),
+        rgba(3, 3, 5, 0.88);
+    backdrop-filter: blur(14px);
+    animation: fadeIn 0.2s ease-out;
+}
+
+.app-update-card {
+    min-width: min(100%, 320px);
+    max-width: 420px;
+    padding: 1.4rem 1.5rem;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    background: rgba(15, 15, 20, 0.78);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    text-align: center;
+}
+
+.app-update-spinner {
+    width: 42px;
+    height: 42px;
+    margin: 0 auto 1rem;
+    border-radius: 999px;
+    border: 3px solid rgba(255, 255, 255, 0.14);
+    border-top-color: var(--color-primary);
+    box-shadow: 0 0 22px rgba(249, 115, 22, 0.24);
+    animation: appUpdateSpin 0.8s linear infinite;
+}
+
+.app-update-title {
+    margin-bottom: 0.35rem;
+    color: #fff;
+    font-size: 1rem;
+    font-weight: 800;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.app-update-text {
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+@keyframes appUpdateSpin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}

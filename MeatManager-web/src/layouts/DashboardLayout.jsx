@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
+import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import { useLicense } from '../context/LicenseContext';
@@ -47,22 +48,66 @@ const BlockedScreen = ({ installationId, machineId, supportNumber }) => (
 
 const DashboardLayout = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    const [isEntranceActive, setIsEntranceActive] = useState(false);
     const location = useLocation();
+    const prefersReducedMotion = useReducedMotion();
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
 
     const toggleSidebar = () => {
         setIsSidebarCollapsed(!isSidebarCollapsed);
     };
 
-    // Trigger Crystal entrance on path change
-    useEffect(() => {
-        setIsEntranceActive(false);
-        const timer = setTimeout(() => {
-            setIsEntranceActive(true);
-        }, 50);
-        return () => clearTimeout(timer);
+    const routeMotion = useMemo(() => {
+        const directions = [
+            { x: -56, y: 0, rotateX: 0.8, rotateY: -2.4 },
+            { x: 56, y: 0, rotateX: 0.8, rotateY: 2.4 },
+            { x: 0, y: -44, rotateX: -2.8, rotateY: 0 },
+            { x: 0, y: 44, rotateX: 2.8, rotateY: 0 },
+        ];
+        const seed = location.pathname.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+        return directions[seed % directions.length];
     }, [location.pathname]);
+
+    const pageTransition = prefersReducedMotion
+        ? {
+            initial: { opacity: 0 },
+            animate: { opacity: 1 },
+            exit: { opacity: 0 },
+        }
+        : {
+            initial: {
+                opacity: 0,
+                x: routeMotion.x,
+                y: routeMotion.y,
+                scale: 0.985,
+                filter: 'blur(10px)',
+                rotateX: routeMotion.rotateX,
+                rotateY: routeMotion.rotateY,
+                transformPerspective: 1400,
+            },
+            animate: {
+                opacity: 1,
+                x: 0,
+                y: 0,
+                scale: 1,
+                filter: 'blur(0px)',
+                rotateX: 0,
+                rotateY: 0,
+                transformPerspective: 1400,
+                transition: {
+                    duration: 0.52,
+                    ease: [0.22, 1, 0.36, 1],
+                },
+            },
+            exit: {
+                opacity: 0,
+                scale: 0.992,
+                filter: 'blur(8px)',
+                transition: {
+                    duration: 0.2,
+                    ease: 'easeInOut',
+                },
+            },
+        };
 
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
@@ -73,11 +118,21 @@ const DashboardLayout = () => {
             <TopBar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
             <div className={`dashboard-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
                 <Sidebar isCollapsed={isSidebarCollapsed} />
-                <main 
-                    className={`main-content animate-scatter ${isEntranceActive ? 'content-entrance' : 'scatter-active'}`}
-                    key={location.pathname}
-                >
-                    <Outlet />
+                <main className="main-content">
+                    <div className="route-stage">
+                        <AnimatePresence mode="wait" initial={false}>
+                            <motion.div
+                                key={location.pathname}
+                                className="route-shell"
+                                initial="initial"
+                                animate="animate"
+                                exit="exit"
+                                variants={pageTransition}
+                            >
+                                <Outlet />
+                            </motion.div>
+                        </AnimatePresence>
+                    </div>
                 </main>
             </div>
         </div>
