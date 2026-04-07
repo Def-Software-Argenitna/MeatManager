@@ -354,10 +354,27 @@ function normalizeLicenseToken(value) {
     return String(value || '').trim().toLowerCase();
 }
 
+function normalizeLicenseKey(value) {
+    return normalizeLicenseToken(value).replace(/[^a-z0-9]/g, '');
+}
+
+function isSuperLicenseMatch(license) {
+    const candidates = [
+        normalizeLicenseKey(license?.internalCode),
+        normalizeLicenseKey(license?.commercialName),
+        normalizeLicenseKey(license?.category),
+    ].filter(Boolean);
+
+    return candidates.some((token) => (
+        token === 'su'
+        || token === 'superuser'
+        || token.includes('superuser')
+    ));
+}
+
 function licenseAppliesToWebapp(license) {
     const code = normalizeLicenseToken(license?.internalCode);
     const category = normalizeLicenseToken(license?.category);
-    const commercialName = normalizeLicenseToken(license?.commercialName);
 
     if (parseBooleanLike(license?.appliesToWebapp)) {
         return true;
@@ -371,7 +388,7 @@ function licenseAppliesToWebapp(license) {
         return true;
     }
 
-    if (commercialName === 'superuser') {
+    if (isSuperLicenseMatch(license)) {
         return true;
     }
 
@@ -468,11 +485,7 @@ function tenantHasAssignedLogisticsLicense(licenses = []) {
 }
 
 function hasSuperLicense(licenses = []) {
-    return licenses.some((license) => (
-        ['superuser', 'su'].includes(normalizeLicenseToken(license?.internalCode))
-        || normalizeLicenseToken(license?.commercialName) === 'superuser'
-        || normalizeLicenseToken(license?.category) === 'superuser'
-    ));
+    return licenses.some((license) => isSuperLicenseMatch(license));
 }
 
 function hasLogisticsAccess(accessContext) {

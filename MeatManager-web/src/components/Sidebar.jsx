@@ -40,7 +40,7 @@ import './Sidebar.css';
 const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isPro, hasModule } = useLicense();
+  const { isPro, hasModule, isSuperUser } = useLicense();
   const { currentUser, hasAccess, logout } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -142,6 +142,14 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Usuarios / Seguridad', path: '/config/seguridad', icon: Lock },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
+
+  if (isSuperUser) {
+    configItems.splice(configItems.length - 1, 0, {
+      title: 'Panel Administración',
+      path: '/admin-pablo-control-master',
+      icon: Crown,
+    });
+  }
 
   const despostadaItems = [
     { title: 'Vaca', path: '/despostada/vaca', icon: Beef, module: 'despostada' },

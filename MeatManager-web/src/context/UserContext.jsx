@@ -38,6 +38,7 @@ export const ALL_ROUTES = [
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
     { path: '/config/licencia',         label: 'Licencia',          group: 'Configuración' },
     { path: '/config/seguridad',        label: 'Seguridad/Usuarios',group: 'Configuración' },
+    { path: '/admin-pablo-control-master', label: 'Panel Administración', group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];
 
@@ -46,14 +47,25 @@ const ALL_PATHS = ALL_ROUTES.map(r => r.path);
 const UserContext = createContext(null);
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
+const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
+
+const isSuperUserLicense = (license) => {
+    const candidates = [
+        normalizeLicenseKey(license?.internalCode),
+        normalizeLicenseKey(license?.commercialName),
+        normalizeLicenseKey(license?.category),
+    ].filter(Boolean);
+
+    return candidates.some((token) => (
+        token === 'su' ||
+        token === 'superuser' ||
+        token.includes('superuser')
+    ));
+};
 
 const hasSuperUserLicense = (licenses) => {
     const list = Array.isArray(licenses) ? licenses : [];
-    return list.some((license) => (
-        ['superuser', 'su'].includes(normalizeToken(license?.internalCode)) ||
-        normalizeToken(license?.commercialName) === 'superuser' ||
-        normalizeToken(license?.category) === 'superuser'
-    ));
+    return list.some(isSuperUserLicense);
 };
 
 const restoreSession = () => {

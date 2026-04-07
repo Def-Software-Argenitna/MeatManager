@@ -298,6 +298,10 @@ const Pedidos = () => {
     const handleSaveOrder = async () => {
         if (!selectedClient || !newPedido.items.length) return;
         const address = newPedido.delivery_type === 'delivery' ? (newPedido.address || deliveryAddress) : '';
+        const total = Number(newPedido.total) || Math.round(computedTotal) || 0;
+        const paymentStatus = newPedido.payment_status || 'pending_driver_collection';
+        const paid = paymentStatus === 'paid';
+        const amountDue = paid ? 0 : (Number(newPedido.amount_due) || total);
         let geocoded = null;
         if (newPedido.delivery_type === 'delivery' && address) {
             geocoded = selectedSuggestion ? {
@@ -316,7 +320,7 @@ const Pedidos = () => {
 
         await saveTableRecord('pedidos', 'insert', {
             customer_id: newPedido.customer_id ? Number(newPedido.customer_id) : null,
-            customer_name: newPedido.name.trim(),
+            customer_name: selectedClient.label,
             items: newPedido.items,
             items_text: newPedido.items.map((item) => item.label).join('\n'),
             total,
@@ -336,6 +340,7 @@ const Pedidos = () => {
             created_at: new Date().toISOString(),
             source: 'manual',
         });
+        await refreshPedidosData();
         resetModal();
     };
 
