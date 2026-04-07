@@ -29,8 +29,7 @@ const GMAPS_OPTIONS = {
     fullscreenControl: false,
 };
 
-const GMAPS_ICONS = {
-    truck: 'http://maps.google.com/mapfiles/ms/icons/orange-dot.png',
+const GMAPS_ICON_URLS = {
     pending: 'http://maps.google.com/mapfiles/ms/icons/yellow-dot.png',
     assigned: 'http://maps.google.com/mapfiles/ms/icons/blue-dot.png',
     delivered: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
@@ -91,10 +90,28 @@ const loadGoogleMapsApi = (apiKey) => {
 };
 
 const getOrderMarkerIcon = (status) => {
-    if (status === 'pending') return GMAPS_ICONS.pending;
-    if (status === 'delivered') return GMAPS_ICONS.delivered;
-    return GMAPS_ICONS.assigned;
+    if (status === 'pending') return GMAPS_ICON_URLS.pending;
+    if (status === 'delivered') return GMAPS_ICON_URLS.delivered;
+    return GMAPS_ICON_URLS.assigned;
 };
+
+const buildTruckMarkerIcon = (maps) => ({
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(`
+        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+            <defs>
+                <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+                    <feDropShadow dx="0" dy="2" stdDeviation="2" flood-color="#111827" flood-opacity="0.35"/>
+                </filter>
+            </defs>
+            <g filter="url(#shadow)">
+                <circle cx="24" cy="24" r="20" fill="#f97316" stroke="#ffffff" stroke-width="3"/>
+                <path d="M14 18h13c1.1 0 2 .9 2 2v3h4.2c.7 0 1.4.37 1.76.98L38 28v5h-2.2a3.8 3.8 0 0 1-7.4 0H21.6a3.8 3.8 0 0 1-7.4 0H12v-5c0-.55.45-1 1-1h1V19c0-.55.45-1 1-1Zm2 2v7h11v-7Zm14 5v2h5.17l-1.72-2ZM18 34.2a1.8 1.8 0 1 0 0-3.6 1.8 1.8 0 0 0 0 3.6Zm14 0a1.8 1.8 0 1 0 0-3.6 1.8 1.8 0 0 0 0 3.6Z" fill="#ffffff"/>
+            </g>
+        </svg>
+    `)}`,
+    scaledSize: new maps.Size(42, 42),
+    anchor: new maps.Point(21, 21),
+});
 
 const formatDriverPopup = (driver, formatLastSeen) => `
     <div class="gm-popup-card">
@@ -185,7 +202,7 @@ const GoogleLogisticsMap = ({
                 map: mapRef.current,
                 position: { lat: Number(driver.lat), lng: Number(driver.lng) },
                 title: driver.repartidor || 'Repartidor',
-                icon: GMAPS_ICONS.truck,
+                icon: buildTruckMarkerIcon(maps),
             });
 
             marker.addListener('click', () => {
