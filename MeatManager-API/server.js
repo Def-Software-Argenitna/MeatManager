@@ -1402,6 +1402,7 @@ async function listEligibleLogisticsDrivers(clientId) {
                 cu.email,
                 cu.role,
                 cu.status,
+                b.name AS branchName,
                 cl.id AS clientLicenseId,
                 cl.licenseId,
                 cl.branchId AS licenseBranchId,
@@ -1411,6 +1412,9 @@ async function listEligibleLogisticsDrivers(clientId) {
                 l.category,
                 l.featureFlags
              FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
+             LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                ON b.id = cu.branchId
+               AND b.clientId = cu.clientId
              INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
                 ON cl.clientId = cu.clientId
                AND cl.userId = cu.id
@@ -1432,6 +1436,7 @@ async function listEligibleLogisticsDrivers(clientId) {
                 id: row.id,
                 clientId: row.clientId,
                 branchId: row.branchId,
+                branchName: row.branchName || '',
                 firebaseUid: row.firebaseUid || null,
                 email: normalizeEmail(row.email || ''),
                 role: row.role === 'admin' ? 'admin' : 'employee',
@@ -2048,6 +2053,26 @@ function getSchemaTables() {
             INDEX idx_delivery_tracking_events_order (\`${TENANT_COLUMN}\`, order_id, created_at),
             INDEX idx_delivery_tracking_events_driver (\`${TENANT_COLUMN}\`, driver_uid, created_at)
         )`,
+        `CREATE TABLE IF NOT EXISTS delivery_driver_last_locations (
+            id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            driver_uid          VARCHAR(191) NOT NULL,
+            driver_name         VARCHAR(150) NULL,
+            driver_email        VARCHAR(150) NULL,
+            latitude            DECIMAL(10,7) NOT NULL,
+            longitude           DECIMAL(10,7) NOT NULL,
+            accuracy            DECIMAL(10,2) NULL,
+            speed               DECIMAL(10,2) NULL,
+            heading             DECIMAL(10,2) NULL,
+            order_id            INT NULL,
+            status              VARCHAR(50) NULL,
+            payload_json        JSON NULL,
+            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_delivery_driver_last_locations_driver (\`${TENANT_COLUMN}\`, driver_uid),
+            INDEX idx_delivery_driver_last_locations_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_delivery_driver_last_locations_status (\`${TENANT_COLUMN}\`, status)
+        )`,
         `CREATE TABLE IF NOT EXISTS cash_withdrawal_authorizations (
             id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -2300,6 +2325,40 @@ async function createDeliveryTrackingEvent(pool, tenantId, payload = {}) {
             Number.isFinite(actorUserId) ? actorUserId : null,
             payload.actorFirebaseUid || null,
             payload.actorEmail || null,
+        ]
+    );
+}
+
+async function upsertDriverLastLocation(pool, tenantId, payload = {}) {
+    await pool.query(
+        `INSERT INTO delivery_driver_last_locations
+            (\`${TENANT_COLUMN}\`, driver_uid, driver_name, driver_email, latitude, longitude, accuracy, speed, heading, order_id, status, payload_json)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+            driver_name = VALUES(driver_name),
+            driver_email = VALUES(driver_email),
+            latitude = VALUES(latitude),
+            longitude = VALUES(longitude),
+            accuracy = VALUES(accuracy),
+            speed = VALUES(speed),
+            heading = VALUES(heading),
+            order_id = VALUES(order_id),
+            status = VALUES(status),
+            payload_json = VALUES(payload_json),
+            updated_at = CURRENT_TIMESTAMP`,
+        [
+            tenantId,
+            payload.driverUid,
+            payload.driverName || null,
+            payload.driverEmail || null,
+            payload.latitude,
+            payload.longitude,
+            payload.accuracy ?? null,
+            payload.speed ?? null,
+            payload.heading ?? null,
+            payload.orderId ?? null,
+            payload.status || null,
+            payload.payloadJson ? JSON.stringify(payload.payloadJson) : null,
         ]
     );
 }
@@ -3841,9 +3900,8 @@ app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
         });
 
         const pool = getTenantPool(tenantInfo.dbName);
-        await createDeliveryTrackingEvent(pool, tenantId, {
+        await upsertDriverLastLocation(pool, tenantId, {
             orderId: Number.isFinite(orderId) ? orderId : null,
-            eventType: 'location_ping',
             status,
             driverName: getAccessDisplayName(accessContext.user),
             driverUid: firebaseUid,
@@ -3853,9 +3911,6 @@ app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
             accuracy: Number.isFinite(accuracy) ? accuracy : null,
             speed: Number.isFinite(speed) ? speed : null,
             heading: Number.isFinite(heading) ? heading : null,
-            actorUserId: accessContext.user.id,
-            actorFirebaseUid: firebaseUid,
-            actorEmail: req.firebaseUser?.email || null,
             payloadJson: req.body || {},
         });
 

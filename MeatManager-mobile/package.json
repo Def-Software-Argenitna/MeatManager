@@ -1,6 +1,6 @@
 {
   "name": "meatmanager-mobile",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "main": "expo/AppEntry",
   "scripts": {
@@ -12,20 +12,22 @@
   },
   "dependencies": {
     "@react-native-async-storage/async-storage": "^2.2.0",
+    "babel-preset-expo": "~54.0.10",
     "expo": "~54.0.33",
     "expo-linking": "~8.0.8",
     "expo-location": "~19.0.7",
     "expo-status-bar": "~3.0.8",
+    "expo-task-manager": "~14.0.9",
     "expo-updates": "~29.0.16",
     "firebase": "^12.7.0",
     "react": "^19.1.0",
     "react-native": "^0.81.5",
+    "react-native-maps": "1.20.1",
     "react-native-safe-area-context": "^5.6.0"
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
     "@types/react": "~19.1.10",
-    "babel-preset-expo": "^55.0.15",
     "typescript": "~5.9.2"
   }
 }

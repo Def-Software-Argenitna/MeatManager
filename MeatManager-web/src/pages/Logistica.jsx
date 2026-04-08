@@ -1,15 +1,11 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import ReactDOM from 'react-dom';
-import { GoogleMap, useJsApiLoader, Marker as GMarker, InfoWindow } from '@react-google-maps/api';
 import {
-    Map as MapIcon,
     Truck,
-    CheckCircle2,
     Clock,
     MapPin,
     ChevronRight,
     Search,
-    Printer,
     Navigation2,
     Share2,
     Users,
@@ -24,46 +20,12 @@ import {
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
+import GoogleLogisticsMap from '../components/GoogleLogisticsMap';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import './Logistica.css';
 
-// Google Maps constants (defined outside component to avoid re-renders)
-const GMAPS_LIBRARIES = ['places'];
-
-const DARK_MAP_STYLE = [
-    { elementType: 'geometry', stylers: [{ color: '#1a1a2e' }] },
-    { elementType: 'labels.icon', stylers: [{ visibility: 'off' }] },
-    { elementType: 'labels.text.fill', stylers: [{ color: '#8a8a9a' }] },
-    { elementType: 'labels.text.stroke', stylers: [{ color: '#1a1a2e' }] },
-    { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#2d2d4e' }] },
-    { featureType: 'road.arterial', elementType: 'labels.text.fill', stylers: [{ color: '#6b6b8a' }] },
-    { featureType: 'road.highway', elementType: 'geometry', stylers: [{ color: '#3a3a5c' }] },
-    { featureType: 'road.highway', elementType: 'labels.text.fill', stylers: [{ color: '#9090b0' }] },
-    { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#0d0d1a' }] },
-    { featureType: 'water', elementType: 'labels.text.fill', stylers: [{ color: '#3a3a5c' }] },
-    { featureType: 'poi', stylers: [{ visibility: 'off' }] },
-    { featureType: 'transit', stylers: [{ visibility: 'off' }] },
-    { featureType: 'administrative', elementType: 'geometry', stylers: [{ color: '#3a3a5c' }] },
-    { featureType: 'administrative.country', elementType: 'labels.text.fill', stylers: [{ color: '#9090b0' }] },
-    { featureType: 'administrative.locality', elementType: 'labels.text.fill', stylers: [{ color: '#c0c0d8' }] },
-];
-
-const GMAPS_ICONS = {
-    truck:     'http://maps.google.com/mapfiles/ms/icons/orange-dot.png',
-    pending:   'http://maps.google.com/mapfiles/ms/icons/yellow-dot.png',
-    transit:   'http://maps.google.com/mapfiles/ms/icons/blue-dot.png',
-    delivered: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
-};
-
-const GMAPS_OPTIONS = {
-    styles: DARK_MAP_STYLE,
-    disableDefaultUI: false,
-    zoomControl: true,
-    streetViewControl: false,
-    mapTypeControl: false,
-    fullscreenControl: false,
-};
+const LIVE_DRIVERS_REFRESH_INTERVAL_MS = 5000;
 
 const toNumber = (value) => {
     const numeric = Number(value);
@@ -104,24 +66,6 @@ const formatDriverLastSeen = (value) => {
     return parsed.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
 };
 
-const getOrderPaymentLabel = (pedido) => {
-    const paymentMethod = String(pedido?.payment_method || pedido?.paymentMethod || '').trim();
-    return paymentMethod || 'Sin informar';
-};
-
-const getOrderPaidLabel = (pedido) => {
-    if (pedido?.paid === true || pedido?.is_paid === true || pedido?.payment_status === 'paid') return 'Sí';
-    if (pedido?.paid === false || pedido?.is_paid === false || pedido?.payment_status === 'pending') return 'No';
-    return 'Pendiente';
-};
-
-const escapeHtml = (value) => String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-
 const normalizeOrderForLogistics = (pedido) => ({
     ...pedido,
     customer_name: typeof pedido?.customer_name === 'string' ? pedido.customer_name : String(pedido?.customer_name || ''),
@@ -135,6 +79,7 @@ const normalizeLiveDriver = (driver) => {
         ?? driver?.updatedAt
         ?? driver?.updated_at
         ?? driver?.timestamp
+        ?? driver?.lastSeenAt
         ?? driver?.lastSeen
         ?? driver?.last_seen
         ?? null;
@@ -149,6 +94,30 @@ const normalizeLiveDriver = (driver) => {
     };
 };
 
+const getDriverDisplayName = (driver) => {
+    const fullName = [driver?.firstName, driver?.lastName]
+        .map((value) => String(value || '').trim())
+        .filter(Boolean)
+        .join(' ');
+
+    if (fullName) return fullName;
+
+    const directName = String(driver?.name || '').trim();
+    if (directName && !directName.includes('@')) return directName;
+
+    return String(driver?.email || driver?.name || 'Repartidor').trim();
+};
+
+const getDriverBranchLabel = (driver) => {
+    const branchName = String(driver?.branchName || driver?.branch_name || '').trim();
+    if (branchName) return branchName;
+
+    const branchId = String(driver?.branchId || driver?.branch_id || '').trim();
+    if (branchId) return `Sucursal #${branchId}`;
+
+    return 'Sucursal general';
+};
+
 const Logistica = () => {
     const { hasModule } = useLicense();
     const [filter, setFilter] = useState('all');
@@ -160,35 +129,13 @@ const Logistica = () => {
     const [isDriverModalOpen, setIsDriverModalOpen] = useState(false);
     const [registeredDrivers, setRegisteredDrivers] = useState([]);
     const [driversError, setDriversError] = useState('');
+    const [liveDriversError, setLiveDriversError] = useState('');
     const [pedidos, setPedidos] = useState([]);
     const [clients, setClients] = useState([]);
     const [selectedDriverIdentity, setSelectedDriverIdentity] = useState('');
     const [paymentDraft, setPaymentDraft] = useState({ status: 'pending_driver_collection', amountDue: '', method: '' });
     const hasLogisticsModule = hasModule('logistica');
     const [isMapExpanded, setIsMapExpanded] = useState(false);
-    const [activeOrderInfoId, setActiveOrderInfoId] = useState(null);
-    const [activeDriverInfoId, setActiveDriverInfoId] = useState(null);
-    const mapRef = useRef(null);
-    const expandedMapRef = useRef(null);
-
-    // Pan map programmatically when user focuses a pedido/driver
-    // (avoids flickering from controlled `center` prop)
-    useEffect(() => {
-        const target = { lat: mapCenter[0], lng: mapCenter[1] };
-        if (mapRef.current) {
-            mapRef.current.panTo(target);
-            mapRef.current.setZoom(mapZoom);
-        }
-        if (expandedMapRef.current) {
-            expandedMapRef.current.panTo(target);
-            expandedMapRef.current.setZoom(mapZoom);
-        }
-    }, [mapCenter, mapZoom]);
-
-    const { isLoaded: isMapLoaded } = useJsApiLoader({
-        googleMapsApiKey: import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '',
-        libraries: GMAPS_LIBRARIES,
-    });
     const driversById = useMemo(() => {
         const map = new Map();
         registeredDrivers.forEach((driver) => map.set(String(driver.id), driver));
@@ -282,16 +229,19 @@ const Logistica = () => {
                     setDriversLocations(
                         (Array.isArray(payload?.drivers) ? payload.drivers : []).map(normalizeLiveDriver)
                     );
+                    setLiveDriversError('');
                 }
             } catch (error) {
                 if (!cancelled) {
-                    console.warn('[LOGISTICA] No se pudo leer tracking vivo', error?.message || error);
+                    const message = error instanceof Error ? error.message : 'No se pudo leer tracking vivo';
+                    console.warn('[LOGISTICA] No se pudo leer tracking vivo', message);
+                    setLiveDriversError(message);
                 }
             }
         };
 
         loadLiveDrivers();
-        const interval = window.setInterval(loadLiveDrivers, 15000);
+        const interval = window.setInterval(loadLiveDrivers, LIVE_DRIVERS_REFRESH_INTERVAL_MS);
 
         return () => {
             cancelled = true;
@@ -354,15 +304,6 @@ const getOrderCoordinates = (pedido) => {
         if (clientCoords) return [clientCoords.latitude, clientCoords.longitude];
 
         return null;
-    };
-
-    const getIconForStatus = (status) => {
-        switch (status) {
-            case 'pending':   return GMAPS_ICONS.pending;
-            case 'ready':     return GMAPS_ICONS.transit;
-            case 'delivered': return GMAPS_ICONS.delivered;
-            default:          return GMAPS_ICONS.transit;
-        }
     };
 
     const handleFocusPedido = (pedido) => {
@@ -511,48 +452,6 @@ const getOrderCoordinates = (pedido) => {
         alert('Link del Portal de Repartidores copiado! Envialo por WhatsApp.');
     };
 
-    const printOrderTicket = (pedido) => {
-        const printWindow = window.open('', '_blank', 'width=360,height=640');
-        if (!printWindow) return;
-
-        const createdAt = pedido?.created_at ? new Date(pedido.created_at) : new Date();
-        const dateLabel = Number.isNaN(createdAt.getTime())
-            ? 'Sin fecha'
-            : createdAt.toLocaleString('es-AR');
-
-        const itemsText = formatOrderItems(pedido)
-            .split('\n')
-            .filter(Boolean)
-            .map((line) => `• ${escapeHtml(line)}`)
-            .join('<br/>');
-
-        printWindow.document.write(`
-            <html>
-                <head>
-                    <title>Pedido #${escapeHtml(pedido?.id)}</title>
-                </head>
-                <body style="font-family: Arial, sans-serif; padding: 16px; color: #111827;">
-                    <h2 style="margin: 0 0 12px;">Pedido #${escapeHtml(pedido?.id)}</h2>
-                    <p style="margin: 0 0 6px;"><strong>Cliente:</strong> ${escapeHtml(pedido?.customer_name)}</p>
-                    <p style="margin: 0 0 6px;"><strong>Fecha:</strong> ${escapeHtml(dateLabel)}</p>
-                    <p style="margin: 0 0 6px;"><strong>Dirección:</strong> ${escapeHtml(pedido?.address || 'Sin dirección')}</p>
-                    <p style="margin: 0 0 12px;"><strong>Estado:</strong> ${escapeHtml(getStatusLabel(pedido?.status))}</p>
-                    <p style="margin: 0 0 6px;"><strong>Medio de pago:</strong> ${escapeHtml(getOrderPaymentLabel(pedido))}</p>
-                    <p style="margin: 0 0 12px;"><strong>Cobrado:</strong> ${escapeHtml(getOrderPaidLabel(pedido))}</p>
-                    <div style="border-top: 1px solid #d1d5db; padding-top: 12px;">
-                        <strong>Items</strong><br/>
-                        <div style="margin-top: 8px; line-height: 1.5;">${itemsText || 'Sin items'}</div>
-                    </div>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
-        setTimeout(() => {
-            printWindow.print();
-            printWindow.close();
-        }, 300);
-    };
-
     return (
         <div className="logistica-container animate-fade-in">
             <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
@@ -581,77 +480,17 @@ const getOrderCoordinates = (pedido) => {
 
             <div className="logistica-content">
                 <DirectionalReveal className={`map-view neo-card${isMapExpanded ? ' map-view--hidden' : ''}`} from="left" delay={0.1}>
-                    {isMapLoaded ? (
-                        <GoogleMap
-                            mapContainerStyle={{ height: '100%', width: '100%', borderRadius: '12px' }}
-                            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
-                            zoom={mapZoom}
-                            options={GMAPS_OPTIONS}
-                            onLoad={(map) => { mapRef.current = map; }}
-                        >
-                            {driversLocations.map((loc) => (
-                                <GMarker
-                                    key={loc.firebaseUid || loc.email || loc.repartidor}
-                                    position={{ lat: loc.lat, lng: loc.lng }}
-                                    icon={GMAPS_ICONS.truck}
-                                    onClick={() => setActiveDriverInfoId(loc.firebaseUid || loc.email || loc.repartidor)}
-                                >
-                                    {activeDriverInfoId === (loc.firebaseUid || loc.email || loc.repartidor) && (
-                                        <InfoWindow onCloseClick={() => setActiveDriverInfoId(null)}>
-                                            <div style={{ color: '#1e293b', padding: '2px' }}>
-                                                <strong>Repartidor: {loc.repartidor}</strong><br />
-                                                Última vez: {formatDriverLastSeen(loc.lastSeenRaw)}
-                                            </div>
-                                        </InfoWindow>
-                                    )}
-                                </GMarker>
-                            ))}
-
-                            {deliveryOrders.map(p => {
-                                const coords = getOrderCoordinates(p);
-                                if (!coords) return null;
-                                return (
-                                    <GMarker
-                                        key={p.id}
-                                        position={{ lat: coords[0], lng: coords[1] }}
-                                        icon={getIconForStatus(p.status)}
-                                        onClick={() => { handleFocusPedido(p); setActiveOrderInfoId(p.id); }}
-                                    >
-                                        {activeOrderInfoId === p.id && (
-                                            <InfoWindow onCloseClick={() => setActiveOrderInfoId(null)}>
-                                                <div style={{ color: '#1e293b', padding: '2px', minWidth: '160px' }}>
-                                                    <h4 style={{ margin: '0 0 4px 0', fontSize: '0.9rem' }}>{p.customer_name}</h4>
-                                                    <p style={{ margin: '0 0 8px 0', fontSize: '0.78rem' }}>{p.address}</p>
-                                                    <div style={{ display: 'flex', gap: '5px' }}>
-                                                        <button className="popup-btn" onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            window.open(`https://www.google.com/maps/search/${encodeURIComponent(p.address)}`, '_blank');
-                                                        }}>
-                                                            <Navigation2 size={14} /> GPS
-                                                        </button>
-                                                        <button className="popup-btn" style={{ background: '#f1f5f9', color: '#334155' }} onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            printOrderTicket(p);
-                                                        }}>
-                                                            <Printer size={14} /> Ticket
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </InfoWindow>
-                                        )}
-                                    </GMarker>
-                                );
-                            })}
-                        </GoogleMap>
-                    ) : (
-                        <div style={{ height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', borderRadius: '12px', background: '#1a1a2e', color: '#8a8a9a', fontSize: '0.9rem' }}>
-                            Cargando mapa…
-                        </div>
-                    )}
-                    {/* Button rendered AFTER map so it sits on top in stacking order */}
-                    <button className="map-expand-btn" onClick={() => setIsMapExpanded(true)} title="Expandir mapa">
-                        <Maximize2 size={16} />
-                    </button>
+                    <GoogleLogisticsMap
+                        center={mapCenter}
+                        zoom={mapZoom}
+                        drivers={driversLocations}
+                        orders={deliveryOrders}
+                        getOrderCoordinates={getOrderCoordinates}
+                        formatDriverLastSeen={formatDriverLastSeen}
+                        onDriverSelect={handleFocusDriver}
+                        onOrderSelect={handleFocusPedido}
+                        onExpand={() => setIsMapExpanded(true)}
+                    />
 
                     {selectedPedido && (
                         <div className="order-map-overlay animate-slide-up">
@@ -770,6 +609,12 @@ const getOrderCoordinates = (pedido) => {
                             <h3>Repartidores</h3>
                             <span>{driversLocations.length} con tracking</span>
                         </div>
+                        {liveDriversError && (
+                            <div className="risk-warning-banner" style={{ marginBottom: '0.85rem' }}>
+                                <AlertCircle size={18} />
+                                <span>{liveDriversError}</span>
+                            </div>
+                        )}
                         {driversLocations.length === 0 ? (
                             <div className="empty-delivery compact">
                                 <Truck size={28} />
@@ -904,11 +749,11 @@ const getOrderCoordinates = (pedido) => {
                                         return (
                                             <tr key={driver.id}>
                                                 <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ fontWeight: 'bold', fontSize: '1rem' }}>{driver.name}</div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b', display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                    <div className="driver-staff-name">{getDriverDisplayName(driver)}</div>
+                                                    <div className="driver-staff-meta">
                                                         <Mail size={12} /> {driver.email}
                                                     </div>
-                                                    <div style={{ fontSize: '0.8rem', color: '#64748b' }}>Sucursal #{driver.branchId || 'General'}</div>
+                                                    <div className="driver-staff-branch">{getDriverBranchLabel(driver)}</div>
                                                 </td>
                                                 <td>
                                                     <div className="compliance-grid">
@@ -948,61 +793,25 @@ const getOrderCoordinates = (pedido) => {
             {/* EXPANDED MAP PORTAL */}
             {isMapExpanded && ReactDOM.createPortal(
                 <div className="map-fullscreen-overlay">
-                    {isMapLoaded ? (
-                        <GoogleMap
-                            mapContainerStyle={{ height: '100%', width: '100%' }}
-                            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
-                            zoom={mapZoom}
-                            options={GMAPS_OPTIONS}
-                            onLoad={(map) => { expandedMapRef.current = map; }}
-                        >
-                            {driversLocations.map((loc) => (
-                                <GMarker
-                                    key={loc.firebaseUid || loc.email || loc.repartidor}
-                                    position={{ lat: loc.lat, lng: loc.lng }}
-                                    icon={GMAPS_ICONS.truck}
-                                    onClick={() => setActiveDriverInfoId(loc.firebaseUid || loc.email || loc.repartidor)}
-                                >
-                                    {activeDriverInfoId === (loc.firebaseUid || loc.email || loc.repartidor) && (
-                                        <InfoWindow onCloseClick={() => setActiveDriverInfoId(null)}>
-                                            <div style={{ color: '#1e293b', padding: '2px' }}>
-                                                <strong>{loc.repartidor}</strong><br />
-                                                Última vez: {formatDriverLastSeen(loc.lastSeenRaw)}
-                                            </div>
-                                        </InfoWindow>
-                                    )}
-                                </GMarker>
-                            ))}
-                            {deliveryOrders.map(p => {
-                                const coords = getOrderCoordinates(p);
-                                if (!coords) return null;
-                                return (
-                                    <GMarker
-                                        key={p.id}
-                                        position={{ lat: coords[0], lng: coords[1] }}
-                                        icon={getIconForStatus(p.status)}
-                                        onClick={() => { handleFocusPedido(p); setActiveOrderInfoId(p.id); }}
-                                    >
-                                        {activeOrderInfoId === p.id && (
-                                            <InfoWindow onCloseClick={() => setActiveOrderInfoId(null)}>
-                                                <div style={{ color: '#1e293b', padding: '2px', minWidth: '160px' }}>
-                                                    <h4 style={{ margin: '0 0 4px 0', fontSize: '0.9rem' }}>{p.customer_name}</h4>
-                                                    <p style={{ margin: '0 0 4px 0', fontSize: '0.78rem' }}>{p.address}</p>
-                                                </div>
-                                            </InfoWindow>
-                                        )}
-                                    </GMarker>
-                                );
-                            })}
-                        </GoogleMap>
-                    ) : (
-                        <div style={{ height: '100%', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#1a1a2e', color: '#8a8a9a', fontSize: '0.9rem' }}>
-                            Cargando mapa…
-                        </div>
-                    )}
-                    {/* Close button rendered AFTER map so it sits on top */}
+                    <GoogleLogisticsMap
+                        center={mapCenter}
+                        zoom={mapZoom}
+                        drivers={driversLocations}
+                        orders={deliveryOrders}
+                        getOrderCoordinates={getOrderCoordinates}
+                        formatDriverLastSeen={formatDriverLastSeen}
+                        onDriverSelect={handleFocusDriver}
+                        onOrderSelect={handleFocusPedido}
+                        className="gm-map-shell--expanded"
+                    />
+                    {/* Close button - inline SVG to avoid Google Maps CSS interference */}
                     <button className="map-expand-btn map-expand-btn--close" onClick={() => setIsMapExpanded(false)} title="Cerrar mapa">
-                        <Minimize2 size={18} />
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="4 14 10 14 10 20" />
+                            <polyline points="20 10 14 10 14 4" />
+                            <line x1="10" y1="14" x2="3" y2="21" />
+                            <line x1="21" y1="3" x2="14" y2="10" />
+                        </svg>
                     </button>
                 </div>,
                 document.body

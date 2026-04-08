@@ -7,6 +7,7 @@ import {
 } from 'firebase/auth';
 
 import { auth } from '../config/firebase';
+import { stopDriverLocationTracking } from '../services/backgroundLocationTask';
 import { fetchCurrentMobileProfile } from '../services/mobileApi';
 import type { MobileAccessProfile, MobileAppMode, MobileLicense } from '../types/session';
 
@@ -201,6 +202,7 @@ export function useAuthSession() {
         }
       },
       logout: async () => {
+        await stopDriverLocationTracking().catch(() => {});
         await signOut(auth);
       },
     }),

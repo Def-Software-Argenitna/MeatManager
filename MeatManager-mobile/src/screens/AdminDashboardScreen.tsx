@@ -10,6 +10,7 @@ import {
   View,
 } from 'react-native';
 
+import { AdminLogisticsMap } from '../components/AdminLogisticsMap';
 import { useAdminDashboard } from '../hooks/useAdminDashboard';
 import { theme } from '../theme';
 import type { MobileAccessProfile } from '../types/session';
@@ -56,6 +57,8 @@ export function AdminDashboardScreen({ profile, onLogout }: Props) {
     pendingDeliveries,
     deliveredOrders,
     drivers,
+    driverMapMarkers,
+    orderMapMarkers,
     cashClosures,
     reload,
   } = useAdminDashboard();
@@ -131,6 +134,11 @@ export function AdminDashboardScreen({ profile, onLogout }: Props) {
               <Text style={styles.metricHint}>{deliveredOrders} entregados</Text>
             </View>
           </View>
+
+          <AdminLogisticsMap
+            driverMarkers={driverMapMarkers}
+            orderMarkers={orderMapMarkers}
+          />
 
           {error ? (
             <View style={styles.warningCard}>

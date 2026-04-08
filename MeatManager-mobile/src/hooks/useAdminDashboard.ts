@@ -7,6 +7,8 @@ import {
   fetchTableRows,
 } from '../services/mobileApi';
 
+const ADMIN_DASHBOARD_REFRESH_INTERVAL_MS = 10000;
+
 type VentaRow = {
   id: number;
   date?: string;
@@ -50,11 +52,14 @@ type PedidoRow = {
   id: number;
   branch_id?: number | null;
   customer_name?: string;
+  address?: string | null;
   repartidor?: string | null;
   assigned_driver_uid?: string | null;
   assigned_driver_email?: string | null;
   status?: string | null;
   total?: number | string;
+  latitude?: number | string | null;
+  longitude?: number | string | null;
 };
 
 type DriverOrderSummary = {
@@ -111,6 +116,29 @@ type DriverSummary = {
   deliveredOrders: DriverOrderSummary[];
 };
 
+export type DriverMapMarker = {
+  id: string;
+  name: string;
+  vehicle: string | null;
+  latitude: number;
+  longitude: number;
+  online: boolean;
+  activeOrderCount: number;
+  lastSyncText: string | null;
+};
+
+export type OrderMapMarker = {
+  id: string;
+  orderId: number;
+  customerName: string;
+  address: string | null;
+  status: string;
+  total: number;
+  latitude: number;
+  longitude: number;
+  driverName: string | null;
+};
+
 type CashClosureSummary = {
   id: number;
   branchName: string;
@@ -137,6 +165,8 @@ type AdminDashboardState = {
   pendingDeliveries: number;
   deliveredOrders: number;
   drivers: DriverSummary[];
+  driverMapMarkers: DriverMapMarker[];
+  orderMapMarkers: OrderMapMarker[];
   cashClosures: CashClosureSummary[];
   reload: () => void;
 };
@@ -201,6 +231,8 @@ export function useAdminDashboard(): AdminDashboardState {
   const [pendingDeliveries, setPendingDeliveries] = useState(0);
   const [deliveredOrders, setDeliveredOrders] = useState(0);
   const [drivers, setDrivers] = useState<DriverSummary[]>([]);
+  const [driverMapMarkers, setDriverMapMarkers] = useState<DriverMapMarker[]>([]);
+  const [orderMapMarkers, setOrderMapMarkers] = useState<OrderMapMarker[]>([]);
   const [cashClosures, setCashClosures] = useState<CashClosureSummary[]>([]);
 
   useEffect(() => {
@@ -401,6 +433,31 @@ export function useAdminDashboard(): AdminDashboardState {
           }
           return left.name.localeCompare(right.name);
         });
+        const nextDriverMapMarkers: DriverMapMarker[] = sortedDrivers
+          .filter((driver) => Number.isFinite(driver.latitude) && Number.isFinite(driver.longitude))
+          .map((driver) => ({
+            id: normalizeName(driver.name),
+            name: driver.name,
+            vehicle: driver.vehicle,
+            latitude: Number(driver.latitude),
+            longitude: Number(driver.longitude),
+            online: driver.online,
+            activeOrderCount: driver.activeOrderCount,
+            lastSyncText: driver.lastSyncText,
+          }));
+        const nextOrderMapMarkers: OrderMapMarker[] = filteredPedidos
+          .filter((pedido) => Number.isFinite(Number(pedido.latitude)) && Number.isFinite(Number(pedido.longitude)))
+          .map((pedido) => ({
+            id: `order-${pedido.id}`,
+            orderId: pedido.id,
+            customerName: String(pedido.customer_name || `Pedido #${pedido.id}`).trim(),
+            address: String(pedido.address || '').trim() || null,
+            status: String(pedido.status || 'pending').trim(),
+            total: toNumber(pedido.total),
+            latitude: Number(pedido.latitude),
+            longitude: Number(pedido.longitude),
+            driverName: String(pedido.repartidor || '').trim() || null,
+          }));
         const branchNameById = new Map(nextBranchOptions.map((branch) => [branch.code, branch.name]));
         const activeBranchName =
           nextBranchOptions.find((branch) => branch.code === selectedCode)?.name || 'Sucursal general';
@@ -431,6 +488,8 @@ export function useAdminDashboard(): AdminDashboardState {
         setPendingDeliveries(filteredPedidos.filter((pedido) => pedido.status && pedido.status !== 'delivered').length);
         setDeliveredOrders(filteredPedidos.filter((pedido) => pedido.status === 'delivered').length);
         setDrivers(sortedDrivers);
+        setDriverMapMarkers(nextDriverMapMarkers);
+        setOrderMapMarkers(nextOrderMapMarkers);
         setCashClosures(latestClosures);
       } catch (nextError) {
         if (cancelled) return;
@@ -444,9 +503,11 @@ export function useAdminDashboard(): AdminDashboardState {
     }
 
     loadDashboard();
+    const interval = setInterval(loadDashboard, ADMIN_DASHBOARD_REFRESH_INTERVAL_MS);
 
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
   }, [refreshTick, selectedBranchCode]);
 
@@ -465,6 +526,8 @@ export function useAdminDashboard(): AdminDashboardState {
       pendingDeliveries,
       deliveredOrders,
       drivers,
+      driverMapMarkers,
+      orderMapMarkers,
       cashClosures,
       reload: () => setRefreshTick((value) => value + 1),
     }),
@@ -473,6 +536,8 @@ export function useAdminDashboard(): AdminDashboardState {
       branchOptions,
       deliveredOrders,
       drivers,
+      driverMapMarkers,
+      orderMapMarkers,
       cashClosures,
       error,
       isLoading,
