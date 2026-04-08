@@ -3451,6 +3451,7 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 });
                 users.push({
                     ...baseUser,
+                    licenses: scopedLicenses.assignedLicenses,
                     perms,
                     assignedLicenses: scopedLicenses.assignedLicenses,
                     deliveryLicenses: scopedLicenses.deliveryLicenses,

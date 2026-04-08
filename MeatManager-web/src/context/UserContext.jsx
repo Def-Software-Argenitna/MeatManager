@@ -49,6 +49,15 @@ const UserContext = createContext(null);
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
 const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
 
+const normalizeUserLicense = (license) => ({
+    ...license,
+    clientLicenseId: license?.clientLicenseId ?? license?.id ?? null,
+    hasLogisticsCapability: Boolean(
+        license?.hasLogisticsCapability
+        || license?.license?.hasLogisticsCapability
+    ),
+});
+
 const isSuperUserLicense = (license) => {
     const candidates = [
         normalizeLicenseKey(license?.internalCode),
@@ -322,12 +331,53 @@ export const UserProvider = ({ children }) => {
 
     const refreshUsers = useCallback(async () => {
         const data = await fetchFirebaseUsers();
-        const nextUsers = (data?.users || []).map((user) => ({
-            ...user,
-            _perms: user.perms || [],
-        }));
+        const nextUsers = (data?.users || []).map((user) => {
+            const assignedLicenses = Array.isArray(user?.assignedLicenses)
+                ? user.assignedLicenses.map(normalizeUserLicense)
+                : Array.isArray(user?.licenses)
+                    ? user.licenses
+                        .filter((license) => {
+                            const assignedUserId = String(license?.assignedUserId || '');
+                            const currentUserId = String(user?.id || '');
+                            return !assignedUserId || assignedUserId === currentUserId;
+                        })
+                        .map(normalizeUserLicense)
+                    : [];
+
+            return {
+                ...user,
+                assignedLicenses,
+                _perms: user.perms || [],
+            };
+        });
+
+        const fallbackLicensePool = nextUsers.flatMap((user) => (
+            (user.assignedLicenses || []).map((license) => ({
+                id: Number(license?.clientLicenseId || license?.id || 0) || null,
+                userId: user?.id ?? null,
+                clientId: user?.clientId ?? null,
+                status: 'ACTIVE',
+                user: {
+                    id: user?.id ?? null,
+                    name: String(user?.username || '').split(' ')[0] || user?.email || '',
+                    lastname: String(user?.username || '').split(' ').slice(1).join(' '),
+                    email: user?.email || '',
+                },
+                license: {
+                    id: license?.licenseId ?? null,
+                    commercialName: license?.commercialName || '',
+                    internalCode: license?.internalCode || '',
+                    category: license?.category || '',
+                    billingScope: license?.billingScope || '',
+                    appliesToWebapp: Boolean(license?.appliesToWebapp),
+                    featureFlags: license?.featureFlags || [],
+                    hasLogisticsCapability: Boolean(license?.hasLogisticsCapability),
+                },
+            }))
+        )).filter((assignment) => assignment.id != null);
+
         setUsers(nextUsers);
-        setLicensePool(Array.isArray(data?.licensePool) ? data.licensePool : []);
+        setLicensePool(Array.isArray(data?.licensePool) && data.licensePool.length > 0 ? data.licensePool : fallbackLicensePool);
         return nextUsers;
     }, []);
 
