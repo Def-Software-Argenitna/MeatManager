@@ -1597,6 +1597,67 @@ function buildAccessResponse(accessContext) {
     };
 }
 
+function buildScopedLicensesForUser(user, licenseRows = []) {
+    const licenseMatchesScope = (license) => {
+        if (user?.isOwnerFallback) {
+            return true;
+        }
+
+        if (user?.role === 'admin') {
+            return true;
+        }
+
+        const billingScope = String(license.billingScope || '').trim();
+        const matchesUser = billingScope === 'per_user'
+            ? String(license.userId || '') === String(user?.id || '')
+            : (license.userId == null || String(license.userId) === String(user?.id || ''));
+        const matchesBranch = billingScope === 'per_branch'
+            ? (license.branchId == null || String(license.branchId) === String(user?.branchId || ''))
+            : true;
+
+        return (matchesUser && matchesBranch) || isBaseWebappLicense(license);
+    };
+
+    const mapResolvedLicense = (license) => ({
+        clientLicenseId: Number(license.clientLicenseId),
+        licenseId: Number(license.licenseId),
+        commercialName: license.commercialName,
+        internalCode: license.internalCode,
+        category: license.category,
+        billingScope: license.billingScope,
+        assignedUserId: license.userId ?? null,
+        assignedBranchId: license.branchId ?? null,
+        appliesToWebapp: licenseAppliesToWebapp(license),
+        featureFlags: parseFeatureFlags(license.featureFlags),
+        hasLogisticsCapability: licenseHasLogisticsCapability(license),
+    });
+
+    const dedupeByClientLicenseId = (license, index, arr) => (
+        arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+    );
+
+    const effectiveLicenses = licenseRows
+        .filter((license) => licenseAppliesToWebapp(license) && licenseMatchesScope(license))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    const deliveryLicenses = licenseRows
+        .filter((license) => licenseHasLogisticsCapability(license) && licenseMatchesScope(license))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    const assignedLicenses = licenseRows
+        .filter((license) => String(license.userId || '') === String(user?.id || ''))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    return {
+        effectiveLicenses,
+        deliveryLicenses,
+        assignedLicenses,
+    };
+}
+
 async function listEligibleLogisticsDrivers(clientId) {
     const conn = await clientsControlPool.getConnection();
     try {
@@ -3326,28 +3387,61 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                  ORDER BY cu.id ASC`,
                 [accessContext.client.id]
             );
-        } finally {
-            conn.release();
-        }
+            const [licenseRows] = await conn.query(
+                `SELECT
+                    cl.id AS clientLicenseId,
+                    cl.clientId,
+                    cl.licenseId,
+                    cl.branchId,
+                    cl.userId,
+                    cl.status AS assignmentStatus,
+                    l.commercialName,
+                    l.internalCode,
+                    l.category,
+                    l.billingScope,
+                    l.isMandatory,
+                    l.featureFlags,
+                    l.status AS licenseStatus,
+                    l.appliesToWebapp
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 WHERE cl.clientId = ?
+                   AND cl.status = 'ACTIVE'
+                   AND l.status = 'ACTIVE'`,
+                [accessContext.client.id]
+            );
 
-        const users = [];
-        for (const row of rows) {
-            const perms = await getUserPermissions(conn, row.id);
-            const baseUser = buildAccessResponse({
-                user: {
+            const licensePool = await getClientLicensePool(conn, accessContext.client.id);
+            const users = [];
+            for (const row of rows) {
+                const perms = await getUserPermissions(conn, row.id);
+                const scopedLicenses = buildScopedLicensesForUser({
                     ...row,
                     userStatus: row.status,
                     perms,
-                },
-                client: accessContext.client,
-                effectiveLicenses: accessContext.effectiveLicenses,
-            });
-            users.push({
-                ...baseUser,
-                perms,
-            });
+                }, licenseRows);
+                const baseUser = buildAccessResponse({
+                    user: {
+                        ...row,
+                        userStatus: row.status,
+                        perms,
+                    },
+                    client: accessContext.client,
+                    effectiveLicenses: scopedLicenses.effectiveLicenses,
+                });
+                users.push({
+                    ...baseUser,
+                    perms,
+                    assignedLicenses: scopedLicenses.assignedLicenses,
+                    deliveryLicenses: scopedLicenses.deliveryLicenses,
+                });
+            }
+
+            return res.json({ ok: true, users, licensePool });
+        } finally {
+            conn.release();
         }
-        return res.json({ ok: true, users });
     } catch (err) {
         console.error('[FIREBASE USERS READ ERROR]', err.message);
         const statusCode = err.statusCode || 500;
