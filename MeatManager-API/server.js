@@ -476,12 +476,21 @@ function licenseHasLogisticsCapability(license) {
     ));
 }
 
-function tenantHasAssignedLogisticsLicense(licenses = []) {
-    return licenses.some((license) => (
-        licenseHasLogisticsCapability(license)
-        && license.userId != null
-        && String(license.userId).trim() !== ''
-    ));
+function isBaseWebappLicense(license) {
+    return (
+        Number(license?.isMandatory) === 1
+        || normalizeLicenseToken(license?.internalCode) === 'base_mm'
+        || normalizeLicenseToken(license?.category) === 'base_webapp'
+        || isSuperLicenseMatch(license)
+    );
+}
+
+function tenantHasPurchasedBaseWebappLicense(licenses = []) {
+    return licenses.some((license) => isBaseWebappLicense(license) && licenseAppliesToWebapp(license));
+}
+
+function tenantHasPurchasedLogisticsLicense(licenses = []) {
+    return licenses.some((license) => licenseHasLogisticsCapability(license));
 }
 
 function hasSuperLicense(licenses = []) {
@@ -525,6 +534,7 @@ function hasAdminPanelAccess(accessContext) {
 
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
+    if (!accessContext.client?.tenantHasDeliveryLicense) return false;
     if (accessContext.user.role === 'admin') return true;
     if (hasSuperLicense(accessContext.effectiveLicenses || [])) return true;
 
@@ -1097,6 +1107,197 @@ async function getUserPermissions(conn, userId) {
         .filter(Boolean);
 }
 
+function normalizeClientLicenseIds(value) {
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+        new Set(
+            value
+                .map((licenseId) => Number(licenseId))
+                .filter((licenseId) => Number.isInteger(licenseId) && licenseId > 0)
+        )
+    );
+}
+
+async function getClientLicensePool(conn, clientId) {
+    const [licenseRows] = await conn.query(
+        `SELECT
+            cl.id AS clientLicenseId,
+            cl.clientId,
+            cl.licenseId,
+            cl.branchId,
+            cl.userId,
+            cl.status AS assignmentStatus,
+            l.commercialName,
+            l.internalCode,
+            l.category,
+            l.billingScope,
+            l.isMandatory,
+            l.featureFlags,
+            l.status AS licenseStatus,
+            l.appliesToWebapp,
+            b.name AS branchName,
+            u.name AS userName,
+            u.lastname AS userLastname,
+            u.email AS userEmail
+         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+         INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+            ON l.id = cl.licenseId
+         LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+            ON b.id = cl.branchId
+         LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` u
+            ON u.id = cl.userId
+         WHERE cl.clientId = ?
+           AND cl.status = 'ACTIVE'
+           AND l.status = 'ACTIVE'
+         ORDER BY cl.id ASC`,
+        [clientId]
+    );
+
+    return licenseRows.map((license) => ({
+        id: Number(license.clientLicenseId),
+        clientId: Number(license.clientId),
+        licenseId: Number(license.licenseId),
+        userId: license.userId == null ? null : Number(license.userId),
+        branchId: license.branchId == null ? null : Number(license.branchId),
+        status: license.assignmentStatus,
+        user: license.userId == null ? null : {
+            id: Number(license.userId),
+            name: license.userName || '',
+            lastname: license.userLastname || '',
+            email: license.userEmail || '',
+        },
+        branch: license.branchId == null ? null : {
+            id: Number(license.branchId),
+            name: license.branchName || '',
+        },
+        license: {
+            id: Number(license.licenseId),
+            commercialName: license.commercialName,
+            internalCode: license.internalCode,
+            category: license.category,
+            billingScope: license.billingScope,
+            appliesToWebapp: licenseAppliesToWebapp(license),
+            featureFlags: parseFeatureFlags(license.featureFlags),
+            hasLogisticsCapability: licenseHasLogisticsCapability(license),
+        },
+    }));
+}
+
+async function getAssignablePerUserLicenseRows(conn, clientId, userId, clientLicenseIds = []) {
+    const normalizedIds = normalizeClientLicenseIds(clientLicenseIds);
+    if (normalizedIds.length === 0) return [];
+
+    const placeholders = normalizedIds.map(() => '?').join(', ');
+    const [rows] = await conn.query(
+        `SELECT
+            cl.id AS clientLicenseId,
+            cl.clientId,
+            cl.userId,
+            cl.status AS assignmentStatus,
+            l.id AS licenseId,
+            l.commercialName,
+            l.internalCode,
+            l.category,
+            l.billingScope,
+            l.featureFlags,
+            l.status AS licenseStatus
+         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+         INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+            ON l.id = cl.licenseId
+         WHERE cl.clientId = ?
+           AND cl.id IN (${placeholders})`,
+        [clientId, ...normalizedIds]
+    );
+
+    if (rows.length !== normalizedIds.length) {
+        const error = new Error('Una o más licencias seleccionadas no pertenecen al cliente');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    for (const license of rows) {
+        if (!isActiveStatus(license.assignmentStatus, false) || !isActiveStatus(license.licenseStatus, false)) {
+            const error = new Error(`La licencia "${license.commercialName}" no está activa`);
+            error.statusCode = 400;
+            throw error;
+        }
+        if (String(license.billingScope || '').trim() !== 'per_user') {
+            const error = new Error(`La licencia "${license.commercialName}" no puede asignarse por usuario`);
+            error.statusCode = 400;
+            throw error;
+        }
+        if (license.userId != null && String(license.userId) !== String(userId)) {
+            const error = new Error(`La licencia "${license.commercialName}" ya está asignada a otro usuario`);
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    return rows;
+}
+
+async function syncClientUserPerUserLicenses(conn, { clientId, userId, clientLicenseIds = [] }) {
+    const normalizedIds = normalizeClientLicenseIds(clientLicenseIds);
+    const assignableRows = await getAssignablePerUserLicenseRows(conn, clientId, userId, normalizedIds);
+
+    await conn.beginTransaction();
+    try {
+        if (normalizedIds.length > 0) {
+            const releasePlaceholders = normalizedIds.map(() => '?').join(', ');
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 SET cl.userId = NULL,
+                     cl.branchId = NULL
+                 WHERE cl.clientId = ?
+                   AND cl.userId = ?
+                   AND l.billingScope = 'per_user'
+                   AND cl.id NOT IN (${releasePlaceholders})`,
+                [clientId, userId, ...normalizedIds]
+            );
+        } else {
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 SET cl.userId = NULL,
+                     cl.branchId = NULL
+                 WHERE cl.clientId = ?
+                   AND cl.userId = ?
+                   AND l.billingScope = 'per_user'`,
+                [clientId, userId]
+            );
+        }
+
+        if (assignableRows.length > 0) {
+            const assignPlaceholders = assignableRows.map(() => '?').join(', ');
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\`
+                 SET userId = ?, branchId = NULL
+                 WHERE clientId = ?
+                   AND id IN (${assignPlaceholders})`,
+                [userId, clientId, ...assignableRows.map((license) => Number(license.clientLicenseId))]
+            );
+        }
+
+        await conn.commit();
+    } catch (error) {
+        await conn.rollback();
+        throw error;
+    }
+
+    return assignableRows.map((license) => ({
+        clientLicenseId: Number(license.clientLicenseId),
+        licenseId: Number(license.licenseId),
+        commercialName: license.commercialName,
+        internalCode: license.internalCode,
+        category: license.category,
+        billingScope: license.billingScope,
+        hasLogisticsCapability: licenseHasLogisticsCapability(license),
+    }));
+}
+
 async function enqueueAuthSync(conn, entityId, action, payload = null) {
     await conn.query(
         `INSERT INTO \`${CLIENTS_DB_NAME}\`.auth_sync_queue (entityType, entityId, action, payload) VALUES ('client_user', ?, ?, ?)`,
@@ -1257,20 +1458,27 @@ async function getClientAccessContext({ uid, email }) {
             [user.clientId]
         );
 
-        const tenantHasDeliveryLicense = tenantHasAssignedLogisticsLicense(licenseRows);
+        const tenantHasBaseLicense = tenantHasPurchasedBaseWebappLicense(licenseRows);
+        const tenantHasDeliveryLicense = tenantHasPurchasedLogisticsLicense(licenseRows);
 
         const licenseMatchesScope = (license) => {
             if (user.isOwnerFallback) {
                 return true;
             }
 
-            const matchesUser = license.userId == null || String(license.userId) === String(user.id);
-            const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
+            if (user.role === 'admin') {
+                return true;
+            }
 
-            const isMandatoryBase =
-                Number(license.isMandatory) === 1 ||
-                normalizeLicenseToken(license.internalCode) === 'base_mm' ||
-                normalizeLicenseToken(license.category) === 'base_webapp';
+            const billingScope = String(license.billingScope || '').trim();
+            const matchesUser = billingScope === 'per_user'
+                ? String(license.userId || '') === String(user.id)
+                : (license.userId == null || String(license.userId) === String(user.id));
+            const matchesBranch = billingScope === 'per_branch'
+                ? (license.branchId == null || String(license.branchId) === String(user.branchId))
+                : true;
+
+            const isMandatoryBase = isBaseWebappLicense(license);
 
             return (matchesUser && matchesBranch) || isMandatoryBase;
         };
@@ -1314,6 +1522,7 @@ async function getClientAccessContext({ uid, email }) {
                 cashAuthorizationEmail: user.cashAuthorizationEmail,
                 billingEmail: user.billingEmail,
                 status: user.clientStatus,
+                tenantHasBaseLicense,
                 tenantHasDeliveryLicense,
             },
             effectiveLicenses,
@@ -1325,8 +1534,6 @@ async function getClientAccessContext({ uid, email }) {
 }
 
 function assertClientAccess(accessContext, options = {}) {
-    const allowDeliveryOnly = options?.allowDeliveryOnly === true;
-
     if (!accessContext?.user) {
         const error = new Error('Usuario no encontrado en GestionClientes');
         error.statusCode = 404;
@@ -1342,13 +1549,8 @@ function assertClientAccess(accessContext, options = {}) {
         error.statusCode = 403;
         throw error;
     }
-    const effectiveLicenses = Array.isArray(accessContext.effectiveLicenses) ? accessContext.effectiveLicenses : [];
-    const deliveryLicenses = Array.isArray(accessContext.deliveryLicenses) ? accessContext.deliveryLicenses : [];
-    const hasEffectiveAccess = effectiveLicenses.length > 0;
-    const hasDeliveryOnlyAccess = allowDeliveryOnly && deliveryLicenses.length > 0;
-
-    if (!hasEffectiveAccess && !hasDeliveryOnlyAccess) {
-        const error = new Error('El usuario no tiene licencias activas asignadas');
+    if (!accessContext.client?.tenantHasBaseLicense) {
+        const error = new Error('El tenant no tiene una licencia base de MeatManager activa');
         error.statusCode = 403;
         throw error;
     }
@@ -1383,6 +1585,7 @@ function buildAccessResponse(accessContext) {
             address: accessContext.user.branchAddress || '',
             status: accessContext.user.branchStatus || '',
         } : null,
+        tenantHasBaseLicense: Boolean(accessContext.client.tenantHasBaseLicense),
         tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
         licenses: accessContext.effectiveLicenses,
     };
@@ -2297,6 +2500,21 @@ async function getTenantClientData(authUser) {
     return { id: userDoc.id, ...userDoc.data() };
 }
 
+function requiresLogisticsLicense({ role, perms = [] }) {
+    if (String(role || '').trim().toLowerCase() !== 'employee') return false;
+    return Array.isArray(perms) && perms.some((pathValue) => String(pathValue || '').trim() === '/logistica');
+}
+
+function assertDeliveryLicenseSelection({ role, perms = [], assignedLicenses = [] }) {
+    if (!requiresLogisticsLicense({ role, perms })) return;
+    const hasAssignedDeliveryLicense = assignedLicenses.some((license) => licenseHasLogisticsCapability(license));
+    if (!hasAssignedDeliveryLicense) {
+        const error = new Error('Para habilitar Logística, el usuario debe tener una licencia de entregas asignada');
+        error.statusCode = 400;
+        throw error;
+    }
+}
+
 function getTenantPool(dbName) {
     if (tenantPools.has(dbName)) return tenantPools.get(dbName);
     const pool = mysql.createPool({
@@ -3090,41 +3308,44 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         assertClientAccess(accessContext);
 
         const conn = await clientsControlPool.getConnection();
-        let users;
+        let rows;
         try {
-            const [rows] = await conn.query(
+            [rows] = await conn.query(
                 `SELECT id, clientId, branchId, firebaseUid, name, lastname, email, role, status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 WHERE clientId = ?
-                 ORDER BY id ASC`,
+                 cu
+                 LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                    ON b.id = cu.branchId
+                 WHERE cu.clientId = ?
+                 ORDER BY cu.id ASC`,
                 [accessContext.client.id]
             );
-
-            users = [];
-            for (const row of rows) {
-                const perms = await getUserPermissions(conn, row.id);
-                const baseUser = buildAccessResponse({
-                    user: {
-                        ...row,
-                        userStatus: row.status,
-                        perms,
-                    },
-                    client: accessContext.client,
-                    effectiveLicenses: accessContext.effectiveLicenses,
-                });
-                users.push({
-                    ...baseUser,
-                    perms,
-                });
-            }
         } finally {
             conn.release();
         }
 
+        const users = [];
+        for (const row of rows) {
+            const perms = await getUserPermissions(conn, row.id);
+            const baseUser = buildAccessResponse({
+                user: {
+                    ...row,
+                    userStatus: row.status,
+                    perms,
+                },
+                client: accessContext.client,
+                effectiveLicenses: accessContext.effectiveLicenses,
+            });
+            users.push({
+                ...baseUser,
+                perms,
+            });
+        }
         return res.json({ ok: true, users });
     } catch (err) {
         console.error('[FIREBASE USERS READ ERROR]', err.message);
-        return res.status(500).json({ error: 'No se pudieron leer los usuarios web' });
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los usuarios web' });
     }
 });
 
@@ -3154,7 +3375,15 @@ app.get('/api/firebase-users/me', verifyFirebaseToken, async (req, res) => {
 // Crea usuario en Firebase Auth y su perfil/permisos en Firestore.
 app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
     try {
-        const { email, password, username, role = 'employee', active = 1, perms = [] } = req.body || {};
+        const {
+            email,
+            password,
+            username,
+            role = 'employee',
+            active = 1,
+            perms = [],
+            assignedClientLicenseIds = [],
+        } = req.body || {};
 
         if (!email || !String(email).trim()) {
             return res.status(400).json({ error: 'Email requerido' });
@@ -3169,6 +3398,9 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let insertId;
+        let job;
+        const normalizedRole = role === 'admin' ? 'admin' : 'employee';
+        const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         try {
             const [existingRows] = await conn.query(
                 `SELECT id FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE clientId = ? AND LOWER(email) = ? LIMIT 1`,
@@ -3186,11 +3418,21 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                     ownerData.clientId,
                     String(username).trim(),
                     normalizeEmail(email),
-                    role === 'admin' ? 'admin' : 'employee',
+                    normalizedRole,
                     Number(active) === 1 ? 'ACTIVE' : 'INACTIVE',
                 ]
             );
             insertId = result.insertId;
+            const assignedLicenses = await syncClientUserPerUserLicenses(conn, {
+                clientId: ownerData.clientId,
+                userId: insertId,
+                clientLicenseIds: assignedClientLicenseIds,
+            });
+            assertDeliveryLicenseSelection({
+                role: normalizedRole,
+                perms: userPerms,
+                assignedLicenses,
+            });
             await enqueueAuthSync(conn, insertId, 'CREATE_FIREBASE', {
                 action: 'CREATE',
                 email: normalizeEmail(email),
@@ -3198,24 +3440,16 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 username: String(username).trim(),
                 active: Number(active) === 1 ? 1 : 0,
             });
-        } finally {
-            conn.release();
-        }
-
-        const queueConn = await clientsControlPool.getConnection();
-        let job;
-        try {
-            const [jobs] = await queueConn.query(
+            const [jobs] = await conn.query(
                 `SELECT * FROM \`${CLIENTS_DB_NAME}\`.auth_sync_queue WHERE entityId = ? ORDER BY id DESC LIMIT 1`,
                 [insertId]
             );
             job = jobs[0];
         } finally {
-            queueConn.release();
+            conn.release();
         }
 
         const syncResult = await runClientUserSync(job);
-        const userPerms = role === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         if (userPerms.length > 0) {
             const permConn = await clientsControlPool.getConnection();
             try {
@@ -3237,7 +3471,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 uid: syncResult.uid,
                 email: normalizeEmail(email),
                 username: String(username).trim(),
-                role: role === 'admin' ? 'admin' : 'employee',
+                role: normalizedRole,
                 active: Number(active) === 1 ? 1 : 0,
                 perms: userPerms,
             },
@@ -3247,7 +3481,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         if (err.code === 'auth/email-already-exists') {
             return res.status(400).json({ error: 'Ese email ya existe en Firebase' });
         }
-        return res.status(500).json({ error: 'No se pudo crear el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el usuario web' });
     }
 });
 
@@ -3259,7 +3493,7 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Usuario inválido' });
         }
 
-        const { email, password, username, role, active, perms } = req.body || {};
+        const { email, password, username, role, active, perms, assignedClientLicenseIds = [] } = req.body || {};
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let currentData;
@@ -3292,6 +3526,16 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
                  WHERE id = ?`,
                 [nextUsername, nextEmail, nextRole, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
             );
+            const assignedLicenses = await syncClientUserPerUserLicenses(writeConn, {
+                clientId: ownerData.clientId,
+                userId: Number(userId),
+                clientLicenseIds: assignedClientLicenseIds,
+            });
+            assertDeliveryLicenseSelection({
+                role: nextRole,
+                perms: nextPerms,
+                assignedLicenses,
+            });
             await enqueueAuthSync(writeConn, Number(userId), 'UPDATE_FIREBASE', {
                 action: nextActive ? 'UPDATE' : 'DISABLE',
                 email: nextEmail,
@@ -3331,7 +3575,7 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         if (err.code === 'auth/email-already-exists') {
             return res.status(400).json({ error: 'Ese email ya existe en Firebase' });
         }
-        return res.status(500).json({ error: 'No se pudo actualizar el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo actualizar el usuario web' });
     }
 });
 
@@ -3370,6 +3614,12 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
                  WHERE id = ?`,
                 [userId]
             );
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\`
+                 SET userId = NULL, branchId = NULL
+                 WHERE clientId = ? AND userId = ?`,
+                [ownerData.clientId, userId]
+            );
             await enqueueAuthSync(conn, Number(userId), 'DISABLE_FIREBASE', {
                 action: 'DELETE',
                 active: 0,
@@ -3397,7 +3647,7 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         return res.json({ ok: true });
     } catch (err) {
         console.error('[FIREBASE USER DELETE ERROR]', err.message);
-        return res.status(500).json({ error: 'No se pudo eliminar el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo eliminar el usuario web' });
     }
 });
 

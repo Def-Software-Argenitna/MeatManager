@@ -2,13 +2,14 @@ import React from 'react';
 import { ArrowLeftRight, Building2, MapPin, Phone, ShieldCheck, User } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useTenant } from '../context/TenantContext';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import './Sucursales.css';
 
 const Sucursales = () => {
     const { tenant } = useTenant();
     const { accessProfile, currentUser } = useUser();
     const branch = accessProfile?.branch || null;
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
     return (
         <div className="sucursales-container animate-fade-in">
@@ -81,7 +82,7 @@ const Sucursales = () => {
                             <ShieldCheck size={18} />
                             <div>
                                 <strong>Rol</strong>
-                                <span>{currentUser?.role === 'admin' ? 'Administrador' : 'Operador'}</span>
+                                <span>{isAdmin ? 'Administrador' : 'Operador'}</span>
                             </div>
                         </div>
                         <div className="sucursal-info-item">

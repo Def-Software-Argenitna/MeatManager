@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchTable } from '../utils/apiClient';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
@@ -53,9 +53,9 @@ const DashboardReveal = ({ from = 'up', delay = 0, className = '', children, sty
 
 const Dashboard = () => {
     const navigate = useNavigate();
-    const { currentUser } = useUser();
+    const { currentUser, accessProfile } = useUser();
     const { hasModule } = useLicense();
-    const isAdmin = currentUser?.role === 'admin';
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
     const [ventasDia, setVentasDia] = useState([]);
     const [allVentas, setAllVentas] = useState([]);

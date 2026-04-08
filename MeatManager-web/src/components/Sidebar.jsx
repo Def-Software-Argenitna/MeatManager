@@ -32,7 +32,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useTenant } from '../context/TenantContext';
 import { getRemoteSetting } from '../utils/apiClient';
 import './Sidebar.css';
@@ -41,7 +41,7 @@ const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isPro, hasModule, isSuperUser } = useLicense();
-  const { currentUser, hasAccess, logout } = useUser();
+  const { currentUser, accessProfile, hasAccess, logout } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
@@ -109,6 +109,7 @@ const Sidebar = ({ isCollapsed }) => {
 
   const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
   const avatarInitial = displayName.charAt(0).toUpperCase();
+  const isEffectiveAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
   const operationItems = [
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -336,7 +337,7 @@ const Sidebar = ({ isCollapsed }) => {
                 {displayName}
               </span>
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {currentUser?.role === 'admin' ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
+                {isEffectiveAdmin ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
             </div>
           )}

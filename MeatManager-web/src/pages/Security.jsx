@@ -3,17 +3,75 @@ import {
     ShieldCheck, Key, RefreshCw, CheckCircle2, AlertTriangle, Lock,
     Users, UserPlus, Pencil, Trash2, ToggleLeft, ToggleRight, X, Save
 } from 'lucide-react';
-import { ALL_ROUTES, useUser } from '../context/UserContext';
+import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './Security.css';
 
 /* ── Helpers ────────────────────────────── */
 const ALL_GROUPS = [...new Set(ALL_ROUTES.map(r => r.group))];
+const DRIVER_PATH = '/logistica';
 
-const EMPTY_FORM = { username: '', email: '', password: '', role: 'employee', selectedPaths: [] };
+const EMPTY_FORM = {
+    username: '',
+    email: '',
+    password: '',
+    role: 'employee',
+    accountType: 'internal',
+    selectedPaths: [],
+    assignedClientLicenseIds: [],
+};
+
+const hasLogisticsCapability = (license) => Boolean(
+    license?.hasLogisticsCapability
+    || license?.license?.hasLogisticsCapability
+);
+
+const isBaseLicense = (license) => {
+    const internalCode = String(license?.internalCode || license?.license?.internalCode || '').trim().toLowerCase();
+    const category = String(license?.category || license?.license?.category || '').trim().toLowerCase();
+    const commercialName = String(license?.commercialName || license?.license?.commercialName || '').trim().toLowerCase();
+    return (
+        internalCode === 'base_mm'
+        || category === 'base_webapp'
+        || internalCode === 'superuser'
+        || internalCode === 'su'
+        || category.includes('superuser')
+        || commercialName.includes('superuser')
+    );
+};
+
+const inferAccountType = (user) => {
+    if (user?.role === 'admin') return 'admin';
+    const hasDriverPermission = Array.isArray(user?._perms) && user._perms.includes(DRIVER_PATH);
+    const hasDriverLicense = Array.isArray(user?.assignedLicenses) && user.assignedLicenses.some((license) => hasLogisticsCapability(license));
+    return hasDriverPermission || hasDriverLicense ? 'driver' : 'internal';
+};
+
+const getUserTypeMeta = (user) => {
+    const accountType = inferAccountType(user);
+    if (accountType === 'admin') {
+        return {
+            label: 'Administrador',
+            accent: '#f59e0b',
+            background: 'rgba(245,158,11,0.15)',
+        };
+    }
+    if (accountType === 'driver') {
+        return {
+            label: 'Repartidor',
+            accent: '#34d399',
+            background: 'rgba(52,211,153,0.15)',
+        };
+    }
+    return {
+        label: 'Usuario interno',
+        accent: '#60a5fa',
+        background: 'rgba(59,130,246,0.15)',
+    };
+};
 
 /* ── User modal ─────────────────────────── */
-const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions }) => {
+const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [] }) => {
     const [form, setForm] = useState(() => {
         if (!user) return EMPTY_FORM;
         return {
@@ -21,10 +79,17 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             email: user.email || '',
             password: '',
             role: user.role,
-            selectedPaths: user._perms || [],
+            accountType: inferAccountType(user),
+            selectedPaths: (user._perms || []).filter((pathValue) => pathValue !== DRIVER_PATH),
+            assignedClientLicenseIds: (user.assignedLicenses || []).map((license) => String(license.clientLicenseId)),
         };
     });
     const [loading, setLoading] = useState(false);
+    const availablePerUserLicenses = licensePool.filter((assignment) => (
+        String(assignment?.license?.billingScope || '').trim() === 'per_user'
+    ));
+    const logisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
+    const optionalPerUserLicenses = availablePerUserLicenses.filter((assignment) => !hasLogisticsCapability(assignment));
 
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -55,6 +120,23 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
         if (!/\S+@\S+\.\S+/.test(form.email.trim())) return toast('error', 'Ingresá un email válido');
         if (!user && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
         if (form.password && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
+        const normalizedRole = form.accountType === 'admin' ? 'admin' : 'employee';
+        const normalizedPerms = form.accountType === 'driver'
+            ? [DRIVER_PATH]
+            : form.accountType === 'internal'
+                ? form.selectedPaths.filter((pathValue) => pathValue !== DRIVER_PATH)
+                : [];
+
+        if (
+            normalizedRole === 'employee'
+            && normalizedPerms.includes(DRIVER_PATH)
+            && !logisticsLicenses.some((assignment) => (
+                form.assignedClientLicenseIds.includes(String(assignment.id))
+                && hasLogisticsCapability(assignment)
+            ))
+        ) {
+            return toast('error', 'Para habilitar Logística, el usuario debe tener una licencia de entregas asignada');
+        }
 
         setLoading(true);
         try {
@@ -63,8 +145,9 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                 const update = {
                     username: form.username.trim(),
                     email: form.email.trim().toLowerCase(),
-                    role: form.role,
-                    perms: form.role === 'employee' ? form.selectedPaths : [],
+                    role: normalizedRole,
+                    perms: normalizedPerms,
+                    assignedClientLicenseIds: form.assignedClientLicenseIds.map((licenseId) => Number(licenseId)),
                 };
                 if (form.password) update.password = form.password;
                 await saveRecord('users', 'update', update, userId);
@@ -73,13 +156,14 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                     username: form.username.trim(),
                     email: form.email.trim().toLowerCase(),
                     password: form.password,
-                    role: form.role,
+                    role: normalizedRole,
                     active: 1,
-                    perms: form.role === 'employee' ? form.selectedPaths : [],
+                    perms: normalizedPerms,
+                    assignedClientLicenseIds: form.assignedClientLicenseIds.map((licenseId) => Number(licenseId)),
                 });
                 userId = result.insertId;
             }
-            await replacePermissions(userId, form.role === 'employee' ? form.selectedPaths : []);
+            await replacePermissions(userId, normalizedPerms);
 
             toast('success', user ? 'Usuario actualizado' : 'Usuario creado');
             onSaved();
@@ -146,27 +230,53 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         />
                     </div>
 
-                    <div className="form-group" style={{ marginBottom: '1.5rem' }}>
-                        <label>Rol</label>
-                        <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem' }}>
-                            {['admin', 'employee'].map(r => (
-                                <label key={r} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', cursor: 'pointer', fontWeight: form.role === r ? '600' : '400' }}>
-                                    <input type="radio" name="role" value={r} checked={form.role === r} onChange={() => set('role', r)} />
-                                    {r === 'admin' ? '🔑 Admin (acceso total)' : '👤 Empleado (acceso limitado)'}
-                                </label>
+                    <div className="security-section" style={{ marginBottom: '1.5rem' }}>
+                        <label className="security-section-title">Tipo de usuario</label>
+                        <div className="security-account-types">
+                            {[
+                                {
+                                    value: 'admin',
+                                    title: 'Administrador',
+                                    description: 'Acceso total a la web de MeatManager para gestionar el tenant.',
+                                },
+                                {
+                                    value: 'internal',
+                                    title: 'Usuario interno',
+                                    description: 'Cajeros, vendedores u operadores con permisos configurables.',
+                                },
+                                {
+                                    value: 'driver',
+                                    title: 'Repartidor',
+                                    description: logisticsLicenses.length > 0
+                                        ? 'Usa logística y requiere una licencia de repartidor asignada.'
+                                        : 'No hay licencias de repartidor disponibles para asignar.',
+                                    disabled: logisticsLicenses.length === 0,
+                                },
+                            ].map((accountTypeOption) => (
+                                <button
+                                    key={accountTypeOption.value}
+                                    type="button"
+                                    className={`security-account-card ${form.accountType === accountTypeOption.value ? 'is-selected' : ''}`}
+                                    disabled={Boolean(accountTypeOption.disabled)}
+                                    onClick={() => set('accountType', accountTypeOption.value)}
+                                >
+                                    <span className="security-account-card-title">{accountTypeOption.title}</span>
+                                    <span className="security-account-card-description">{accountTypeOption.description}</span>
+                                </button>
                             ))}
                         </div>
                     </div>
 
-                    {form.role === 'employee' && (
-                        <div style={{ marginBottom: '1.5rem' }}>
-                            <label style={{ display: 'block', marginBottom: '0.75rem', fontWeight: '600' }}>
-                                Permisos de acceso
+                    {form.accountType === 'internal' && (
+                        <div className="security-section" style={{ marginBottom: '1.5rem' }}>
+                            <label className="security-section-title">
+                                Permisos del usuario interno
                             </label>
                             {ALL_GROUPS.map(group => {
-                                const groupRoutes = ALL_ROUTES.filter(r => r.group === group);
+                                const groupRoutes = ALL_ROUTES.filter((r) => r.group === group && r.path !== DRIVER_PATH);
                                 const allSel = groupRoutes.every(r => form.selectedPaths.includes(r.path));
                                 const someSel = groupRoutes.some(r => form.selectedPaths.includes(r.path));
+                                if (groupRoutes.length === 0) return null;
                                 return (
                                     <div key={group} style={{ marginBottom: '1rem', background: 'rgba(255,255,255,0.03)', borderRadius: '10px', padding: '0.75rem' }}>
                                         <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', fontWeight: '600', marginBottom: '0.5rem' }}>
@@ -196,6 +306,125 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         </div>
                     )}
 
+                    {form.accountType === 'driver' && (
+                        <div className="security-section" style={{ marginBottom: '1.5rem' }}>
+                            <label className="security-section-title">
+                                Licencias de repartidor disponibles
+                            </label>
+                            <div className="security-license-list">
+                                {logisticsLicenses.map((assignment) => {
+                                    const assignedToCurrentUser = user && String(assignment.userId || '') === String(user.id);
+                                    const assignedToOtherUser = assignment.userId != null && !assignedToCurrentUser;
+                                    const checked = form.assignedClientLicenseIds.includes(String(assignment.id));
+
+                                    return (
+                                        <label
+                                            key={assignment.id}
+                                            className={`security-license-item ${assignedToOtherUser ? 'is-disabled' : ''}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                disabled={assignedToOtherUser}
+                                                onChange={() => {
+                                                    setForm((current) => ({
+                                                        ...current,
+                                                        assignedClientLicenseIds: checked
+                                                            ? current.assignedClientLicenseIds.filter((id) => id !== String(assignment.id))
+                                                            : [...current.assignedClientLicenseIds, String(assignment.id)],
+                                                    }));
+                                                }}
+                                            />
+                                            <div>
+                                                <div className="security-license-title">
+                                                    {assignment.license?.commercialName || 'Licencia de repartidor'}
+                                                </div>
+                                                <div className="security-license-description">
+                                                    {assignedToOtherUser
+                                                        ? `Asignada a ${assignment.user?.name || 'otro usuario'} ${assignment.user?.lastname || ''}`.trim()
+                                                        : 'Habilita logística y seguimiento desde la app móvil'}
+                                                </div>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                                {logisticsLicenses.length === 0 && (
+                                    <div className="security-empty-note">
+                                        El tenant no tiene licencias de repartidor libres para asignar.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {(form.accountType === 'internal' || form.accountType === 'admin') && (
+                        <div className="security-section" style={{ marginBottom: '1.5rem' }}>
+                            <label className="security-section-title">
+                                Licencias adicionales disponibles
+                            </label>
+                            <div className="security-license-list">
+                                {optionalPerUserLicenses.map((assignment) => {
+                                    const assignedToCurrentUser = user && String(assignment.userId || '') === String(user.id);
+                                    const assignedToOtherUser = assignment.userId != null && !assignedToCurrentUser;
+                                    const checked = form.assignedClientLicenseIds.includes(String(assignment.id));
+
+                                    return (
+                                        <label
+                                            key={assignment.id}
+                                            className={`security-license-item ${assignedToOtherUser ? 'is-disabled' : ''}`}
+                                        >
+                                            <input
+                                                type="checkbox"
+                                                checked={checked}
+                                                disabled={assignedToOtherUser}
+                                                onChange={() => {
+                                                    setForm((current) => ({
+                                                        ...current,
+                                                        assignedClientLicenseIds: checked
+                                                            ? current.assignedClientLicenseIds.filter((id) => id !== String(assignment.id))
+                                                            : [...current.assignedClientLicenseIds, String(assignment.id)],
+                                                    }));
+                                                }}
+                                            />
+                                            <div>
+                                                <div className="security-license-title">
+                                                    {assignment.license?.commercialName || 'Licencia'}
+                                                </div>
+                                                <div className="security-license-description">
+                                                    {assignedToOtherUser
+                                                        ? `Asignada a ${assignment.user?.name || 'otro usuario'} ${assignment.user?.lastname || ''}`.trim()
+                                                        : 'Disponible para asignar a este usuario'}
+                                                </div>
+                                            </div>
+                                        </label>
+                                    );
+                                })}
+                                {optionalPerUserLicenses.length === 0 && (
+                                    <div className="security-empty-note">
+                                        No hay licencias adicionales por usuario disponibles en este tenant.
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="security-section" style={{ marginBottom: '1.5rem' }}>
+                        <label className="security-section-title">
+                            Resumen de acceso
+                        </label>
+                        <div className="security-summary-box">
+                            {form.accountType === 'admin' && (
+                                <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
+                            )}
+                            {form.accountType === 'internal' && (
+                                <span>Este usuario podrá ingresar con los permisos que selecciones arriba. No necesita licencia de repartidor.</span>
+                            )}
+                            {form.accountType === 'driver' && (
+                                <span>Este usuario se registrará como repartidor y necesita al menos una licencia logística asignada.</span>
+                            )}
+                        </div>
+                    </div>
+
                     <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                         <button type="button" onClick={onClose} className="btn-security secondary">Cancelar</button>
                         <button type="submit" className="btn-security primary" disabled={loading}>
@@ -211,8 +440,11 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, users, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
-    const isAdmin = currentUser?.role === 'admin';
+    const { currentUser, accessProfile, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
+    const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
+    const availableLogisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
     const [activeTab, setActiveTab] = useState('pin');
     const [message, setMessage] = useState(null);
 
@@ -457,6 +689,33 @@ const Security = () => {
             {/* ── Users Tab ─────────────────────────────── */}
             {activeTab === 'usuarios' && (
                 <div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Licencia base
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: hasBaseLicense ? '#34d399' : '#f87171' }}>
+                                {hasBaseLicense ? 'Base / SuperUser activa' : 'No activa'}
+                            </div>
+                        </div>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Licencias por usuario disponibles
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: '#fff' }}>
+                                {availablePerUserLicenses.length}
+                            </div>
+                        </div>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Licencias de logística disponibles
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: availableLogisticsLicenses.length > 0 ? '#f59e0b' : '#9ca3af' }}>
+                                {availableLogisticsLicenses.length}
+                            </div>
+                        </div>
+                    </div>
+
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <p style={{ margin: 0, color: '#9ca3af', fontSize: '0.9rem' }}>
                             {users.length} usuario{users.length !== 1 ? 's' : ''} registrado{users.length !== 1 ? 's' : ''}
@@ -505,16 +764,28 @@ const Security = () => {
                                             {user.email}
                                         </div>
                                     )}
+                                    {(user.assignedLicenses || []).length > 0 && (
+                                        <div style={{ fontSize: '0.82rem', color: '#d1d5db', marginTop: '0.25rem' }}>
+                                            Licencias: {user.assignedLicenses.map((license) => (
+                                                hasLogisticsCapability(license)
+                                                    ? `${license.commercialName} (Logística)`
+                                                    : license.commercialName
+                                            )).join(', ')}
+                                        </div>
+                                    )}
                                     <div style={{ fontSize: '0.8rem', color: '#6b7280', display: 'flex', gap: '0.75rem', marginTop: '0.2rem' }}>
                                         <span style={{
                                             padding: '0.1rem 0.5rem', borderRadius: '999px', fontWeight: '600',
-                                            background: user.role === 'admin' ? 'rgba(245,158,11,0.15)' : 'rgba(59,130,246,0.15)',
-                                            color: user.role === 'admin' ? '#f59e0b' : '#60a5fa',
+                                            background: getUserTypeMeta(user).background,
+                                            color: getUserTypeMeta(user).accent,
                                         }}>
-                                            {user.role === 'admin' ? 'Admin' : 'Empleado'}
+                                            {getUserTypeMeta(user).label}
                                         </span>
                                         {user.role === 'employee' && (
                                             <span>{user._perms?.length || 0} permiso{user._perms?.length !== 1 ? 's' : ''}</span>
+                                        )}
+                                        {user.branch?.name && (
+                                            <span>Sucursal: {user.branch.name}</span>
                                         )}
                                         {user.active === 0 && <span style={{ color: '#ef4444' }}>Inactivo</span>}
                                     </div>
@@ -616,6 +887,7 @@ const Security = () => {
                     toast={toast}
                     saveRecord={saveRecord}
                     replacePermissions={replaceUserPermissions}
+                    licensePool={licensePool}
                 />
             )}
 
@@ -632,4 +904,3 @@ const Security = () => {
 };
 
 export default Security;
-

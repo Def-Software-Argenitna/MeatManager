@@ -79,6 +79,15 @@ const hasSuperUserLicense = (licenses, options = {}) => {
     ));
 };
 
+export const isEffectiveAdminUser = (currentUser, accessProfile) => Boolean(
+    currentUser?.role === 'admin'
+    || hasSuperUserLicense(accessProfile?.licenses, {
+        role: currentUser?.role,
+        currentUserId: currentUser?.id,
+        isOwnerFallback: accessProfile?.isOwnerFallback,
+    })
+);
+
 const restoreSession = () => {
     try {
         const u = sessionStorage.getItem('mm_user');
@@ -104,6 +113,7 @@ export const UserProvider = ({ children }) => {
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
+    const [licensePool, setLicensePool] = useState([]);
     const profileRecoveryRef = useRef('');
 
     const applyResolvedUser = useCallback((userData) => {
@@ -211,6 +221,8 @@ export const UserProvider = ({ children }) => {
         setCurrentUser(null);
         setUserPerms([]);
         setAccessProfile(null);
+        setUsers([]);
+        setLicensePool([]);
         sessionStorage.removeItem('mm_user');
         sessionStorage.removeItem('mm_perms');
         sessionStorage.removeItem('mm_access_profile');
@@ -315,6 +327,7 @@ export const UserProvider = ({ children }) => {
             _perms: user.perms || [],
         }));
         setUsers(nextUsers);
+        setLicensePool(Array.isArray(data?.licensePool) ? data.licensePool : []);
         return nextUsers;
     }, []);
 
@@ -364,6 +377,7 @@ export const UserProvider = ({ children }) => {
             userPerms,
             loadingUser,
             users,
+            licensePool,
             refreshUsers,
             saveTableRecord: saveUserRecord,
             replaceUserPermissions,
