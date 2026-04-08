@@ -3,7 +3,7 @@ import {
     ShieldCheck, Key, RefreshCw, CheckCircle2, AlertTriangle, Lock,
     Users, UserPlus, Pencil, Trash2, ToggleLeft, ToggleRight, X, Save
 } from 'lucide-react';
-import { ALL_ROUTES, useUser } from '../context/UserContext';
+import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './Security.css';
 
@@ -440,8 +440,8 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
-    const isAdmin = currentUser?.role === 'admin';
+    const { currentUser, accessProfile, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
     const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
     const availableLogisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));

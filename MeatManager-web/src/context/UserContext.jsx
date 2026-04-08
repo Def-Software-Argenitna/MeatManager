@@ -79,6 +79,15 @@ const hasSuperUserLicense = (licenses, options = {}) => {
     ));
 };
 
+export const isEffectiveAdminUser = (currentUser, accessProfile) => Boolean(
+    currentUser?.role === 'admin'
+    || hasSuperUserLicense(accessProfile?.licenses, {
+        role: currentUser?.role,
+        currentUserId: currentUser?.id,
+        isOwnerFallback: accessProfile?.isOwnerFallback,
+    })
+);
+
 const restoreSession = () => {
     try {
         const u = sessionStorage.getItem('mm_user');
