@@ -244,6 +244,7 @@ tr:hover td {
 }
 
 .modal-content {
+    padding: 2rem;
     animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
@@ -307,4 +308,12 @@ tr:hover td {
 @keyframes appUpdateSpin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+}
+
+
+/* Fix for select options visibility */
+select.neo-input option,
+select option {
+    background-color: #1f2937;
+    color: #f3f4f6;
 }

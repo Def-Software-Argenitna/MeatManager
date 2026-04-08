@@ -1,6 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
@@ -563,7 +564,13 @@ const Ventas = () => {
             const key = item.name + '-' + item.type; // Group by name & type
 
             if (!grouped[key]) {
-                const priceRecord = prices?.find(p => p.product_id === key) || {};
+                const normalizedName = String(item.name || '').trim().toLowerCase().replace(/\s+/g, '_');
+                const normalizedType = String(item.type || '').trim().toLowerCase().replace(/\s+/g, '_');
+                const normalizedKey = `${normalizedName}-${normalizedType}`;
+                const priceRecord = (prices?.filter(p => {
+                    const pid = String(p.product_id || '').trim().toLowerCase();
+                    return pid === normalizedKey || pid === normalizedName || pid.startsWith(`${normalizedName}-`);
+                }) || []).sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0))[0] || {};
 
                 grouped[key] = {
                     id: key,
@@ -1810,7 +1817,7 @@ const Ventas = () => {
                                     onClick={() => setSelectedPaymentMethod(m.id)}
                                     style={{ padding: '0.6rem', fontSize: '0.75rem', fontWeight: '800' }}
                                 >
-                                    {m.name.toUpperCase()}
+                                    {m.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '24px' }} /> : m.name.toUpperCase()}
                                 </button>
                             ))}
                         </div>
@@ -2096,8 +2103,14 @@ const Ventas = () => {
                                                 transition: 'all 0.2s'
                                             }}
                                         >
-                                            <PaymentMethodIcon method={m} size={38} compact />
-                                            <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>{m.name}</div>
+                                            {m.name.toLowerCase().includes('mercado pago') ? (
+    <img src={mpLogoText} alt="Mercado Pago" style={{ height: '38px', objectFit: 'contain' }} />
+) : (
+    <>
+        <PaymentMethodIcon method={m} size={38} compact />
+        <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>{m.name}</div>
+    </>
+)}
                                             {m.percentage !== 0 && (
                                                 <div style={{ fontSize: '0.7rem', color: m.percentage > 0 ? '#ef4444' : '#22c55e' }}>
                                                     {m.percentage > 0 ? '+' : ''}{m.percentage}%

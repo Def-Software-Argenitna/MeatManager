@@ -65,6 +65,7 @@
     min-height: 100%;
     transform-origin: center center;
     will-change: transform, opacity, filter;
+    padding: 1.5rem;
 }
 
 /* Scrollbar styling for the whole app */

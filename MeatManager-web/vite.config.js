@@ -9,9 +9,9 @@ export default defineConfig({
     port: 4173,
     proxy: {
       '/api': {
-        target: 'https://meatmanager.demo.def-software.com',
+        target: 'http://localhost:3001',
         changeOrigin: true,
-        secure: true
+        secure: false
       }
     }
   },

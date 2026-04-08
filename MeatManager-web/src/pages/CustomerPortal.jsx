@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { fetchTable, getRemoteSetting } from '../utils/apiClient';
 import './CustomerPortal.css';
+import mpLogoText from '../assets/mercado-pago-text.svg';
 
 const toNumber = (value) => {
     const numeric = Number(value);
@@ -194,7 +195,7 @@ const CustomerPortal = () => {
                                 <DollarSign size={18} /> Efectivo / Transf.
                             </button>
                             <button className={paymentMethod === 'digital' ? 'active' : ''} onClick={() => setPaymentMethod('digital')}>
-                                <CreditCard size={18} /> Mercado Pago
+                                <img src={mpLogoText} alt="Mercado Pago" style={{ height: '16px' }} />
                             </button>
                         </div>
                     </div>

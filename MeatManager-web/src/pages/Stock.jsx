@@ -579,13 +579,7 @@ const Stock = () => {
 
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div>
-                    <h1 className="page-title">
-                        <Package size={32} />
-                        Stock e Inventario
-                    </h1>
-                    <p className="page-description">Visualización completa del inventario disponible</p>
-                </div>
+                
                 <div style={{ display: 'flex', gap: '0.8rem' }}>
                     <button
                         className="neo-button"

@@ -25,9 +25,8 @@ const ConfiguracionPrecio = () => {
         <div className="config-precio-page animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <h1 className="page-title">Formato de Precio</h1>
-                <p className="page-description">Definí cómo interpreta y muestra los precios el sistema.</p>
-            </header>
+                
+                </header>
             </DirectionalReveal>
 
             <DirectionalReveal className="neo-card config-precio-card" from="down" delay={0.1}>

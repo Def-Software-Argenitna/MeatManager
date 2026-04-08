@@ -22,42 +22,6 @@ import './MenuDigital.css';
 
 const formatFullPrice = (value) => `$${Number(value || 0).toLocaleString('es-AR')} /kg`;
 
-const LiveInput = ({ value, updateFn, placeholder, Icon, type = "text", customStyle = {} }) => {
-    const [local, setLocal] = React.useState(value ?? '');
-    const [isFocused, setIsFocused] = React.useState(false);
-
-    React.useEffect(() => {
-        if (!isFocused && value !== local) {
-            setLocal(value ?? '');
-        }
-    }, [value, isFocused]);
-
-    const handleChange = (e) => {
-        const val = e.target.value;
-        setLocal(val);
-        updateFn(val);
-    };
-
-    return (
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', width: '100%', position: 'relative' }}>
-            {Icon && <Icon size={14} style={{ position: 'absolute', left: '0.6rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)' }} />}
-            <input
-                type={type}
-                className="neo-input"
-                style={{ ...customStyle, paddingLeft: Icon ? '1.8rem' : customStyle.paddingLeft || '1rem' }}
-                placeholder={placeholder}
-                value={local}
-                onChange={handleChange}
-                onFocus={() => setIsFocused(true)}
-                onBlur={() => {
-                    setIsFocused(false);
-                    if (local !== value) updateFn(local);
-                }}
-            />
-        </div>
-    );
-};
-
 const MenuDigital = () => {
     const navigate = useNavigate();
     const [isAdding, setIsAdding] = useState(false);
@@ -65,7 +29,6 @@ const MenuDigital = () => {
     const [copiedBot, setCopiedBot] = useState(false);
     const [copiedPortal, setCopiedPortal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
-    const [filterType, setFilterType] = useState('all');
 
     const { hasModule, supportNumber, installationId } = useLicense();
     const hasMenuDigital = hasModule('menu-digital');
@@ -137,7 +100,11 @@ const MenuDigital = () => {
     return (
         <div className="menu-digital-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
-            <header className="page-header" style={{ justifyContent: 'flex-end' }}>
+            <header className="page-header">
+                <div>
+                    
+                    <p className="page-description">Elegí qué cortes mostrar y gestioná tus precios de venta</p>
+                </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
                     {!hasMenuDigital && (
                         <button className="neo-button" onClick={copyLink}>
@@ -155,34 +122,37 @@ const MenuDigital = () => {
             <DirectionalReveal className="menu-settings-bar neo-card animate-fade-in" from="left" delay={0.1} style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
                 <div style={{ flex: 1 }}>
                     <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>Nombre del Local</label>
-                    <LiveInput
+                    <input
                         type="text"
+                        className="blank-input"
                         placeholder="Ej: Carnicería El Toro"
                         value={shopName}
-                        updateFn={(val) => updateSetting('shop_name', val)}
-                        customStyle={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none', padding: '0.2rem' }}
+                        onChange={(e) => updateSetting('shop_name', e.target.value)}
+                        style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
                     />
                 </div>
                 <div style={{ flex: 1.2, borderLeft: '1px solid var(--color-border)', paddingLeft: '1.5rem' }}>
                     <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>Dirección (Para el Ticket)</label>
-                    <LiveInput
+                    <input
                         type="text"
+                        className="blank-input"
                         placeholder="Ej: Av. Rivadavia 1234, CABA"
                         value={settingsArr?.find(s => s.key === 'shop_address')?.value || ''}
-                        updateFn={(val) => updateSetting('shop_address', val)}
-                        customStyle={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none', padding: '0.2rem' }}
+                        onChange={(e) => updateSetting('shop_address', e.target.value)}
+                        style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
                     />
                 </div>
                 <div style={{ flex: 1, borderLeft: '1px solid var(--color-border)', paddingLeft: '1.5rem' }}>
                     <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>WhatsApp (54911...)</label>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                         <MessageCircle size={18} color="#25D366" />
-                        <LiveInput
+                        <input
                             type="text"
+                            className="blank-input"
                             placeholder="5491100000000"
                             value={whatsappNumber}
-                            updateFn={(val) => updateSetting('whatsapp_number', val)}
-                            customStyle={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none', padding: '0.2rem' }}
+                            onChange={(e) => updateSetting('whatsapp_number', e.target.value)}
+                            style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
                         />
                     </div>
                 </div>
@@ -353,7 +323,11 @@ const MenuDigital = () => {
                                                 <td>
                                                     <div className="price-input-wrapper">
                                                         <DollarSign size={14} />
-                                                        <LiveInput type="number" value={item.price} updateFn={(val) => updatePrice(item.id, val)} customStyle={{ padding: '0.4rem', border: '1px solid var(--color-border)', borderRadius: '6px', width: '100px' }} />
+                                                        <input
+                                                            type="number"
+                                                            value={item.price}
+                                                            onChange={(e) => updatePrice(item.id, e.target.value)}
+                                                        />
                                                     </div>
                                                 </td>
                                                 <td>

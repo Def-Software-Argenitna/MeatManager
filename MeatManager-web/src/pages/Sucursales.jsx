@@ -14,12 +14,7 @@ const Sucursales = () => {
         <div className="sucursales-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header sucursales-readonly-header">
-                <div>
-                    <h1 className="page-title">Sucursal Asignada</h1>
-                    <p className="page-description">
-                        La gestión de sucursales se realiza en GdC. En MeatManager solo se muestra la sucursal asignada a este tenant.
-                    </p>
-                </div>
+                
             </header>
             </DirectionalReveal>
 

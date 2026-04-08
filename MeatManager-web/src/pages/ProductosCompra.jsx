@@ -73,13 +73,17 @@ const ProductosCompra = () => {
         if (!formData.name) return;
 
         const nameTrimmed = formData.name.trim();
-        if (!formData.sale_price || !formData.sale_plu) {
-            alert('⚠️ Completa el precio y el PLU para ventas.');
-            return;
+        const isDespostada = formData.type === 'despostada';
+
+        if (!isDespostada) {
+            if (!formData.sale_price || !formData.sale_plu) {
+                alert('⚠️ Completa el precio y el PLU para ventas.');
+                return;
+            }
         }
 
-        const salePrice = parseFloat(formData.sale_price);
-        if (Number.isNaN(salePrice) || salePrice <= 0) {
+        const salePrice = isDespostada ? 0 : parseFloat(formData.sale_price);
+        if (!isDespostada && (Number.isNaN(salePrice) || salePrice <= 0)) {
             alert('⚠️ El precio de venta debe ser un numero valido.');
             return;
         }
@@ -106,6 +110,7 @@ const ProductosCompra = () => {
             });
         }
 
+        if (!isDespostada) {
         const productId = `${nameTrimmed}-${formData.sale_category}`;
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
@@ -139,6 +144,7 @@ const ProductosCompra = () => {
                 updated_at: new Date().toISOString()
             });
         }
+        } // end if (!isDespostada)
 
         await loadData();
         setIsModalOpen(false);
@@ -214,10 +220,7 @@ const ProductosCompra = () => {
                 </div>
             )}
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">Catálogo de Compras</h1>
-                    <p className="page-description">Define los productos que compras a proveedores</p>
-                </div>
+                
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
                         <Plus size={20} />
@@ -391,51 +394,51 @@ const ProductosCompra = () => {
                                 </div>
                             )}
 
-                            <div style={{ marginBottom: '1.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)' }}>
-                                <div style={{ fontWeight: '600', marginBottom: '0.75rem' }}>Datos para Ventas</div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
-                                    <div>
-                                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Categoria de Venta</label>
-                                        <select
-                                            className="neo-input"
-                                            value={formData.sale_category}
-                                            onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
-                                        >
-                                            <option value="vaca">Vaca</option>
-                                            <option value="cerdo">Cerdo</option>
-                                            <option value="pollo">Pollo</option>
-                                            <option value="pescado">Pescado</option>
-                                            <option value="pre-elaborados">Pre-elaborados</option>
-                                        </select>
+                            {formData.type !== 'despostada' && (
+                                <div style={{ marginBottom: '1.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)' }}>
+                                    <div style={{ fontWeight: '600', marginBottom: '0.75rem' }}>Datos para Ventas</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                        <div>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem' }}>Categoria de Venta</label>
+                                            <select
+                                                className="neo-input"
+                                                value={formData.sale_category}
+                                                onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
+                                            >
+                                                <option value="vaca">Vaca</option>
+                                                <option value="cerdo">Cerdo</option>
+                                                <option value="pollo">Pollo</option>
+                                                <option value="pescado">Pescado</option>
+                                                <option value="pre-elaborados">Pre-elaborados</option>
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', marginBottom: '0.5rem' }}>PLU</label>
+                                            <input
+                                                type="text"
+                                                className="neo-input"
+                                                placeholder="Ej: 111"
+                                                value={formData.sale_plu}
+                                                onChange={e => setFormData({ ...formData, sale_plu: e.target.value })}
+                                            />
+                                        </div>
                                     </div>
                                     <div>
-                                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>PLU</label>
+                                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Precio de Venta</label>
                                         <input
-                                            type="text"
+                                            type="number"
+                                            step="0.01"
                                             className="neo-input"
-                                            placeholder="Ej: 111"
-                                            required
-                                            value={formData.sale_plu}
-                                            onChange={e => setFormData({ ...formData, sale_plu: e.target.value })}
+                                            placeholder="0"
+                                            value={formData.sale_price}
+                                            onChange={e => setFormData({ ...formData, sale_price: e.target.value })}
                                         />
                                     </div>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
+                                        Se crea el producto base en Stock con 0 cantidad y el precio/PLU para Ventas.
+                                    </div>
                                 </div>
-                                <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Precio de Venta</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        className="neo-input"
-                                        placeholder="0"
-                                        required
-                                        value={formData.sale_price}
-                                        onChange={e => setFormData({ ...formData, sale_price: e.target.value })}
-                                    />
-                                </div>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
-                                    Se crea el producto base en Stock con 0 cantidad y el precio/PLU para Ventas.
-                                </div>
-                            </div>
+                            )}
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.5rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancel</button>

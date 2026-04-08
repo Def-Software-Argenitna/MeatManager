@@ -79,10 +79,7 @@ const HistorialVentas = () => {
                         <ArrowLeft size={16} />
                         Volver
                     </button>
-                    <div>
-                        <h1 className="page-title" style={{ marginBottom: '0.25rem' }}>Historial de Ventas</h1>
-                        <p className="page-description" style={{ margin: 0 }}>Listado completo de ventas registradas</p>
-                    </div>
+                    
                 </div>
             </header>
 

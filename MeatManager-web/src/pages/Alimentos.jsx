@@ -87,13 +87,7 @@ const Alimentos = () => {
         <div className="alimentos-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">
-                        <Package size={32} />
-                        Alimentos Pre-elaborados
-                    </h1>
-                    <p className="page-description">Carga de productos preparados (milanesas, hamburguesas, etc.)</p>
-                </div>
+                
             </header>
             </DirectionalReveal>
 

@@ -1925,6 +1925,16 @@ function getSchemaTables() {
             INDEX idx_compras_items_tenant_purchase (\`${TENANT_COLUMN}\`, purchase_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, purchase_id) REFERENCES compras(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
+        `CREATE TABLE IF NOT EXISTS supplier_item_tax_profiles (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            supplier_name   VARCHAR(150) NOT NULL,
+            product_name    VARCHAR(150) NOT NULL,
+            last_iva_rate   DECIMAL(5,2) DEFAULT 10.5,
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_sitp_tenant_supplier_product (\`${TENANT_COLUMN}\`, supplier_name(100), product_name(100)),
+            INDEX idx_sitp_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS animal_lots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -3080,36 +3090,37 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         assertClientAccess(accessContext);
 
         const conn = await clientsControlPool.getConnection();
-        let rows;
+        let users;
         try {
-            [rows] = await conn.query(
+            const [rows] = await conn.query(
                 `SELECT id, clientId, branchId, firebaseUid, name, lastname, email, role, status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  WHERE clientId = ?
                  ORDER BY id ASC`,
                 [accessContext.client.id]
             );
+
+            users = [];
+            for (const row of rows) {
+                const perms = await getUserPermissions(conn, row.id);
+                const baseUser = buildAccessResponse({
+                    user: {
+                        ...row,
+                        userStatus: row.status,
+                        perms,
+                    },
+                    client: accessContext.client,
+                    effectiveLicenses: accessContext.effectiveLicenses,
+                });
+                users.push({
+                    ...baseUser,
+                    perms,
+                });
+            }
         } finally {
             conn.release();
         }
 
-        const users = [];
-        for (const row of rows) {
-            const perms = await getUserPermissions(conn, row.id);
-            const baseUser = buildAccessResponse({
-                user: {
-                    ...row,
-                    userStatus: row.status,
-                    perms,
-                },
-                client: accessContext.client,
-                effectiveLicenses: accessContext.effectiveLicenses,
-            });
-            users.push({
-                ...baseUser,
-                perms,
-            });
-        }
         return res.json({ ok: true, users });
     } catch (err) {
         console.error('[FIREBASE USERS READ ERROR]', err.message);

@@ -43,10 +43,7 @@ const OtrosItems = () => {
         <div className="stock-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div>
-                    <h1 className="page-title">Otros Items e Insumos</h1>
-                    <p className="page-description">Carbón, leña, especias y descartables</p>
-                </div>
+                
             </header>
             </DirectionalReveal>
 

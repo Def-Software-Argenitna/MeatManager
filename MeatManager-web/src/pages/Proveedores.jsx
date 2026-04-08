@@ -110,10 +110,7 @@ const Proveedores = () => {
     return (
         <div className="animate-fade-in">
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">Proveedores</h1>
-                    <p className="page-description">Gestión fiscal y logística de abastecimiento</p>
-                </div>
+                
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
                         <Plus size={20} />
@@ -205,12 +202,12 @@ const Proveedores = () => {
 
             {isModalOpen && createPortal(
                 <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%' }}>
+                    <div className="modal-content neo-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', padding: '2rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                             <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
                                 {editingId ? 'Editar Proveedor' : 'Nuevo Proveedor'}
                             </h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={24} /></button>
+                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
                         </div>
 
                         <form onSubmit={handleSave}>

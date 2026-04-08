@@ -90,14 +90,8 @@ const ConfiguracionPagos = () => {
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header config-pagos-header">
                 <div className="config-pagos-header-main">
-                    <h1 className="page-title">
-                        <Settings size={32} />
-                        Configuración de Métodos de Pago
-                    </h1>
-                    <p className="page-description">
-                        Gestiona los recargos y descuentos para cada método de pago
-                    </p>
-                </div>
+                    
+                    </div>
                 <button
                     className="reset-btn"
                     onClick={handleResetPayments}

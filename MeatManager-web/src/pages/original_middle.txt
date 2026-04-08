@@ -1,0 +1,153 @@
+
+>                     <h1 className="page-title">Configuración Menú Digital</h1>
+                      <p className="page-description">Elegí qué cortes mostrar y gestioná tus precios de venta</p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '1rem' }}>
+                      {!hasMenuDigital && (
+                          <button className="neo-button" onClick={copyLink}>
+                              {copied ? <Check size={20} color="#22c55e" /> : <Share2 size={20} />}
+                              {copied ? 'Copiado!' : 'Copiar Lista (Manual)'}
+                          </button>
+                      )}
+                      <button className="neo-button pro-btn" onClick={() => setIsAdding(true)}>
+                          <Plus size={20} /> Agregar Producto
+                      </button>
+                  </div>
+              </header>
+              </DirectionalReveal>
+  
+              <DirectionalReveal className="menu-settings-bar neo-card animate-fade-in" from="left" delay={0.1} style={{ marginBottom: '1.5rem', padding: '1rem', display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
+                  <div style={{ flex: 1 }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>Nombre del Local</label>
+                      <input
+                          type="text"
+                          className="blank-input"
+                          placeholder="Ej: Carnicería El Toro"
+                          value={shopName}
+                          onChange={(e) => updateSetting('shop_name', e.target.value)}
+                          style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
+                      />
+                  </div>
+                  <div style={{ flex: 1.2, borderLeft: '1px solid var(--color-border)', paddingLeft: '1.5rem' }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>Dirección (Para el Ticket)</label>
+                      <input
+                          type="text"
+                          className="blank-input"
+                          placeholder="Ej: Av. Rivadavia 1234, CABA"
+                          value={settingsArr?.find(s => s.key === 'shop_address')?.value || ''}
+                          onChange={(e) => updateSetting('shop_address', e.target.value)}
+                          style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
+                      />
+                  </div>
+                  <div style={{ flex: 1, borderLeft: '1px solid var(--color-border)', paddingLeft: '1.5rem' }}>
+                      <label style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', display: 'block', marginBottom: '0.2rem' }}>WhatsApp (54911...)</label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <MessageCircle size={18} color="#25D366" />
+                          <input
+                              type="text"
+                              className="blank-input"
+                              placeholder="5491100000000"
+                              value={whatsappNumber}
+                              onChange={(e) => updateSetting('whatsapp_number', e.target.value)}
+                              style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
+                          />
+                      </div>
+                  </div>
+              </DirectionalReveal>
+  
+              {hasMenuDigital ? (
+                  <div className="bot-config-area animate-fade-in">
+                      <DirectionalReveal className="neo-card bot-card bot-card-whatsapp" from="left" delay={0.16}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                              <MessageCircle size={20} color="#25D366" />
+                              <h3 style={{ margin: 0 }}>Mensaje del "Bot" (Auto-respuesta) <span className="pro-badge-small">PRO</span></h3>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                              Copiá este mensaje y pegalo en tu aplicación de "Respuesta Automática" de WhatsApp:
+                          </p>
+                          <div className="code-box">
+                              {`¡Hola! 👋 Bienvenido a *${shopName}*.\n\n¿En qué podemos ayudarte?\n\n1️⃣ *Realizar un Pedido Online* (Ver precios y stock)\n2️⃣ *Hacer una consulta* (Hablar con un humano)\n\n_Respondé con el número de tu opción._`}
+                              <button
+                                  className={`menu-copy-btn ${copiedBot ? 'copied' : ''}`}
+                                  onClick={() => {
+                                      navigator.clipboard.writeText(`¡Hola! 👋 Bienvenido a *${shopName}*.\n\n¿En qué podemos ayudarte?\n\n1️⃣ *Realizar un Pedido Online* (Ver precios y stock)\n2️⃣ *Hacer una consulta* (Hablar con un humano)\n\n_Respondé con el número de tu opción._`);
+                                      setCopiedBot(true);
+                                      setTimeout(() => setCopiedBot(false), 2000);
+                                  }}
+                              >
+                                  {copiedBot ? <Check size={16} /> : <Copy size={16} />}
+                              </button>
+                          </div>
+                      </DirectionalReveal>
+  
+                      <DirectionalReveal className="neo-card bot-card bot-card-portal" from="right" delay={0.22}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
+                              <LayoutGrid size={20} color="var(--color-primary)" />
+                              <h3 style={{ margin: 0 }}>Link de tu Portal de Clientes <span className="pro-badge-small">PRO</span></h3>
+                          </div>
+                          <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                              El "Bot" enviará este link cuando el cliente elija la **Opción 1**:
+                          </p>
+                          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
+                              <input
+                                  type="text"
+                                  readOnly
+                                  className="neo-input"
+                                  value={`${window.location.origin}/#/catalogo`}
+                                  style={{ flex: 1 }}
+                              />
+                              <button
+                                  className="neo-button"
+                                  style={{ minWidth: '120px', justifyContent: 'center', color: copiedPortal ? '#22c55e' : 'inherit' }}
+                                  onClick={() => {
+                                      navigator.clipboard.writeText(`${window.location.origin}/#/catalogo`);
+                                      setCopiedPortal(true);
+                                      setTimeout(() => setCopiedPortal(false), 2000);
+                                  }}
+                              >
+                                  {copiedPortal ? <Check size={20} /> : <Copy size={20} />}
+                                  {copiedPortal ? 'Copiado!' : 'Copiar'}
+                              </button>
+                          </div>
+  
+                          <div style={{ background: 'var(--color-bg-secondary)', padding: '1rem', borderRadius: '12px', border: '1px dashed var(--color-border)' }}>
+                              <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 0.75rem 0' }}>
+                                  💡 <strong>Importante:</strong> Para que tus clientes vean el portal desde sus celulares, necesitás "subirlo" a internet.
+                              </p>
+                              <button
+                                  className="neo-button full-width"
+                                  style={{ gap: '0.5rem', background: '#1e293b', color: 'white' }}
+                                  onClick={() => {
+                                      const msg = `Hola! Soy de *${shopName}* y tengo el módulo Menú Digital activo en MeatManager. Me gustaría pedir un turno para configurar mi Portal de Clientes en Vercel. Mi ID de Instalación es: ${installationId || 'N/A'}`;
+                                      window.open(`https://wa.me/${supportNumber}?text=${encodeURIComponent(msg)}`, '_blank');
+                                  }}
+                              >
+                                  <Headset size={18} /> Solicitar Configuración Online
+                              </button>
+                          </div>
+                      </DirectionalReveal>
+                  </div>
+              ) : (
+                  <DirectionalReveal className="neo-card pro-locked-banner" from="down" delay={0.16} style={{ marginBottom: '1.5rem', padding: '1.5rem', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                          <div style={{ background: 'gold', padding: '0.75rem', borderRadius: '50%' }}>
+                              <Crown color="#000" size={24} />
+                          </div>
+                          <div>
+                              <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Pasate a PRO para automatizar tus ventas</h3>
+                              <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>Bot de auto-respuesta, Portal con carrito de compras y más.</p>
+                          </div>
+                      </div>
+                      <button
+                          className="neo-button"
+                          style={{ background: 'gold', color: 'black', fontWeight: 'bold' }}
+                          onClick={() => navigate('/config/licencia')}
+                      >
+                          Conocer Planes PRO
+                      </button>
+                  </DirectionalReveal>
+              )}
+  
+              <div className="pro-grid-layout">
+                  {/* PREVIEW PANEL */}
+

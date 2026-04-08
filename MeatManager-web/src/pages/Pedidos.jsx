@@ -419,10 +419,7 @@ const Pedidos = () => {
         <div className="pedidos-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div>
-                    <h1 className="page-title">Pedidos y Reservas</h1>
-                    <p className="page-description">Gestioná pedidos manuales y de WhatsApp con stock real y dirección asistida</p>
-                </div>
+                
                 <div style={{ display: 'flex', gap: '1rem' }}>
                     <button className="neo-button" style={{ background: '#25D366', color: 'white', border: 'none' }} onClick={importFromClipboard}>
                         <ClipboardPaste size={20} /> Importar de WhatsApp

@@ -170,9 +170,8 @@ const Dashboard = () => {
     return (
         <div className="dashboard-page animate-fade-in">
             <header className="page-header">
-                <h1 className="page-title">Dashboard</h1>
-                <p className="page-description">Resumen en tiempo real de tu carnicería</p>
-            </header>
+                
+                </header>
 
             <div className="dashboard-stats-grid">
                 <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" delay={0.02} from="left" />

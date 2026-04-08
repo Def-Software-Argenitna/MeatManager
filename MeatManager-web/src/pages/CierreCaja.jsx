@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import mpLogoText from '../assets/mercado-pago-text.svg';
 import {
     Save,
     Calendar as CalendarIcon,
@@ -371,7 +372,7 @@ const CierreCaja = () => {
                                     <div className="method-info">
                                         <span className="method-icon"><PaymentMethodIcon method={item} size={38} compact /></span>
                                         <div className="method-balance-text">
-                                            <span className="method-name">{item.name}</span>
+                                            <span className="method-name">{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '18px', verticalAlign: 'middle' }} /> : item.name}</span>
                                             <div className="method-breakdown">
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
                                                 <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
@@ -429,7 +430,7 @@ const CierreCaja = () => {
                             <div className="opening-preview">
                                 {methodCards.map((item) => (
                                     <div key={item.name} className="opening-chip">
-                                        <span>{item.name}</span>
+                                        <span>{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '14px', verticalAlign: 'middle' }} /> : item.name}</span>
                                         <strong>${item.opening.toLocaleString('es-AR')}</strong>
                                     </div>
                                 ))}
@@ -441,7 +442,7 @@ const CierreCaja = () => {
                                 <div className="form-grid">
                                     {activePaymentMethods.map((method) => (
                                         <div className="form-group" key={method.name}>
-                                            <label>{method.name}</label>
+                                            <label>{method.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '14px', verticalAlign: 'middle' }} /> : method.name}</label>
                                             <input
                                                 type="number"
                                                 min="0"
