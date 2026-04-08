@@ -20,16 +20,17 @@ export default defineConfig({
     VitePWA({
       injectRegister: null,
       registerType: 'autoUpdate',
-      includeAssets: ['apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['def-software-favicon.png', 'def-software-apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'Carnicería Antigravity',
-        short_name: 'Carnicería',
-        description: 'Sistema de Gestión Integral para Carnicerías',
+        name: 'MeatManager',
+        short_name: 'MeatManager',
+        description: 'Sistema integral de gestión comercial, sucursales y logística',
         theme_color: '#0a0a0a',
         background_color: '#0a0a0a',
         display: 'standalone',
         orientation: 'landscape',
         start_url: '/',
+        lang: 'es-AR',
         icons: [
           {
             src: 'pwa-192x192.png',
@@ -40,6 +41,12 @@ export default defineConfig({
             src: 'pwa-512x512.png',
             sizes: '512x512',
             type: 'image/png'
+          },
+          {
+            src: 'masked-icon.svg',
+            sizes: 'any',
+            type: 'image/svg+xml',
+            purpose: 'maskable'
           }
         ]
       },
