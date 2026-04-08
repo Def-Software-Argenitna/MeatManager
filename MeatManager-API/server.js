@@ -994,6 +994,12 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
             await ensureColumnType(conn, 'prices', 'product_id', '`product_id` VARCHAR(191) NULL', ['varchar']);
 
+            // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
+            await conn.query(
+                `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
+                 WHERE product_id REGEXP '[A-Z ]'`
+            );
+
             await conn.query(
                 `UPDATE ventas
                  SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
