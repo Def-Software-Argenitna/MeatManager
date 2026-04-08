@@ -584,8 +584,8 @@ const getOrderCoordinates = (pedido) => {
                     {isMapLoaded ? (
                         <GoogleMap
                             mapContainerStyle={{ height: '100%', width: '100%', borderRadius: '12px' }}
-                            defaultCenter={{ lat: mapCenter[0], lng: mapCenter[1] }}
-                            defaultZoom={mapZoom}
+                            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
+                            zoom={mapZoom}
                             options={GMAPS_OPTIONS}
                             onLoad={(map) => { mapRef.current = map; }}
                         >
@@ -951,8 +951,8 @@ const getOrderCoordinates = (pedido) => {
                     {isMapLoaded ? (
                         <GoogleMap
                             mapContainerStyle={{ height: '100%', width: '100%' }}
-                            defaultCenter={{ lat: mapCenter[0], lng: mapCenter[1] }}
-                            defaultZoom={mapZoom}
+                            center={{ lat: mapCenter[0], lng: mapCenter[1] }}
+                            zoom={mapZoom}
                             options={GMAPS_OPTIONS}
                             onLoad={(map) => { expandedMapRef.current = map; }}
                         >
