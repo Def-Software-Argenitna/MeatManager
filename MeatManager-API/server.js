@@ -481,6 +481,7 @@ function isBaseWebappLicense(license) {
         Number(license?.isMandatory) === 1
         || normalizeLicenseToken(license?.internalCode) === 'base_mm'
         || normalizeLicenseToken(license?.category) === 'base_webapp'
+        || isSuperLicenseMatch(license)
     );
 }
 

@@ -20,7 +20,15 @@ const hasLogisticsCapability = (license) => Boolean(
 const isBaseLicense = (license) => {
     const internalCode = String(license?.internalCode || license?.license?.internalCode || '').trim().toLowerCase();
     const category = String(license?.category || license?.license?.category || '').trim().toLowerCase();
-    return internalCode === 'base_mm' || category === 'base_webapp';
+    const commercialName = String(license?.commercialName || license?.license?.commercialName || '').trim().toLowerCase();
+    return (
+        internalCode === 'base_mm'
+        || category === 'base_webapp'
+        || internalCode === 'superuser'
+        || internalCode === 'su'
+        || category.includes('superuser')
+        || commercialName.includes('superuser')
+    );
 };
 
 /* ── User modal ─────────────────────────── */
@@ -577,7 +585,7 @@ const Security = () => {
                                 Licencia base
                             </div>
                             <div style={{ marginTop: '0.45rem', fontWeight: '700', color: hasBaseLicense ? '#34d399' : '#f87171' }}>
-                                {hasBaseLicense ? 'Activa para el tenant' : 'No activa'}
+                                {hasBaseLicense ? 'Base / SuperUser activa' : 'No activa'}
                             </div>
                         </div>
                         <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
