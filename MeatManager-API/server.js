@@ -3414,8 +3414,27 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
 
             const licensePool = await getClientLicensePool(conn, accessContext.client.id);
             const users = [];
-            for (const row of rows) {
-                const perms = await getUserPermissions(conn, row.id);
+            const userRows = [...rows];
+
+            const currentUserId = String(accessContext.user?.id || '');
+            const currentUserAlreadyListed = userRows.some((row) => String(row.id || '') === currentUserId);
+            if (accessContext.user && !currentUserAlreadyListed) {
+                userRows.unshift({
+                    id: accessContext.user.id,
+                    clientId: accessContext.user.clientId,
+                    branchId: accessContext.user.branchId ?? null,
+                    firebaseUid: accessContext.user.firebaseUid || null,
+                    name: accessContext.user.name || accessContext.client.businessName || accessContext.user.email || 'Administrador',
+                    lastname: accessContext.user.lastname || '',
+                    email: accessContext.user.email || '',
+                    role: accessContext.user.role || 'admin',
+                    status: accessContext.user.userStatus || 'ACTIVE',
+                    isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
+                });
+            }
+
+            for (const row of userRows) {
+                const perms = row.isOwnerFallback ? [] : await getUserPermissions(conn, row.id);
                 const scopedLicenses = buildScopedLicensesForUser({
                     ...row,
                     userStatus: row.status,
