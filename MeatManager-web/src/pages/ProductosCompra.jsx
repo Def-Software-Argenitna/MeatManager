@@ -111,7 +111,9 @@ const ProductosCompra = () => {
         }
 
         if (!isDespostada) {
-        const productId = `${nameTrimmed}-${formData.sale_category}`;
+        const normalizedName = String(nameTrimmed || '').trim().toLowerCase().replace(/\s+/g, '_');
+        const normalizedCategory = String(formData.sale_category || '').trim().toLowerCase().replace(/\s+/g, '_');
+        const productId = `${normalizedName}-${normalizedCategory}`;
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
             String(item.name || '').trim().toLowerCase() === nameTrimmed.toLowerCase() &&

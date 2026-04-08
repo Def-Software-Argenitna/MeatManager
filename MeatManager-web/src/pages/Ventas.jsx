@@ -635,12 +635,17 @@ const Ventas = () => {
             return;
         }
         const plu = pluVal;
-        const existing = prices.find((item) => String(item.product_id || '') === String(productId));
+        // Normalize productId to match Stock's format (lowercase, spaces to underscores)
+        const normalizedProductId = String(productId || '').trim().toLowerCase().replace(/\s+/g, '_');
+        const existing = prices.find((item) => {
+            const pid = String(item.product_id || '').trim().toLowerCase().replace(/\s+/g, '_');
+            return pid === normalizedProductId;
+        });
 
         if (existing) {
             await saveTableRecord('prices', 'update', { price, plu, updated_at: new Date().toISOString() }, existing.id);
         } else {
-            await saveTableRecord('prices', 'insert', { product_id: productId, price, plu, updated_at: new Date().toISOString() });
+            await saveTableRecord('prices', 'insert', { product_id: normalizedProductId, price, plu, updated_at: new Date().toISOString() });
         }
         await refreshVentasData();
         setEditingPriceId(null);
