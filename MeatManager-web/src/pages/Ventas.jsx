@@ -176,6 +176,7 @@ const Ventas = () => {
         const [
             stockRows,
             productRows,
+            pricesRows,
             clientRows,
             paymentRows,
             salesRows,
@@ -184,6 +185,7 @@ const Ventas = () => {
         ] = await Promise.all([
             fetchTable('stock'),
             fetchProductsSafe(),
+            fetchTable('prices'),
             fetchTable('clients'),
             fetchTable('payment_methods'),
             fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
@@ -194,12 +196,12 @@ const Ventas = () => {
         await syncLegacyProductsToCatalog({
             products: productRows,
             stockRows,
-            prices: [],
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
         });
         const syncedProducts = await fetchProductsSafe();
         await reconcileLegacyProductConflicts({
             products: syncedProducts,
-            prices: [],
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
         });
         const refreshedProducts = await fetchProductsSafe();
 
