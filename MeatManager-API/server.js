@@ -1604,6 +1604,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
             await ensureColumn(conn, 'compras', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `total`');
@@ -2967,6 +2968,7 @@ function getSchemaTables() {
             product_id      INT,
             name            VARCHAR(150) NOT NULL,
             type            VARCHAR(50),
+            \`usage\`         VARCHAR(50),
             quantity        DECIMAL(12,3) DEFAULT 0,
             unit            VARCHAR(20),
             price           DECIMAL(12,2) DEFAULT 0,
@@ -4417,13 +4419,12 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
         if (table === 'payment_methods' && rows.length === 0) {
             const PAYMENT_DEFAULTS = [
-                { name: 'Posnet',           type: 'card',             percentage: 0, enabled: 1 },
+                { name: 'Postnet',          type: 'card',             percentage: 0, enabled: 1 },
                 { name: 'Mercado Pago',     type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Cuenta DNI',       type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Efectivo',         type: 'cash',             percentage: 0, enabled: 1 },
-                { name: 'Transferencia',    type: 'transfer',         percentage: 0, enabled: 1 },
                 { name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0, enabled: 1 },
-                { name: 'Mixto',            type: 'mixto',            percentage: 0, enabled: 1 },
+                { name: 'Mixto',            type: 'mixed',            percentage: 0, enabled: 1 },
             ];
             for (const pm of PAYMENT_DEFAULTS) {
                 await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
@@ -4787,13 +4788,14 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, product_id, name, type, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, product_id, name, type, usage, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     productId,
                     String(item.product_name || '').trim(),
                     String(item.category || '').trim() || null,
+                    'venta',
                     -(parseFloat(item.quantity) || 0),
                     String(item.unit || 'kg').trim(),
                     `venta_${saleId}`,
@@ -4871,12 +4873,13 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                 if (prod) productId = prod.id;
             }
             await conn.query(
-                `INSERT INTO stock (tenant_id, product_id, name, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO stock (tenant_id, product_id, name, usage, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     productId,
                     String(item.product_name || '').trim(),
+                    'venta',
                     parseFloat(item.quantity) || 0,
                     String(item.unit || 'kg').trim(),
                     `anulacion_venta_${saleId}`,
@@ -5087,7 +5090,16 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         let rows;
         try {
             [rows] = await conn.query(
-                `SELECT id, clientId, branchId, firebaseUid, name, lastname, email, role, status
+                `SELECT
+                    cu.id AS id,
+                    cu.clientId AS clientId,
+                    cu.branchId AS branchId,
+                    cu.firebaseUid AS firebaseUid,
+                    cu.name AS name,
+                    cu.lastname AS lastname,
+                    cu.email AS email,
+                    cu.role AS role,
+                    cu.status AS status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  cu
                  LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b

@@ -241,7 +241,7 @@ const Sidebar = ({ isCollapsed }) => {
   };
 
   const renderGroup = (groupKey, title, GroupIcon, items, extraContent = null) => {
-    const visibleItems = items.filter((item) => hasAccess(item.path));
+    const visibleItems = items.filter((item) => hasAccess(item.path) || Boolean(item.module));
     const hasVisibleContent = visibleItems.length > 0 || extraContent;
 
     if (!hasVisibleContent) return null;

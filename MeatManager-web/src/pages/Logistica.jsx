@@ -21,6 +21,7 @@ import {
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import GoogleLogisticsMap from '../components/GoogleLogisticsMap';
+import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import './Logistica.css';
@@ -453,6 +454,7 @@ const getOrderCoordinates = (pedido) => {
     };
 
     return (
+        <ModuleLicenseGate locked={!hasLogisticsModule} moduleName="Logística">
         <div className="logistica-container animate-fade-in">
             <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
                 <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
@@ -817,6 +819,7 @@ const getOrderCoordinates = (pedido) => {
                 document.body
             )}
         </div>
+        </ModuleLicenseGate>
     );
 };
 

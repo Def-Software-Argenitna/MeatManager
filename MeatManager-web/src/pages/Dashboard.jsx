@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
-import { fetchTable } from '../utils/apiClient';
+import { fetchClientBranches, fetchTable } from '../utils/apiClient';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
 
@@ -64,6 +64,7 @@ const Dashboard = () => {
     const [clients, setClients] = useState([]);
     const [proLogs, setProLogs] = useState([]);
     const [branchSnapshots, setBranchSnapshots] = useState([]);
+    const [tenantBranches, setTenantBranches] = useState([]);
 
     useEffect(() => {
         const start = new Date();
@@ -79,7 +80,7 @@ const Dashboard = () => {
 
         const loadDashboard = async () => {
             try {
-                const [ventasRows, ventasItemsRows, comprasRows, stockRows, clientRows, logRows, snapshotRows] = await Promise.all([
+                const [ventasRows, ventasItemsRows, comprasRows, stockRows, clientRows, logRows, snapshotRows, branchPayload] = await Promise.all([
                     fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                     fetchTable('ventas_items', { limit: 10000, orderBy: 'id', direction: 'DESC' }),
                     fetchTable('compras', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
@@ -87,6 +88,7 @@ const Dashboard = () => {
                     fetchTable('clients', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
                     fetchTable('despostada_logs', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                     fetchTable('branch_stock_snapshots', { limit: 5000, orderBy: 'snapshot_at', direction: 'DESC' }),
+                    fetchClientBranches(),
                 ]);
 
                 if (cancelled) return;
@@ -122,6 +124,7 @@ const Dashboard = () => {
                 setClients(Array.isArray(clientRows) ? clientRows : []);
                 setProLogs(Array.isArray(logRows) ? logRows : []);
                 setBranchSnapshots(Array.isArray(snapshotRows) ? snapshotRows : []);
+                setTenantBranches(Array.isArray(branchPayload?.branches) ? branchPayload.branches : []);
             } catch (error) {
                 if (!cancelled) {
                     console.error('[DASHBOARD] No se pudieron cargar métricas desde la API', error);
@@ -132,6 +135,7 @@ const Dashboard = () => {
                     setClients([]);
                     setProLogs([]);
                     setBranchSnapshots([]);
+                    setTenantBranches([]);
                 }
             }
         };
@@ -157,6 +161,29 @@ const Dashboard = () => {
         : 0;
 
     const filteredBranchSnapshots = branchSnapshots.filter((snapshot) => selectedRemoteBranch === 'all' || snapshot.branch_code === selectedRemoteBranch);
+    const branchOptions = (() => {
+        const optionsByValue = new Map();
+
+        tenantBranches.forEach((branch) => {
+            const value = String(branch.internalCode || branch.id || '').trim();
+            if (!value) return;
+            optionsByValue.set(value, {
+                value,
+                label: branch.internalCode ? `${branch.internalCode} - ${branch.name}` : branch.name,
+            });
+        });
+
+        branchSnapshots.forEach((snapshot) => {
+            const value = String(snapshot.branch_code || '').trim();
+            if (!value || optionsByValue.has(value)) return;
+            optionsByValue.set(value, {
+                value,
+                label: snapshot.branch_name ? `${value} - ${snapshot.branch_name}` : value,
+            });
+        });
+
+        return Array.from(optionsByValue.values());
+    })();
     const remoteBranchCount = filteredBranchSnapshots.length;
     const remoteTotalKg = filteredBranchSnapshots.reduce((acc, snapshot) => acc + toNumber(snapshot.total_kg), 0);
     const remoteLowStock = filteredBranchSnapshots.reduce((acc, snapshot) => acc + toNumber(snapshot.low_stock_count), 0);
@@ -320,9 +347,9 @@ const Dashboard = () => {
                                 style={{ minWidth: '220px', background: 'var(--color-bg-main)', color: 'var(--color-text-main)', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.7rem 0.9rem' }}
                             >
                                 <option value="all">Todas las sucursales</option>
-                                {branchSnapshots.map((snapshot) => (
-                                    <option key={`${snapshot.branch_code}-${snapshot.id}`} value={snapshot.branch_code}>
-                                        {snapshot.branch_code} - {snapshot.branch_name}
+                                {branchOptions.map((branchOption) => (
+                                    <option key={branchOption.value} value={branchOption.value}>
+                                        {branchOption.label}
                                     </option>
                                 ))}
                             </select>
@@ -331,7 +358,11 @@ const Dashboard = () => {
                     </div>
 
                     {filteredBranchSnapshots.length === 0 ? (
-                        <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: '1.5rem 0' }}>Todavía no hay stock importado de otras sucursales.</p>
+                        <p style={{ color: 'var(--color-text-muted)', textAlign: 'center', padding: '1.5rem 0' }}>
+                            {branchOptions.length > 0
+                                ? 'Las sucursales del tenant ya están sincronizadas, pero todavía no hay stock importado desde ellas.'
+                                : 'Todavía no hay sucursales activas sincronizadas para este tenant.'}
+                        </p>
                     ) : (
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
                             {filteredBranchSnapshots.map((snapshot, index) => (

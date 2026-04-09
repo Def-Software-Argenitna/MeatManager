@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -56,6 +56,52 @@ const toNumber = (value) => {
 const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
 const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
 const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
+const PAYMENT_METHOD_ORDER = ['Efectivo', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
+const ALLOWED_PAYMENT_METHOD_NAMES = new Set(PAYMENT_METHOD_ORDER.map((name) => name.toLowerCase()));
+
+const canonicalizePaymentMethodName = (name) => {
+    const normalized = String(name || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized.includes('efectivo')) return 'Efectivo';
+    if (normalized.includes('cuenta corriente')) return 'Cuenta Corriente';
+    if (normalized.includes('mercado pago')) return 'Mercado Pago';
+    if (normalized.includes('cuenta dni')) return 'Cuenta DNI';
+    if (normalized.includes('posnet') || normalized.includes('postnet')) return 'Postnet';
+    if (normalized.includes('mixto') || normalized.includes('mixed')) return 'Mixto';
+    return String(name || '').trim();
+};
+
+const normalizePaymentMethodType = (rawType, canonicalName) => {
+    const normalizedType = String(rawType || '').trim().toLowerCase();
+    const normalizedName = String(canonicalName || '').trim().toLowerCase();
+    if (normalizedType === 'mixto' || normalizedType === 'mixed' || normalizedName === 'mixto') return 'mixed';
+    if (normalizedType === 'cuenta_corriente' || normalizedName === 'cuenta corriente') return 'cuenta_corriente';
+    if (normalizedType === 'cash' || normalizedName === 'efectivo') return 'cash';
+    if (normalizedType === 'card' || normalizedName === 'postnet') return 'card';
+    if (normalizedType === 'wallet' || normalizedName === 'mercado pago' || normalizedName === 'cuenta dni') return 'wallet';
+    return normalizedType || 'cash';
+};
+
+const normalizePaymentMethods = (rows = []) => {
+    const dedup = new Map();
+    rows
+        .filter((method) => method && method.enabled)
+        .forEach((method) => {
+            const canonicalName = canonicalizePaymentMethodName(method.name);
+            if (!ALLOWED_PAYMENT_METHOD_NAMES.has(canonicalName.toLowerCase())) return;
+            if (!dedup.has(canonicalName)) {
+                dedup.set(canonicalName, {
+                    ...method,
+                    name: canonicalName,
+                    type: normalizePaymentMethodType(method.type, canonicalName),
+                });
+            }
+        });
+
+    return [...dedup.values()].sort((left, right) => (
+        PAYMENT_METHOD_ORDER.indexOf(left.name) - PAYMENT_METHOD_ORDER.indexOf(right.name)
+    ));
+};
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
@@ -210,9 +256,8 @@ const Ventas = () => {
         setStockItems(Array.isArray(stockRows) ? stockRows : []);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
-        setDbPaymentMethods(
-            (Array.isArray(paymentRows) ? paymentRows : []).filter((m) => m.enabled)
-        );
+        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
 
         const recentRows = Array.isArray(salesRows) ? salesRows : [];
         setRecentSales(recentRows);
@@ -630,6 +675,11 @@ const Ventas = () => {
         const grouped = {};
 
         stockItems.forEach(item => {
+            const usage = String(item?.usage || 'venta').trim().toLowerCase();
+            if (usage === 'interno' || usage === 'consumo_interno' || usage === 'consumo interno') {
+                return;
+            }
+
             const productRecord = findProductByIdentity(productsCatalog, {
                 id: item.product_id,
                 name: item.name,
@@ -1272,6 +1322,17 @@ const Ventas = () => {
     const activeMethod = getMethodById(selectedPaymentMethod);
     const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
     const finalTotal = cartTotal + cartAdjustment;
+    const quickPaymentMethods = React.useMemo(() => {
+        const preferred = ['Efectivo', 'Mercado Pago'];
+        const selected = preferred
+            .map((name) => dbPaymentMethods?.find((method) => method.name === name))
+            .filter(Boolean);
+        if (selected.length >= 2) return selected.slice(0, 2);
+        const fallback = (dbPaymentMethods || [])
+            .filter((method) => method.type !== 'mixed')
+            .slice(0, 2);
+        return selected.length ? [...selected, ...fallback.filter((item) => !selected.some((s) => s.id === item.id))].slice(0, 2) : fallback;
+    }, [dbPaymentMethods]);
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -1623,18 +1684,13 @@ const Ventas = () => {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'flex-end' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
                     <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <User size={14} />
                     </div>
-                    <span style={{ color: 'var(--color-text-muted)' }}>Cajera:</span>
+                    <span style={{ color: 'var(--color-text-muted)' }}>Cajero:</span>
                     <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><Printer size={18} /></button>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><Settings size={18} /></button>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><X size={18} /></button>
                 </div>
             </div>
         </div>
@@ -1943,7 +1999,7 @@ const Ventas = () => {
                             </div>
                         )}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                            {dbPaymentMethods?.slice(0, 2).map(m => (
+                            {quickPaymentMethods.map(m => (
                                 <button 
                                     key={m.id} 
                                     className={`payment-method-btn ${selectedPaymentMethod === m.id ? 'active' : ''}`} 
@@ -1958,7 +2014,12 @@ const Ventas = () => {
 
                     <div className="action-buttons">
                         <button className="btn-secondary" onClick={() => setShowClientList(true)}>CLIENTES</button>
-                        <button className="btn-secondary">CONFIG</button>
+                        <button
+                            className="btn-secondary"
+                            onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
+                        >
+                            ELIMINAR TICKET
+                        </button>
                         <button className="btn-danger" onClick={() => { if(window.confirm('¿Anular ticket?')) setCart([]); }}>ANULAR</button>
                     </div>
 
@@ -1986,14 +2047,6 @@ const Ventas = () => {
                         </div>
                     )}
                     
-                    <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-                        <button
-                            onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
-                            style={{ background: 'none', border: 'none', color: 'rgba(239, 68, 68, 0.4)', fontSize: '0.6rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', textTransform: 'uppercase', margin: '0 auto' }}
-                        >
-                            <Trash2 size={12} /> ELIMINAR TICKET ({recentSales?.length || 0})
-                        </button>
-                    </div>
                 </div>
             </DirectionalReveal>
         </div>

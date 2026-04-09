@@ -104,7 +104,33 @@ function RequireAuth() {
   return <Outlet />;
 }
 
+function RequirePermission({ path, children }) {
+  const { currentUser, hasAccess, userPerms } = useUser();
+  const location = useLocation();
+
+  if (!currentUser) {
+    return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+
+  if (hasAccess(path)) {
+    return children;
+  }
+
+  const fallbackPath = Array.isArray(userPerms) && userPerms.length > 0 ? userPerms[0] : '/';
+  if (location.pathname !== fallbackPath) {
+    return <Navigate to={fallbackPath} replace />;
+  }
+
+  return <RouteLoader />;
+}
+
 function App() {
+  const protect = (path, element) => (
+    <RequirePermission path={path}>
+      {element}
+    </RequirePermission>
+  );
+
   return (
     <TenantProvider>
       <UserProvider>
@@ -114,38 +140,38 @@ function App() {
 
             <Route element={<RequireAuth />}>
               <Route path="/" element={<DashboardLayout />}>
-                <Route index element={lazyElement(Dashboard)} />
-                <Route path="ventas" element={lazyElement(Ventas)} />
-                <Route path="ventas/historial" element={lazyElement(HistorialVentas)} />
-                <Route path="caja" element={lazyElement(CierreCaja)} />
-                <Route path="cierre-caja" element={lazyElement(CierreCaja)} />
-                <Route path="compras" element={lazyElement(Compras)} />
-                <Route path="stock" element={lazyElement(Stock)} />
-                <Route path="clientes" element={lazyElement(Clientes)} />
-                <Route path="config/categorias" element={lazyElement(Categorias)} />
-                <Route path="config/productos-compra" element={lazyElement(ProductosCompra)} />
-                <Route path="config/proveedores" element={lazyElement(Proveedores)} />
-                <Route path="config/pagos" element={lazyElement(ConfiguracionPagos)} />
+                <Route index element={protect('/', lazyElement(Dashboard))} />
+                <Route path="ventas" element={protect('/ventas', lazyElement(Ventas))} />
+                <Route path="ventas/historial" element={protect('/ventas/historial', lazyElement(HistorialVentas))} />
+                <Route path="caja" element={protect('/caja', lazyElement(CierreCaja))} />
+                <Route path="cierre-caja" element={protect('/cierre-caja', lazyElement(CierreCaja))} />
+                <Route path="compras" element={protect('/compras', lazyElement(Compras))} />
+                <Route path="stock" element={protect('/stock', lazyElement(Stock))} />
+                <Route path="clientes" element={protect('/clientes', lazyElement(Clientes))} />
+                <Route path="config/categorias" element={protect('/config/categorias', lazyElement(Categorias))} />
+                <Route path="config/productos-compra" element={protect('/config/productos-compra', lazyElement(ProductosCompra))} />
+                <Route path="config/proveedores" element={protect('/config/proveedores', lazyElement(Proveedores))} />
+                <Route path="config/pagos" element={protect('/config/pagos', lazyElement(ConfiguracionPagos))} />
                 <Route path="config/licencia" element={<Navigate to="/config/seguridad" replace />} />
-                <Route path="config/mantenimiento" element={lazyElement(Maintenance)} />
-                <Route path="config/seguridad" element={lazyElement(Security)} />
-                <Route path="informes-pro" element={lazyElement(InformesPro)} />
-                <Route path="pedidos" element={lazyElement(Pedidos)} />
-                <Route path="logistica" element={lazyElement(Logistica)} />
-                <Route path="admin-pablo-control-master" element={lazyElement(AdminPanel)} />
-                <Route path="menu-digital" element={lazyElement(MenuDigital)} />
-                <Route path="sucursales" element={lazyElement(Sucursales)} />
+                <Route path="config/mantenimiento" element={protect('/config/seguridad', lazyElement(Maintenance))} />
+                <Route path="config/seguridad" element={protect('/config/seguridad', lazyElement(Security))} />
+                <Route path="informes-pro" element={protect('/informes-pro', lazyElement(InformesPro))} />
+                <Route path="pedidos" element={protect('/pedidos', lazyElement(Pedidos))} />
+                <Route path="logistica" element={protect('/logistica', lazyElement(Logistica))} />
+                <Route path="admin-pablo-control-master" element={protect('/config/seguridad', lazyElement(AdminPanel))} />
+                <Route path="menu-digital" element={protect('/menu-digital', lazyElement(MenuDigital))} />
+                <Route path="sucursales" element={protect('/sucursales', lazyElement(Sucursales))} />
                 <Route path="catalogo" element={lazyElement(CustomerPortal)} />
-                <Route path="manual" element={lazyElement(Manual)} />
-                <Route path="inicio" element={<Navigate to="/" replace />} />
-                <Route path="despostada/vaca" element={lazyElement(DespostadaVaca)} />
-                <Route path="despostada/cerdo" element={lazyElement(DespostadaCerdo)} />
-                <Route path="despostada/pollo" element={lazyElement(DespostadaPollo)} />
-                <Route path="despostada/pescado" element={lazyElement(DespostadaPescado)} />
-                <Route path="alimentos" element={lazyElement(Alimentos)} />
-                <Route path="otros" element={lazyElement(OtrosItems)} />
-                <Route path="config/precios" element={lazyElement(ConfiguracionPrecio)} />
-                <Route path="config/precio" element={lazyElement(ConfiguracionPrecio)} />
+                <Route path="manual" element={protect('/manual', lazyElement(Manual))} />
+                <Route path="inicio" element={protect('/', <Navigate to="/" replace />)} />
+                <Route path="despostada/vaca" element={protect('/despostada/vaca', lazyElement(DespostadaVaca))} />
+                <Route path="despostada/cerdo" element={protect('/despostada/cerdo', lazyElement(DespostadaCerdo))} />
+                <Route path="despostada/pollo" element={protect('/despostada/pollo', lazyElement(DespostadaPollo))} />
+                <Route path="despostada/pescado" element={protect('/despostada/pescado', lazyElement(DespostadaPescado))} />
+                <Route path="alimentos" element={protect('/alimentos', lazyElement(Alimentos))} />
+                <Route path="otros" element={protect('/otros', lazyElement(OtrosItems))} />
+                <Route path="config/precios" element={protect('/config/precio', lazyElement(ConfiguracionPrecio))} />
+                <Route path="config/precio" element={protect('/config/precio', lazyElement(ConfiguracionPrecio))} />
               </Route>
             </Route>
           </Routes>

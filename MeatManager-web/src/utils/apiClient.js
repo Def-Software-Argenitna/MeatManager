@@ -240,6 +240,15 @@ export const fetchInternalAdminClients = async (token, search = '') => {
     return res.json();
 };
 
+export const fetchClientBranches = async () => {
+    const res = await apiFetch('/api/client/branches');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudieron leer las sucursales del cliente');
+    }
+    return res.json();
+};
+
 export const fetchLogisticsDrivers = async () => {
     const res = await apiFetch('/api/logistics/drivers');
     if (!res.ok) {

@@ -1,10 +1,11 @@
 import React, { useMemo, useState } from 'react';
-import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Crown, Filter, Download } from 'lucide-react';
+import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Filter, Download } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { fetchTable } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
+import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import './InformesPro.css';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
@@ -25,17 +26,20 @@ const InformesPro = () => {
     const [logs, setLogs] = useState([]);
     const [animalLots, setAnimalLots] = useState([]);
     const [compras, setCompras] = useState([]);
+    const [prices, setPrices] = useState([]);
 
     React.useEffect(() => {
         const loadReportData = async () => {
-            const [logsRows, lotRows, comprasRows] = await Promise.all([
+            const [logsRows, lotRows, comprasRows, pricesRows] = await Promise.all([
                 fetchTable('despostada_logs', { orderBy: 'date', direction: 'desc' }),
                 fetchTable('animal_lots'),
                 fetchTable('compras'),
+                fetchTable('prices'),
             ]);
             setLogs(Array.isArray(logsRows) ? logsRows : []);
             setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
             setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+            setPrices(Array.isArray(pricesRows) ? pricesRows : []);
         };
 
         loadReportData().catch((error) => console.error('Error cargando informes PRO:', error));
@@ -548,20 +552,8 @@ const InformesPro = () => {
     const worstSupplier = ranking.length > 0 ? ranking[ranking.length - 1] : null;
     const avgCowYield = ranking.length > 0 ? (ranking.reduce((acc, r) => acc + parseFloat(r.avgYield), 0) / ranking.length).toFixed(1) : 0;
 
-    if (!hasInformesProModule) {
-        return (
-            <div className="pro-locked-container animate-fade-in">
-                <Crown size={64} color="gold" />
-                <h2>Módulo de Informes Avanzados</h2>
-                <p>El análisis de rendimiento y costos es exclusivo para usuarios **PRO**.</p>
-                <button className="neo-button pro-btn" onClick={() => window.location.hash = '#/config/licencia'}>
-                    Ver Planes de Activación
-                </button>
-            </div>
-        );
-    }
-
     return (
+        <ModuleLicenseGate locked={!hasInformesProModule} moduleName="Rendimiento PRO">
         <div className="informes-pro-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
@@ -1170,6 +1162,7 @@ const InformesPro = () => {
                 ))}
             </DirectionalReveal>
         </div>
+        </ModuleLicenseGate>
     );
 };
 

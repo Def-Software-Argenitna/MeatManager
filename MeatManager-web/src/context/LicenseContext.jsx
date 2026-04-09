@@ -50,6 +50,7 @@ const FEATURE_ALIASES = {
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
 const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
+const resolveModuleAlias = (value) => FEATURE_ALIASES[normalizeToken(value)] || FEATURE_ALIASES[normalizeLicenseKey(value)] || null;
 
 const isBaseLicense = (license) => {
     const code = normalizeToken(license?.internalCode);
@@ -121,6 +122,11 @@ const buildLicenseCapabilities = (licenses, options = {}) => {
 
         const code = normalizeToken(license?.internalCode);
         const category = normalizeToken(license?.category);
+        const directAliases = [
+            resolveModuleAlias(license?.internalCode),
+            resolveModuleAlias(license?.commercialName),
+            resolveModuleAlias(license?.category),
+        ].filter(Boolean);
 
         if (isSuperUserLicense(license)) {
             hasSuperUser = true;
@@ -132,6 +138,11 @@ const buildLicenseCapabilities = (licenses, options = {}) => {
 
         if (code === 'man_webpage') {
             modules.add('menu-digital');
+        }
+
+        for (const alias of directAliases) {
+            modules.add(alias);
+            rawFlags.add(alias);
         }
     }
 
