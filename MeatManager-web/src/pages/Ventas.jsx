@@ -54,6 +54,8 @@ const toNumber = (value) => {
     return Number.isFinite(parsed) ? parsed : 0;
 };
 const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
+const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
+const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
@@ -645,7 +647,11 @@ const Ventas = () => {
                     unit: productRecord?.unit || item.unit || 'kg',
                     price: getProductCurrentPrice(productRecord),
                     plu: productRecord?.plu || '',
+                    barcode: String(item?.barcode || '').trim() || null,
                 };
+            }
+            if (!grouped[key].barcode && item?.barcode) {
+                grouped[key].barcode = String(item.barcode).trim();
             }
             grouped[key].totalQuantity += toNumber(item.quantity);
         });
@@ -721,6 +727,30 @@ const Ventas = () => {
         )) || null;
     }, [products]);
 
+    const findProductByBarcode = React.useCallback((rawCode) => {
+        const rawNormalized = normalizeBarcode(rawCode);
+        const rawDigits = normalizeBarcodeDigits(rawCode);
+        if (!rawNormalized) return null;
+
+        const matchingStockItem = (Array.isArray(stockItems) ? stockItems : []).find((item) => {
+            const itemBarcode = String(item?.barcode || '').trim();
+            if (!itemBarcode) return false;
+            const itemNormalized = normalizeBarcode(itemBarcode);
+            const itemDigits = normalizeBarcodeDigits(itemBarcode);
+            return (
+                itemNormalized === rawNormalized
+                || (rawDigits && itemDigits && itemDigits === rawDigits)
+            );
+        });
+
+        if (!matchingStockItem) return null;
+
+        return findProductByIdentity(productsCatalog, {
+            id: matchingStockItem.product_id,
+            name: matchingStockItem.name,
+        });
+    }, [productsCatalog, stockItems]);
+
     // Filter products
     const filteredProducts = products.filter(p => {
         const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
@@ -729,6 +759,7 @@ const Ventas = () => {
             term.length === 0 ||
             p.name.toLowerCase().includes(term) ||
             String(p.plu || '').toLowerCase().includes(term) ||
+            String(p.barcode || '').toLowerCase().includes(term) ||
             String(p.id || '').toLowerCase().includes(term);
         return matchesCategory && matchesSearch;
     });
@@ -769,6 +800,25 @@ const Ventas = () => {
 
         const cleanData = barcodeData.trim();
         console.log("📦 Escaneando código RAW:", cleanData, `(${cleanData.length} chars)`);
+
+        // ============ FORMATO 0: CÓDIGO DE PRODUCTO NORMAL (EAN/UPC/CODE128/etc.) ============
+        // Prioridad: si el barcode existe en stock, se agrega directo y no se parsea como balanza.
+        const barcodeProduct = findProductByBarcode(cleanData);
+        if (barcodeProduct) {
+            playBeep();
+            const productForCart = {
+                id: `product:${barcodeProduct.id}`,
+                productId: barcodeProduct.id,
+                name: barcodeProduct.name,
+                category: barcodeProduct.category,
+                unit: barcodeProduct.unit || 'un',
+                price: Number(barcodeProduct.current_price || 0),
+                plu: barcodeProduct.plu || '',
+            };
+            addToCart(productForCart, 1);
+            setScannerError('');
+            return;
+        }
 
         // INTENTAR MÚLTIPLES PARSEOS
         let successCount = 0;
