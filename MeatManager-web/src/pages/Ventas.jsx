@@ -1242,8 +1242,8 @@ const Ventas = () => {
 
     const openPaymentModal = (preferredMethod = null) => {
         if (!hasCashOpeningToday) {
-            showToast('⚠️ Debés registrar la apertura de caja antes de comenzar a vender.', 'warning');
-            navigate('/caja');
+            showToast('⚠️ No hay apertura de caja registrada hoy. Te llevamos a realizarla...', 'warning');
+            setTimeout(() => navigate('/caja'), 2500);
             return;
         }
         const defaultMethod = preferredMethod || dbPaymentMethods?.find(m => m.type === 'cash') || dbPaymentMethods?.[0];
