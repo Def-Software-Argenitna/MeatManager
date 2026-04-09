@@ -21,7 +21,6 @@ import {
   Settings,
   Truck,
   ShieldCheck,
-  Crown,
   BarChart3,
   ShoppingBag,
   Smartphone,
@@ -40,7 +39,7 @@ import './Sidebar.css';
 const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isPro, hasModule, isSuperUser } = useLicense();
+  const { isPro, hasModule } = useLicense();
   const { currentUser, accessProfile, hasAccess, logout } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -142,14 +141,6 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
-
-  if (isSuperUser) {
-    configItems.splice(configItems.length - 1, 0, {
-      title: 'Panel Administración',
-      path: '/admin-pablo-control-master',
-      icon: Crown,
-    });
-  }
 
   const despostadaItems = [
     { title: 'Vaca', path: '/despostada/vaca', icon: Beef, module: 'despostada' },
