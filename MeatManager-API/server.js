@@ -3428,7 +3428,6 @@ async function handleProvision(req, res) {
         });
         assertClientAccess(accessContext);
         const isRequesterAdmin = accessContext.user.role === 'admin' && !accessContext.user.isGlobalSuperAdmin;
-        const isRequesterAdmin = accessContext.user.role === 'admin' && !accessContext.user.isGlobalSuperAdmin;
 
         const ownerData = await getTenantClientData(req.firebaseUser);
         const { cuit, empresa, clientId } = ownerData;
