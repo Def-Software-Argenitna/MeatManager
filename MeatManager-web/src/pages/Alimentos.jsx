@@ -339,24 +339,6 @@ const Alimentos = () => {
                         </div>
                     </div>
 
-                    {/* Preview del producto */}
-                    <div className="product-preview">
-                        <div className="preview-label">Vista previa:</div>
-                        <div className="preview-content">
-                            <span className="preview-icon">
-                                {PRODUCT_TYPES.find(p => p.id === selectedProductType)?.icon}
-                            </span>
-                            <span className="preview-name">
-                                {PRODUCT_TYPES.find(p => p.id === selectedProductType)?.name} de {MEAT_TYPES.find(m => m.id === selectedMeatType)?.name}
-                            </span>
-                            {(quantity || weight) && (
-                                <span className="preview-quantity">
-                                    {unitType === 'unidades' ? `${quantity} unidades` : `${weight} kg`}
-                                </span>
-                            )}
-                        </div>
-                    </div>
-
                     {/* Botón de agregar */}
                     <button
                         className="action-btn"
