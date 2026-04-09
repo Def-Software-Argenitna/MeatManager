@@ -248,13 +248,13 @@ const CierreCaja = () => {
             totals[method.name] = 0;
         });
 
-        (allSalesUntilDate || []).forEach((sale) => {
+        (sales || []).forEach((sale) => {
             buildSaleParts(sale).forEach((part) => {
                 totals[part.name] = (totals[part.name] || 0) + part.amount;
             });
         });
 
-        (allMovementsUntilDate || []).forEach((movement) => {
+        (movements || []).forEach((movement) => {
             const methodName = movement.payment_method || 'Efectivo';
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             const sign = getMovementSign(movement);
@@ -262,7 +262,7 @@ const CierreCaja = () => {
         });
 
         return totals;
-    }, [activePaymentMethods, allSalesUntilDate, allMovementsUntilDate]);
+    }, [activePaymentMethods, sales, movements]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
