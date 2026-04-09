@@ -410,25 +410,23 @@ const ProductosCompra = () => {
                                 </div>
                             </div>
 
-                            {formData.type === 'despostada' && hasDespostadaModule && (
-                                <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
-                                    <select
-                                        className="neo-input"
-                                        style={{ border: '1px solid var(--color-primary)' }}
-                                        value={formData.species}
-                                        onChange={e => setFormData({ ...formData, species: e.target.value })}
-                                    >
-                                        <option value="vaca">Vaca / Ternera</option>
-                                        <option value="cerdo">Cerdo</option>
-                                        <option value="pollo">Pollo / Ave</option>
-                                        <option value="pescado">Pescado</option>
-                                    </select>
-                                    <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
-                                        Esto determina en qué pantalla de despostada aparecerá el stock.
-                                    </p>
-                                </div>
-                            )}
+                            <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
+                                <select
+                                    className="neo-input"
+                                    style={{ border: '1px solid var(--color-primary)' }}
+                                    value={formData.species}
+                                    onChange={e => setFormData({ ...formData, species: e.target.value })}
+                                >
+                                    <option value="vaca">Vaca / Ternera</option>
+                                    <option value="cerdo">Cerdo</option>
+                                    <option value="pollo">Pollo / Ave</option>
+                                    <option value="pescado">Pescado</option>
+                                </select>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
+                                    Categoriza el producto por su origen animal.
+                                </p>
+                            </div>
 
                             <div style={{ marginBottom: '1.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)' }}>
                                 <div style={{ fontWeight: '600', marginBottom: '0.75rem' }}>Datos para Ventas</div>

@@ -849,7 +849,7 @@ const Compras = () => {
                                         </div>
                                     )}
 
-                                    <div style={{ opacity: currentItem.type === 'despostada' && hasDespostadaModule ? 1 : 0.45, pointerEvents: currentItem.type === 'despostada' && hasDespostadaModule ? 'auto' : 'none' }}>
+                                    <div>
                                         <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Especie</label>
                                         <select
                                             className="neo-input"
