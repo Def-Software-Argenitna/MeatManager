@@ -1434,7 +1434,10 @@ async function ensureOperationalTenantIsolation() {
 
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
+            await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
             await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
@@ -2575,6 +2578,7 @@ function getSchemaTables() {
             last_price      DECIMAL(12,2) DEFAULT 0,
             unit            VARCHAR(20),
             type            VARCHAR(50),
+            is_preelaborable TINYINT(1) DEFAULT 0,
             species         VARCHAR(50),
             \`usage\`       VARCHAR(50),
             plu             VARCHAR(20),
@@ -2595,6 +2599,8 @@ function getSchemaTables() {
             price           DECIMAL(12,2) DEFAULT 0,
             category_id     INT,
             reference       VARCHAR(100),
+            barcode         VARCHAR(64),
+            presentation    VARCHAR(50),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_stock_tenant_id (\`${TENANT_COLUMN}\`, id),

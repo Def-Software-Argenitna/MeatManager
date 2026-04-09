@@ -49,6 +49,7 @@ const ProductosCompra = () => {
         category_id: '',
         unit: 'kg', // default unit
         type: 'directo', // directo or despostada
+        is_preelaborable: false,
         species: 'vaca', // default species for traceability
         default_iva_rate: 10.5,
         sale_category: 'vaca',
@@ -102,6 +103,7 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                is_preelaborable: formData.is_preelaborable ? 1 : 0,
                 species: formData.type === 'despostada' ? formData.species : null,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
             }, editingItem.id);
@@ -112,6 +114,7 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                is_preelaborable: formData.is_preelaborable ? 1 : 0,
                 species: formData.type === 'despostada' ? formData.species : 'vaca',
                 last_price: 0,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
@@ -158,7 +161,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
@@ -177,6 +180,7 @@ const ProductosCompra = () => {
             category_id: item.category_id || '',
             unit: item.unit || 'kg',
             type: item.type || 'directo',
+            is_preelaborable: Number(item.is_preelaborable || 0) === 1,
             species: item.species || 'vaca',
             default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
@@ -188,7 +192,7 @@ const ProductosCompra = () => {
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: String(nextSuggestedPlu) });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: String(nextSuggestedPlu) });
         setIsModalOpen(true);
     };
 
@@ -274,6 +278,11 @@ const ProductosCompra = () => {
                                 {item.type === 'despostada' && (
                                     <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)' }}>
                                         PARA DESPOSTAR
+                                    </span>
+                                )}
+                                {Number(item.is_preelaborable || 0) === 1 && (
+                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)' }}>
+                                        INSUMO PRE-ELABORADO
                                     </span>
                                 )}
                             </div>
@@ -384,6 +393,20 @@ const ProductosCompra = () => {
                                             <ShieldCheck size={12} /> Activar modo PRO para despostada
                                         </div>
                                     )}
+                                </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem', padding: '0.9rem 1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.02)' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.is_preelaborable}
+                                        onChange={(e) => setFormData({ ...formData, is_preelaborable: e.target.checked })}
+                                    />
+                                    Este producto puede usarse como insumo para pre-elaborados
+                                </label>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.45rem' }}>
+                                    Si lo activás, aparecerá en la pantalla de Pre-elaborados cuando haya stock disponible.
                                 </div>
                             </div>
 

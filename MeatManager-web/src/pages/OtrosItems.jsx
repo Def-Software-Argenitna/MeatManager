@@ -4,10 +4,20 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
 
+const PRESENTATION_OPTIONS = [
+    { value: 'unidades', label: 'Unidades' },
+    { value: 'kg', label: 'Kilos' },
+    { value: 'l', label: 'Litros' },
+    { value: 'caja', label: 'Caja' },
+    { value: 'bolsa', label: 'Bolsa' },
+    { value: 'pack', label: 'Pack' },
+    { value: 'botella', label: 'Botella' },
+];
+
 const OtrosItems = () => {
     const [items, setItems] = useState([]);
 
-    const [newItem, setNewItem] = useState({ name: '', quantity: '' });
+    const [newItem, setNewItem] = useState({ name: '', quantity: '', presentation: 'unidades', barcode: '' });
 
     const loadItems = React.useCallback(async () => {
         const rows = await fetchTable('stock');
@@ -26,9 +36,12 @@ const OtrosItems = () => {
             name: newItem.name,
             quantity: parseFloat(newItem.quantity),
             type: 'insumo',
+            unit: newItem.presentation,
+            presentation: newItem.presentation,
+            barcode: newItem.barcode.trim() || null,
             updated_at: new Date().toISOString()
         });
-        setNewItem({ name: '', quantity: '' });
+        setNewItem({ name: '', quantity: '', presentation: 'unidades', barcode: '' });
         await loadItems();
     };
 
@@ -66,6 +79,24 @@ const OtrosItems = () => {
                         value={newItem.quantity}
                         onChange={e => setNewItem({ ...newItem, quantity: e.target.value })}
                     />
+                    <select
+                        className="neo-input"
+                        style={{ flex: 1, marginBottom: 0 }}
+                        value={newItem.presentation}
+                        onChange={e => setNewItem({ ...newItem, presentation: e.target.value })}
+                    >
+                        {PRESENTATION_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
+                    <input
+                        type="text"
+                        placeholder="Código de barra (opcional)"
+                        className="neo-input"
+                        style={{ flex: 2, marginBottom: 0 }}
+                        value={newItem.barcode}
+                        onChange={e => setNewItem({ ...newItem, barcode: e.target.value })}
+                    />
                     <button type="submit" className="neo-button">
                         <Plus size={18} /> Agregar
                     </button>
@@ -81,8 +112,13 @@ const OtrosItems = () => {
                         <div className="stock-info">
                             <h3>{item.name}</h3>
                             <div className="stock-quantity">
-                                {item.quantity} <sub>unid.</sub>
+                                {item.quantity} <sub>{item.presentation || item.unit || 'unid.'}</sub>
                             </div>
+                            {item.barcode && (
+                                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
+                                    Cod. barra: {item.barcode}
+                                </div>
+                            )}
                         </div>
                         <button
                             onClick={() => handleDelete(item.id)}
