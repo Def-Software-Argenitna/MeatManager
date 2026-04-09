@@ -28,7 +28,7 @@ const CATEGORY_META = {
 
 const CATEGORY_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'pre-elaborados', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
 
-const normalizeCategoryId = (value) => String(value || '').trim().toLowerCase();
+const normalizeCategoryId = (value) => String(value || '').trim().toLowerCase().replace(/_/g, '-');
 
 const getCategoryDisplay = (id) => {
     const normalized = normalizeCategoryId(id);

@@ -128,6 +128,7 @@ export const ensureUnifiedProduct = async ({
     price,
     plu,
     source,
+    categoryId = null,
     preferredProductId = null,
     resolveConflict = promptPriceConflictResolution,
 }) => {
@@ -157,9 +158,15 @@ export const ensureUnifiedProduct = async ({
         });
     }
 
+    const parsedCategoryId = Number(categoryId);
+    const resolvedCategoryId = Number.isFinite(parsedCategoryId) && parsedCategoryId > 0
+        ? parsedCategoryId
+        : (existingProduct?.category_id ?? null);
+
     const payload = {
         canonical_key: canonicalKey,
         name: trimmedName,
+        category_id: resolvedCategoryId,
         category: existingProduct?.category || trimmedCategory,
         unit: existingProduct?.unit || trimmedUnit,
         current_price: resolvedPrice > 0 ? resolvedPrice : null,

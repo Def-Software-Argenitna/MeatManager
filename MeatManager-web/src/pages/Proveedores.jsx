@@ -11,6 +11,17 @@ const Proveedores = () => {
     const [suppliers, setSuppliers] = useState([]);
     const [compras, setCompras] = useState([]);
     const [pagos, setPagos] = useState([]);
+    const [paymentMethods, setPaymentMethods] = useState([]);
+    const [showLedgerModal, setShowLedgerModal] = useState(false);
+    const [ledgerSupplier, setLedgerSupplier] = useState(null);
+    const [showPaymentModal, setShowPaymentModal] = useState(false);
+    const [paymentSupplier, setPaymentSupplier] = useState(null);
+    const [paymentForm, setPaymentForm] = useState({
+        amount: '',
+        payment_method: '',
+        description: '',
+        date: new Date().toISOString().slice(0, 10),
+    });
 
     const [formData, setFormData] = useState({
         name: '',
@@ -36,14 +47,16 @@ const Proveedores = () => {
     ];
 
     const loadSuppliersData = React.useCallback(async () => {
-        const [suppliersRows, comprasRows, pagosRows] = await Promise.all([
+        const [suppliersRows, comprasRows, pagosRows, paymentMethodsRows] = await Promise.all([
             fetchTable('suppliers'),
             fetchTable('compras'),
             fetchTable('caja_movimientos'),
+            fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
         ]);
         setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
         setCompras(Array.isArray(comprasRows) ? comprasRows : []);
         setPagos((Array.isArray(pagosRows) ? pagosRows : []).filter((item) => item.category === 'Pago Proveedor'));
+        setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
     }, []);
 
     React.useEffect(() => {
@@ -107,6 +120,97 @@ const Proveedores = () => {
         return MAJOR_CITIES[formData.province] || [];
     }, [formData.province]);
 
+    const activePaymentMethods = useMemo(() => {
+        const methods = (paymentMethods || []).filter((m) => Number(m.enabled || 0) === 1 || m.enabled === true);
+        if (methods.length > 0) return methods;
+        return [
+            { name: 'Efectivo', type: 'cash' },
+            { name: 'Transferencia', type: 'transfer' },
+            { name: 'Mercado Pago', type: 'wallet' },
+            { name: 'Posnet', type: 'card' },
+            { name: 'Cuenta Corriente', type: 'cuenta_corriente' },
+        ];
+    }, [paymentMethods]);
+
+    const getSupplierLedger = React.useCallback((supplierName) => {
+        const supplierKey = String(supplierName || '').trim().toLowerCase();
+        const comprasProveedor = (compras || []).filter((c) => {
+            const isSupplier = String(c.supplier || '').trim().toLowerCase() === supplierKey;
+            const isAccount = Boolean(c.is_account) || ['cta_cte', 'cuenta corriente'].includes(String(c.payment_method || '').trim().toLowerCase());
+            return isSupplier && isAccount;
+        });
+
+        const pagosProveedor = (pagos || []).filter((p) => {
+            const bySupplierColumn = String(p.supplier || '').trim().toLowerCase() === supplierKey;
+            const byDescription = String(p.description || '').trim().toLowerCase().includes(supplierKey);
+            return bySupplierColumn || byDescription;
+        });
+
+        const ledgerRows = [
+            ...comprasProveedor.map((c) => ({
+                id: `compra-${c.id}`,
+                date: c.date,
+                kind: 'debe',
+                concept: `Compra ${c.invoice_num ? `#${c.invoice_num}` : ''}`.trim(),
+                amount: Number(c.total || 0),
+                payment_method: c.payment_method || 'Cuenta Corriente',
+            })),
+            ...pagosProveedor.map((p) => ({
+                id: `pago-${p.id}`,
+                date: p.date,
+                kind: 'haber',
+                concept: p.description || 'Pago a proveedor',
+                amount: Number(p.amount || 0),
+                payment_method: p.payment_method || 'Sin definir',
+            })),
+        ].sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0));
+
+        let running = 0;
+        return ledgerRows.map((row) => {
+            running += row.kind === 'debe' ? row.amount : -row.amount;
+            return { ...row, balance: running };
+        });
+    }, [compras, pagos]);
+
+    const openLedger = (supplier) => {
+        setLedgerSupplier(supplier);
+        setShowLedgerModal(true);
+    };
+
+    const openPayment = (supplier) => {
+        setPaymentSupplier(supplier);
+        setPaymentForm({
+            amount: '',
+            payment_method: activePaymentMethods[0]?.name || '',
+            description: '',
+            date: new Date().toISOString().slice(0, 10),
+        });
+        setShowPaymentModal(true);
+    };
+
+    const handleRegisterPayment = async (e) => {
+        e.preventDefault();
+        const amount = Number(paymentForm.amount || 0);
+        if (!paymentSupplier || !Number.isFinite(amount) || amount <= 0) {
+            alert('Ingrese un monto valido para registrar el pago.');
+            return;
+        }
+        const selectedMethod = activePaymentMethods.find((m) => m.name === paymentForm.payment_method) || activePaymentMethods[0];
+        await saveTableRecord('caja_movimientos', 'insert', {
+            type: 'egreso',
+            amount,
+            category: 'Pago Proveedor',
+            description: paymentForm.description?.trim() || `Pago a proveedor ${paymentSupplier.name}`,
+            supplier: paymentSupplier.name,
+            payment_method: selectedMethod?.name || 'Efectivo',
+            payment_method_type: selectedMethod?.type || 'cash',
+            date: new Date(`${paymentForm.date}T12:00:00`).toISOString(),
+        });
+        await loadSuppliersData();
+        setShowPaymentModal(false);
+        setPaymentSupplier(null);
+    };
+
     return (
         <div className="animate-fade-in">
             <header className="page-header">
@@ -136,9 +240,13 @@ const Proveedores = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '1.5rem' }}>
                 {filteredSuppliers?.map(s => {
                     // Calcular saldo de cuenta corriente
-                    const comprasProveedor = compras?.filter(c => c.supplier === s.name && (c.is_account || c.payment_method === 'cta_cte')) || [];
+                    const comprasProveedor = compras?.filter(c => c.supplier === s.name && (c.is_account || ['cta_cte', 'Cuenta Corriente'].includes(String(c.payment_method || '').trim()))) || [];
                     const totalDebe = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
-                    const pagosProveedor = pagos?.filter(p => p.supplier === s.name) || [];
+                    const pagosProveedor = pagos?.filter(p => {
+                        const bySupplier = p.supplier === s.name;
+                        const byDescription = String(p.description || '').toLowerCase().includes(String(s.name || '').toLowerCase());
+                        return bySupplier || byDescription;
+                    }) || [];
                     const totalHaber = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
                     const saldo = totalDebe - totalHaber;
                     return (
@@ -183,8 +291,8 @@ const Proveedores = () => {
                                 <span style={{ fontWeight: 'bold', color: saldo > 0 ? '#ef4444' : '#22c55e' }}>
                                     Cuenta Corriente: ${Number(saldo || 0).toLocaleString()}
                                 </span>
-                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }} onClick={() => alert('Movimientos no implementado aún')}>Ver Movimientos</button>
-                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem', background: '#22c55e', color: 'white' }} onClick={() => alert('Registrar pago no implementado aún')}>Registrar Pago</button>
+                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }} onClick={() => openLedger(s)}>Ver Cuenta Corriente</button>
+                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem', background: '#22c55e', color: 'white' }} onClick={() => openPayment(s)}>Registrar Pago</button>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
                                 <button onClick={() => openEdit(s)} className="neo-button" style={{ background: 'transparent', color: 'var(--color-text-main)', border: '1px solid var(--color-border)', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
@@ -301,6 +409,109 @@ const Proveedores = () => {
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', borderTop: '1px solid var(--color-border)', paddingTop: '1.5rem' }}>
                                 <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1.5rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancelar</button>
                                 <button type="submit" className="neo-button" style={{ padding: '0.75rem 2rem' }}>{editingId ? 'Actualizar' : 'Guardar'} Proveedor</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {showLedgerModal && ledgerSupplier && createPortal(
+                <div className="modal-overlay" onClick={() => setShowLedgerModal(false)}>
+                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px', width: '92%', padding: '1.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Cuenta Corriente · {ledgerSupplier.name}</h2>
+                            <button onClick={() => setShowLedgerModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
+                        </div>
+                        <div style={{ maxHeight: '60vh', overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: '10px' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead style={{ position: 'sticky', top: 0, background: 'var(--color-bg-main)' }}>
+                                    <tr>
+                                        <th style={{ textAlign: 'left', padding: '0.65rem' }}>Fecha</th>
+                                        <th style={{ textAlign: 'left', padding: '0.65rem' }}>Concepto</th>
+                                        <th style={{ textAlign: 'left', padding: '0.65rem' }}>Medio</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Debe</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Haber</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Saldo</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {getSupplierLedger(ledgerSupplier.name).map((row) => (
+                                        <tr key={row.id} style={{ borderTop: '1px solid var(--color-border)' }}>
+                                            <td style={{ padding: '0.6rem' }}>{row.date ? new Date(row.date).toLocaleDateString() : '-'}</td>
+                                            <td style={{ padding: '0.6rem' }}>{row.concept}</td>
+                                            <td style={{ padding: '0.6rem' }}>{row.payment_method || '-'}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right', color: '#ef4444' }}>{row.kind === 'debe' ? `$${row.amount.toLocaleString()}` : '-'}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right', color: '#22c55e' }}>{row.kind === 'haber' ? `$${row.amount.toLocaleString()}` : '-'}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 700 }}>{`$${Number(row.balance || 0).toLocaleString()}`}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {showPaymentModal && paymentSupplier && createPortal(
+                <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
+                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '560px', width: '92%', padding: '1.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Registrar Pago · {paymentSupplier.name}</h2>
+                            <button onClick={() => setShowPaymentModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
+                        </div>
+                        <form onSubmit={handleRegisterPayment}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.4rem' }}>Monto</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        className="neo-input"
+                                        value={paymentForm.amount}
+                                        onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))}
+                                        required
+                                    />
+                                </div>
+                                <div>
+                                    <label style={{ display: 'block', marginBottom: '0.4rem' }}>Fecha</label>
+                                    <input
+                                        type="date"
+                                        className="neo-input"
+                                        value={paymentForm.date}
+                                        onChange={(e) => setPaymentForm((prev) => ({ ...prev, date: e.target.value }))}
+                                        required
+                                    />
+                                </div>
+                            </div>
+                            <div style={{ marginTop: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.4rem' }}>Medio de pago</label>
+                                <select
+                                    className="neo-input"
+                                    value={paymentForm.payment_method}
+                                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, payment_method: e.target.value }))}
+                                    required
+                                >
+                                    {activePaymentMethods.map((method) => (
+                                        <option key={method.name} value={method.name}>{method.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div style={{ marginTop: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.4rem' }}>Descripcion (opcional)</label>
+                                <input
+                                    type="text"
+                                    className="neo-input"
+                                    placeholder={`Pago a proveedor ${paymentSupplier.name}`}
+                                    value={paymentForm.description}
+                                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, description: e.target.value }))}
+                                />
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.2rem' }}>
+                                <button type="button" onClick={() => setShowPaymentModal(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.6rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancelar</button>
+                                <button type="submit" className="neo-button" style={{ background: '#22c55e', color: '#fff' }}>Guardar Pago</button>
                             </div>
                         </form>
                     </div>

@@ -10,8 +10,7 @@ import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
-
-const SALE_CATEGORY_OPTIONS = [
+const DEFAULT_SALE_CATEGORY_OPTIONS = [
     { value: 'vaca', label: 'Vaca', group: 'animal' },
     { value: 'cerdo', label: 'Cerdo', group: 'animal' },
     { value: 'pollo', label: 'Pollo', group: 'animal' },
@@ -37,20 +36,23 @@ const ProductosCompra = () => {
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
+    const [saleCategories, setSaleCategories] = useState([]);
 
     useEffect(() => {
         desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
     }, []);
 
     const loadData = React.useCallback(async () => {
-        const [itemsRows, productRows, categoriesRows] = await Promise.all([
+        const [itemsRows, productRows, categoriesRows, saleCategoriesRows] = await Promise.all([
             fetchTable('purchase_items'),
             fetchProductsSafe(),
             fetchTable('categories'),
+            fetchTable('product_categories'),
         ]);
         setItems(Array.isArray(itemsRows) ? itemsRows : []);
         setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
+        setSaleCategories(Array.isArray(saleCategoriesRows) ? saleCategoriesRows : []);
     }, []);
 
     useEffect(() => {
@@ -86,6 +88,24 @@ const ProductosCompra = () => {
         return categories.sort((a, b) => a.name.localeCompare(b.name));
     }, [categories]);
 
+    const saleCategoryOptions = React.useMemo(() => {
+        const dbOptions = (Array.isArray(saleCategories) ? saleCategories : [])
+            .map((category) => {
+                const value = String(category.code || '').trim().toLowerCase();
+                if (!value) return null;
+                return {
+                    value,
+                    label: String(category.name || value).trim(),
+                    group: ANIMAL_SALE_CATEGORIES.includes(value) ? 'animal' : 'no_animal',
+                };
+            })
+            .filter(Boolean)
+            .sort((left, right) => left.label.localeCompare(right.label));
+
+        if (dbOptions.length > 0) return dbOptions;
+        return DEFAULT_SALE_CATEGORY_OPTIONS;
+    }, [saleCategories]);
+
     // Sugerir el próximo PLU correlativo al crear un item nuevo
     const nextSuggestedPlu = React.useMemo(() => {
         const existingPlus = products
@@ -93,6 +113,14 @@ const ProductosCompra = () => {
             .filter(n => Number.isFinite(n) && n > 0);
         return existingPlus.length > 0 ? Math.max(...existingPlus) + 1 : 1;
     }, [products]);
+
+    useEffect(() => {
+        if (!saleCategoryOptions.length) return;
+        const selectedKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
+        const valid = saleCategoryOptions.some((option) => String(option.value || '').trim().toLowerCase().replace(/-/g, '_') === selectedKey);
+        if (valid) return;
+        setFormData((prev) => ({ ...prev, sale_category: saleCategoryOptions[0].value }));
+    }, [formData.sale_category, saleCategoryOptions]);
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -136,11 +164,15 @@ const ProductosCompra = () => {
             purchaseItemId = inserted?.insertId || null;
         }
 
+        const selectedCategoryKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
+        const selectedSaleCategory = saleCategoryOptions.find((option) => String(option.value || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
+        const selectedSaleCategoryRow = saleCategories.find((row) => String(row.code || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
         const unifiedProduct = await ensureUnifiedProduct({
             products,
             prices: [],
             name: nameTrimmed,
             category: formData.sale_category,
+            categoryId: selectedSaleCategoryRow?.id || null,
             unit: formData.unit,
             price: salePrice,
             plu: formData.sale_plu.trim(),
@@ -159,7 +191,7 @@ const ProductosCompra = () => {
             await saveTableRecord('stock', 'insert', {
                 product_id: unifiedProduct?.id || null,
                 name: nameTrimmed,
-                type: formData.sale_category,
+                type: selectedSaleCategory?.value || formData.sale_category,
                 quantity: 0,
                 unit: formData.unit,
                 updated_at: new Date().toISOString(),
@@ -187,7 +219,7 @@ const ProductosCompra = () => {
 
     const openEdit = (item) => {
         const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
-        const existingCategory = productRecord?.category || 'almacen';
+        const existingCategory = String(productRecord?.category_code || productRecord?.category || 'almacen').trim().toLowerCase();
         setEditingItem(item);
         setFormData({
             name: item.name,
@@ -233,8 +265,8 @@ const ProductosCompra = () => {
     );
 
     const renderSaleCategoryOptions = () => {
-        const animal = SALE_CATEGORY_OPTIONS.filter((option) => option.group === 'animal');
-        const nonAnimal = SALE_CATEGORY_OPTIONS.filter((option) => option.group === 'no_animal');
+        const animal = saleCategoryOptions.filter((option) => option.group === 'animal');
+        const nonAnimal = saleCategoryOptions.filter((option) => option.group === 'no_animal');
 
         return (
             <>

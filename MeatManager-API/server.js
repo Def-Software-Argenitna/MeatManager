@@ -425,7 +425,7 @@ function licenseAppliesToWebapp(license) {
 }
 
 const TENANT_SCOPED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -433,7 +433,7 @@ const TENANT_SCOPED_TABLES = new Set([
 ]);
 
 const TENANT_ID_TABLES = [
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -667,7 +667,7 @@ function orderBelongsToDriver(row, driverIdentity) {
 }
 
 const TABLES_WITH_NUMERIC_ID = [
-    'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items', 'stock',
+    'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items', 'stock',
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -1233,6 +1233,101 @@ async function ensureProductCatalogIntegrity(conn) {
     }
 }
 
+async function ensureProductCategoriesIntegrity(conn) {
+    const codeExpr = (expr) => `LOWER(TRIM(BOTH '_' FROM REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(${expr}, ''), ' ', '_'), '-', '_'), '/', '_'), '__', '_')))`;
+    const textExpr = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
+
+    await conn.query(
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
+            (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
+         SELECT
+            src.tenant_id,
+            src.code,
+            src.name,
+            1,
+            0,
+            NOW(),
+            NOW()
+         FROM (
+            SELECT p.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('p.category')} AS code, ${textExpr('p.category')} AS name
+            FROM \`${OPERATIONAL_DB_NAME}\`.products p
+            WHERE ${textExpr('p.category')} IS NOT NULL
+            UNION ALL
+            SELECT s.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('s.type')} AS code, ${textExpr('s.type')} AS name
+            FROM \`${OPERATIONAL_DB_NAME}\`.stock s
+            WHERE ${textExpr('s.type')} IS NOT NULL
+            UNION ALL
+            SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.type')} AS code, ${textExpr('pi.type')} AS name
+            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+            WHERE ${textExpr('pi.type')} IS NOT NULL
+            UNION ALL
+            SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.species')} AS code, ${textExpr('pi.species')} AS name
+            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+            WHERE ${textExpr('pi.species')} IS NOT NULL
+         ) src
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = src.tenant_id
+          AND pc.code = src.code
+         WHERE src.code IS NOT NULL
+           AND src.code <> ''
+           AND src.name IS NOT NULL
+           AND pc.id IS NULL`
+    );
+
+    const [tenantRows] = await conn.query(
+        `SELECT DISTINCT \`${TENANT_COLUMN}\` AS tenant_id
+         FROM (
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.products
+            UNION ALL
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.stock
+            UNION ALL
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items
+         ) t`
+    );
+    const defaultCategories = [
+        ['vaca', 'Vaca'],
+        ['cerdo', 'Cerdo'],
+        ['pollo', 'Pollo'],
+        ['pescado', 'Pescado'],
+        ['pre_elaborados', 'Pre-elaborados'],
+        ['almacen', 'Almacen'],
+        ['limpieza', 'Limpieza'],
+        ['bebidas', 'Bebidas'],
+        ['insumo', 'Insumo General'],
+        ['otros', 'Otros'],
+    ];
+    for (const row of tenantRows) {
+        const tenantId = Number(row?.tenant_id);
+        if (!Number.isFinite(tenantId) || tenantId <= 0) continue;
+        for (const [code, name] of defaultCategories) {
+            await conn.query(
+                `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
+                    (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
+                 VALUES (?, ?, ?, 1, 0, NOW(), NOW())`,
+                [tenantId, code, name]
+            );
+        }
+    }
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+          AND pc.code = ${codeExpr('p.category')}
+         SET p.category_id = pc.id
+         WHERE p.category_id IS NULL
+           AND ${textExpr('p.category')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+          AND pc.id = p.category_id
+         SET p.category = pc.code`
+    );
+}
+
 async function ensureTenantScopedForeignKeys(conn) {
     const fkDefinitions = [
         {
@@ -1318,6 +1413,18 @@ async function ensureTenantScopedForeignKeys(conn) {
             indexName: 'idx_purchase_items_tenant_product',
             indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
                 ADD INDEX idx_purchase_items_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'products',
+            constraint: 'products_category_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                ADD CONSTRAINT products_category_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, category_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.product_categories (\`${TENANT_COLUMN}\`, id)
+                ON DELETE SET NULL`,
+            indexName: 'idx_products_tenant_category',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                ADD INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)`,
         },
         {
             table: 'stock',
@@ -1435,6 +1542,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
+            await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
@@ -1539,6 +1647,7 @@ async function ensureOperationalTenantIsolation() {
             }
 
             await ensureProductCatalogIntegrity(conn);
+            await ensureProductCategoriesIntegrity(conn);
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
@@ -2537,6 +2646,19 @@ function getSchemaTables() {
             INDEX idx_categories_tenant_parent (\`${TENANT_COLUMN}\`, parent_id),
             CONSTRAINT categories_ibfk_1 FOREIGN KEY (\`${TENANT_COLUMN}\`, parent_id) REFERENCES categories(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
+        `CREATE TABLE IF NOT EXISTS product_categories (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            code        VARCHAR(100) NOT NULL,
+            name        VARCHAR(120) NOT NULL,
+            active      TINYINT(1) DEFAULT 1,
+            synced      TINYINT(1) DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_product_categories_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_product_categories_tenant_code (\`${TENANT_COLUMN}\`, code),
+            INDEX idx_product_categories_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS suppliers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -2562,6 +2684,7 @@ function getSchemaTables() {
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             canonical_key   VARCHAR(191) NOT NULL,
             name            VARCHAR(150) NOT NULL,
+            category_id     INT,
             category        VARCHAR(100),
             unit            VARCHAR(20),
             current_price   DECIMAL(12,2) DEFAULT 0,
@@ -2573,6 +2696,7 @@ function getSchemaTables() {
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
             UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id),
             INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
@@ -3551,7 +3675,7 @@ async function getTableDescribe(pool, dbName, table) {
 
 // Tablas permitidas (whitelist contra inyección de nombres de tabla)
 const ALLOWED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -3635,6 +3759,90 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+async function resolveProductRecordCategory(pool, tenantId, record) {
+    if (!record || typeof record !== 'object') return record;
+
+    const next = { ...record };
+    const rawCategoryId = next.category_id;
+    const normalizedCategoryId = Number(rawCategoryId);
+    const categoryNameInput = String(next.category || '').trim();
+
+    if (Number.isFinite(normalizedCategoryId) && normalizedCategoryId > 0) {
+        const category = await findProductCategoryById(pool, tenantId, normalizedCategoryId);
+        if (category) {
+            next.category_id = category.id;
+            next.category = category.code;
+            return next;
+        }
+    }
+
+    if (categoryNameInput) {
+        const category = await findOrCreateProductCategory(pool, tenantId, categoryNameInput);
+        if (category) {
+            next.category_id = category.id;
+            next.category = category.code;
+        }
+        return next;
+    }
+
+    if (rawCategoryId == null || rawCategoryId === '') {
+        next.category_id = null;
+    }
+
+    return next;
+}
+
+function normalizeProductCategoryCode(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 100);
+}
+
+async function findProductCategoryById(pool, tenantId, categoryId) {
+    if (!Number.isFinite(Number(categoryId)) || Number(categoryId) <= 0) return null;
+    const [rows] = await pool.query(
+        `SELECT id, code, name
+         FROM product_categories
+         WHERE \`${TENANT_COLUMN}\` = ? AND id = ?
+         LIMIT 1`,
+        [tenantId, Number(categoryId)]
+    );
+    return rows?.[0] || null;
+}
+
+async function findOrCreateProductCategory(pool, tenantId, rawNameOrCode) {
+    const trimmed = String(rawNameOrCode || '').trim();
+    if (!trimmed) return null;
+    const code = normalizeProductCategoryCode(trimmed);
+    if (!code) return null;
+
+    const [existingRows] = await pool.query(
+        `SELECT id, code, name
+         FROM product_categories
+         WHERE \`${TENANT_COLUMN}\` = ? AND (code = ? OR LOWER(name) = LOWER(?))
+         ORDER BY id ASC
+         LIMIT 1`,
+        [tenantId, code, trimmed]
+    );
+    if (existingRows?.length) return existingRows[0];
+
+    const [insertResult] = await pool.query(
+        `INSERT INTO product_categories (\`${TENANT_COLUMN}\`, code, name, active)
+         VALUES (?, ?, ?, 1)`,
+        [tenantId, code, trimmed]
+    );
+    return {
+        id: insertResult.insertId,
+        code,
+        name: trimmed,
+    };
+}
+
 function normalizeBranchCodeValue(value) {
     const digits = String(value ?? '').replace(/\D/g, '');
     if (!digits) return null;
@@ -3668,6 +3876,9 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
         });
+        const normalizedRecord = table === 'products'
+            ? await resolveProductRecordCategory(pool, tenantId, record)
+            : record;
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
@@ -3698,8 +3909,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         };
 
         if (operation === 'insert') {
-            if (!record) return res.status(400).json({ error: 'record requerido' });
-            const filtered = await filterRecord(record, false); // incluir id si viene (Dexie lo manda)
+            if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
+            const filtered = await filterRecord(normalizedRecord, false); // incluir id si viene (Dexie lo manda)
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
@@ -3725,7 +3936,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         if (operation === 'update') {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para update' });
-            const filtered = await filterRecord(record, true); // excluir id del SET
+            const filtered = await filterRecord(normalizedRecord, true); // excluir id del SET
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
             }
@@ -3744,7 +3955,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
         if (operation === 'upsert') {
             // Para settings (PK = key) u otras tablas con ON DUPLICATE KEY UPDATE
-            if (!record) return res.status(400).json({ error: 'record requerido' });
+            if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
             const validCols = await getTableColumns(pool, dbName, table);
             const filtered = {};
             for (const col of validCols) {
@@ -3753,8 +3964,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     filtered[col] = tenantId;
                     continue;
                 }
-                if (record[col] !== undefined && record[col] !== null) {
-                    filtered[col] = normalizeColumnValue(record[col], tableDesc.get(col) || '');
+                if (normalizedRecord[col] !== undefined && normalizedRecord[col] !== null) {
+                    filtered[col] = normalizeColumnValue(normalizedRecord[col], tableDesc.get(col) || '');
                 }
             }
             if (Object.keys(filtered).length === 0) {
@@ -3830,7 +4041,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -3964,6 +4175,64 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
                 [...scope.params, limit, offset]
             );
+        }
+
+        if (table === 'product_categories' && rows.length === 0) {
+            const CATEGORY_DEFAULTS = [
+                { code: 'vaca', name: 'Vaca' },
+                { code: 'cerdo', name: 'Cerdo' },
+                { code: 'pollo', name: 'Pollo' },
+                { code: 'pescado', name: 'Pescado' },
+                { code: 'pre_elaborados', name: 'Pre-elaborados' },
+                { code: 'almacen', name: 'Almacen' },
+                { code: 'limpieza', name: 'Limpieza' },
+                { code: 'bebidas', name: 'Bebidas' },
+                { code: 'insumo', name: 'Insumo General' },
+                { code: 'otros', name: 'Otros' },
+            ];
+            for (const category of CATEGORY_DEFAULTS) {
+                await pool.query(
+                    `INSERT IGNORE INTO product_categories (\`${TENANT_COLUMN}\`, code, name, active, synced)
+                     VALUES (?, ?, ?, 1, 0)`,
+                    [tenantId, category.code, category.name]
+                );
+            }
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, limit, offset]
+            );
+        }
+
+        if (table === 'products' && rows.length > 0) {
+            const categoryIds = Array.from(
+                new Set(
+                    rows
+                        .map((row) => Number(row?.category_id))
+                        .filter((idValue) => Number.isFinite(idValue) && idValue > 0)
+                )
+            );
+            let categoriesById = new Map();
+            if (categoryIds.length > 0) {
+                const placeholders = categoryIds.map(() => '?').join(', ');
+                const [categoryRows] = await pool.query(
+                    `SELECT id, code, name
+                     FROM product_categories
+                     WHERE \`${TENANT_COLUMN}\` = ?
+                       AND id IN (${placeholders})`,
+                    [tenantId, ...categoryIds]
+                );
+                categoriesById = new Map(categoryRows.map((cat) => [Number(cat.id), cat]));
+            }
+            rows = rows.map((row) => {
+                const category = categoriesById.get(Number(row?.category_id));
+                if (!category) return row;
+                return {
+                    ...row,
+                    category: category.code,
+                    category_code: category.code,
+                    category_name: category.name,
+                };
+            });
         }
 
         return res.json({
