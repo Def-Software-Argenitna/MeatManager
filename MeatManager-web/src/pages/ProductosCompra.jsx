@@ -9,6 +9,20 @@ import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const IVA_OPTIONS = [10.5, 21];
+const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
+
+const SALE_CATEGORY_OPTIONS = [
+    { value: 'vaca', label: 'Vaca', group: 'animal' },
+    { value: 'cerdo', label: 'Cerdo', group: 'animal' },
+    { value: 'pollo', label: 'Pollo', group: 'animal' },
+    { value: 'pescado', label: 'Pescado', group: 'animal' },
+    { value: 'almacen', label: 'Almacen', group: 'no_animal' },
+    { value: 'limpieza', label: 'Limpieza', group: 'no_animal' },
+    { value: 'bebidas', label: 'Bebidas', group: 'no_animal' },
+    { value: 'insumo', label: 'Insumo General', group: 'no_animal' },
+    { value: 'otros', label: 'Otros', group: 'no_animal' },
+    { value: 'pre-elaborados', label: 'Pre-elaborados', group: 'no_animal' },
+];
 
 const ProductosCompra = () => {
     const navigate = useNavigate();
@@ -52,7 +66,7 @@ const ProductosCompra = () => {
         is_preelaborable: false,
         species: 'vaca', // default species for traceability
         default_iva_rate: 10.5,
-        sale_category: 'vaca',
+        sale_category: 'almacen',
         sale_price: '',
         sale_plu: ''
     });
@@ -161,7 +175,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
@@ -173,7 +187,7 @@ const ProductosCompra = () => {
 
     const openEdit = (item) => {
         const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
-        const existingCategory = productRecord?.category || 'vaca';
+        const existingCategory = productRecord?.category || 'almacen';
         setEditingItem(item);
         setFormData({
             name: item.name,
@@ -182,7 +196,7 @@ const ProductosCompra = () => {
             type: item.type || 'directo',
             is_preelaborable: Number(item.is_preelaborable || 0) === 1,
             species: item.species || 'vaca',
-            default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
+            default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ANIMAL_SALE_CATEGORIES.includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
             sale_price: productRecord?.current_price?.toString() || '',
             sale_plu: productRecord?.plu || ''
@@ -192,7 +206,7 @@ const ProductosCompra = () => {
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: String(nextSuggestedPlu) });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu) });
         setIsModalOpen(true);
     };
 
@@ -217,6 +231,26 @@ const ProductosCompra = () => {
     const filteredItems = items?.filter(i =>
         i.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
+
+    const renderSaleCategoryOptions = () => {
+        const animal = SALE_CATEGORY_OPTIONS.filter((option) => option.group === 'animal');
+        const nonAnimal = SALE_CATEGORY_OPTIONS.filter((option) => option.group === 'no_animal');
+
+        return (
+            <>
+                <optgroup label="Origen Animal">
+                    {animal.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                </optgroup>
+                <optgroup label="Origen No Animal">
+                    {nonAnimal.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                </optgroup>
+            </>
+        );
+    };
 
     return (
         <div className="animate-fade-in">
@@ -411,6 +445,21 @@ const ProductosCompra = () => {
                             </div>
 
                             <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Origen del Producto</label>
+                                <select
+                                    className="neo-input"
+                                    value={formData.sale_category}
+                                    onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
+                                >
+                                    {renderSaleCategoryOptions()}
+                                </select>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
+                                    Define de donde viene el producto para clasificarlo correctamente en ventas y stock.
+                                </p>
+                            </div>
+
+                            {ANIMAL_SALE_CATEGORIES.includes(formData.sale_category) && (
+                            <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
                                 <select
                                     className="neo-input"
@@ -427,6 +476,7 @@ const ProductosCompra = () => {
                                     Categoriza el producto por su origen animal.
                                 </p>
                             </div>
+                            )}
 
                             <div style={{ marginBottom: '1.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)' }}>
                                 <div style={{ fontWeight: '600', marginBottom: '0.75rem' }}>Datos para Ventas</div>
@@ -438,11 +488,7 @@ const ProductosCompra = () => {
                                             value={formData.sale_category}
                                             onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
                                         >
-                                            <option value="vaca">Vaca</option>
-                                            <option value="cerdo">Cerdo</option>
-                                            <option value="pollo">Pollo</option>
-                                            <option value="pescado">Pescado</option>
-                                            <option value="pre-elaborados">Pre-elaborados</option>
+                                            {renderSaleCategoryOptions()}
                                         </select>
                                     </div>
                                     <div>

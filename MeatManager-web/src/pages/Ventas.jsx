@@ -13,12 +13,33 @@ import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, fin
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './Ventas.css';
 
-const CATEGORIES = [
-    { id: 'vaca', label: 'Vaca' },
-    { id: 'cerdo', label: 'Cerdo' },
-    { id: 'pollo', label: 'Pollo' },
-    { id: 'pre-elaborados', label: 'Pre-elaborados' },
-];
+const CATEGORY_META = {
+    vaca: { label: 'Vaca', icon: '🐄' },
+    cerdo: { label: 'Cerdo', icon: '🐖' },
+    pollo: { label: 'Pollo', icon: '🐔' },
+    pescado: { label: 'Pescado', icon: '🐟' },
+    'pre-elaborados': { label: 'Pre-elaborados', icon: '🍖' },
+    almacen: { label: 'Almacen', icon: '📦' },
+    limpieza: { label: 'Limpieza', icon: '🧴' },
+    bebidas: { label: 'Bebidas', icon: '🥤' },
+    insumo: { label: 'Insumo', icon: '🧰' },
+    otros: { label: 'Otros', icon: '📁' },
+};
+
+const CATEGORY_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'pre-elaborados', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
+
+const normalizeCategoryId = (value) => String(value || '').trim().toLowerCase();
+
+const getCategoryDisplay = (id) => {
+    const normalized = normalizeCategoryId(id);
+    const meta = CATEGORY_META[normalized];
+    if (meta) return { id: normalized, label: meta.label, icon: meta.icon };
+    return {
+        id: normalized,
+        label: String(id || 'Otros').trim() || 'Otros',
+        icon: '📦',
+    };
+};
 
 const getClientDisplayName = (client) => {
     const firstName = String(client?.first_name || '').trim();
@@ -629,6 +650,36 @@ const Ventas = () => {
 
         return Object.values(grouped);
     }, [stockItems, productsCatalog, getProductPriceCandidates]);
+
+    const availableCategories = React.useMemo(() => {
+        const detected = new Set(
+            products
+                .map((product) => normalizeCategoryId(product?.category))
+                .filter(Boolean)
+        );
+
+        const sorted = [...detected].sort((a, b) => {
+            const ai = CATEGORY_PRIORITY.indexOf(a);
+            const bi = CATEGORY_PRIORITY.indexOf(b);
+            if (ai !== -1 || bi !== -1) {
+                if (ai === -1) return 1;
+                if (bi === -1) return -1;
+                return ai - bi;
+            }
+            return a.localeCompare(b);
+        });
+
+        return [
+            { id: 'all', label: 'Todos', icon: '📦' },
+            ...sorted.map((id) => getCategoryDisplay(id)),
+        ];
+    }, [products]);
+
+    React.useEffect(() => {
+        if (categoryFilter === 'all') return;
+        const valid = availableCategories.some((category) => category.id === categoryFilter);
+        if (!valid) setCategoryFilter('all');
+    }, [availableCategories, categoryFilter]);
 
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = String(pluValue || '').trim();
@@ -1666,14 +1717,14 @@ const Ventas = () => {
                 </div>
 
                 <div className="pos-categories" style={{ marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1rem' }}>
-                    {CATEGORIES.map(cat => (
+                    {availableCategories.map(cat => (
                         <button
                             key={cat.id}
                             className={`category-pill ${categoryFilter === cat.id ? 'active' : ''}`}
                             onClick={() => setCategoryFilter(cat.id)}
                             style={{ fontSize: '0.8rem', letterSpacing: '0.05em', fontWeight: '800' }}
                         >
-                            {cat.label.toUpperCase()}
+                            {`${cat.icon} ${String(cat.label || '').toUpperCase()}`}
                         </button>
                     ))}
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
@@ -2602,15 +2653,17 @@ const Ventas = () => {
                             <div>
                                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Categoría</label>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
-                                    {['vaca', 'cerdo', 'pollo'].map(cat => (
+                                    {availableCategories
+                                        .filter((cat) => cat.id !== 'all')
+                                        .map((cat) => (
                                         <button
-                                            key={cat}
-                                            onClick={() => setQuickProductCategory(cat)}
+                                            key={cat.id}
+                                            onClick={() => setQuickProductCategory(cat.id)}
                                             style={{
                                                 padding: '0.75rem',
                                                 borderRadius: 'var(--radius-md)',
-                                                border: quickProductCategory === cat ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                                background: quickProductCategory === cat ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
+                                                border: quickProductCategory === cat.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
+                                                background: quickProductCategory === cat.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
                                                 color: 'var(--color-text-main)',
                                                 cursor: 'pointer',
                                                 fontSize: '0.9rem',
@@ -2618,7 +2671,7 @@ const Ventas = () => {
                                                 textTransform: 'capitalize'
                                             }}
                                         >
-                                            {cat}
+                                            {cat.label}
                                         </button>
                                     ))}
                                 </div>
