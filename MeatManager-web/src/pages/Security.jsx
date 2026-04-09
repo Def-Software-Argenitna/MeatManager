@@ -1,9 +1,11 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
     ShieldCheck, Key, RefreshCw, CheckCircle2, AlertTriangle, Lock,
-    Users, UserPlus, Pencil, Trash2, ToggleLeft, ToggleRight, X, Save
+    Users, UserPlus, Pencil, Trash2, ToggleLeft, ToggleRight, X, Save,
+    Cpu, Crown, Check, Zap
 } from 'lucide-react';
 import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
+import { useLicense } from '../context/LicenseContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import './Security.css';
 
@@ -69,6 +71,12 @@ const getUserTypeMeta = (user) => {
         background: 'rgba(59,130,246,0.15)',
     };
 };
+
+const formatLicenseLabel = (license) => (
+    hasLogisticsCapability(license)
+        ? `${license?.commercialName || 'Licencia'} (Logística)`
+        : (license?.commercialName || 'Licencia')
+);
 
 /* ── User modal ─────────────────────────── */
 const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [] }) => {
@@ -441,12 +449,31 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 /* ── Main component ─────────────────────── */
 const Security = () => {
     const { currentUser, accessProfile, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
     const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
     const availableLogisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
-    const [activeTab, setActiveTab] = useState('pin');
+    const availableUnassignedLicenses = licensePool.filter((assignment) => assignment?.userId == null);
+    const activeLicenseCount = licenses.length;
+    const [activeTab, setActiveTab] = useState('usuarios');
     const [message, setMessage] = useState(null);
+    const displayModules = useMemo(() => ([
+        { key: 'despostada', label: 'Trazabilidad de Lotes' },
+        { key: 'informes-pro', label: 'Análisis de Rinde' },
+        { key: 'costos-reales', label: 'Costos Reales' },
+        { key: 'proveedores-pro', label: 'Cuentas de Proveedores' },
+        { key: 'logistica', label: 'Logística y Reparto' },
+        { key: 'menu-digital', label: 'Menú Digital' },
+    ]), []);
+    const statusLabel = isSuperUser
+        ? (activeLicenseCount > 1 ? `SUPERUSER + ${activeLicenseCount - 1}` : 'SUPERUSER')
+        : licenseMode.toUpperCase();
+    const statusDescription = isSuperUser
+        ? 'La cuenta tiene acceso administrativo total y módulos premium habilitados.'
+        : isPro
+            ? 'La cuenta tiene módulos premium habilitados desde Gestión de Clientes.'
+            : 'La cuenta tiene solo módulos base habilitados.';
 
     // PIN tab state
     const [loading, setLoading] = useState(false);
@@ -583,19 +610,21 @@ const Security = () => {
             <header className="security-header">
                 <ShieldCheck size={32} className="text-gold" />
                 <div>
-                    <h1>Seguridad y Usuarios</h1>
-                    <p>Gestioná claves de administración y permisos de usuario</p>
+                    <h1>Usuarios y Licencias</h1>
+                    <p>Gestioná usuarios web, contraseñas y licencias asignadas desde una sola pantalla</p>
                 </div>
             </header>
 
             {/* Tabs */}
             <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                <button style={tabStyle('pin')} onClick={() => setActiveTab('pin')}>
-                    🔐 PIN de Admin
-                </button>
                 <button style={tabStyle('usuarios')} onClick={() => setActiveTab('usuarios')}>
-                    👥 Usuarios
+                    👥 Usuarios y Licencias
                 </button>
+                {isAdmin && (
+                    <button style={tabStyle('pin')} onClick={() => setActiveTab('pin')}>
+                        🔐 Seguridad Admin
+                    </button>
+                )}
                 {isAdmin && (
                     <button style={tabStyle('tickets')} onClick={() => setActiveTab('tickets')}>
                         🧾 Tickets Borrados
@@ -692,6 +721,17 @@ const Security = () => {
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
                         <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
                             <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Estado de la cuenta
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: isPro ? '#f59e0b' : '#34d399' }}>
+                                {statusLabel}
+                            </div>
+                            <div style={{ marginTop: '0.35rem', color: '#9ca3af', fontSize: '0.82rem' }}>
+                                {statusDescription}
+                            </div>
+                        </div>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
                                 Licencia base
                             </div>
                             <div style={{ marginTop: '0.45rem', fontWeight: '700', color: hasBaseLicense ? '#34d399' : '#f87171' }}>
@@ -716,6 +756,94 @@ const Security = () => {
                         </div>
                     </div>
 
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '0.9rem', marginBottom: '1rem' }}>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                <Crown size={20} color={isPro ? '#f59e0b' : '#60a5fa'} />
+                                <div>
+                                    <div style={{ fontWeight: 700 }}>Licencias activas de esta cuenta</div>
+                                    <div style={{ color: '#9ca3af', fontSize: '0.82rem' }}>
+                                        {activeLicenseCount} licencia{activeLicenseCount === 1 ? '' : 's'} visible{activeLicenseCount === 1 ? '' : 's'} en esta sesión
+                                    </div>
+                                </div>
+                            </div>
+                            {licenses.length === 0 ? (
+                                <div style={{ color: '#9ca3af', fontSize: '0.9rem' }}>No hay licencias web activas para este usuario.</div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                    {licenses.map((license, index) => (
+                                        <div key={`${license.clientLicenseId || license.licenseId || 'license'}-${index}`} style={{ padding: '0.85rem 0.95rem', borderRadius: '12px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                                                <div style={{ fontWeight: 700 }}>{license.commercialName || license.internalCode}</div>
+                                                <span style={{ fontSize: '0.72rem', color: '#22c55e', background: 'rgba(34,197,94,0.12)', borderRadius: '999px', padding: '0.18rem 0.55rem' }}>
+                                                    Activa
+                                                </span>
+                                            </div>
+                                            <div style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '0.35rem' }}>
+                                                {license.internalCode || 'SIN_CODIGO'} · {license.category || 'sin categoría'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                            <div style={{ marginTop: '0.9rem', paddingTop: '0.85rem', borderTop: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', gap: '0.65rem', color: '#9ca3af', fontSize: '0.82rem' }}>
+                                <Cpu size={16} />
+                                ID de instalación: <code>{installationId || 'sin configurar'}</code>
+                            </div>
+                        </div>
+
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                                <ShieldCheck size={20} color="#34d399" />
+                                <div>
+                                    <div style={{ fontWeight: 700 }}>Licencias disponibles para asignar</div>
+                                    <div style={{ color: '#9ca3af', fontSize: '0.82rem' }}>
+                                        Pool activo del tenant para usuarios y logística
+                                    </div>
+                                </div>
+                            </div>
+                            {availableUnassignedLicenses.length === 0 ? (
+                                <div style={{ color: '#9ca3af', fontSize: '0.9rem' }}>No hay licencias libres para asignar en este momento.</div>
+                            ) : (
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                                    {availableUnassignedLicenses.map((assignment) => (
+                                        <div key={assignment.id} style={{ padding: '0.85rem 0.95rem', borderRadius: '12px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', gap: '0.75rem', alignItems: 'center' }}>
+                                                <div style={{ fontWeight: 700 }}>{assignment.license?.commercialName || 'Licencia'}</div>
+                                                <span style={{ fontSize: '0.72rem', color: '#60a5fa', background: 'rgba(96,165,250,0.12)', borderRadius: '999px', padding: '0.18rem 0.55rem' }}>
+                                                    {assignment.license?.billingScope === 'per_user' ? 'Por usuario' : 'Disponible'}
+                                                </span>
+                                            </div>
+                                            <div style={{ fontSize: '0.82rem', color: '#9ca3af', marginTop: '0.35rem' }}>
+                                                {formatLicenseLabel(assignment.license)} · {assignment.license?.internalCode || 'SIN_CODIGO'}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="neo-card" style={{ padding: '1rem 1.25rem', marginBottom: '1rem' }}>
+                        <div style={{ fontWeight: 700, marginBottom: '0.45rem' }}>Módulos habilitados</div>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.55rem' }}>
+                            <span className="feature-item active"><Check size={14} /> Ventas y POS</span>
+                            <span className="feature-item active"><Check size={14} /> Stock de Cortes</span>
+                            <span className="feature-item active"><Check size={14} /> Compras Básicas</span>
+                            {displayModules.map((moduleItem) => (
+                                <span key={moduleItem.key} className={`feature-item ${modules.includes(moduleItem.key) ? 'active' : 'locked'}`}>
+                                    {modules.includes(moduleItem.key) ? <Check size={14} /> : <Zap size={14} />}
+                                    {moduleItem.label}
+                                </span>
+                            ))}
+                        </div>
+                        {featureFlags.length > 0 && (
+                            <div style={{ marginTop: '0.75rem', color: '#9ca3af', fontSize: '0.82rem' }}>
+                                Feature flags: {featureFlags.join(', ')}
+                            </div>
+                        )}
+                    </div>
+
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                         <p style={{ margin: 0, color: '#9ca3af', fontSize: '0.9rem' }}>
                             {users.length} usuario{users.length !== 1 ? 's' : ''} registrado{users.length !== 1 ? 's' : ''}
@@ -727,7 +855,7 @@ const Security = () => {
 
                     {!isAdmin && (
                         <div className="neo-card" style={{ padding: '1rem 1.25rem', marginBottom: '1rem', color: '#f59e0b', border: '1px solid rgba(245,158,11,0.25)' }}>
-                            Solo el usuario administrador puede crear, editar, activar o eliminar usuarios.
+                            Solo el usuario administrador puede crear usuarios, cambiar contraseñas, editar permisos, activar o eliminar usuarios.
                         </div>
                     )}
 
@@ -766,11 +894,7 @@ const Security = () => {
                                     )}
                                     {(user.assignedLicenses || []).length > 0 && (
                                         <div style={{ fontSize: '0.82rem', color: '#d1d5db', marginTop: '0.25rem' }}>
-                                            Licencias: {user.assignedLicenses.map((license) => (
-                                                hasLogisticsCapability(license)
-                                                    ? `${license.commercialName} (Logística)`
-                                                    : license.commercialName
-                                            )).join(', ')}
+                                            Licencias: {user.assignedLicenses.map((license) => formatLicenseLabel(license)).join(', ')}
                                         </div>
                                     )}
                                     <div style={{ fontSize: '0.8rem', color: '#6b7280', display: 'flex', gap: '0.75rem', marginTop: '0.2rem' }}>
