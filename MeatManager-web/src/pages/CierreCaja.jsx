@@ -475,7 +475,7 @@ const CierreCaja = () => {
 
                         {openingMovements.length > 0 && !showOpeningForm && (
                             <div className="opening-preview">
-                                {methodCards.map((item) => (
+                                {methodCards.filter(m => m.type === 'cash').map((item) => (
                                     <div key={item.name} className="opening-chip">
                                         <span>{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '14px', verticalAlign: 'middle' }} /> : item.name}</span>
                                         <strong>${item.opening.toLocaleString('es-AR')}</strong>
@@ -487,16 +487,16 @@ const CierreCaja = () => {
                         {showOpeningForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleSaveOpening}>
                                 <div className="form-grid">
-                                    {activePaymentMethods.map((method) => (
-                                        <div className="form-group" key={method.name}>
-                                            <label>{method.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '14px', verticalAlign: 'middle' }} /> : method.name}</label>
+                                    {activePaymentMethods.filter(m => m.type === 'cash').map((method) => (
+                                        <div className="form-group full" key={method.name}>
+                                            <label>{method.name} inicial (Apertura)</label>
                                             <input
                                                 type="number"
                                                 min="0"
                                                 step="0.01"
                                                 value={openingDraft[method.name] || ''}
                                                 onChange={(e) => handleOpeningChange(method.name, e.target.value)}
-                                                placeholder="0.00"
+                                                placeholder="Ej: 100000"
                                                 className="neo-input"
                                             />
                                         </div>
