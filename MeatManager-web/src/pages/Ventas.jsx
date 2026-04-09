@@ -1322,6 +1322,17 @@ const Ventas = () => {
     const activeMethod = getMethodById(selectedPaymentMethod);
     const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
     const finalTotal = cartTotal + cartAdjustment;
+    const quickPaymentMethods = React.useMemo(() => {
+        const preferred = ['Efectivo', 'Mercado Pago'];
+        const selected = preferred
+            .map((name) => dbPaymentMethods?.find((method) => method.name === name))
+            .filter(Boolean);
+        if (selected.length >= 2) return selected.slice(0, 2);
+        const fallback = (dbPaymentMethods || [])
+            .filter((method) => method.type !== 'mixed')
+            .slice(0, 2);
+        return selected.length ? [...selected, ...fallback.filter((item) => !selected.some((s) => s.id === item.id))].slice(0, 2) : fallback;
+    }, [dbPaymentMethods]);
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -1988,7 +1999,7 @@ const Ventas = () => {
                             </div>
                         )}
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                            {dbPaymentMethods?.slice(0, 2).map(m => (
+                            {quickPaymentMethods.map(m => (
                                 <button 
                                     key={m.id} 
                                     className={`payment-method-btn ${selectedPaymentMethod === m.id ? 'active' : ''}`} 
@@ -2003,7 +2014,12 @@ const Ventas = () => {
 
                     <div className="action-buttons">
                         <button className="btn-secondary" onClick={() => setShowClientList(true)}>CLIENTES</button>
-                        <button className="btn-secondary">CONFIG</button>
+                        <button
+                            className="btn-secondary"
+                            onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
+                        >
+                            ELIMINAR TICKET
+                        </button>
                         <button className="btn-danger" onClick={() => { if(window.confirm('¿Anular ticket?')) setCart([]); }}>ANULAR</button>
                     </div>
 
@@ -2031,14 +2047,6 @@ const Ventas = () => {
                         </div>
                     )}
                     
-                    <div style={{ marginTop: '0.75rem', textAlign: 'center' }}>
-                        <button
-                            onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
-                            style={{ background: 'none', border: 'none', color: 'rgba(239, 68, 68, 0.4)', fontSize: '0.6rem', fontWeight: '800', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', textTransform: 'uppercase', margin: '0 auto' }}
-                        >
-                            <Trash2 size={12} /> ELIMINAR TICKET ({recentSales?.length || 0})
-                        </button>
-                    </div>
                 </div>
             </DirectionalReveal>
         </div>
