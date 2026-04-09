@@ -28,7 +28,8 @@ import {
   ArrowLeftRight,
   Calculator,
   Lock,
-  HelpCircle
+  HelpCircle,
+  Crown
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
