@@ -775,6 +775,17 @@ async function hasForeignKey(conn, dbName, tableName, constraintName) {
     return rows.length > 0;
 }
 
+async function hasTable(conn, dbName, tableName) {
+    const [rows] = await conn.query(
+        `SELECT 1
+         FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName]
+    );
+    return rows.length > 0;
+}
+
 async function ensureTenantIdColumn(conn, tableName) {
     if (await hasColumn(conn, OPERATIONAL_DB_NAME, tableName, TENANT_COLUMN)) {
         return;
@@ -1238,6 +1249,22 @@ async function ensureProductCategoriesIntegrity(conn) {
     const textExpr = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
 
     await conn.query(
+        `CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.product_categories (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            code        VARCHAR(100) NOT NULL,
+            name        VARCHAR(120) NOT NULL,
+            active      TINYINT(1) DEFAULT 1,
+            synced      TINYINT(1) DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_product_categories_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_product_categories_tenant_code (\`${TENANT_COLUMN}\`, code),
+            INDEX idx_product_categories_tenant (\`${TENANT_COLUMN}\`)
+        )`
+    );
+
+    await conn.query(
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
             (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
          SELECT
@@ -1646,8 +1673,8 @@ async function ensureOperationalTenantIsolation() {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
 
-            await ensureProductCatalogIntegrity(conn);
             await ensureProductCategoriesIntegrity(conn);
+            await ensureProductCatalogIntegrity(conn);
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
