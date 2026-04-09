@@ -100,6 +100,15 @@ const extractFeatureTokens = (value) => {
 };
 
 const buildLicenseCapabilities = (licenses, options = {}) => {
+    if (options.isGlobalSuperAdmin) {
+        return {
+            modules: Array.from(new Set(ALL_MODULES)).sort(),
+            featureFlags: ['superadmin'],
+            isPro: true,
+            isSuperUser: true,
+        };
+    }
+
     const normalizedLicenses = Array.isArray(licenses) ? licenses : [];
     const rawFlags = new Set();
     const modules = new Set(BASE_MODULES);
@@ -204,8 +213,9 @@ export const LicenseProvider = ({ children }) => {
     const capabilities = useMemo(
         () => buildLicenseCapabilities(scopedLicenses, {
             tenantHasDeliveryLicense: Boolean(accessProfile?.tenantHasDeliveryLicense),
+            isGlobalSuperAdmin: Boolean(accessProfile?.isGlobalSuperAdmin),
         }),
-        [accessProfile?.tenantHasDeliveryLicense, scopedLicenses],
+        [accessProfile?.isGlobalSuperAdmin, accessProfile?.tenantHasDeliveryLicense, scopedLicenses],
     );
     const licenseMode = capabilities.isPro ? 'pro' : 'base';
 

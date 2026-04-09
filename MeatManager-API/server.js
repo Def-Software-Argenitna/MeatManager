@@ -19,6 +19,8 @@ const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { createClient } = require('redis');
 
@@ -108,12 +110,15 @@ const CLIENT_USERS_TABLE = process.env.CLIENT_USERS_TABLE || 'client_users';
 const CLIENT_LICENSES_TABLE = process.env.CLIENT_LICENSES_TABLE || 'client_licenses';
 const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE || 'client_user_permissions';
 const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
+const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
+const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
+const INTERNAL_ADMIN_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
 );
@@ -214,6 +219,25 @@ function maskEmailAddress(email) {
     if (!name) return `***@${domain}`;
     if (name.length <= 2) return `${name[0] || '*'}***@${domain}`;
     return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function signInternalAdminToken(adminPayload) {
+    return jwt.sign(
+        {
+            kind: 'internal_admin',
+            admin: adminPayload,
+        },
+        INTERNAL_ADMIN_JWT_SECRET,
+        { expiresIn: INTERNAL_ADMIN_JWT_EXPIRES_IN }
+    );
+}
+
+function verifyInternalAdminToken(token) {
+    const payload = jwt.verify(token, INTERNAL_ADMIN_JWT_SECRET);
+    if (payload?.kind !== 'internal_admin' || !payload?.admin?.id) {
+        throw new Error('Invalid internal admin token');
+    }
+    return payload.admin;
 }
 
 async function sendCashWithdrawalAuthorizationEmail({
@@ -545,6 +569,7 @@ function licenseHasAdminCapability(license) {
 
 function hasAdminPanelAccess(accessContext) {
     if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
     if (accessContext.user.role === 'admin') return true;
 
     const licenses = [
@@ -563,6 +588,7 @@ function hasAdminPanelAccess(accessContext) {
 
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
     if (!accessContext.client?.tenantHasDeliveryLicense) return false;
     if (accessContext.user.role === 'admin') return true;
     if (hasSuperLicense(accessContext.effectiveLicenses || [])) return true;
@@ -1948,6 +1974,125 @@ async function getClientAccessContext({ uid, email }) {
     const normalizedEmail = normalizeEmail(email);
     const conn = await clientsControlPool.getConnection();
     try {
+        const internalAdmin = arguments[0]?._internalAdmin || null;
+        const supportClientId = Number(arguments[0]?._supportClientId || 0);
+
+        if (internalAdmin) {
+            if (!Number.isFinite(supportClientId) || supportClientId <= 0) {
+                const error = new Error('Seleccioná un tenant para operar como SuperAdmin');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const [clientRows] = await conn.query(
+                `SELECT
+                    c.id AS clientId,
+                    c.businessName,
+                    c.taxId,
+                    c.billingEmail,
+                    c.cashAuthorizationEmail,
+                    c.status AS clientStatus
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                 WHERE c.id = ?
+                 LIMIT 1`,
+                [supportClientId]
+            );
+
+            const client = clientRows[0] || null;
+            if (!client) {
+                const error = new Error('Tenant no encontrado');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            const [licenseRows] = await conn.query(
+                `SELECT
+                    cl.id AS clientLicenseId,
+                    cl.clientId,
+                    cl.licenseId,
+                    cl.branchId,
+                    cl.userId,
+                    cl.status AS assignmentStatus,
+                    l.commercialName,
+                    l.internalCode,
+                    l.category,
+                    l.billingScope,
+                    l.isMandatory,
+                    l.featureFlags,
+                    l.status AS licenseStatus,
+                    l.appliesToWebapp
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 WHERE cl.clientId = ?
+                   AND cl.status = 'ACTIVE'
+                   AND l.status = 'ACTIVE'`,
+                [client.id]
+            );
+
+            const mapResolvedLicense = (license) => ({
+                clientLicenseId: license.clientLicenseId,
+                licenseId: license.licenseId,
+                commercialName: license.commercialName,
+                internalCode: license.internalCode,
+                category: license.category,
+                billingScope: license.billingScope,
+                assignedUserId: license.userId ?? null,
+                assignedBranchId: license.branchId ?? null,
+                appliesToWebapp: licenseAppliesToWebapp(license),
+                featureFlags: parseFeatureFlags(license.featureFlags),
+            });
+
+            const effectiveLicenses = licenseRows
+                .filter((license) => licenseAppliesToWebapp(license))
+                .map(mapResolvedLicense)
+                .filter((license, index, arr) => (
+                    arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+                ));
+
+            const deliveryLicenses = licenseRows
+                .filter((license) => licenseHasLogisticsCapability(license))
+                .map(mapResolvedLicense)
+                .filter((license, index, arr) => (
+                    arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+                ));
+
+            return {
+                user: {
+                    id: `support-${internalAdmin.id}`,
+                    clientId: client.id,
+                    branchId: null,
+                    firebaseUid: null,
+                    name: internalAdmin.name || 'DEF',
+                    lastname: internalAdmin.lastname || 'SuperAdmin',
+                    email: internalAdmin.email,
+                    role: 'admin',
+                    userStatus: 'ACTIVE',
+                    isSynced: 1,
+                    lastLogin: null,
+                    businessName: client.businessName,
+                    taxId: client.taxId,
+                    billingEmail: client.billingEmail,
+                    cashAuthorizationEmail: client.cashAuthorizationEmail,
+                    clientStatus: client.clientStatus,
+                    isGlobalSuperAdmin: true,
+                    supportAdminId: internalAdmin.id,
+                },
+                client: {
+                    id: client.id,
+                    businessName: client.businessName,
+                    taxId: client.taxId,
+                    cashAuthorizationEmail: client.cashAuthorizationEmail,
+                    billingEmail: client.billingEmail,
+                    status: client.clientStatus,
+                    tenantHasBaseLicense: tenantHasPurchasedBaseWebappLicense(licenseRows),
+                    tenantHasDeliveryLicense: tenantHasPurchasedLogisticsLicense(licenseRows),
+                },
+                effectiveLicenses,
+                deliveryLicenses,
+            };
+        }
+
         const [rows] = await conn.query(
             `SELECT
                 cu.id,
@@ -2178,6 +2323,9 @@ function assertClientAccess(accessContext, options = {}) {
         error.statusCode = 404;
         throw error;
     }
+    if (accessContext.user?.isGlobalSuperAdmin) {
+        return;
+    }
     if (!isActiveStatus(accessContext.client?.status, false)) {
         const error = new Error(`Cliente sin acceso (${accessContext.client?.status || 'SIN ESTADO'})`);
         error.statusCode = 403;
@@ -2213,10 +2361,12 @@ function buildAccessResponse(accessContext) {
         username: fullName || accessContext.user.email || 'Usuario',
         role: accessContext.user.role === 'admin' ? 'admin' : 'employee',
         isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
+        isGlobalSuperAdmin: Boolean(accessContext.user.isGlobalSuperAdmin),
         active: isActiveStatus(accessContext.user.userStatus, false) ? 1 : 0,
         perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
         clientId: accessContext.client.id,
         clientStatus: accessContext.client.status,
+        businessName: accessContext.client.businessName,
         branch: accessContext.user?.branchRecordId ? {
             id: accessContext.user.branchRecordId,
             name: accessContext.user.branchName || '',
@@ -2568,6 +2718,31 @@ async function runClientUserSync(job) {
 }
 
 // ── Middleware: verifica Firebase ID Token ─────────────────────────────────
+async function resolveInternalAdminFromToken(token) {
+    try {
+        const payload = verifyInternalAdminToken(token);
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const [rows] = await conn.query(
+                `SELECT id, email, username, name, lastname, role, status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 WHERE id = ?
+                 LIMIT 1`,
+                [payload.id]
+            );
+            const internalAdmin = rows[0] || null;
+            if (!internalAdmin || !isActiveStatus(internalAdmin.status, false)) {
+                return null;
+            }
+            return internalAdmin;
+        } finally {
+            conn.release();
+        }
+    } catch {
+        return null;
+    }
+}
+
 async function verifyFirebaseToken(req, res, next) {
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -2575,12 +2750,45 @@ async function verifyFirebaseToken(req, res, next) {
     }
     try {
         const token = auth.split('Bearer ')[1];
+        const internalAdmin = await resolveInternalAdminFromToken(token);
+        if (internalAdmin) {
+            const rawTargetClientId = req.headers['x-mm-target-client-id']
+                || req.query?.clientId
+                || req.body?.clientId;
+            const supportClientId = Number(rawTargetClientId || 0);
+
+            req.internalAdmin = internalAdmin;
+            req.firebaseUser = {
+                uid: `internal-admin-${internalAdmin.id}`,
+                email: internalAdmin.email,
+                _internalAdmin: internalAdmin,
+                _supportClientId: Number.isFinite(supportClientId) && supportClientId > 0 ? supportClientId : null,
+            };
+            return next();
+        }
+
         const decoded = await admin.auth().verifyIdToken(token);
         req.firebaseUser = decoded;
         return next();
     } catch {
         return res.status(401).json({ error: 'Token inválido o expirado' });
     }
+}
+
+async function verifyInternalAdminSession(req, res, next) {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    const token = auth.split('Bearer ')[1];
+    const internalAdmin = await resolveInternalAdminFromToken(token);
+    if (!internalAdmin) {
+        return res.status(401).json({ error: 'Sesión interna inválida o expirada' });
+    }
+
+    req.internalAdmin = internalAdmin;
+    return next();
 }
 
 async function verifyFirebaseTokenWithClient(req, res, next) {
@@ -3205,7 +3413,12 @@ async function getTenantInfo(authUser, options = {}) {
     const email = typeof authUser === 'string' ? '' : authUser?.email;
     tenantInfoCache.delete(uid);
 
-    const accessContext = await getClientAccessContext({ uid, email });
+    const accessContext = await getClientAccessContext({
+        uid,
+        email,
+        _internalAdmin: authUser?._internalAdmin || null,
+        _supportClientId: authUser?._supportClientId || null,
+    });
     if (accessContext) {
         assertClientAccess(accessContext, options);
         const info = {
@@ -3237,7 +3450,12 @@ async function getTenantInfo(authUser, options = {}) {
 async function getTenantClientData(authUser) {
     const uid = typeof authUser === 'string' ? authUser : authUser?.uid;
     const email = typeof authUser === 'string' ? '' : authUser?.email;
-    const accessContext = await getClientAccessContext({ uid, email });
+    const accessContext = await getClientAccessContext({
+        uid,
+        email,
+        _internalAdmin: authUser?._internalAdmin || null,
+        _supportClientId: authUser?._supportClientId || null,
+    });
     if (accessContext) {
         assertClientAccess(accessContext);
         return {
@@ -3250,6 +3468,7 @@ async function getTenantClientData(authUser) {
             role: accessContext.user.role,
             firebaseUid: accessContext.user.firebaseUid,
             licenses: accessContext.effectiveLicenses,
+            isGlobalSuperAdmin: Boolean(accessContext.user.isGlobalSuperAdmin),
         };
     }
 
@@ -3911,6 +4130,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         const normalizedRecord = table === 'products'
             ? await resolveProductRecordCategory(pool, tenantId, record)
@@ -4746,6 +4967,110 @@ app.get('/api/users', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.post('/api/internal-admin/login', async (req, res) => {
+    try {
+        const identifier = String(req.body?.identifier || '').trim();
+        const password = String(req.body?.password || '');
+
+        if (!identifier || !password) {
+            return res.status(400).json({ error: 'Usuario/email y contraseña son obligatorios' });
+        }
+
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const [rows] = await conn.query(
+                `SELECT id, email, username, name, lastname, passwordHash, role, status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
+                 LIMIT 1`,
+                [identifier, identifier]
+            );
+            const internalAdmin = rows[0] || null;
+
+            if (!internalAdmin) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            const isPasswordValid = await bcrypt.compare(password, internalAdmin.passwordHash);
+            if (!isPasswordValid) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            if (!isActiveStatus(internalAdmin.status, false)) {
+                return res.status(403).json({ error: 'El SuperAdmin está inactivo' });
+            }
+
+            const adminPayload = {
+                id: internalAdmin.id,
+                email: internalAdmin.email,
+                username: internalAdmin.username,
+                name: internalAdmin.name,
+                lastname: internalAdmin.lastname,
+                role: internalAdmin.role,
+                status: internalAdmin.status,
+            };
+
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 SET lastLogin = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [internalAdmin.id]
+            );
+
+            return res.json({
+                ok: true,
+                token: signInternalAdminToken(adminPayload),
+                admin: adminPayload,
+            });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[INTERNAL ADMIN LOGIN ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudo iniciar sesión como SuperAdmin' });
+    }
+});
+
+app.get('/api/internal-admin/me', verifyInternalAdminSession, async (req, res) => {
+    return res.json({
+        ok: true,
+        admin: req.internalAdmin,
+    });
+});
+
+app.get('/api/internal-admin/clients', verifyInternalAdminSession, async (req, res) => {
+    try {
+        const search = String(req.query?.search || '').trim();
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const searchLike = `%${search}%`;
+            const [rows] = await conn.query(
+                `SELECT
+                    c.id,
+                    c.businessName,
+                    c.taxId,
+                    c.billingEmail,
+                    c.status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                 ${search ? 'WHERE c.businessName LIKE ? OR c.taxId LIKE ? OR c.billingEmail LIKE ?' : ''}
+                 ORDER BY c.businessName ASC
+                 LIMIT 1000`,
+                search ? [searchLike, searchLike, searchLike] : []
+            );
+
+            return res.json({
+                ok: true,
+                clients: rows,
+            });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[INTERNAL ADMIN CLIENTS ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudieron leer los tenants' });
+    }
+});
+
 // ── RUTA: GET /api/firebase-users ──────────────────────────────────────────
 // Lista usuarios web/Firebase de la misma empresa (mismo CUIT).
 app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
@@ -4753,6 +5078,8 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -4800,7 +5127,7 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
 
             const currentUserId = String(accessContext.user?.id || '');
             const currentUserAlreadyListed = userRows.some((row) => String(row.id || '') === currentUserId);
-            if (accessContext.user && !currentUserAlreadyListed) {
+            if (accessContext.user && !currentUserAlreadyListed && !accessContext.user.isGlobalSuperAdmin) {
                 userRows.unshift({
                     id: accessContext.user.id,
                     clientId: accessContext.user.clientId,
@@ -4858,6 +5185,8 @@ app.get('/api/firebase-users/me', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -5286,6 +5615,8 @@ app.post('/api/cash/withdrawals/request-authorization', verifyFirebaseToken, asy
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         const tenantInfo = await getTenantInfo(req.firebaseUser);
@@ -5323,6 +5654,8 @@ app.post('/api/cash/withdrawals/verify-authorization', verifyFirebaseToken, asyn
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         const tenantInfo = await getTenantInfo(req.firebaseUser);
@@ -5355,6 +5688,8 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5399,6 +5734,8 @@ app.get('/api/delivery/orders', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5435,6 +5772,8 @@ app.get('/api/logistics/drivers', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
@@ -5463,6 +5802,8 @@ app.get('/api/client/branches', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -5486,6 +5827,8 @@ app.post('/api/logistics/orders/:id/assign', verifyFirebaseToken, async (req, re
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
@@ -5544,6 +5887,8 @@ app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5624,6 +5969,8 @@ app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5694,6 +6041,8 @@ app.get('/api/delivery/locations', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5717,6 +6066,8 @@ app.get('/api/logistics/drivers/live', verifyFirebaseToken, async (req, res) => 
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
