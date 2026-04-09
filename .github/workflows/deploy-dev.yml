@@ -87,3 +87,18 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker compose -f docker-compose.cloud.yml --env-file .env pull web-dev api-dev
           docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-dev api-dev
+
+      - name: Debug deploy failure (containers + logs)
+        if: failure()
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          echo "=== Deploy debug: docker compose ps ==="
+          cd "${DEPLOY_PATH}"
+          docker compose -f docker-compose.cloud.yml --env-file .env ps || true
+          echo "=== Deploy debug: web-dev logs (last 200) ==="
+          docker compose -f docker-compose.cloud.yml --env-file .env logs --tail=200 web-dev || true
+          echo "=== Deploy debug: api-dev logs (last 200) ==="
+          docker compose -f docker-compose.cloud.yml --env-file .env logs --tail=200 api-dev || true
+          echo "=== Deploy debug: docker ps ==="
+          docker ps -a || true
