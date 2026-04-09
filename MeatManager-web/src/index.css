@@ -235,7 +235,7 @@ tr:hover td {
     z-index: 10000;
     animation: fadeIn 0.3s ease-out;
     padding: 1rem;
-    overflow: hidden;
+    overflow-y: auto;
 }
 
 @keyframes fadeIn {
@@ -246,6 +246,9 @@ tr:hover td {
 .modal-content {
     padding: 2rem;
     animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+    max-height: calc(100vh - 2rem);
+    overflow-y: auto;
+    margin: auto;
 }
 
 @keyframes slideUp {

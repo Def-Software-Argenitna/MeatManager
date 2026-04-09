@@ -859,9 +859,10 @@ const Compras = () => {
                                         <select
                                             className="neo-input"
                                             style={{ marginBottom: 0 }}
-                                            value={currentItem.species}
+                                            value={currentItem.species || 'ninguna'}
                                             onChange={(e) => setCurrentItem({ ...currentItem, species: e.target.value })}
                                         >
+                                            <option value="ninguna">Ninguna / No aplica</option>
                                             <option value="vaca">Vaca / Ternera</option>
                                             <option value="cerdo">Cerdo</option>
                                             <option value="pollo">Pollo / Ave</option>
