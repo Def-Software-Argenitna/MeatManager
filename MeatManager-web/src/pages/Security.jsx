@@ -130,7 +130,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
         if (!/\S+@\S+\.\S+/.test(form.email.trim())) return toast('error', 'Ingresá un email válido');
         if (!user && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
         if (form.password && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
-        const normalizedRole = form.accountType === 'admin' ? 'admin' : 'employee';
+        const normalizedRole = user?.role === 'admin' ? 'admin' : 'employee';
         const normalizedPerms = form.accountType === 'driver'
             ? [DRIVER_PATH]
             : form.accountType === 'internal'
@@ -251,11 +251,6 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         <div className="security-account-types">
                             {[
                                 {
-                                    value: 'admin',
-                                    title: 'Administrador',
-                                    description: 'Acceso total a la web de MeatManager para gestionar el tenant.',
-                                },
-                                {
                                     value: 'internal',
                                     title: 'Usuario interno',
                                     description: 'Cajeros, vendedores u operadores con permisos configurables.',
@@ -373,7 +368,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         </div>
                     )}
 
-                    {(form.accountType === 'internal' || form.accountType === 'admin') && (
+                    {form.accountType === 'internal' && (
                         <div className="security-section" style={{ marginBottom: '1.5rem' }}>
                             <label className="security-section-title">
                                 Licencias adicionales disponibles
@@ -429,7 +424,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             Resumen de acceso
                         </label>
                         <div className="security-summary-box">
-                            {form.accountType === 'admin' && (
+                            {false && (
                                 <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
                             )}
                             {form.accountType === 'internal' && (

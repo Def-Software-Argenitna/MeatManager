@@ -3420,6 +3420,16 @@ function getSchemaTables() {
 // crea la BD si no existe, devuelve la config de conexión.
 async function handleProvision(req, res) {
     try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin' && !accessContext.user.isGlobalSuperAdmin;
+        const isRequesterAdmin = accessContext.user.role === 'admin' && !accessContext.user.isGlobalSuperAdmin;
+
         const ownerData = await getTenantClientData(req.firebaseUser);
         const { cuit, empresa, clientId } = ownerData;
         if (!cuit) {
@@ -5322,11 +5332,22 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Nombre de usuario requerido' });
         }
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin';
+        const requestedRole = String(role || 'employee').trim().toLowerCase();
+        const effectiveRole = isRequesterAdmin ? 'employee' : requestedRole;
+
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let insertId;
         let job;
-        const normalizedRole = role === 'admin' ? 'admin' : 'employee';
+        const normalizedRole = effectiveRole === 'admin' ? 'admin' : 'employee';
         const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         try {
             const [existingRows] = await conn.query(
@@ -5421,6 +5442,14 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         const { email, password, username, role, active, perms, assignedClientLicenseIds = [] } = req.body || {};
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin';
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let currentData;
@@ -5440,7 +5469,11 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
 
         const nextEmail = email ? normalizeEmail(email) : normalizeEmail(currentData.email);
         const nextUsername = username ? String(username).trim() : String(currentData.name || '').trim();
-        const nextRole = role === 'admin' ? 'admin' : (role === 'employee' ? 'employee' : currentData.role || 'employee');
+        const requestedRole = String(role || '').trim().toLowerCase();
+        const safeRequestedRole = isRequesterAdmin && requestedRole === 'admin' ? 'employee' : requestedRole;
+        const nextRole = safeRequestedRole === 'admin'
+            ? 'admin'
+            : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
         const nextActive = active === undefined ? currentData.status === 'ACTIVE' : Number(active) === 1;
         const nextPerms = nextRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
 
