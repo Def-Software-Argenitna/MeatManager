@@ -67,6 +67,22 @@ jobs:
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
+          if [ -z "${DEPLOY_PATH}" ]; then
+            echo "DEPLOY_PATH is empty or missing"
+            exit 1
+          fi
+          if [ -z "${API_MAIN_ENV}" ]; then
+            echo "API_MAIN_ENV is empty or missing"
+            exit 1
+          fi
+          if [ -z "${API_DEV_ENV}" ]; then
+            echo "API_DEV_ENV is empty or missing"
+            exit 1
+          fi
+          if [ -z "${FIREBASE_SERVICE_ACCOUNT_JSON}" ]; then
+            echo "FIREBASE_SERVICE_ACCOUNT_JSON is empty or missing"
+            exit 1
+          fi
           mkdir -p "${DEPLOY_PATH}/env" "${DEPLOY_PATH}/secrets" "${DEPLOY_PATH}/nginx"
           cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
           cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
@@ -93,6 +109,13 @@ jobs:
         env:
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
+          echo "=== Deploy debug: DEPLOY_PATH=${DEPLOY_PATH} ==="
+          if [ -z "${DEPLOY_PATH}" ]; then
+            echo "DEPLOY_PATH missing in debug step too"
+            exit 0
+          fi
+          echo "=== Deploy debug: DEPLOY_PATH tree ==="
+          ls -la "${DEPLOY_PATH}" || true
           echo "=== Deploy debug: docker compose ps ==="
           cd "${DEPLOY_PATH}"
           docker compose -f docker-compose.cloud.yml --env-file .env ps || true
