@@ -301,8 +301,7 @@ const ProductosCompra = () => {
             )}
             <header className="page-header">
                 <div className="page-header-main">
-                    <h1 className="page-title">Catálogo de Compras</h1>
-                    <p className="page-description">Define los productos que compras a proveedores</p>
+                    <h1 className="page-title">Artículo</h1>
                 </div>
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
@@ -331,23 +330,23 @@ const ProductosCompra = () => {
                     <div key={item.id} className="neo-card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.name}</div>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>
                                     {item.category_id ? categoryMap[item.category_id] : 'Sin Categoría'}
                                 </span>
-                                <span style={{ background: 'var(--color-bg-main)', padding: '0 0.3rem', borderRadius: '4px' }}>
+                                <span style={{ background: 'var(--color-bg-main)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
                                     {item.unit}
                                 </span>
-                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
                                     IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
                                 </span>
                                 {item.type === 'despostada' && (
-                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)' }}>
+                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
                                         PARA DESPOSTAR
                                     </span>
                                 )}
                                 {Number(item.is_preelaborable || 0) === 1 && (
-                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)' }}>
+                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
                                         INSUMO PRE-ELABORADO
                                     </span>
                                 )}

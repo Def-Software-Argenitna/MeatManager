@@ -13,7 +13,7 @@ const TopBar = ({ onToggleSidebar }) => {
         if (path.includes("ventas")) name = "CENTRO DE VENTAS";
         else if (path.includes("cierre") || path.includes("caja")) name = "CIERRE DE CAJA";
         else if (path.includes("compras")) name = "GESTIÓN DE COMPRAS";
-        else if (path.includes("productos-compra") || path.includes("catalogo")) name = "CATÁLOGO DE COMPRAS";
+        else if (path.includes("productos-compra") || path.includes("catalogo")) name = "ARTÍCULO";
         else if (path.includes("stock")) name = "STOCK E INVENTARIO";
         else if (path.includes("clientes")) name = "GESTIÓN DE CLIENTES";
         else if (path.includes("proveedores")) name = "PROVEEDORES";
