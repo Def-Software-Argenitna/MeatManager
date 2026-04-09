@@ -8,6 +8,27 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import './Stock.css';
 
+const TYPE_META = {
+    vaca: { name: 'Vaca', icon: '🐄', color: '#dc2626' },
+    cerdo: { name: 'Cerdo', icon: '🐷', color: '#ec4899' },
+    pollo: { name: 'Pollo', icon: '🐔', color: '#f59e0b' },
+    pescado: { name: 'Pescado', icon: '🐟', color: '#3b82f6' },
+    'pre-elaborado': { name: 'Pre-elaborados', icon: '🍖', color: '#8b5cf6' },
+    almacen: { name: 'Almacen', icon: '📦', color: '#f97316' },
+    limpieza: { name: 'Limpieza', icon: '🧴', color: '#06b6d4' },
+    bebidas: { name: 'Bebidas', icon: '🥤', color: '#22c55e' },
+    insumo: { name: 'Insumos', icon: '🧰', color: '#14b8a6' },
+    otros: { name: 'Otros', icon: '📁', color: '#64748b' },
+};
+
+const TYPE_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'pre-elaborado', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
+
+const normalizeStockType = (value) => {
+    const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
+    if (normalized === 'pre-elaborados' || normalized === 'preelaborado') return 'pre-elaborado';
+    return normalized || 'otros';
+};
+
 const Stock = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
@@ -102,7 +123,7 @@ const Stock = () => {
                     id: key,
                     product_ref_id: matchedProduct?.id || null,
                     name: matchedProduct?.name || item.name,
-                    type: matchedProduct?.category || item.type,
+                    type: normalizeStockType(matchedProduct?.category || item.type),
                     unit: matchedProduct?.unit || item.unit || 'kg',
                     quantity: 0,
                     updated_at: item.updated_at
@@ -137,7 +158,7 @@ const Stock = () => {
     // Filtrar stock consolidado
     const filteredStock = consolidatedStock.filter(item => {
         const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const matchesType = filterType === 'all' || item.type === filterType;
+        const matchesType = filterType === 'all' || normalizeStockType(item.type) === filterType;
         return matchesSearch && matchesType;
     });
 
@@ -167,17 +188,30 @@ const Stock = () => {
     }, 0);
 
     // Tipos disponibles
-    const types = [
-        { id: 'all', name: 'Todos', icon: '📦' },
-        { id: 'vaca', name: 'Vaca', icon: '🐄', color: '#dc2626' },
-        { id: 'cerdo', name: 'Cerdo', icon: '🐷', color: '#ec4899' },
-        { id: 'pollo', name: 'Pollo', icon: '🐔', color: '#f59e0b' },
-        { id: 'pescado', name: 'Pescado', icon: '🐟', color: '#3b82f6' },
-        { id: 'pre-elaborado', name: 'Pre-elaborados', icon: '🍖', color: '#8b5cf6' },
-    ];
+    const types = React.useMemo(() => {
+        const dynamicTypes = [...new Set((consolidatedStock || []).map((item) => normalizeStockType(item.type)))];
+        dynamicTypes.sort((a, b) => {
+            const ia = TYPE_PRIORITY.indexOf(a);
+            const ib = TYPE_PRIORITY.indexOf(b);
+            if (ia === -1 && ib === -1) return a.localeCompare(b, 'es');
+            if (ia === -1) return 1;
+            if (ib === -1) return -1;
+            return ia - ib;
+        });
+        return [
+            { id: 'all', name: 'Todos', icon: '📦', color: '#64748b' },
+            ...dynamicTypes.map((id) => ({
+                id,
+                name: TYPE_META[id]?.name || id,
+                icon: TYPE_META[id]?.icon || '📦',
+                color: TYPE_META[id]?.color || '#64748b',
+            })),
+        ];
+    }, [consolidatedStock]);
 
     const getTypeInfo = (type) => {
-        return types.find(t => t.id === type) || { name: type, icon: '📦', color: '#6b7280' };
+        const normalized = normalizeStockType(type);
+        return types.find(t => t.id === normalized) || { name: normalized, icon: '📦', color: '#6b7280' };
     };
 
     const [isModalOpen, setIsModalOpen] = useState(false);

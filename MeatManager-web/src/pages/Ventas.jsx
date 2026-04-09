@@ -56,6 +56,52 @@ const toNumber = (value) => {
 const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
 const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
 const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
+const PAYMENT_METHOD_ORDER = ['Efectivo', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
+const ALLOWED_PAYMENT_METHOD_NAMES = new Set(PAYMENT_METHOD_ORDER.map((name) => name.toLowerCase()));
+
+const canonicalizePaymentMethodName = (name) => {
+    const normalized = String(name || '').trim().toLowerCase();
+    if (!normalized) return '';
+    if (normalized.includes('efectivo')) return 'Efectivo';
+    if (normalized.includes('cuenta corriente')) return 'Cuenta Corriente';
+    if (normalized.includes('mercado pago')) return 'Mercado Pago';
+    if (normalized.includes('cuenta dni')) return 'Cuenta DNI';
+    if (normalized.includes('posnet') || normalized.includes('postnet')) return 'Postnet';
+    if (normalized.includes('mixto') || normalized.includes('mixed')) return 'Mixto';
+    return String(name || '').trim();
+};
+
+const normalizePaymentMethodType = (rawType, canonicalName) => {
+    const normalizedType = String(rawType || '').trim().toLowerCase();
+    const normalizedName = String(canonicalName || '').trim().toLowerCase();
+    if (normalizedType === 'mixto' || normalizedType === 'mixed' || normalizedName === 'mixto') return 'mixed';
+    if (normalizedType === 'cuenta_corriente' || normalizedName === 'cuenta corriente') return 'cuenta_corriente';
+    if (normalizedType === 'cash' || normalizedName === 'efectivo') return 'cash';
+    if (normalizedType === 'card' || normalizedName === 'postnet') return 'card';
+    if (normalizedType === 'wallet' || normalizedName === 'mercado pago' || normalizedName === 'cuenta dni') return 'wallet';
+    return normalizedType || 'cash';
+};
+
+const normalizePaymentMethods = (rows = []) => {
+    const dedup = new Map();
+    rows
+        .filter((method) => method && method.enabled)
+        .forEach((method) => {
+            const canonicalName = canonicalizePaymentMethodName(method.name);
+            if (!ALLOWED_PAYMENT_METHOD_NAMES.has(canonicalName.toLowerCase())) return;
+            if (!dedup.has(canonicalName)) {
+                dedup.set(canonicalName, {
+                    ...method,
+                    name: canonicalName,
+                    type: normalizePaymentMethodType(method.type, canonicalName),
+                });
+            }
+        });
+
+    return [...dedup.values()].sort((left, right) => (
+        PAYMENT_METHOD_ORDER.indexOf(left.name) - PAYMENT_METHOD_ORDER.indexOf(right.name)
+    ));
+};
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
@@ -210,9 +256,8 @@ const Ventas = () => {
         setStockItems(Array.isArray(stockRows) ? stockRows : []);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
-        setDbPaymentMethods(
-            (Array.isArray(paymentRows) ? paymentRows : []).filter((m) => m.enabled)
-        );
+        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
 
         const recentRows = Array.isArray(salesRows) ? salesRows : [];
         setRecentSales(recentRows);

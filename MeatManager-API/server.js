@@ -4419,13 +4419,12 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
         if (table === 'payment_methods' && rows.length === 0) {
             const PAYMENT_DEFAULTS = [
-                { name: 'Posnet',           type: 'card',             percentage: 0, enabled: 1 },
+                { name: 'Postnet',          type: 'card',             percentage: 0, enabled: 1 },
                 { name: 'Mercado Pago',     type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Cuenta DNI',       type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Efectivo',         type: 'cash',             percentage: 0, enabled: 1 },
-                { name: 'Transferencia',    type: 'transfer',         percentage: 0, enabled: 1 },
                 { name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0, enabled: 1 },
-                { name: 'Mixto',            type: 'mixto',            percentage: 0, enabled: 1 },
+                { name: 'Mixto',            type: 'mixed',            percentage: 0, enabled: 1 },
             ];
             for (const pm of PAYMENT_DEFAULTS) {
                 await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
@@ -4789,13 +4788,14 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, product_id, name, type, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, product_id, name, type, usage, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     productId,
                     String(item.product_name || '').trim(),
                     String(item.category || '').trim() || null,
+                    'venta',
                     -(parseFloat(item.quantity) || 0),
                     String(item.unit || 'kg').trim(),
                     `venta_${saleId}`,
@@ -4873,12 +4873,13 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                 if (prod) productId = prod.id;
             }
             await conn.query(
-                `INSERT INTO stock (tenant_id, product_id, name, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO stock (tenant_id, product_id, name, usage, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     productId,
                     String(item.product_name || '').trim(),
+                    'venta',
                     parseFloat(item.quantity) || 0,
                     String(item.unit || 'kg').trim(),
                     `anulacion_venta_${saleId}`,
