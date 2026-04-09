@@ -3,6 +3,7 @@ import { Package, Plus, Search, Trash2 } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
+import './OtrosItems.css';
 
 const PRESENTATION_OPTIONS = [
     { value: 'unidades', label: 'Unidades' },
@@ -54,12 +55,6 @@ const OtrosItems = () => {
 
     return (
         <div className="stock-container animate-fade-in">
-            <DirectionalReveal from="up" delay={0.04}>
-            <header className="page-header">
-                
-            </header>
-            </DirectionalReveal>
-
             <DirectionalReveal className="neo-card" from="left" delay={0.1} style={{ padding: '1.5rem', marginBottom: '2rem' }}>
                 <h3 style={{ marginBottom: '1rem' }}>Agregar Nuevo Insumo</h3>
                 <form onSubmit={handleAddItem} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
@@ -103,19 +98,19 @@ const OtrosItems = () => {
                 </form>
             </DirectionalReveal>
 
-            <div className="stock-grid">
+            <div className="otros-items-grid">
                 {items?.map((item, index) => (
-                    <DirectionalReveal key={item.id} className="stock-card neo-card" from={index % 2 === 0 ? 'left' : 'right'} delay={0.16 + (index * 0.03)}>
-                        <div className="stock-icon-wrapper" style={{ backgroundColor: 'var(--color-bg-main)' }}>
+                    <DirectionalReveal key={item.id} className="otros-item-card neo-card" from={index % 2 === 0 ? 'left' : 'right'} delay={0.16 + (index * 0.03)}>
+                        <div className="otros-item-icon" style={{ backgroundColor: 'var(--color-bg-main)' }}>
                             <Package size={24} color="var(--color-primary)" />
                         </div>
-                        <div className="stock-info">
+                        <div className="otros-item-info">
                             <h3>{item.name}</h3>
-                            <div className="stock-quantity">
+                            <div className="otros-item-quantity">
                                 {item.quantity} <sub>{item.presentation || item.unit || 'unid.'}</sub>
                             </div>
                             {item.barcode && (
-                                <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
+                                <div className="otros-item-barcode">
                                     Cod. barra: {item.barcode}
                                 </div>
                             )}
