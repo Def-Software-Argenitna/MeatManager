@@ -1,30 +1,25 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { fetchTable, saveTableRecord, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import {
     LayoutGrid,
     Plus,
     Trash2,
-    Share2,
     Copy,
     Check,
     Smartphone,
     DollarSign,
     MessageCircle,
-    Crown,
     Headset
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { BRAND_CONFIG } from '../brandConfig';
+import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import './MenuDigital.css';
 
 const formatFullPrice = (value) => `$${Number(value || 0).toLocaleString('es-AR')} /kg`;
 
 const MenuDigital = () => {
-    const navigate = useNavigate();
     const [isAdding, setIsAdding] = useState(false);
-    const [copied, setCopied] = useState(false);
     const [copiedBot, setCopiedBot] = useState(false);
     const [copiedPortal, setCopiedPortal] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -99,33 +94,8 @@ const MenuDigital = () => {
         await loadData();
     };
 
-    const generateCatalogLink = () => {
-        const phone = whatsappNumber.replace(/\D/g, '');
-        const availableItems = menuItems?.filter(i => getStockForItem(i.product_name) > 0) || [];
-
-        let text = `*${shopName} - Menú Digital* 🥩\n\n`;
-        text += `¡Hola! 👋 Para pedir, simplemente respondé con el *NÚMERO* y la *CANTIDAD* (kg o piezas).\n\n`;
-        text += `*PRODUCTOS DISPONIBLES:*\n`;
-
-        availableItems.forEach((item, index) => {
-            text += `${index + 1}. ${item.product_name} -> *$${item.price.toLocaleString()}/kg* ${item.is_offer ? '🔥' : ''}\n`;
-        });
-
-        text += `\n--- \n`;
-        text += `✍️ *TU PEDIDO:* \n`;
-        text += `(Ejemplo: 1-2kg, 3-1.5kg, 5-1pieza)\n\n`;
-        text += `*FORMA DE PAGO:* [Efectivo / Transferencia / Tarjeta]`;
-
-        return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
-    };
-
-    const copyLink = () => {
-        navigator.clipboard.writeText(generateCatalogLink());
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-    };
-
     return (
+        <ModuleLicenseGate locked={!hasMenuDigital} moduleName="Menú Digital">
         <div className="menu-digital-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
@@ -134,12 +104,6 @@ const MenuDigital = () => {
                     <p className="page-description">Elegí qué cortes mostrar y gestioná tus precios de venta</p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                    {!hasMenuDigital && (
-                        <button className="neo-button" onClick={copyLink}>
-                            {copied ? <Check size={20} color="#22c55e" /> : <Share2 size={20} />}
-                            {copied ? 'Copiado!' : 'Copiar Lista (Manual)'}
-                        </button>
-                    )}
                     <button className="neo-button pro-btn" onClick={() => setIsAdding(true)}>
                         <Plus size={20} /> Agregar Producto
                     </button>
@@ -186,7 +150,7 @@ const MenuDigital = () => {
                 </div>
             </DirectionalReveal>
 
-            {hasMenuDigital ? (
+            {hasMenuDigital && (
                 <div className="bot-config-area animate-fade-in">
                     <DirectionalReveal className="neo-card bot-card bot-card-whatsapp" from="left" delay={0.16}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
@@ -258,25 +222,6 @@ const MenuDigital = () => {
                         </div>
                     </DirectionalReveal>
                 </div>
-            ) : (
-                <DirectionalReveal className="neo-card pro-locked-banner" from="down" delay={0.16} style={{ marginBottom: '1.5rem', padding: '1.5rem', background: 'linear-gradient(135deg, #1e293b, #0f172a)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderRadius: '12px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                        <div style={{ background: 'gold', padding: '0.75rem', borderRadius: '50%' }}>
-                            <Crown color="#000" size={24} />
-                        </div>
-                        <div>
-                            <h3 style={{ margin: 0, fontSize: '1.1rem' }}>Pasate a PRO para automatizar tus ventas</h3>
-                            <p style={{ margin: 0, fontSize: '0.85rem', opacity: 0.8 }}>Bot de auto-respuesta, Portal con carrito de compras y más.</p>
-                        </div>
-                    </div>
-                    <button
-                        className="neo-button"
-                        style={{ background: 'gold', color: 'black', fontWeight: 'bold' }}
-                        onClick={() => navigate('/config/licencia')}
-                    >
-                        Conocer Planes PRO
-                    </button>
-                </DirectionalReveal>
             )}
 
             <div className="pro-grid-layout">
@@ -419,6 +364,7 @@ const MenuDigital = () => {
                 </div>
             )}
         </div>
+        </ModuleLicenseGate>
     );
 };
 
