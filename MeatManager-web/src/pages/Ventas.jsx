@@ -218,7 +218,8 @@ const Ventas = () => {
     }, []);
 
     const navigate = useNavigate();
-    const { currentUser } = useUser();
+    const { currentUser, accessProfile } = useUser();
+    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -253,7 +254,12 @@ const Ventas = () => {
         });
         const refreshedProducts = await fetchProductsSafe();
 
-        setStockItems(Array.isArray(stockRows) ? stockRows : []);
+        const filteredStockRows = Array.isArray(stockRows)
+            ? stockRows.filter((row) => (
+                !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId
+            ))
+            : [];
+        setStockItems(filteredStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
         const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
@@ -1115,6 +1121,7 @@ const Ventas = () => {
             });
 
             await saveTableRecord('stock', 'insert', {
+                branch_id: currentBranchId || null,
                 product_id: unifiedProduct?.id || null,
                 name: quickProductName,
                 type: quickProductCategory,

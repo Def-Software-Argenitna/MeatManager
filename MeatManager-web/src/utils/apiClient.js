@@ -249,6 +249,42 @@ export const fetchClientBranches = async () => {
     return res.json();
 };
 
+export const fetchBranchTransfers = async ({ direction, status } = {}) => {
+    const query = new URLSearchParams();
+    if (direction) query.set('direction', direction);
+    if (status) query.set('status', status);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/branch-transfers${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudieron leer las transferencias');
+    }
+    return res.json();
+};
+
+export const createBranchTransfer = async (payload) => {
+    const res = await apiFetch('/api/branch-transfers', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo crear el remito');
+    }
+    return res.json();
+};
+
+export const receiveBranchTransfer = async (transferId) => {
+    const res = await apiFetch(`/api/branch-transfers/${encodeURIComponent(transferId)}/receive`, {
+        method: 'POST',
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo confirmar la recepcion');
+    }
+    return res.json();
+};
+
 export const fetchLogisticsDrivers = async () => {
     const res = await apiFetch('/api/logistics/drivers');
     if (!res.ok) {

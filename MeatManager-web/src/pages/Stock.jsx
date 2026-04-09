@@ -6,6 +6,7 @@ import { desktopApi } from '../utils/desktopApi';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { useUser } from '../context/UserContext';
 import './Stock.css';
 
 const TYPE_META = {
@@ -30,6 +31,8 @@ const normalizeStockType = (value) => {
 };
 
 const Stock = () => {
+    const { accessProfile } = useUser();
+    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
     const [isImporting, setIsImporting] = useState(false);
@@ -106,11 +109,19 @@ const Stock = () => {
         }
     };
 
+    const branchStockRows = React.useMemo(() => {
+        if (!Array.isArray(allStock)) return [];
+        if (!currentBranchId) return allStock;
+        return allStock.filter((row) => (
+            row.branch_id == null || Number(row.branch_id) === currentBranchId
+        ));
+    }, [allStock, currentBranchId]);
+
     const consolidatedStock = React.useMemo(() => {
-        if (!allStock) return [];
+        if (!branchStockRows) return [];
 
         const grouped = {};
-        allStock.forEach((item) => {
+        branchStockRows.forEach((item) => {
             const matchedProduct = findProductByIdentity(products, {
                 id: item.product_id,
                 name: item.name,
@@ -153,7 +164,7 @@ const Stock = () => {
                 };
             })
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-    }, [allStock, products]);
+    }, [branchStockRows, products]);
 
     // Filtrar stock consolidado
     const filteredStock = consolidatedStock.filter(item => {
@@ -232,6 +243,7 @@ const Stock = () => {
         const finalQty = adjustment.type === 'add' ? qty : -qty;
 
         await saveTableRecord('stock', 'insert', {
+            branch_id: currentBranchId || null,
             product_id: product.productId || null,
             name: product.name,
             type: product.category,
@@ -334,6 +346,7 @@ const Stock = () => {
                 ));
                 if (!inStock) {
                     await saveTableRecord('stock', 'insert', {
+                        branch_id: currentBranchId || null,
                         product_id: unifiedProduct?.id || null,
                         name: art.name,
                         type: 'vaca',
@@ -550,6 +563,7 @@ const Stock = () => {
             ));
             if (!inStock) {
                 await saveTableRecord('stock', 'insert', {
+                    branch_id: currentBranchId || null,
                     product_id: unifiedProduct?.id || null,
                     name: nombre, type: tipo, quantity: 0,
                     unit: esKg ? 'kg' : 'unidades',
