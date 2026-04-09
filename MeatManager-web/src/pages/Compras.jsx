@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { fetchTable, saveTableRecord, createCompra } from '../utils/apiClient';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import './Compras.css';
 
 const IVA_OPTIONS = [10.5, 21];
@@ -63,6 +64,7 @@ const getPurchaseBreakdown = (compra) => {
 const Compras = () => {
     const { hasModule } = useLicense();
     const hasDespostadaModule = hasModule('despostada');
+    const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [destinationFilter, setDestinationFilter] = useState('all');
@@ -318,6 +320,7 @@ const Compras = () => {
         if (!newPurchase.supplier) return;
 
         try {
+            // 1. Save the purchase record
             const purchaseTotal = parseFloat(newPurchase.total) || 0;
             const purchaseBreakdown = newPurchase.selectedItems.reduce((acc, item) => {
                 const subtotal = Number(item.subtotal) || 0;
@@ -338,112 +341,62 @@ const Compras = () => {
                 return;
             }
 
-            // 1. Save the purchase record
-            const purchaseInsert = await saveTableRecord('compras', 'insert', {
+            const selectedPaymentMethod = paymentMethods?.find((method) => (
+                method.name === newPurchase.payment_method || String(method.name || '').trim().toLowerCase() === normalizedPaymentMethod
+            ));
+
+            // Construir catalog_updates (para actualizar last_price en purchase_items)
+            const catalogUpdates = newPurchase.selectedItems
+                .map(item => {
+                    const catalogItem = purchaseItems?.find(pi => pi.name.toLowerCase() === item.name.toLowerCase());
+                    if (!catalogItem || !(item.unit_price > 0)) return null;
+                    return {
+                        purchase_item_id: catalogItem.id,
+                        last_price: item.unit_price,
+                        usage: item.destination || 'venta',
+                        default_iva_rate: Number(item.iva_rate) || catalogItem.default_iva_rate || 10.5,
+                    };
+                })
+                .filter(Boolean);
+
+            // Items enriquecidos con product_id del catálogo
+            const enrichedItems = newPurchase.selectedItems.map(i => {
+                const catalogItem = purchaseItems?.find(pi => pi.name.toLowerCase() === i.name.toLowerCase());
+                const subtotal = Number(i.subtotal) || 0;
+                const ivaRate = Number(i.iva_rate) || 0;
+                const ivaAmount = parseFloat((subtotal * ivaRate / (100 + ivaRate)).toFixed(2));
+                return {
+                    product_id: catalogItem?.product_id || i.product_id || null,
+                    product_name: i.name,
+                    quantity: i.quantity,
+                    weight: i.weight || 0,
+                    unit_price: i.unit_price,
+                    subtotal,
+                    iva_rate: ivaRate,
+                    iva_amount: ivaAmount,
+                    net_subtotal: subtotal - ivaAmount,
+                    destination: i.destination || 'venta',
+                    unit: i.unit,
+                    type: i.type,
+                    species: i.species || 'vaca',
+                };
+            });
+
+            // Registrar la compra de forma atómica en el servidor
+            const { insertId: purchaseId } = await createCompra({
                 supplier: newPurchase.supplier,
                 invoice_num: newPurchase.invoice_num,
                 date: newPurchase.date,
                 total: purchaseTotal,
                 payment_method: newPurchase.payment_method,
                 is_account: newPurchase.is_account,
-                synced: 0,
-                items_detail: newPurchase.selectedItems
+                payment_method_type: selectedPaymentMethod?.type || (normalizedPaymentMethod === 'transferencia' ? 'transfer' : 'cash'),
+                should_affect_cash: shouldAffectCash,
+                cash_amount: purchaseBreakdown.internal,
+                has_despostada_module: hasDespostadaModule,
+                items: enrichedItems,
+                catalog_updates: catalogUpdates,
             });
-            const purchaseId = Number(purchaseInsert?.insertId);
-
-            // 1.1 Normalized Items
-            const purchaseItemsNormalized = newPurchase.selectedItems.map(i => ({
-                purchase_id: purchaseId,
-                product_name: i.name,
-                quantity: i.quantity,
-                weight: i.weight || 0,
-                unit_price: i.unit_price,
-                subtotal: i.subtotal,
-                iva_rate: Number(i.iva_rate) || 0,
-                iva_amount: calculateIvaAmount(i.subtotal, i.iva_rate),
-                net_subtotal: (Number(i.subtotal) || 0) - calculateIvaAmount(i.subtotal, i.iva_rate),
-                destination: i.destination || 'venta',
-                unit: i.unit
-            }));
-            await Promise.all(purchaseItemsNormalized.map((item) => saveTableRecord('compras_items', 'insert', item)));
-
-            // 2. Logic for Stock and Traceability
-            for (const item of newPurchase.selectedItems) {
-                // UPDATE LAST PRICE
-                const catalogItem = purchaseItems?.find(pi => pi.name.toLowerCase() === item.name.toLowerCase());
-                if (catalogItem && item.unit_price > 0) {
-                    await saveTableRecord('purchase_items', 'update', {
-                        ...catalogItem,
-                        last_price: item.unit_price,
-                        usage: item.destination || 'venta',
-                        default_iva_rate: Number(item.iva_rate) || catalogItem.default_iva_rate || 10.5
-                    }, catalogItem.id);
-                }
-
-                await saveTableRecord('supplier_item_tax_profiles', 'upsert', {
-                    supplier_name: newPurchase.supplier,
-                    product_name: item.name,
-                    last_iva_rate: Number(item.iva_rate) || 0,
-                    updated_at: new Date().toISOString()
-                });
-
-                // IF FOR DESPOSTADA -> CREATE ANIMAL_LOTS (ONLY IF PRO)
-                // This must happen regardless of sale/internal destination, otherwise
-                // media res purchases for internal processing never reach Despostada.
-                if (item.type === 'despostada' && hasDespostadaModule) {
-                    // Logic: If unit is 'un' (units), we create one lot per unit.
-                    // If unit is 'kg' (weight), we create ONE lot with the total weight.
-
-                    const numLots = item.unit === 'un' ? Math.floor(item.quantity) : 1;
-                    const weightPerLot = item.unit === 'un' ? (item.weight / (item.quantity || 1)) : item.weight;
-
-                    for (let i = 0; i < numLots; i++) {
-                        await saveTableRecord('animal_lots', 'insert', {
-                            purchase_id: purchaseId,
-                            supplier: newPurchase.supplier,
-                            date: newPurchase.date,
-                            species: item.species || 'vaca',
-                            weight: weightPerLot,
-                            status: 'disponible'
-                        });
-                    }
-
-                    continue;
-                }
-
-                if (item.destination === 'interno') {
-                    continue;
-                }
-
-                // IF DIRECT SALE -> UPDATE STOCK
-                await saveTableRecord('stock', 'insert', {
-                    name: item.name,
-                    type: item.species || 'vaca',
-                    quantity: item.unit === 'kg' ? (parseFloat(item.weight) || parseFloat(item.quantity)) : parseFloat(item.quantity),
-                    unit: item.unit,
-                    updated_at: new Date().toISOString(),
-                    synced: 0,
-                    reference: `compra_${purchaseId}`
-                });
-            }
-
-            if (shouldAffectCash) {
-                const selectedPaymentMethod = paymentMethods?.find((method) => (
-                    method.name === newPurchase.payment_method || String(method.name || '').trim().toLowerCase() === normalizedPaymentMethod
-                ));
-
-                await saveTableRecord('caja_movimientos', 'insert', {
-                    type: 'egreso',
-                    amount: purchaseBreakdown.internal,
-                    category: 'Compra interna',
-                    description: `${newPurchase.supplier}${newPurchase.invoice_num ? ` · Comprobante ${newPurchase.invoice_num}` : ''}`,
-                    payment_method: newPurchase.payment_method || 'Efectivo',
-                    payment_method_type: selectedPaymentMethod?.type || (normalizedPaymentMethod === 'transferencia' ? 'transfer' : 'cash'),
-                    date: new Date(`${newPurchase.date}T12:00:00`).toISOString(),
-                    purchase_id: purchaseId,
-                    synced: 0
-                });
-            }
 
             await loadComprasData();
             setIsModalOpen(false);
@@ -712,7 +665,7 @@ const Compras = () => {
                             </button>
                         </div>
 
-                        <form onSubmit={handleAddPurchase}>
+                        <form onSubmit={guardSave(handleAddPurchase)}>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
                                 <div>
                                     <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.8rem' }}>Proveedor</label>
@@ -1051,8 +1004,8 @@ const Compras = () => {
                                     >
                                         Cancelar
                                     </button>
-                                    <button type="submit" className="neo-button">
-                                        <Save size={18} style={{ marginRight: '0.5rem' }} /> Guardar Compra
+                                    <button type="submit" className="neo-button" disabled={isSaving}>
+                                        <Save size={18} style={{ marginRight: '0.5rem' }} /> {isSaving ? 'Guardando...' : 'Guardar Compra'}
                                     </button>
                                 </div>
                             </div>

@@ -143,6 +143,35 @@ redisClient.on('error', (error) => {
     console.error('[REDIS ERROR]', error.message);
 });
 
+async function connectRedisSafely(timeoutMs = 5000) {
+    if (!process.env.REDIS_HOST) {
+        console.warn('[REDIS] REDIS_HOST no configurado. Tracking de delivery deshabilitado.');
+        return false;
+    }
+
+    let timeoutHandle = null;
+    try {
+        await Promise.race([
+            redisClient.connect(),
+            new Promise((_, reject) => {
+                timeoutHandle = setTimeout(() => reject(new Error(`timeout after ${timeoutMs}ms`)), timeoutMs);
+            }),
+        ]);
+        console.log(`[REDIS] Conectado a ${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`);
+        return true;
+    } catch (error) {
+        try {
+            redisClient.destroy();
+        } catch (_) {
+            // ignore best-effort cleanup
+        }
+        console.warn(`[REDIS] No se pudo conectar. Tracking de delivery deshabilitado. ${error?.message || error}`);
+        return false;
+    } finally {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+    }
+}
+
 function getSmtpFromAddress() {
     return process.env.SMTP_FROM || 'no-reply@def-software.com.ar';
 }
@@ -396,18 +425,18 @@ function licenseAppliesToWebapp(license) {
 }
 
 const TENANT_SCOPED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ]);
 
 const TENANT_ID_TABLES = [
-    'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
 
@@ -628,10 +657,10 @@ function orderBelongsToDriver(row, driverIdentity) {
 }
 
 const TABLES_WITH_NUMERIC_ID = [
-    'payment_methods', 'categories', 'suppliers', 'purchase_items', 'stock',
+    'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items', 'stock',
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
 ];
 const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures']);
@@ -836,6 +865,364 @@ async function ensureSettingsPrimaryKey(conn) {
     }
 }
 
+async function ensureProductCatalogIntegrity(conn) {
+    const canonicalNameSql = (expr) => `LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_'))`;
+    const cleanTextSql = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
+    const cleanCategoryKeySql = (expr) => `NULLIF(LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_')), '')`;
+    const legacyPriceNameSql = `TRIM(REPLACE(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1), '_', ' '))`;
+    const legacyPriceCategorySql = `NULLIF(TRIM(REPLACE(SUBSTRING(COALESCE(pr.product_id, ''), LENGTH(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1)) + 2), '_', ' ')), '')`;
+    const canonicalPriceProductIdSql = `CONCAT(p.canonical_key, '-', COALESCE(NULLIF(LOWER(REPLACE(TRIM(COALESCE(p.category, '')), ' ', '_')), ''), 'general'))`;
+
+    const insertStatements = [
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            s.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql('s.name')} AS canonical_key,
+            TRIM(s.name) AS name,
+            MAX(${cleanTextSql('s.type')}) AS category,
+            MAX(${cleanTextSql('s.unit')}) AS unit,
+            MAX(CASE WHEN COALESCE(s.price, 0) > 0 THEN s.price ELSE 0 END) AS current_price,
+            NULL AS plu,
+            'stock_backfill' AS source,
+            NOW(),
+            COALESCE(MAX(s.updated_at), NOW())
+         FROM \`${OPERATIONAL_DB_NAME}\`.stock s
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('s.name')}
+         WHERE ${cleanTextSql('s.name')} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY s.\`${TENANT_COLUMN}\`, ${canonicalNameSql('s.name')}, TRIM(s.name)`,
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            pi.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql('pi.name')} AS canonical_key,
+            TRIM(pi.name) AS name,
+            MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
+            MAX(${cleanTextSql('pi.unit')}) AS unit,
+            MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price,
+            MAX(${cleanTextSql('pi.plu')}) AS plu,
+            'purchase_catalog_backfill' AS source,
+            NOW(),
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = pi.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('pi.name')}
+         WHERE ${cleanTextSql('pi.name')} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY pi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('pi.name')}, TRIM(pi.name)`,
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            vi.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql('vi.product_name')} AS canonical_key,
+            TRIM(vi.product_name) AS name,
+            NULL AS category,
+            NULL AS unit,
+            MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
+            NULL AS plu,
+            'ventas_backfill' AS source,
+            NOW(),
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
+         WHERE ${cleanTextSql('vi.product_name')} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY vi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            ci.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql('ci.product_name')} AS canonical_key,
+            TRIM(ci.product_name) AS name,
+            NULL AS category,
+            NULL AS unit,
+            MAX(CASE WHEN COALESCE(ci.unit_price, 0) > 0 THEN ci.unit_price ELSE 0 END) AS current_price,
+            NULL AS plu,
+            'compras_backfill' AS source,
+            NOW(),
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.compras_items ci
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = ci.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('ci.product_name')}
+         WHERE ${cleanTextSql('ci.product_name')} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY ci.\`${TENANT_COLUMN}\`, ${canonicalNameSql('ci.product_name')}, TRIM(ci.product_name)`,
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            md.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql('md.product_name')} AS canonical_key,
+            TRIM(md.product_name) AS name,
+            MAX(${cleanTextSql('md.category')}) AS category,
+            NULL AS unit,
+            MAX(CASE WHEN COALESCE(md.price, 0) > 0 THEN md.price ELSE 0 END) AS current_price,
+            NULL AS plu,
+            'menu_backfill' AS source,
+            NOW(),
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.menu_digital md
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = md.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('md.product_name')}
+         WHERE ${cleanTextSql('md.product_name')} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY md.\`${TENANT_COLUMN}\`, ${canonicalNameSql('md.product_name')}, TRIM(md.product_name)`,
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+         SELECT
+            pr.\`${TENANT_COLUMN}\`,
+            ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
+            ${legacyPriceNameSql} AS name,
+            MAX(${legacyPriceCategorySql}) AS category,
+            NULL AS unit,
+            MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price,
+            MAX(${cleanTextSql('pr.plu')}) AS plu,
+            'prices_backfill' AS source,
+            NOW(),
+            COALESCE(MAX(pr.updated_at), NOW())
+         FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = pr.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql(legacyPriceNameSql)}
+         WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
+           AND p.id IS NULL
+         GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}, ${legacyPriceNameSql}`,
+    ];
+
+    for (const sql of insertStatements) {
+        await conn.query(sql);
+    }
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN (
+            SELECT
+                s.\`${TENANT_COLUMN}\` AS tenant_id,
+                ${canonicalNameSql('s.name')} AS canonical_key,
+                MAX(${cleanTextSql('s.type')}) AS category,
+                MAX(${cleanTextSql('s.unit')}) AS unit,
+                MAX(CASE WHEN COALESCE(s.price, 0) > 0 THEN s.price ELSE 0 END) AS current_price
+            FROM \`${OPERATIONAL_DB_NAME}\`.stock s
+            WHERE ${cleanTextSql('s.name')} IS NOT NULL
+            GROUP BY s.\`${TENANT_COLUMN}\`, ${canonicalNameSql('s.name')}
+         ) src
+           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+          AND src.canonical_key = p.canonical_key
+         SET
+            p.category = COALESCE(NULLIF(p.category, ''), src.category),
+            p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
+            p.current_price = CASE
+                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                ELSE p.current_price
+            END`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN (
+            SELECT
+                pi.\`${TENANT_COLUMN}\` AS tenant_id,
+                ${canonicalNameSql('pi.name')} AS canonical_key,
+                MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
+                MAX(${cleanTextSql('pi.unit')}) AS unit,
+                MAX(${cleanTextSql('pi.plu')}) AS plu,
+                MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
+            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+            WHERE ${cleanTextSql('pi.name')} IS NOT NULL
+            GROUP BY pi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('pi.name')}
+         ) src
+           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+          AND src.canonical_key = p.canonical_key
+         SET
+            p.category = COALESCE(NULLIF(p.category, ''), src.category),
+            p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
+            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+            p.current_price = CASE
+                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                ELSE p.current_price
+            END`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN (
+            SELECT
+                pr.\`${TENANT_COLUMN}\` AS tenant_id,
+                ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
+                MAX(${legacyPriceCategorySql}) AS category,
+                MAX(${cleanTextSql('pr.plu')}) AS plu,
+                MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price
+            FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
+            WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
+            GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}
+         ) src
+           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+          AND src.canonical_key = p.canonical_key
+         SET
+            p.category = COALESCE(NULLIF(p.category, ''), src.category),
+            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+            p.current_price = CASE
+                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                ELSE p.current_price
+            END`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.stock s
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('s.name')}
+         SET s.product_id = p.id
+         WHERE s.product_id IS NULL
+           AND ${cleanTextSql('s.name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = pi.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('pi.name')}
+         SET pi.product_id = p.id
+         WHERE pi.product_id IS NULL
+           AND ${cleanTextSql('pi.name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
+         SET vi.product_id = p.id
+         WHERE vi.product_id IS NULL
+           AND ${cleanTextSql('vi.product_name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.compras_items ci
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = ci.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('ci.product_name')}
+         SET ci.product_id = p.id
+         WHERE ci.product_id IS NULL
+           AND ${cleanTextSql('ci.product_name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.menu_digital md
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = md.\`${TENANT_COLUMN}\`
+          AND p.canonical_key = ${canonicalNameSql('md.product_name')}
+         SET md.product_id = p.id
+         WHERE md.product_id IS NULL
+           AND ${cleanTextSql('md.product_name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.prices pr
+         JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+           ON p.\`${TENANT_COLUMN}\` = pr.\`${TENANT_COLUMN}\`
+          AND (
+                (pr.product_ref_id IS NOT NULL AND pr.product_ref_id = p.id)
+                OR p.canonical_key = ${canonicalNameSql(legacyPriceNameSql)}
+                OR (NULLIF(TRIM(COALESCE(pr.plu, '')), '') IS NOT NULL AND NULLIF(TRIM(COALESCE(pr.plu, '')), '') = NULLIF(TRIM(COALESCE(p.plu, '')), ''))
+             )
+         SET
+            pr.product_ref_id = p.id,
+            pr.product_id = ${canonicalPriceProductIdSql},
+            pr.price = CASE WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price ELSE pr.price END,
+            pr.plu = COALESCE(NULLIF(p.plu, ''), pr.plu),
+            pr.updated_at = COALESCE(pr.updated_at, NOW())
+         WHERE ${cleanTextSql('p.name')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.prices
+            (\`${TENANT_COLUMN}\`, product_ref_id, product_id, price, plu, updated_at)
+         SELECT
+            p.\`${TENANT_COLUMN}\`,
+            p.id,
+            ${canonicalPriceProductIdSql},
+            p.current_price,
+            p.plu,
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.products p
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.prices pr
+           ON pr.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+          AND pr.product_ref_id = p.id
+         WHERE pr.id IS NULL`
+    );
+
+    await conn.query(
+        `DELETE legacy
+         FROM \`${OPERATIONAL_DB_NAME}\`.prices legacy
+         JOIN \`${OPERATIONAL_DB_NAME}\`.prices newest
+           ON newest.\`${TENANT_COLUMN}\` = legacy.\`${TENANT_COLUMN}\`
+          AND newest.product_ref_id = legacy.product_ref_id
+          AND newest.id > legacy.id
+         WHERE legacy.product_ref_id IS NOT NULL`
+    );
+
+    // ── Dual-write: sincronizar product_prices con el estado canónico ────────
+    // Inserta una nueva entrada en product_prices por cada producto cuyo
+    // current_price difiere del último registro registrado en product_prices.
+    // Esto construye el historial progresivamente sin tocar filas antiguas.
+    await conn.query(
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_prices
+            (\`${TENANT_COLUMN}\`, product_id, price, plu, source, effective_at, created_at)
+         SELECT
+            p.\`${TENANT_COLUMN}\`,
+            p.id,
+            COALESCE(p.current_price, 0),
+            NULLIF(TRIM(COALESCE(p.plu, '')), ''),
+            'reconcile',
+            NOW(),
+            NOW()
+         FROM \`${OPERATIONAL_DB_NAME}\`.products p
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.product_prices latest
+           ON latest.id = (
+               SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.product_prices pp2
+               WHERE pp2.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+                 AND pp2.product_id = p.id
+               ORDER BY pp2.effective_at DESC, pp2.id DESC
+               LIMIT 1
+           )
+         WHERE COALESCE(p.current_price, 0) > 0
+           AND (latest.product_id IS NULL
+                OR ABS(COALESCE(latest.price, 0) - COALESCE(p.current_price, 0)) > 0.009)`
+    );
+
+    const productRefTables = [
+        ['stock', 'product_id'],
+        ['purchase_items', 'product_id'],
+        ['ventas_items', 'product_id'],
+        ['compras_items', 'product_id'],
+        ['menu_digital', 'product_id'],
+        ['prices', 'product_ref_id'],
+    ];
+
+    for (const [tableName, columnName] of productRefTables) {
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\` child
+             LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+               ON p.\`${TENANT_COLUMN}\` = child.\`${TENANT_COLUMN}\`
+              AND p.id = child.\`${columnName}\`
+             SET child.\`${columnName}\` = NULL
+             WHERE child.\`${columnName}\` IS NOT NULL
+               AND p.id IS NULL`
+        );
+    }
+}
+
 async function ensureTenantScopedForeignKeys(conn) {
     const fkDefinitions = [
         {
@@ -910,6 +1297,90 @@ async function ensureTenantScopedForeignKeys(conn) {
             indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.user_permissions
                 ADD INDEX idx_user_permissions_tenant_user (\`${TENANT_COLUMN}\`, user_id)`,
         },
+        {
+            table: 'purchase_items',
+            constraint: 'purchase_items_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
+                ADD CONSTRAINT purchase_items_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_purchase_items_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
+                ADD INDEX idx_purchase_items_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'stock',
+            constraint: 'stock_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.stock
+                ADD CONSTRAINT stock_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_stock_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.stock
+                ADD INDEX idx_stock_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'ventas_items',
+            constraint: 'ventas_items_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas_items
+                ADD CONSTRAINT ventas_items_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_ventas_items_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.ventas_items
+                ADD INDEX idx_ventas_items_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'compras_items',
+            constraint: 'compras_items_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.compras_items
+                ADD CONSTRAINT compras_items_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_compras_items_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.compras_items
+                ADD INDEX idx_compras_items_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'menu_digital',
+            constraint: 'menu_digital_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.menu_digital
+                ADD CONSTRAINT menu_digital_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_menu_digital_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.menu_digital
+                ADD INDEX idx_menu_digital_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'prices',
+            constraint: 'prices_product_ref_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.prices
+                ADD CONSTRAINT prices_product_ref_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_ref_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'uniq_prices_tenant_product_ref',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.prices
+                ADD UNIQUE KEY uniq_prices_tenant_product_ref (\`${TENANT_COLUMN}\`, product_ref_id)`,
+        },
+        {
+            table: 'product_prices',
+            constraint: 'product_prices_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.product_prices
+                ADD CONSTRAINT product_prices_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE RESTRICT`,
+            indexName: 'idx_pp_tenant_product_eff',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.product_prices
+                ADD INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at)`,
+        },
     ];
 
     for (const definition of fkDefinitions) {
@@ -952,6 +1423,12 @@ async function ensureOperationalTenantIsolation() {
             }
 
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
+            await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
+            await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
+            await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
@@ -976,6 +1453,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'pedidos', 'paid', '`paid` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'pedidos', 'amount_due', '`amount_due` DECIMAL(12,2) NULL');
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
+            await ensureColumn(conn, 'ventas', 'subtotal', '`subtotal` DECIMAL(12,2) NULL AFTER `total`');
+            await ensureColumn(conn, 'ventas', 'adjustment', '`adjustment` DECIMAL(12,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
@@ -1034,6 +1513,7 @@ async function ensureOperationalTenantIsolation() {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
 
+            await ensureProductCatalogIntegrity(conn);
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
@@ -1798,10 +2278,29 @@ function getSchemaTables() {
             UNIQUE KEY uniq_suppliers_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_suppliers_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS products (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            canonical_key   VARCHAR(191) NOT NULL,
+            name            VARCHAR(150) NOT NULL,
+            category        VARCHAR(100),
+            unit            VARCHAR(20),
+            current_price   DECIMAL(12,2) DEFAULT 0,
+            plu             VARCHAR(20),
+            source          VARCHAR(50),
+            synced          TINYINT(1) DEFAULT 0,
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
+            INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
+        )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             name            VARCHAR(150) NOT NULL,
+            product_id      INT,
             category_id     INT,
             last_price      DECIMAL(12,2) DEFAULT 0,
             unit            VARCHAR(20),
@@ -1818,6 +2317,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS stock (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            product_id      INT,
             name            VARCHAR(150) NOT NULL,
             type            VARCHAR(50),
             quantity        DECIMAL(12,3) DEFAULT 0,
@@ -1884,6 +2384,7 @@ function getSchemaTables() {
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             venta_id        INT NOT NULL,
+            product_id      INT,
             product_name    VARCHAR(150),
             quantity        DECIMAL(12,3),
             price           DECIMAL(12,2),
@@ -1913,6 +2414,7 @@ function getSchemaTables() {
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             purchase_id     INT NOT NULL,
+            product_id      INT,
             product_name    VARCHAR(150),
             quantity        DECIMAL(12,3),
             weight          DECIMAL(12,3),
@@ -2000,6 +2502,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS menu_digital (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            product_id      INT,
             product_name    VARCHAR(150),
             price           DECIMAL(12,2),
             category        VARCHAR(100),
@@ -2146,12 +2649,29 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            product_ref_id  INT,
             product_id      VARCHAR(191),
             price           DECIMAL(12,2),
             plu             VARCHAR(20),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`)
+        )`,
+        // Tabla canónica de historial de precios (reemplaza a prices a mediano plazo).
+        // Cada fila es un evento de precio: no se actualiza, se inserta una nueva.
+        // El precio vigente de un producto es el último por (tenant_id, product_id, effective_at DESC).
+        `CREATE TABLE IF NOT EXISTS product_prices (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            product_id      INT NOT NULL,
+            price           DECIMAL(12,2) NOT NULL DEFAULT 0,
+            plu             VARCHAR(20),
+            source          VARCHAR(50),
+            effective_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_product_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at),
+            INDEX idx_pp_tenant_plu (\`${TENANT_COLUMN}\`, plu)
         )`,
         `CREATE TABLE IF NOT EXISTS users (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -2724,10 +3244,10 @@ async function getTableDescribe(pool, dbName, table) {
 
 // Tablas permitidas (whitelist contra inyección de nombres de tabla)
 const ALLOWED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots',
 ]);
 
@@ -2876,8 +3396,23 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
-            const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
-            return res.json({ ok: true, insertId: result.insertId });
+            try {
+                const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
+                return res.json({ ok: true, insertId: result.insertId });
+            } catch (insertError) {
+                if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
+                    const scope = tenantWhereClause(table, tenantId);
+                    const [existingRows] = await pool.query(
+                        `SELECT id FROM \`${table}\` WHERE canonical_key = ? AND ${scope.sql} LIMIT 1`,
+                        [filtered.canonical_key, ...scope.params]
+                    );
+                    const existingId = existingRows?.[0]?.id;
+                    if (existingId) {
+                        return res.json({ ok: true, insertId: existingId, existed: true });
+                    }
+                }
+                throw insertError;
+            }
         }
 
         if (operation === 'update') {
@@ -2988,7 +3523,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'suppliers', 'purchase_items', 'clients', 'prices', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -3007,6 +3542,75 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
     } catch (err) {
         console.error('[BOOTSTRAP ERROR]', err.message);
         res.status(500).json({ error: 'Error armando bootstrap: ' + err.message });
+    }
+});
+
+// ── RUTA: GET /api/products/:id/prices ────────────────────────────────────
+// Historial de precios de un producto, ordenado por effective_at DESC.
+app.get('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
+    try {
+        const productId = parseInt(req.params.id, 10);
+        if (!Number.isFinite(productId) || productId <= 0) {
+            return res.status(400).json({ error: 'product id inválido' });
+        }
+        const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 500));
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const [rows] = await pool.query(
+            `SELECT id, product_id, price, plu, source, effective_at, created_at
+             FROM product_prices
+             WHERE tenant_id = ? AND product_id = ?
+             ORDER BY effective_at DESC, id DESC
+             LIMIT ?`,
+            [tenantId, productId, limit]
+        );
+        return res.json({ ok: true, prices: rows });
+    } catch (err) {
+        console.error('[PRODUCT PRICES ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: POST /api/products/:id/prices ───────────────────────────────────
+// Registra un nuevo precio para un producto (append-only, nunca modifica histórico).
+// Body: { price, plu?, source? }
+app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
+    try {
+        const productId = parseInt(req.params.id, 10);
+        if (!Number.isFinite(productId) || productId <= 0) {
+            return res.status(400).json({ error: 'product id inválido' });
+        }
+        const price = parseFloat(req.body?.price);
+        if (!Number.isFinite(price) || price < 0) {
+            return res.status(400).json({ error: 'price inválido' });
+        }
+        const plu = String(req.body?.plu || '').trim() || null;
+        const source = String(req.body?.source || 'manual').trim().slice(0, 50);
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+
+        // Verificar que el producto pertenece a este tenant
+        const [[product]] = await pool.query(
+            'SELECT id FROM products WHERE tenant_id = ? AND id = ? LIMIT 1',
+            [tenantId, productId]
+        );
+        if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+
+        const now = new Date();
+        const [result] = await pool.query(
+            `INSERT INTO product_prices (tenant_id, product_id, price, plu, source, effective_at, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+            [tenantId, productId, price, plu, source, now, now]
+        );
+        // Actualizar snapshot en products.current_price
+        await pool.query(
+            'UPDATE products SET current_price = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+            [price, now, tenantId, productId]
+        );
+        return res.json({ ok: true, id: result.insertId });
+    } catch (err) {
+        console.error('[PRODUCT PRICES WRITE ERROR]', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -3030,10 +3634,30 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         const safeOrderBy = validCols.includes(orderBy) ? orderBy : (validCols.includes('id') ? 'id' : validCols[0]);
         const scope = tenantWhereClause(table, tenantId);
 
-        const [rows] = await pool.query(
+        let [rows] = await pool.query(
             `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
             [...scope.params, limit, offset]
         );
+
+        // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
+        if (table === 'payment_methods' && rows.length === 0) {
+            const PAYMENT_DEFAULTS = [
+                { name: 'Posnet',           type: 'card',             percentage: 0, enabled: 1 },
+                { name: 'Mercado Pago',     type: 'wallet',           percentage: 0, enabled: 1 },
+                { name: 'Cuenta DNI',       type: 'wallet',           percentage: 0, enabled: 1 },
+                { name: 'Efectivo',         type: 'cash',             percentage: 0, enabled: 1 },
+                { name: 'Transferencia',    type: 'transfer',         percentage: 0, enabled: 1 },
+                { name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0, enabled: 1 },
+                { name: 'Mixto',            type: 'mixto',            percentage: 0, enabled: 1 },
+            ];
+            for (const pm of PAYMENT_DEFAULTS) {
+                await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
+            }
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, limit, offset]
+            );
+        }
 
         return res.json({
             ok: true,
@@ -3045,6 +3669,447 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
     } catch (err) {
         console.error('[TABLE READ ERROR]', err.message);
         res.status(500).json({ error: 'Error leyendo tabla: ' + err.message });
+    }
+});
+
+// ── RUTA: POST /api/compras ────────────────────────────────────────────────
+// Registra una compra de forma ATÓMICA: compras + compras_items + stock
+// + animal_lots (despostada) + caja_movimientos — en una sola transacción MySQL.
+// Dual-write: actualiza product_prices con el precio de costo al guardar.
+// Body: {
+//   supplier, invoice_num, date, total, payment_method, is_account,
+//   payment_method_type,   should_affect_cash, cash_amount,
+//   has_despostada_module,
+//   items: [{ product_id?, product_name, quantity, weight, unit_price, subtotal,
+//             iva_rate, iva_amount, net_subtotal, destination, unit, type, species }],
+//   catalog_updates: [{ purchase_item_id, last_price, usage, default_iva_rate }]
+// }
+app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
+    const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+    const pool = getTenantPool(dbName);
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const {
+            supplier, invoice_num, date, total, payment_method, is_account,
+            payment_method_type, should_affect_cash, cash_amount,
+            has_despostada_module,
+            items, catalog_updates,
+        } = req.body;
+
+        if (!Array.isArray(items) || items.length === 0) {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'items requeridos' });
+        }
+
+        const purchaseDate = date ? new Date(String(date).split('T')[0] + 'T12:00:00') : new Date();
+
+        // 1. INSERT compras
+        const [compraResult] = await conn.query(
+            `INSERT INTO compras
+             (tenant_id, date, supplier, invoice_num, total, payment_method, is_account, items_detail)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                tenantId, purchaseDate, String(supplier || '').trim(),
+                invoice_num || null, parseFloat(total) || 0,
+                payment_method || null, is_account ? 1 : 0,
+                JSON.stringify(items),
+            ]
+        );
+        const purchaseId = compraResult.insertId;
+
+        // 2. INSERT compras_items
+        for (const item of items) {
+            const subtotal = parseFloat(item.subtotal) || 0;
+            const ivaRate = parseFloat(item.iva_rate) || 0;
+            const ivaAmount = parseFloat(item.iva_amount) || 0;
+            const netSubtotal = parseFloat(item.net_subtotal) || (subtotal - ivaAmount);
+            await conn.query(
+                `INSERT INTO compras_items
+                 (tenant_id, purchase_id, product_id, product_name, quantity, weight,
+                  unit_price, subtotal, iva_rate, iva_amount, net_subtotal, destination)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    tenantId, purchaseId,
+                    item.product_id || null,
+                    String(item.product_name || '').trim(),
+                    parseFloat(item.quantity) || 0,
+                    parseFloat(item.weight) || 0,
+                    parseFloat(item.unit_price) || 0,
+                    subtotal, ivaRate, ivaAmount, netSubtotal,
+                    item.destination || 'venta',
+                ]
+            );
+        }
+
+        // 3. Stock / animal_lots por item
+        for (const item of items) {
+            const isDespostada = item.type === 'despostada';
+            const isInternal = item.destination === 'interno';
+
+            // Despostada → crear lotes (solo si tiene módulo)
+            if (isDespostada && has_despostada_module) {
+                const qty = parseFloat(item.quantity) || 1;
+                const weight = parseFloat(item.weight) || 0;
+                const numLots = item.unit === 'un' ? Math.floor(qty) : 1;
+                const weightPerLot = item.unit === 'un' ? (weight / qty) : weight;
+                for (let i = 0; i < numLots; i++) {
+                    await conn.query(
+                        `INSERT INTO animal_lots
+                         (tenant_id, purchase_id, supplier, date, species, weight, status)
+                         VALUES (?, ?, ?, ?, ?, ?, 'disponible')`,
+                        [tenantId, purchaseId, String(supplier || '').trim(),
+                         purchaseDate, item.species || 'vaca', weightPerLot]
+                    );
+                }
+                continue; // no va al stock de venta
+            }
+
+            if (isInternal) continue; // interno → no afecta stock venta
+
+            // Directo / insumo → incrementar stock
+            const stockQty = item.unit === 'kg'
+                ? (parseFloat(item.weight) || parseFloat(item.quantity) || 0)
+                : (parseFloat(item.quantity) || 0);
+
+            await conn.query(
+                `INSERT INTO stock
+                 (tenant_id, product_id, name, type, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    tenantId,
+                    item.product_id || null,
+                    String(item.product_name || '').trim(),
+                    item.species || item.type || 'vaca',
+                    stockQty,
+                    item.unit || 'kg',
+                    `compra_${purchaseId}`,
+                ]
+            );
+
+            // Dual-write: registrar precio de costo en product_prices (source='compra')
+            if (item.product_id && parseFloat(item.unit_price) > 0) {
+                await conn.query(
+                    `INSERT INTO product_prices
+                     (tenant_id, product_id, price, source, effective_at, created_at)
+                     VALUES (?, ?, ?, 'compra', ?, NOW())`,
+                    [tenantId, item.product_id, parseFloat(item.unit_price), purchaseDate]
+                );
+            }
+        }
+
+        // 4. Caja movimientos (egreso si compra interna pagada con efectivo/transferencia)
+        if (should_affect_cash && parseFloat(cash_amount) > 0) {
+            const desc = `${String(supplier || '').trim()}${invoice_num ? ` · Comprobante ${invoice_num}` : ''}`;
+            await conn.query(
+                `INSERT INTO caja_movimientos
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, purchase_id)
+                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, ?, ?)`,
+                [
+                    tenantId, parseFloat(cash_amount) || 0, desc,
+                    payment_method || 'Efectivo',
+                    payment_method_type || 'cash',
+                    purchaseDate, purchaseId,
+                ]
+            );
+        }
+
+        await conn.commit();
+        conn.release();
+
+        // 5. Best-effort: actualizar purchase_items.last_price (fuera de transacción)
+        if (Array.isArray(catalog_updates)) {
+            for (const cu of catalog_updates) {
+                if (!cu.purchase_item_id || !(parseFloat(cu.last_price) > 0)) continue;
+                try {
+                    await pool.query(
+                        `UPDATE purchase_items
+                         SET last_price = ?, usage = ?, default_iva_rate = ?
+                         WHERE tenant_id = ? AND id = ?`,
+                        [parseFloat(cu.last_price), cu.usage || 'venta',
+                         parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id]
+                    );
+                } catch (e) {
+                    console.warn('[POST /api/compras] last_price update skipped:', e.message);
+                }
+            }
+        }
+
+        // 6. Best-effort: upsert supplier_item_tax_profiles
+        for (const item of items) {
+            if (!(parseFloat(item.iva_rate) >= 0)) continue;
+            try {
+                await pool.query(
+                    `INSERT INTO supplier_item_tax_profiles
+                     (tenant_id, supplier_name, product_name, last_iva_rate, updated_at)
+                     VALUES (?, ?, ?, ?, NOW())
+                     ON DUPLICATE KEY UPDATE last_iva_rate = VALUES(last_iva_rate), updated_at = NOW()`,
+                    [tenantId, String(supplier || '').trim(),
+                     String(item.product_name || '').trim(), parseFloat(item.iva_rate) || 0]
+                );
+            } catch (e) {
+                console.warn('[POST /api/compras] tax profile upsert skipped:', e.message);
+            }
+        }
+
+        return res.json({ ok: true, insertId: purchaseId });
+
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) {}
+        conn.release();
+        console.error('[POST /api/compras ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: POST /api/ventas ─────────────────────────────────────────────────
+// Registra una venta de forma ATÓMICA: ventas + ventas_items + stock (descuento)
+// + ajuste de balance de cliente (cta cte) — todo en una sola transacción MySQL.
+// Body: {
+//   date, subtotal, adjustment, total,
+//   receipt_number, receipt_code,
+//   payment_method, payment_method_id,
+//   payment_breakdown?,    // array para pago mixto
+//   clientId?,
+//   qendra_ticket_id?, source?,
+//   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
+// }
+app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
+    const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+    const pool = getTenantPool(dbName);
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const {
+            date, subtotal, adjustment, total,
+            receipt_number, receipt_code,
+            payment_method, payment_method_id,
+            payment_breakdown,
+            clientId,
+            qendra_ticket_id, source,
+            items,
+        } = req.body;
+
+        if (!Array.isArray(items) || items.length === 0) {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'items requeridos' });
+        }
+
+        const safeTotal = parseFloat(total) || 0;
+        const safeSubtotal = parseFloat(subtotal) || 0;
+        const safeAdj = parseFloat(adjustment) || 0;
+        const now = date ? new Date(date) : new Date();
+
+        // 1. INSERT ventas
+        const [ventaResult] = await conn.query(
+            `INSERT INTO ventas
+             (tenant_id, date, subtotal, adjustment, total,
+              receipt_number, receipt_code,
+              payment_method, payment_method_id, payment_breakdown,
+              clientId, qendra_ticket_id, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                tenantId, now, safeSubtotal, safeAdj, safeTotal,
+                receipt_number || null, receipt_code || null,
+                payment_method || null, payment_method_id || null,
+                payment_breakdown ? JSON.stringify(payment_breakdown) : null,
+                clientId || null,
+                qendra_ticket_id || null, source || 'manual',
+            ]
+        );
+        const saleId = ventaResult.insertId;
+
+        // 2. INSERT ventas_items
+        for (const item of items) {
+            const itemSubtotal = parseFloat(item.subtotal) || (parseFloat(item.price) * parseFloat(item.quantity));
+            await conn.query(
+                `INSERT INTO ventas_items
+                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    tenantId, saleId,
+                    item.product_id || null,
+                    String(item.product_name || '').trim(),
+                    parseFloat(item.quantity) || 0,
+                    parseFloat(item.price) || 0,
+                    itemSubtotal,
+                ]
+            );
+        }
+
+        // 3. INSERT movimientos negativos en stock (descuento)
+        for (const item of items) {
+            // Resolver product_id por FK si no vino desde el frontend
+            let productId = item.product_id || null;
+            if (!productId && item.product_name) {
+                const [[prod]] = await conn.query(
+                    `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
+                    [tenantId, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
+                );
+                if (prod) productId = prod.id;
+            }
+            await conn.query(
+                `INSERT INTO stock
+                 (tenant_id, product_id, name, type, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    tenantId,
+                    productId,
+                    String(item.product_name || '').trim(),
+                    String(item.category || '').trim() || null,
+                    -(parseFloat(item.quantity) || 0),
+                    String(item.unit || 'kg').trim(),
+                    `venta_${saleId}`,
+                ]
+            );
+        }
+
+        // 4. Actualizar balance del cliente (solo cuenta corriente)
+        if (clientId) {
+            const isCurrentAccount = payment_method === 'Cuenta Corriente'
+                || (Array.isArray(payment_breakdown) && payment_breakdown.some(
+                    (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
+                ));
+            if (isCurrentAccount) {
+                await conn.query(
+                    `UPDATE clients SET balance = balance - ?, last_updated = NOW()
+                     WHERE tenant_id = ? AND id = ?`,
+                    [safeTotal, tenantId, clientId]
+                );
+            }
+        }
+
+        await conn.commit();
+        conn.release();
+        return res.json({ ok: true, insertId: saleId, receipt_number, receipt_code });
+
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) {}
+        conn.release();
+        console.error('[POST /api/ventas ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: DELETE /api/ventas/:id ───────────────────────────────────────────
+// Anula una venta de forma ATÓMICA: restaura stock + ajusta balance cta cte
+// + registra deleted_sales_history + elimina ventas_items y ventas.
+// Body: { deleted_by_user_id?, deleted_by_username? }
+app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
+    const saleId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(saleId) || saleId <= 0) {
+        return res.status(400).json({ error: 'id inválido' });
+    }
+    const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+    const pool = getTenantPool(dbName);
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        // Verificar que la venta existe y pertenece al tenant
+        const [[venta]] = await conn.query(
+            `SELECT * FROM ventas WHERE tenant_id = ? AND id = ? LIMIT 1`,
+            [tenantId, saleId]
+        );
+        if (!venta) {
+            await conn.rollback();
+            conn.release();
+            return res.status(404).json({ error: 'Venta no encontrada' });
+        }
+
+        // Cargar items
+        const [items] = await conn.query(
+            `SELECT * FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`,
+            [tenantId, saleId]
+        );
+
+        // 1. Restaurar stock (movimiento positivo por cada item)
+        for (const item of items) {
+            let productId = item.product_id || null;
+            if (!productId && item.product_name) {
+                const [[prod]] = await conn.query(
+                    `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
+                    [tenantId, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
+                );
+                if (prod) productId = prod.id;
+            }
+            await conn.query(
+                `INSERT INTO stock (tenant_id, product_id, name, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?)`,
+                [
+                    tenantId,
+                    productId,
+                    String(item.product_name || '').trim(),
+                    parseFloat(item.quantity) || 0,
+                    String(item.unit || 'kg').trim(),
+                    `anulacion_venta_${saleId}`,
+                ]
+            );
+        }
+
+        // 2. Revertir balance cliente (solo cta cte)
+        if (venta.clientId) {
+            const isCurrentAccount = venta.payment_method === 'Cuenta Corriente'
+                || (() => {
+                    try {
+                        const pb = typeof venta.payment_breakdown === 'string'
+                            ? JSON.parse(venta.payment_breakdown) : venta.payment_breakdown;
+                        return Array.isArray(pb) && pb.some(
+                            (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
+                        );
+                    } catch { return false; }
+                })();
+            if (isCurrentAccount) {
+                await conn.query(
+                    `UPDATE clients SET balance = balance + ?, last_updated = NOW()
+                     WHERE tenant_id = ? AND id = ?`,
+                    [parseFloat(venta.total) || 0, tenantId, venta.clientId]
+                );
+            }
+        }
+
+        // 3. Registrar en historial de eliminaciones
+        const deletedBy = req.body?.deleted_by_user_id || null;
+        const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
+        await conn.query(
+            `INSERT INTO deleted_sales_history
+             (tenant_id, sale_id, receipt_number, receipt_code, sale_date,
+              deleted_at, deleted_by_user_id, deleted_by_username,
+              payment_method, clientId, total, source,
+              authorization_verified, sale_snapshot, items_snapshot)
+             VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+            [
+                tenantId, saleId,
+                venta.receipt_number || null,
+                venta.receipt_code || null,
+                venta.date || null,
+                deletedBy, deletedByUsername,
+                venta.payment_method || '',
+                venta.clientId || null,
+                parseFloat(venta.total) || 0,
+                venta.source || 'manual',
+                JSON.stringify(venta),
+                JSON.stringify(items),
+            ]
+        );
+
+        // 4. Eliminar items y venta
+        await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
+        await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
+
+        await conn.commit();
+        conn.release();
+        return res.json({ ok: true });
+
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) {}
+        conn.release();
+        console.error('[DELETE /api/ventas ERROR]', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
@@ -3992,12 +5057,7 @@ ensureClientsControlStore()
     })
     .then(async () => {
         console.log('[BOOT] Operational tenant isolation OK');
-        if (process.env.REDIS_HOST) {
-            await redisClient.connect();
-            console.log(`[REDIS] Conectado a ${process.env.REDIS_HOST}:${process.env.REDIS_PORT || 6379}`);
-        } else {
-            console.warn('[REDIS] REDIS_HOST no configurado. Tracking de delivery deshabilitado.');
-        }
+        await connectRedisSafely();
     })
     .then(() => {
         app.listen(PORT, () => {

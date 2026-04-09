@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { desktopApi } from '../utils/desktopApi';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
+import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const IVA_OPTIONS = [10.5, 21];
 
@@ -12,13 +14,14 @@ const ProductosCompra = () => {
     const navigate = useNavigate();
     const { hasModule } = useLicense();
     const hasDespostadaModule = hasModule('despostada');
+    const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingItem, setEditingItem] = useState(null);
     const [qendraAvailable, setQendraAvailable] = useState(false);
     const [qendraSendStatus, setQendraSendStatus] = useState(null);
     const [items, setItems] = useState([]);
-    const [prices, setPrices] = useState([]);
+    const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
 
     useEffect(() => {
@@ -26,13 +29,13 @@ const ProductosCompra = () => {
     }, []);
 
     const loadData = React.useCallback(async () => {
-        const [itemsRows, pricesRows, categoriesRows] = await Promise.all([
+        const [itemsRows, productRows, categoriesRows] = await Promise.all([
             fetchTable('purchase_items'),
-            fetchTable('prices'),
+            fetchProductsSafe(),
             fetchTable('categories'),
         ]);
         setItems(Array.isArray(itemsRows) ? itemsRows : []);
-        setPrices(Array.isArray(pricesRows) ? pricesRows : []);
+        setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
     }, []);
 
@@ -68,6 +71,14 @@ const ProductosCompra = () => {
         return categories.sort((a, b) => a.name.localeCompare(b.name));
     }, [categories]);
 
+    // Sugerir el próximo PLU correlativo al crear un item nuevo
+    const nextSuggestedPlu = React.useMemo(() => {
+        const existingPlus = products
+            .map(p => parseInt(p?.plu || '', 10))
+            .filter(n => Number.isFinite(n) && n > 0);
+        return existingPlus.length > 0 ? Math.max(...existingPlus) + 1 : 1;
+    }, [products]);
+
     const handleSave = async (e) => {
         e.preventDefault();
         if (!formData.name) return;
@@ -84,6 +95,7 @@ const ProductosCompra = () => {
             return;
         }
 
+        let purchaseItemId = editingItem?.id || null;
         if (editingItem) {
             await saveTableRecord('purchase_items', 'update', {
                 name: nameTrimmed,
@@ -95,7 +107,7 @@ const ProductosCompra = () => {
             }, editingItem.id);
             setEditingItem(null);
         } else {
-            await saveTableRecord('purchase_items', 'insert', {
+            const inserted = await saveTableRecord('purchase_items', 'insert', {
                 name: nameTrimmed,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
@@ -104,17 +116,31 @@ const ProductosCompra = () => {
                 last_price: 0,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
             });
+            purchaseItemId = inserted?.insertId || null;
         }
 
-        const productId = `${nameTrimmed}-${formData.sale_category}`;
+        const unifiedProduct = await ensureUnifiedProduct({
+            products,
+            prices: [],
+            name: nameTrimmed,
+            category: formData.sale_category,
+            unit: formData.unit,
+            price: salePrice,
+            plu: formData.sale_plu.trim(),
+            source: 'catalogo_compra',
+        });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
-            String(item.name || '').trim().toLowerCase() === nameTrimmed.toLowerCase() &&
-            String(item.type || '').trim().toLowerCase() === String(formData.sale_category || '').trim().toLowerCase()
+            Number(item.product_id || 0) === Number(unifiedProduct?.id || 0) ||
+            (
+                String(item.name || '').trim().toLowerCase() === nameTrimmed.toLowerCase() &&
+                String(item.type || '').trim().toLowerCase() === String(formData.sale_category || '').trim().toLowerCase()
+            )
         );
 
         if (!existingStock) {
             await saveTableRecord('stock', 'insert', {
+                product_id: unifiedProduct?.id || null,
                 name: nameTrimmed,
                 type: formData.sale_category,
                 quantity: 0,
@@ -124,20 +150,10 @@ const ProductosCompra = () => {
             });
         }
 
-        const existingPrice = prices.find((item) => String(item.product_id || '') === productId);
-        if (existingPrice) {
-            await saveTableRecord('prices', 'update', {
-                price: salePrice,
-                plu: formData.sale_plu.trim(),
-                updated_at: new Date().toISOString()
-            }, existingPrice.id);
-        } else {
-            await saveTableRecord('prices', 'insert', {
-                product_id: productId,
-                price: salePrice,
-                plu: formData.sale_plu.trim(),
-                updated_at: new Date().toISOString()
-            });
+        if (purchaseItemId && unifiedProduct?.id) {
+            await saveTableRecord('purchase_items', 'update', {
+                product_id: unifiedProduct.id,
+            }, purchaseItemId);
         }
 
         await loadData();
@@ -153,8 +169,8 @@ const ProductosCompra = () => {
     };
 
     const openEdit = (item) => {
-        const priceRecord = prices?.find(p => p.product_id?.startsWith(`${item.name}-`));
-        const existingCategory = priceRecord?.product_id?.substring(item.name.length + 1) || 'vaca';
+        const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
+        const existingCategory = productRecord?.category || 'vaca';
         setEditingItem(item);
         setFormData({
             name: item.name,
@@ -164,31 +180,31 @@ const ProductosCompra = () => {
             species: item.species || 'vaca',
             default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
-            sale_price: priceRecord?.price?.toString() || '',
-            sale_plu: priceRecord?.plu || ''
+            sale_price: productRecord?.current_price?.toString() || '',
+            sale_plu: productRecord?.plu || ''
         });
         setIsModalOpen(true);
     };
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: String(nextSuggestedPlu) });
         setIsModalOpen(true);
     };
 
     const handleSendToQendra = async (item) => {
-        const priceRecord = prices?.find(p => p.product_id?.startsWith(`${item.name}-`));
-        if (!priceRecord?.plu || !priceRecord?.price) {
+        const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
+        if (!productRecord?.plu || !productRecord?.current_price) {
             setQendraSendStatus({ ok: false, msg: `Sin PLU/precio definido para "${item.name}"` });
             setTimeout(() => setQendraSendStatus(null), 4000);
             return;
         }
         setQendraSendStatus({ ok: null, msg: 'Actualizando en QENDRA...' });
-        const res = await desktopApi.qendraUpdatePrecio(priceRecord.plu, priceRecord.price);
+        const res = await desktopApi.qendraUpdatePrecio(productRecord.plu, productRecord.current_price);
         setQendraSendStatus({
             ok: res.ok,
             msg: res.ok
-                ? `PLU ${priceRecord.plu} → $${priceRecord.price} actualizado en QENDRA ✓`
+                ? `PLU ${productRecord.plu} → $${productRecord.current_price} actualizado en QENDRA ✓`
                 : `Error QENDRA: ${res.error}`
         });
         setTimeout(() => setQendraSendStatus(null), 5000);
@@ -287,7 +303,7 @@ const ProductosCompra = () => {
                             <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={24} /></button>
                         </div>
 
-                        <form onSubmit={handleSave}>
+                        <form onSubmit={guardSave(handleSave)}>
                             <div style={{ marginBottom: '1rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nombre del Producto</label>
                                 <input
@@ -418,6 +434,11 @@ const ProductosCompra = () => {
                                             value={formData.sale_plu}
                                             onChange={e => setFormData({ ...formData, sale_plu: e.target.value })}
                                         />
+                                        {!editingItem && (
+                                            <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
+                                                Sugerido ({nextSuggestedPlu}) — podés cambiarlo
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                                 <div>
@@ -439,7 +460,7 @@ const ProductosCompra = () => {
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.5rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancel</button>
-                                <button type="submit" className="neo-button">Guardar</button>
+                                <button type="submit" className="neo-button" disabled={isSaving}>{isSaving ? 'Guardando...' : 'Guardar'}</button>
                             </div>
                         </form>
                     </div>

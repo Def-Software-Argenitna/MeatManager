@@ -1,7 +1,6 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { fetchTable, saveTableRecord, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import {
     LayoutGrid,
     Plus,
@@ -33,16 +32,41 @@ const MenuDigital = () => {
     const { hasModule, supportNumber, installationId } = useLicense();
     const hasMenuDigital = hasModule('menu-digital');
 
-    const menuItems = useLiveQuery(() => db.menu_digital.toArray());
-    const catalogItems = useLiveQuery(() => db.purchase_items.toArray());
-    const stockItems = useLiveQuery(() => db.stock.toArray());
-    const settingsArr = useLiveQuery(() => db.settings.toArray());
+    const [menuItems, setMenuItems] = useState([]);
+    const [catalogItems, setCatalogItems] = useState([]);
+    const [stockItems, setStockItems] = useState([]);
+    const [shopName, setShopName] = useState('Nuestra Carnicería');
+    const [shopAddress, setShopAddress] = useState('');
+    const [whatsappNumber, setWhatsappNumber] = useState('');
 
-    const shopName = settingsArr?.find(s => s.key === 'shop_name')?.value || 'Nuestra Carnicería';
-    const whatsappNumber = settingsArr?.find(s => s.key === 'whatsapp_number')?.value || '';
+    const loadData = useCallback(async () => {
+        try {
+            const [menuRows, catalogRows, stockRows, nameVal, addressVal, waVal] = await Promise.all([
+                fetchTable('menu_digital', { limit: 500, orderBy: 'id', direction: 'ASC' }),
+                fetchTable('purchase_items', { limit: 2000, orderBy: 'name', direction: 'ASC' }),
+                fetchTable('stock', { limit: 2000, orderBy: 'name', direction: 'ASC' }),
+                getRemoteSetting('shop_name').catch(() => null),
+                getRemoteSetting('shop_address').catch(() => null),
+                getRemoteSetting('whatsapp_number').catch(() => null),
+            ]);
+            setMenuItems(Array.isArray(menuRows) ? menuRows : []);
+            setCatalogItems(Array.isArray(catalogRows) ? catalogRows : []);
+            setStockItems(Array.isArray(stockRows) ? stockRows : []);
+            if (nameVal) setShopName(nameVal);
+            if (addressVal) setShopAddress(addressVal);
+            if (waVal) setWhatsappNumber(waVal);
+        } catch (err) {
+            console.error('[MenuDigital] loadData error', err);
+        }
+    }, []);
+
+    useEffect(() => { loadData(); }, [loadData]);
 
     const updateSetting = async (key, value) => {
-        await db.settings.put({ key, value });
+        if (key === 'shop_name') setShopName(value);
+        if (key === 'shop_address') setShopAddress(value);
+        if (key === 'whatsapp_number') setWhatsappNumber(value);
+        await upsertRemoteSetting(key, value);
     };
 
     const getStockForItem = (name) => {
@@ -50,25 +74,29 @@ const MenuDigital = () => {
     };
 
     const addToMenu = async (item) => {
-        await db.menu_digital.add({
+        await saveTableRecord('menu_digital', 'insert', {
             product_name: item.name,
             price: item.last_price || 0,
             category: 'General',
-            is_offer: false
+            is_offer: 0,
         });
+        await loadData();
         setIsAdding(false);
     };
 
     const removeFromMenu = async (id) => {
-        await db.menu_digital.delete(id);
+        await saveTableRecord('menu_digital', 'delete', null, id);
+        await loadData();
     };
 
     const toggleOffer = async (item) => {
-        await db.menu_digital.update(item.id, { is_offer: !item.is_offer });
+        await saveTableRecord('menu_digital', 'update', { is_offer: item.is_offer ? 0 : 1 }, item.id);
+        await loadData();
     };
 
     const updatePrice = async (id, newPrice) => {
-        await db.menu_digital.update(id, { price: parseFloat(newPrice) || 0 });
+        await saveTableRecord('menu_digital', 'update', { price: parseFloat(newPrice) || 0 }, id);
+        await loadData();
     };
 
     const generateCatalogLink = () => {
@@ -137,7 +165,7 @@ const MenuDigital = () => {
                         type="text"
                         className="blank-input"
                         placeholder="Ej: Av. Rivadavia 1234, CABA"
-                        value={settingsArr?.find(s => s.key === 'shop_address')?.value || ''}
+                        value={shopAddress}
                         onChange={(e) => updateSetting('shop_address', e.target.value)}
                         style={{ fontSize: '1.1rem', fontWeight: 'bold', width: '100%', border: 'none', background: 'transparent', outline: 'none' }}
                     />

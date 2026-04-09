@@ -22,17 +22,39 @@ export const getAuthToken = async () => {
     return getStoredAuthToken();
 };
 
+// ── Token in-flight cache ────────────────────────────────────────────────────
+// Evita llamar getIdToken() N veces en paralelo (una por cada fetchTable).
+// Si ya hay una Promise de token en curso se reutiliza la misma.
+let _tokenPromise = null;
+let _tokenExpiry = 0; // epoch ms estimado de expiración (55 min margen)
+
+const getCachedToken = (forceRefresh = false) => {
+    if (!hasTenantSession()) return Promise.resolve(null);
+    const user = auth.currentUser;
+    if (!user) return Promise.resolve(getStoredAuthToken());
+
+    const now = Date.now();
+    if (!forceRefresh && _tokenPromise && now < _tokenExpiry) {
+        return _tokenPromise;
+    }
+
+    _tokenExpiry = now + 55 * 60 * 1000; // 55 min
+    _tokenPromise = user.getIdToken(forceRefresh).then((token) => {
+        setStoredAuthToken(token);
+        return token;
+    }).catch(() => {
+        _tokenPromise = null;
+        _tokenExpiry = 0;
+        return getStoredAuthToken();
+    });
+
+    return _tokenPromise;
+};
+
 export const apiFetch = async (path, options = {}) => {
     const buildHeaders = async (forcedRefresh = false) => {
-        let token = null;
-        if (hasTenantSession()) {
-            if (auth.currentUser) {
-                token = await auth.currentUser.getIdToken(forcedRefresh);
-                setStoredAuthToken(token);
-            } else if (!forcedRefresh) {
-                token = getStoredAuthToken();
-            }
-        }
+        const token = await getCachedToken(forcedRefresh);
+        if (forcedRefresh) { _tokenPromise = null; _tokenExpiry = 0; } // invalidar cache en retry
 
         const headers = {
             ...(options.body ? { 'Content-Type': 'application/json' } : {}),
@@ -285,5 +307,48 @@ export const verifyCashWithdrawalAuthorization = async (payload) => {
         throw new Error(err.error || 'No se pudo validar el codigo de autorizacion');
     }
 
+    return res.json();
+};
+
+// ── Venta atómica ─────────────────────────────────────────────────────────
+
+// Venta atomica: registra venta + items + descuento de stock + balance cliente
+// en una sola transaccion en el servidor.
+export const createVenta = async (payload) => {
+    const res = await apiFetch('/api/ventas', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Error al registrar la venta');
+    }
+    return res.json();
+};
+
+// Anula una venta de forma atomica: restaura stock + revierte balance + historial.
+export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username } = {}) => {
+    const res = await apiFetch(`/api/ventas/${encodeURIComponent(id)}`, {
+        method: 'DELETE',
+        body: JSON.stringify({ deleted_by_user_id, deleted_by_username }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Error al anular la venta');
+    }
+    return res.json();
+};
+
+// Compra atomica: registra compra + items + stock + animal_lots + caja
+// en una sola transaccion en el servidor.
+export const createCompra = async (payload) => {
+    const res = await apiFetch('/api/compras', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Error al registrar la compra');
+    }
     return res.json();
 };

@@ -6,7 +6,9 @@ import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { formatPrice } from '../utils/priceFormat';
 import { desktopApi } from '../utils/desktopApi';
-import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta } from '../utils/apiClient';
+import { useOfflineQueue } from '../hooks/useOfflineQueue';
+import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './Ventas.css';
 
@@ -25,7 +27,6 @@ const getClientDisplayName = (client) => {
 
 const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
 const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
-const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
 const toNumber = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
@@ -80,6 +81,7 @@ const Ventas = () => {
     const [quickProductName, setQuickProductName] = useState('');
     const [quickProductPrice, setQuickProductPrice] = useState('');
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
+    const [quickProductPlu, setQuickProductPlu] = useState(''); // PLU editable; prioridad al de la balanza
 
     // Barcode Scanner State
     const [scannerError, setScannerError] = useState('');
@@ -123,13 +125,18 @@ const Ventas = () => {
     const [showPrintConfirmModal, setShowPrintConfirmModal] = useState(false);
     const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
-    const [prices, setPrices] = useState([]);
+    const [productsCatalog, setProductsCatalog] = useState([]);
     const [clients, setClients] = useState([]);
     const [dbPaymentMethods, setDbPaymentMethods] = useState([]);
     const [shopInfo, setShopInfo] = useState({ name: 'Nuestra Carnicería', address: '', phone: '' });
     const [todayOpeningMovements, setTodayOpeningMovements] = useState([]);
     const [recentSales, setRecentSales] = useState([]);
     const [recentSalesItems, setRecentSalesItems] = useState({});
+
+    // Cola offline — ventas encoladas cuando no hay conexión
+    const { queueLength, enqueue, drain } = useOfflineQueue({
+        onVentaSynced: () => refreshVentasData(),
+    });
 
     // Toast (reemplaza todos los alert() nativos que roban el foco en Electron)
     const [toastMsg, setToastMsg] = useState(null); // { text, type: 'error'|'success'|'warning' }
@@ -146,7 +153,7 @@ const Ventas = () => {
     const refreshVentasData = React.useCallback(async () => {
         const [
             stockRows,
-            priceRows,
+            productRows,
             clientRows,
             paymentRows,
             salesRows,
@@ -154,7 +161,7 @@ const Ventas = () => {
             movementsRows,
         ] = await Promise.all([
             fetchTable('stock'),
-            fetchTable('prices'),
+            fetchProductsSafe(),
             fetchTable('clients'),
             fetchTable('payment_methods'),
             fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
@@ -162,14 +169,23 @@ const Ventas = () => {
             fetchTable('caja_movimientos'),
         ]);
 
+        await syncLegacyProductsToCatalog({
+            products: productRows,
+            stockRows,
+            prices: [],
+        });
+        const syncedProducts = await fetchProductsSafe();
+        await reconcileLegacyProductConflicts({
+            products: syncedProducts,
+            prices: [],
+        });
+        const refreshedProducts = await fetchProductsSafe();
+
         setStockItems(Array.isArray(stockRows) ? stockRows : []);
-        setPrices(Array.isArray(priceRows) ? priceRows : []);
+        setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
         setDbPaymentMethods(
-            (Array.isArray(paymentRows) ? paymentRows : []).filter((m) => {
-                const allowedNames = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
-                return m.enabled && allowedNames.includes(m.name);
-            })
+            (Array.isArray(paymentRows) ? paymentRows : []).filter((m) => m.enabled)
         );
 
         const recentRows = Array.isArray(salesRows) ? salesRows : [];
@@ -202,6 +218,22 @@ const Ventas = () => {
             })
         );
     }, []);
+
+    const getProductPriceCandidates = React.useCallback((itemName, _itemType) => {
+        // Ya no usamos prices legacy — devuelve el producto del catálogo como candidato único
+        const product = productsCatalog.find((p) =>
+            String(p?.canonical_key || '').toLowerCase() === normalizeProductKey(itemName)
+        );
+        if (!product) return [];
+        return [{
+            id: product.id,
+            product_id: normalizeProductKey(itemName),
+            product_ref_id: product.id,
+            price: product.current_price || 0,
+            plu: product.plu || '',
+            updated_at: product.updated_at,
+        }];
+    }, [productsCatalog]);
 
     React.useEffect(() => {
         const loadVentasBootstrap = async () => {
@@ -528,7 +560,7 @@ const Ventas = () => {
                         </div>
                         <div class="item">
                             <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
-                            <span>$${(toNumber(i.price) * toNumber(i.quantity)).toLocaleString()}</span>
+                            <span>$${(Math.round(toNumber(i.price) * toNumber(i.quantity) * 100) / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -560,36 +592,50 @@ const Ventas = () => {
         const grouped = {};
 
         stockItems.forEach(item => {
-            const key = item.name + '-' + item.type; // Group by name & type
+            const productRecord = findProductByIdentity(productsCatalog, {
+                id: item.product_id,
+                name: item.name,
+            });
+            const key = productRecord?.id ? `product:${productRecord.id}` : buildLegacyPriceProductId(item.name, item.type);
 
             if (!grouped[key]) {
-                const priceRecord = prices?.find(p => p.product_id === key) || {};
-
                 grouped[key] = {
-                    id: key,
-                    name: item.name,
-                    category: item.type,
+                    id: productRecord?.id ? `product:${productRecord.id}` : key,
+                    productId: productRecord?.id || null,
+                    name: productRecord?.name || item.name,
+                    category: productRecord?.category || item.type,
                     totalQuantity: 0,
-                    unit: item.unit || 'kg',
-                    price: toNumber(priceRecord.price),
-                    plu: priceRecord.plu || ''
+                    unit: productRecord?.unit || item.unit || 'kg',
+                    price: getProductCurrentPrice(productRecord),
+                    plu: productRecord?.plu || '',
                 };
             }
             grouped[key].totalQuantity += toNumber(item.quantity);
         });
 
         return Object.values(grouped);
-    }, [stockItems, prices]);
+    }, [stockItems, productsCatalog, getProductPriceCandidates]);
 
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = String(pluValue || '').trim();
         if (!normalized) return null;
         const normalizedNumber = String(parseInt(normalized, 10));
-        return prices.find((price) => {
-            const pricePlu = String(price?.plu || '').trim();
-            return pricePlu === normalized || pricePlu === normalizedNumber;
-        }) || null;
-    }, [prices]);
+        // Buscar por PLU en el catálogo de productos (fuente canónica)
+        const product = productsCatalog.find((p) => {
+            const plu = String(p?.plu || '').trim();
+            return plu === normalized || plu === normalizedNumber;
+        });
+        if (!product) return null;
+        // Retornar en formato compatible con findProductByPriceRecord
+        return {
+            id: product.id,
+            product_id: normalizeProductKey(product.name),
+            product_ref_id: product.id,
+            price: product.current_price || 0,
+            plu: product.plu || '',
+            updated_at: product.updated_at,
+        };
+    }, [productsCatalog]);
 
     const findStockItemByName = React.useCallback((name) => {
         const normalized = String(name || '').trim().toUpperCase();
@@ -598,15 +644,14 @@ const Ventas = () => {
 
     const findProductByPriceRecord = React.useCallback((priceRecord) => {
         if (!priceRecord) return null;
+        if (priceRecord.product_ref_id != null) {
+            return products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
+        }
         const productId = String(priceRecord.product_id || '').trim();
-        return products.find((product) => {
-            const productKey = `${product.name}-${product.category}`;
-            return (
-                product.id === productId ||
-                productKey === productId ||
-                normalizeProductKey(productKey) === normalizeProductKey(productId)
-            );
-        }) || null;
+        return products.find((product) => (
+            buildLegacyPriceProductId(product.name, product.category) === productId
+            || normalizeProductKey(product.name) === normalizeProductKey(productId)
+        )) || null;
     }, [products]);
 
     // Filter products
@@ -628,12 +673,19 @@ const Ventas = () => {
             return;
         }
         const plu = pluVal;
-        const existing = prices.find((item) => String(item.product_id || '') === String(productId));
-
-        if (existing) {
-            await saveTableRecord('prices', 'update', { price, plu, updated_at: new Date().toISOString() }, existing.id);
-        } else {
-            await saveTableRecord('prices', 'insert', { product_id: productId, price, plu, updated_at: new Date().toISOString() });
+        const product = products.find((item) => item.id === productId);
+        if (product) {
+            await ensureUnifiedProduct({
+                products: productsCatalog,
+                prices: [],
+                preferredProductId: product.productId,
+                name: product.name,
+                category: product.category,
+                unit: product.unit,
+                price,
+                plu,
+                source: 'ventas_manual',
+            });
         }
         await refreshVentasData();
         setEditingPriceId(null);
@@ -721,6 +773,7 @@ const Ventas = () => {
                 setQuickProductName('');
                 setQuickProductPrice('');
                 setQuickProductCategory('vaca');
+                setQuickProductPlu(String(pluNumber)); // PLU de la balanza tiene prioridad
                 setShowQuickCreateModal(true);
                 setScannerError('');
                 return;
@@ -879,10 +932,23 @@ const Ventas = () => {
             return;
         }
 
+        // PLU: prioridad al editado por el usuario (que por defecto ya es el de la balanza)
+        const finalPlu = String(quickProductPlu || pendingBarcode.plu || '').trim();
+
         try {
-            // 1. Crear producto en Stock (con cantidad inicial 0)
-            const productId = `${quickProductName}-${quickProductCategory}`;
+            const unifiedProduct = await ensureUnifiedProduct({
+                products: productsCatalog,
+                prices: [],
+                name: quickProductName,
+                category: quickProductCategory,
+                unit: 'kg',
+                price,
+                plu: finalPlu,
+                source: 'ventas_quick_create',
+            });
+
             await saveTableRecord('stock', 'insert', {
+                product_id: unifiedProduct?.id || null,
                 name: quickProductName,
                 type: quickProductCategory,
                 quantity: 0, // Inicialmente sin stock
@@ -890,25 +956,18 @@ const Ventas = () => {
                 updated_at: new Date().toISOString(),
             });
 
-            // 2. Crear precio con PLU
-            await saveTableRecord('prices', 'insert', {
-                product_id: productId,
-                price: price,
-                plu: pendingBarcode.plu,
-                updated_at: new Date().toISOString(),
-            });
-
             await refreshVentasData();
 
-            // 3. Agregar al carrito con el peso escaneado
+            // 2. Agregar al carrito con el peso escaneado
             const newProduct = {
-                id: productId,
+                id: `product:${unifiedProduct?.id || quickProductName}`,
+                productId: unifiedProduct?.id || null,
                 name: quickProductName,
                 category: quickProductCategory,
                 totalQuantity: 0,
                 unit: 'kg',
                 price: price,
-                plu: pendingBarcode.plu
+                plu: finalPlu
             };
 
             addToCart(newProduct, pendingBarcode.weight);
@@ -918,6 +977,7 @@ const Ventas = () => {
             setPendingBarcode(null);
             setQuickProductName('');
             setQuickProductPrice('');
+            setQuickProductPlu('');
             setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
 
             showToast(`✅ Producto "${quickProductName}" creado y agregado al carrito con ${pendingBarcode.weight}kg`, 'success');
@@ -1069,7 +1129,12 @@ const Ventas = () => {
         }
     };
 
-    const cartTotal = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+    // cartTotal acumula los subtotales ya redondeados a 2 decimales,
+    // igual que lo que muestra cada línea del carrito — evita discrepancias de $0.01
+    const cartTotal = cart.reduce((sum, item) => {
+        const lineSubtotal = Math.round(item.price * item.quantity * 100) / 100;
+        return Math.round((sum + lineSubtotal) * 100) / 100;
+    }, 0);
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountMethod = React.useMemo(() => (
@@ -1233,8 +1298,8 @@ const Ventas = () => {
                 );
             const { receiptNumber: saleReceiptNumber, receiptCode: saleReceiptCode } = await getNextRemoteReceiptData('sales_receipt_counter');
 
-            // 1. Registrar la Venta
-            const { insertId: saleId } = await saveTableRecord('ventas', 'insert', {
+            // Registrar la venta de forma atómica (ventas + items + stock + balance cliente)
+            const ventaPayload = {
                 date: new Date(),
                 subtotal: cartTotal,
                 adjustment: adjustment,
@@ -1246,44 +1311,27 @@ const Ventas = () => {
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
                 ...(qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {}),
-            });
-
-            console.log("Venta creada ID:", saleId);
-
-            // 2. Registrar Items de la Venta
-            const saleItems = cart.map(i => ({
-                venta_id: saleId,
-                product_name: i.name,
-                quantity: i.quantity,
-                price: i.price,
-                subtotal: i.price * i.quantity,
-                synced: 0
-            }));
-            await Promise.all(saleItems.map((item) => saveTableRecord('ventas_items', 'insert', item)));
-
-            // 3. Ajustar Balance del Cliente (si es cta cte)
-            if (methodObj.type === 'cuenta_corriente' && numericClientId !== null) {
-                const client = clients.find((item) => Number(item.id) === numericClientId);
-                if (client) {
-                    await saveTableRecord('clients', 'update', {
-                        balance: (client.balance || 0) - finalTotal,
-                        last_updated: new Date().toISOString(),
-                    }, numericClientId);
+                items: cart.map(i => ({
+                    product_id: i.productId || null,
+                    product_name: i.name,
+                    quantity: i.quantity,
+                    price: i.price,
+                    subtotal: i.price * i.quantity,
+                    category: i.category || null,
+                    unit: i.unit || 'kg',
+                })),
+            };
+            const { insertId: saleId } = await createVenta(ventaPayload).catch((err) => {
+                // Si el error es de red, encolar para sincronizar cuando vuelva la conexión
+                if (!navigator.onLine || String(err?.message || '').toLowerCase().includes('failed to fetch')) {
+                    enqueue(ventaPayload);
+                    // Asignar saleId temporal negativo para no romper el flujo de pantalla
+                    return { insertId: -(Date.now()), receipt_number: saleReceiptNumber, receipt_code: saleReceiptCode, _offline: true };
                 }
-            }
-
-            // 4. Descontar Stock (Añadiendo movimiento negativo)
-            const stockAdjustments = cart.map(item => ({
-                name: item.name,
-                type: item.category,
-                quantity: -item.quantity,
-                unit: item.unit || 'kg',
-                updated_at: new Date(),
-                synced: 0
-            }));
-
-            await Promise.all(stockAdjustments.map((item) => saveTableRecord('stock', 'insert', item)));
-            await refreshVentasData();
+                throw err;
+            });
+            const isOfflineSale = saleId < 0;
+            if (!isOfflineSale) await refreshVentasData();
 
             console.log("Proceso de guardado completado.");
             playCashRegister();
@@ -1372,53 +1420,12 @@ const Ventas = () => {
             throw new Error('La venta ya no existe.');
         }
 
-        const items = recentSalesItems?.[id] || recentSalesItems?.[Number(id)] || [];
-
-        if (items.length > 0) {
-            const stockRestorations = items.map((item) => {
-                const ref = findStockItemByName(item.product_name);
-                return {
-                    name: item.product_name,
-                    type: ref?.type || 'vaca',
-                    quantity: item.quantity,
-                    unit: ref?.unit || item.unit || 'kg',
-                    updated_at: new Date().toISOString(),
-                    reference: `anulacion_venta_${id}`,
-                };
-            });
-            await Promise.all(stockRestorations.map((item) => saveTableRecord('stock', 'insert', item)));
-        }
-
-        if (venta.clientId && venta.payment_method === 'Cuenta Corriente') {
-            const numericClientId = Number(venta.clientId);
-            const client = clients.find((item) => Number(item.id) === numericClientId);
-            if (client) {
-                await saveTableRecord('clients', 'update', {
-                    balance: Number(client.balance || 0) + Number(venta.total || 0),
-                    last_updated: new Date().toISOString(),
-                }, numericClientId);
-            }
-        }
-
-        await saveTableRecord('deleted_sales_history', 'insert', {
-            sale_id: venta.id,
-            receipt_number: venta.receipt_number || null,
-            receipt_code: venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id),
-            sale_date: venta.date || null,
-            deleted_at: new Date().toISOString(),
+        // Anular de forma atómica en el servidor: stock + balance + historial + delete
+        await deleteVenta(id, {
             deleted_by_user_id: currentUser?.id || null,
             deleted_by_username: currentUser?.username || 'Usuario desconocido',
-            payment_method: venta.payment_method || '',
-            clientId: venta.clientId ?? null,
-            total: Number(venta.total || 0),
-            source: venta.source || 'manual',
-            authorization_verified: 1,
-            sale_snapshot: venta,
-            items_snapshot: items,
         });
 
-        await Promise.all(items.map((item) => saveTableRecord('ventas_items', 'delete', null, item.id)));
-        await saveTableRecord('ventas', 'delete', null, id);
         await refreshVentasData();
 
         setDeleteAuthorizationCode('');
@@ -1462,6 +1469,23 @@ const Ventas = () => {
                 {toastMsg.text}
             </div>
         )}
+        {/* INDICADOR OFFLINE — muestra ventas encoladas pendientes de sincronizar */}
+        {queueLength > 0 && (
+            <div
+                onClick={() => drain()}
+                title={`${queueLength} venta(s) pendiente(s) de sincronizar. Hacé clic para reintentar.`}
+                style={{
+                    position: 'fixed', top: '1.2rem', right: '1.2rem',
+                    zIndex: 99998, padding: '0.5rem 1rem',
+                    borderRadius: '8px', background: '#854d0e',
+                    color: '#fff', fontWeight: '600', fontSize: '0.85rem',
+                    boxShadow: '0 2px 12px rgba(0,0,0,0.5)',
+                    cursor: 'pointer', userSelect: 'none',
+                }}
+            >
+                ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
+            </div>
+        )}
         {/* TOP BAR - Premium TPV Style */}
         <div style={{
             display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -1488,7 +1512,7 @@ const Ventas = () => {
                         <User size={14} />
                     </div>
                     <span style={{ color: 'var(--color-text-muted)' }}>Cajera:</span>
-                    <span style={{ fontWeight: '600' }}>{currentUser?.displayName || 'Sara J.'}</span>
+                    <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
                 </div>
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                     <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><Printer size={18} /></button>
@@ -1666,7 +1690,6 @@ const Ventas = () => {
                                 <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
                                     Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
                                 </div>
-
                                 <button
                                     className="price-tag-btn"
                                     onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
@@ -2535,6 +2558,28 @@ const Ventas = () => {
                             </div>
 
                             <div>
+                                <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                                    PLU <span style={{ color: '#22c55e', fontSize: '0.72rem' }}>(⚖️ de la balanza — podés editarlo)</span>
+                                </label>
+                                <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={quickProductPlu}
+                                    onChange={e => setQuickProductPlu(e.target.value.replace(/\D/g, ''))}
+                                    style={{
+                                        width: '100%',
+                                        padding: '0.75rem 1rem',
+                                        fontSize: '1rem',
+                                        background: 'var(--color-bg-main)',
+                                        border: '2px solid rgba(34,197,94,0.4)',
+                                        borderRadius: 'var(--radius-md)',
+                                        color: 'var(--color-text-main)',
+                                        fontWeight: '700',
+                                    }}
+                                />
+                            </div>
+
+                            <div>
                                 <label style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>Categoría</label>
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0.5rem' }}>
                                     {['vaca', 'cerdo', 'pollo'].map(cat => (
@@ -2565,6 +2610,7 @@ const Ventas = () => {
                                 onClick={() => {
                                     setShowQuickCreateModal(false);
                                     setPendingBarcode(null);
+                                    setQuickProductPlu('');
                                     setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
                                 }}
                                 style={{
