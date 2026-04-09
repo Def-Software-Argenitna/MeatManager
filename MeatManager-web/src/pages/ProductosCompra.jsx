@@ -300,9 +300,6 @@ const ProductosCompra = () => {
                 </div>
             )}
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">Artículo</h1>
-                </div>
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
                         <Plus size={20} />
