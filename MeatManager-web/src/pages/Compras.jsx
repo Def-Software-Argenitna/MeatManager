@@ -654,11 +654,16 @@ const Compras = () => {
                             </div>
                             {compra.items_detail ? (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                    {compra.items_detail.slice(0, 5).map((d, idx) => (
-                                        <span key={idx} className={`purchase-item-chip ${(d.destination || 'venta') === 'interno' ? 'internal' : ''}`}>
-                                            {d.quantity} {d.name} {(d.destination || 'venta') === 'interno' ? '• interno' : ''}
-                                        </span>
-                                    ))}
+                                    {compra.items_detail.slice(0, 5).map((d, idx) => {
+                                        const qtyValue = d.quantity > 0 ? d.quantity : d.weight;
+                                        const unitText = d.unit ? ` ${d.unit.toLowerCase()}` : '';
+                                        const itemName = d.product_name || d.name || '';
+                                        return (
+                                            <span key={idx} className={`purchase-item-chip ${(d.destination || 'venta') === 'interno' ? 'internal' : ''}`}>
+                                                {qtyValue}{unitText} {itemName} {(d.destination || 'venta') === 'interno' ? '• interno' : ''}
+                                            </span>
+                                        );
+                                    })}
                                     {compra.items_detail.length > 5 && <span style={{ fontSize: '0.8rem' }}>+{compra.items_detail.length - 5} más</span>}
                                 </div>
                             ) : (
