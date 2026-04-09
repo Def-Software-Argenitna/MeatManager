@@ -5090,7 +5090,16 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         let rows;
         try {
             [rows] = await conn.query(
-                `SELECT id, clientId, branchId, firebaseUid, name, lastname, email, role, status
+                `SELECT
+                    cu.id AS id,
+                    cu.clientId AS clientId,
+                    cu.branchId AS branchId,
+                    cu.firebaseUid AS firebaseUid,
+                    cu.name AS name,
+                    cu.lastname AS lastname,
+                    cu.email AS email,
+                    cu.role AS role,
+                    cu.status AS status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  cu
                  LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
