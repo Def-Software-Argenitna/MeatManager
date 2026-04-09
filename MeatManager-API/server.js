@@ -1438,6 +1438,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
+            await ensureColumn(conn, 'compras', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `total`');
+            await ensureColumn(conn, 'compras', 'is_account', '`is_account` TINYINT(1) NULL DEFAULT 0 AFTER `payment_method`');
+            await ensureColumn(conn, 'compras', 'items_detail', '`items_detail` JSON NULL AFTER `is_account`');
             await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
@@ -1445,6 +1448,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'purchase_id', '`purchase_id` INT NULL AFTER `authorization_verified`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
