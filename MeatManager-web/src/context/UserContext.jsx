@@ -36,8 +36,7 @@ export const ALL_ROUTES = [
     { path: '/config/categorias',       label: 'Categorías',        group: 'Configuración' },
     { path: '/config/productos-compra', label: 'Catálogo Compras',  group: 'Configuración' },
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
-    { path: '/config/licencia',         label: 'Licencia',          group: 'Configuración' },
-    { path: '/config/seguridad',        label: 'Seguridad/Usuarios',group: 'Configuración' },
+    { path: '/config/seguridad',        label: 'Usuarios y Licencias',group: 'Configuración' },
     { path: '/admin-pablo-control-master', label: 'Panel Administración', group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];

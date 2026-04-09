@@ -139,8 +139,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Catálogo Compras', path: '/config/productos-compra', icon: PackageSearch },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
-    { title: 'Licencia', path: '/config/licencia', icon: ShieldCheck },
-    { title: 'Usuarios / Seguridad', path: '/config/seguridad', icon: Lock },
+    { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
 
