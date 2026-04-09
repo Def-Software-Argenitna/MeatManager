@@ -630,6 +630,11 @@ const Ventas = () => {
         const grouped = {};
 
         stockItems.forEach(item => {
+            const usage = String(item?.usage || 'venta').trim().toLowerCase();
+            if (usage === 'interno' || usage === 'consumo_interno' || usage === 'consumo interno') {
+                return;
+            }
+
             const productRecord = findProductByIdentity(productsCatalog, {
                 id: item.product_id,
                 name: item.name,

@@ -1604,6 +1604,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
             await ensureColumn(conn, 'compras', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `total`');
@@ -2967,6 +2968,7 @@ function getSchemaTables() {
             product_id      INT,
             name            VARCHAR(150) NOT NULL,
             type            VARCHAR(50),
+            \`usage\`         VARCHAR(50),
             quantity        DECIMAL(12,3) DEFAULT 0,
             unit            VARCHAR(20),
             price           DECIMAL(12,2) DEFAULT 0,

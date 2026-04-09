@@ -14,11 +14,15 @@ const PRESENTATION_OPTIONS = [
     { value: 'pack', label: 'Pack' },
     { value: 'botella', label: 'Botella' },
 ];
+const USAGE_OPTIONS = [
+    { value: 'venta', label: 'Para vender' },
+    { value: 'interno', label: 'Consumo interno' },
+];
 
 const OtrosItems = () => {
     const [items, setItems] = useState([]);
 
-    const [newItem, setNewItem] = useState({ name: '', quantity: '', presentation: 'unidades', barcode: '' });
+    const [newItem, setNewItem] = useState({ name: '', quantity: '', presentation: 'unidades', barcode: '', usage: 'venta' });
 
     const loadItems = React.useCallback(async () => {
         const rows = await fetchTable('stock');
@@ -37,12 +41,13 @@ const OtrosItems = () => {
             name: newItem.name,
             quantity: parseFloat(newItem.quantity),
             type: 'insumo',
+            usage: newItem.usage || 'venta',
             unit: newItem.presentation,
             presentation: newItem.presentation,
             barcode: newItem.barcode.trim() || null,
             updated_at: new Date().toISOString()
         });
-        setNewItem({ name: '', quantity: '', presentation: 'unidades', barcode: '' });
+        setNewItem({ name: '', quantity: '', presentation: 'unidades', barcode: '', usage: 'venta' });
         await loadItems();
     };
 
@@ -92,6 +97,16 @@ const OtrosItems = () => {
                         value={newItem.barcode}
                         onChange={e => setNewItem({ ...newItem, barcode: e.target.value })}
                     />
+                    <select
+                        className="neo-input"
+                        style={{ flex: 1, marginBottom: 0 }}
+                        value={newItem.usage}
+                        onChange={e => setNewItem({ ...newItem, usage: e.target.value })}
+                    >
+                        {USAGE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                    </select>
                     <button type="submit" className="neo-button">
                         <Plus size={18} /> Agregar
                     </button>
@@ -108,6 +123,9 @@ const OtrosItems = () => {
                             <h3>{item.name}</h3>
                             <div className="otros-item-quantity">
                                 {item.quantity} <sub>{item.presentation || item.unit || 'unid.'}</sub>
+                            </div>
+                            <div className="otros-item-usage">
+                                {String(item.usage || 'venta').toLowerCase() === 'interno' ? 'Consumo interno' : 'Para vender'}
                             </div>
                             {item.barcode && (
                                 <div className="otros-item-barcode">
