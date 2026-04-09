@@ -1265,7 +1265,7 @@ async function ensureProductCategoriesIntegrity(conn) {
     );
 
     await conn.query(
-        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
+        `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
             (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
          SELECT
             dedup.tenant_id,
@@ -1305,7 +1305,7 @@ async function ensureProductCategoriesIntegrity(conn) {
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
            ON pc.\`${TENANT_COLUMN}\` = dedup.tenant_id
           AND pc.code = dedup.code
-         AND pc.id IS NULL`
+         WHERE pc.id IS NULL`
     );
 
     const [tenantRows] = await conn.query(

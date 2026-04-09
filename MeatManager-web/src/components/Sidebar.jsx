@@ -135,7 +135,7 @@ const Sidebar = ({ isCollapsed }) => {
   const configItems = [
     { title: 'Medios de Pago', path: '/config/pagos', icon: Settings },
     { title: 'Categorías', path: '/config/categorias', icon: FolderOpen },
-    { title: 'Catálogo Compras', path: '/config/productos-compra', icon: PackageSearch },
+    { title: 'Artículos', path: '/config/productos-compra', icon: PackageSearch },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
     { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
