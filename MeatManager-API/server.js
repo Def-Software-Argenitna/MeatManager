@@ -1268,37 +1268,44 @@ async function ensureProductCategoriesIntegrity(conn) {
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
             (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
          SELECT
-            src.tenant_id,
-            src.code,
-            src.name,
+            dedup.tenant_id,
+            dedup.code,
+            dedup.name,
             1,
             0,
             NOW(),
             NOW()
          FROM (
-            SELECT p.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('p.category')} AS code, ${textExpr('p.category')} AS name
-            FROM \`${OPERATIONAL_DB_NAME}\`.products p
-            WHERE ${textExpr('p.category')} IS NOT NULL
-            UNION ALL
-            SELECT s.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('s.type')} AS code, ${textExpr('s.type')} AS name
-            FROM \`${OPERATIONAL_DB_NAME}\`.stock s
-            WHERE ${textExpr('s.type')} IS NOT NULL
-            UNION ALL
-            SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.type')} AS code, ${textExpr('pi.type')} AS name
-            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
-            WHERE ${textExpr('pi.type')} IS NOT NULL
-            UNION ALL
-            SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.species')} AS code, ${textExpr('pi.species')} AS name
-            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
-            WHERE ${textExpr('pi.species')} IS NOT NULL
-         ) src
+            SELECT
+                src.tenant_id,
+                src.code,
+                MAX(src.name) AS name
+            FROM (
+                SELECT p.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('p.category')} AS code, ${textExpr('p.category')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.products p
+                WHERE ${textExpr('p.category')} IS NOT NULL
+                UNION ALL
+                SELECT s.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('s.type')} AS code, ${textExpr('s.type')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.stock s
+                WHERE ${textExpr('s.type')} IS NOT NULL
+                UNION ALL
+                SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.type')} AS code, ${textExpr('pi.type')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${textExpr('pi.type')} IS NOT NULL
+                UNION ALL
+                SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.species')} AS code, ${textExpr('pi.species')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${textExpr('pi.species')} IS NOT NULL
+            ) src
+            WHERE src.code IS NOT NULL
+              AND src.code <> ''
+              AND src.name IS NOT NULL
+            GROUP BY src.tenant_id, src.code
+         ) dedup
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
-           ON pc.\`${TENANT_COLUMN}\` = src.tenant_id
-          AND pc.code = src.code
-         WHERE src.code IS NOT NULL
-           AND src.code <> ''
-           AND src.name IS NOT NULL
-           AND pc.id IS NULL`
+           ON pc.\`${TENANT_COLUMN}\` = dedup.tenant_id
+          AND pc.code = dedup.code
+         AND pc.id IS NULL`
     );
 
     const [tenantRows] = await conn.query(
