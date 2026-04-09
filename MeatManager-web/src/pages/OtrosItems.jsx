@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Package, Plus, Search, Trash2 } from 'lucide-react';
+import { Edit2, Package, Plus, Trash2 } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
@@ -21,6 +21,7 @@ const USAGE_OPTIONS = [
 
 const OtrosItems = () => {
     const [items, setItems] = useState([]);
+    const [editingItemId, setEditingItemId] = useState(null);
 
     const [newItem, setNewItem] = useState({ name: '', quantity: '', presentation: 'unidades', barcode: '', usage: 'venta' });
 
@@ -37,7 +38,7 @@ const OtrosItems = () => {
         e.preventDefault();
         if (!newItem.name || !newItem.quantity) return;
 
-        await saveTableRecord('stock', 'insert', {
+        const payload = {
             name: newItem.name,
             quantity: parseFloat(newItem.quantity),
             type: 'insumo',
@@ -46,9 +47,33 @@ const OtrosItems = () => {
             presentation: newItem.presentation,
             barcode: newItem.barcode.trim() || null,
             updated_at: new Date().toISOString()
-        });
+        };
+
+        if (editingItemId) {
+            await saveTableRecord('stock', 'update', payload, editingItemId);
+        } else {
+            await saveTableRecord('stock', 'insert', payload);
+        }
+
         setNewItem({ name: '', quantity: '', presentation: 'unidades', barcode: '', usage: 'venta' });
+        setEditingItemId(null);
         await loadItems();
+    };
+
+    const handleEdit = (item) => {
+        setEditingItemId(item.id);
+        setNewItem({
+            name: String(item.name || ''),
+            quantity: String(item.quantity ?? ''),
+            presentation: String(item.presentation || item.unit || 'unidades'),
+            barcode: String(item.barcode || ''),
+            usage: String(item.usage || 'venta'),
+        });
+    };
+
+    const handleCancelEdit = () => {
+        setEditingItemId(null);
+        setNewItem({ name: '', quantity: '', presentation: 'unidades', barcode: '', usage: 'venta' });
     };
 
     const handleDelete = async (id) => {
@@ -61,7 +86,7 @@ const OtrosItems = () => {
     return (
         <div className="stock-container animate-fade-in">
             <DirectionalReveal className="neo-card" from="left" delay={0.1} style={{ padding: '1.5rem', marginBottom: '2rem' }}>
-                <h3 style={{ marginBottom: '1rem' }}>Agregar Nuevo Insumo</h3>
+                <h3 style={{ marginBottom: '1rem' }}>{editingItemId ? 'Editar Insumo' : 'Agregar Nuevo Insumo'}</h3>
                 <form onSubmit={handleAddItem} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                     <input
                         type="text"
@@ -108,8 +133,14 @@ const OtrosItems = () => {
                         ))}
                     </select>
                     <button type="submit" className="neo-button">
-                        <Plus size={18} /> Agregar
+                        {editingItemId ? <Edit2 size={18} /> : <Plus size={18} />}
+                        {editingItemId ? 'Guardar cambios' : 'Agregar'}
                     </button>
+                    {editingItemId && (
+                        <button type="button" className="neo-button" style={{ background: 'transparent', color: 'var(--color-text-main)', border: '1px solid var(--color-border)' }} onClick={handleCancelEdit}>
+                            Cancelar
+                        </button>
+                    )}
                 </form>
             </DirectionalReveal>
 
@@ -133,12 +164,14 @@ const OtrosItems = () => {
                                 </div>
                             )}
                         </div>
-                        <button
-                            onClick={() => handleDelete(item.id)}
-                            style={{ position: 'absolute', top: '10px', right: '10px', background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
-                        >
-                            <Trash2 size={16} />
-                        </button>
+                        <div className="otros-item-actions">
+                            <button type="button" className="otros-item-action-btn" onClick={() => handleEdit(item)} title="Editar ítem">
+                                <Edit2 size={16} />
+                            </button>
+                            <button type="button" className="otros-item-action-btn danger" onClick={() => handleDelete(item.id)} title="Eliminar ítem">
+                                <Trash2 size={16} />
+                            </button>
+                        </div>
                     </DirectionalReveal>
                 ))}
             </div>
