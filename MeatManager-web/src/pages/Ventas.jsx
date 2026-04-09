@@ -261,6 +261,18 @@ const Ventas = () => {
         });
     }, [refreshVentasData, showToast]);
 
+    // Recargar movimientos de caja cuando el usuario vuelve a esta pestaña/página
+    // (por ejemplo, luego de hacer la apertura en /caja y volver a /ventas)
+    React.useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible') {
+                refreshVentasData().catch(() => {});
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [refreshVentasData]);
+
     const handleQendraSyncVentas = async () => {
         setQendraSyncing(true);
         setQendraSyncResult(null);
