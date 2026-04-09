@@ -240,7 +240,7 @@ const Login = () => {
                     <form onSubmit={handleSupportSubmit} className="login-form" style={{ marginTop: '1.5rem' }}>
                         <div className="login-support-note">
                             <ShieldCheck size={16} />
-                            Acceso interno no visible para el cliente.
+                            Acceso exclusivo para administradores de Def-Software
                         </div>
 
                         <div className="form-group">
@@ -250,7 +250,7 @@ const Login = () => {
                                 type="text"
                                 value={supportIdentifier}
                                 onChange={(e) => setSupportIdentifier(e.target.value)}
-                                placeholder="admin@def-software.com"
+                                placeholder=""
                                 autoComplete="username"
                             />
                         </div>
