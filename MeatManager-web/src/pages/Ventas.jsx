@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Printer, Settings, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -1628,18 +1628,13 @@ const Ventas = () => {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'flex-end' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
                     <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         <User size={14} />
                     </div>
-                    <span style={{ color: 'var(--color-text-muted)' }}>Cajera:</span>
+                    <span style={{ color: 'var(--color-text-muted)' }}>Cajero:</span>
                     <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
-                </div>
-                <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><Printer size={18} /></button>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><Settings size={18} /></button>
-                    <button style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}><X size={18} /></button>
                 </div>
             </div>
         </div>
