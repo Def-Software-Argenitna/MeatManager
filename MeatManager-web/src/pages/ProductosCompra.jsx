@@ -464,9 +464,10 @@ const ProductosCompra = () => {
                                 <select
                                     className="neo-input"
                                     style={{ border: '1px solid var(--color-primary)' }}
-                                    value={formData.species}
+                                    value={formData.species || 'ninguna'}
                                     onChange={e => setFormData({ ...formData, species: e.target.value })}
                                 >
+                                    <option value="ninguna">Ninguna / No aplica</option>
                                     <option value="vaca">Vaca / Ternera</option>
                                     <option value="cerdo">Cerdo</option>
                                     <option value="pollo">Pollo / Ave</option>
