@@ -9,6 +9,19 @@ import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const IVA_OPTIONS = [10.5, 21];
+const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
+const DEFAULT_SALE_CATEGORY_OPTIONS = [
+    { value: 'vaca', label: 'Vaca', group: 'animal' },
+    { value: 'cerdo', label: 'Cerdo', group: 'animal' },
+    { value: 'pollo', label: 'Pollo', group: 'animal' },
+    { value: 'pescado', label: 'Pescado', group: 'animal' },
+    { value: 'almacen', label: 'Almacen', group: 'no_animal' },
+    { value: 'limpieza', label: 'Limpieza', group: 'no_animal' },
+    { value: 'bebidas', label: 'Bebidas', group: 'no_animal' },
+    { value: 'insumo', label: 'Insumo General', group: 'no_animal' },
+    { value: 'otros', label: 'Otros', group: 'no_animal' },
+    { value: 'pre-elaborados', label: 'Pre-elaborados', group: 'no_animal' },
+];
 
 const ProductosCompra = () => {
     const navigate = useNavigate();
@@ -23,20 +36,23 @@ const ProductosCompra = () => {
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
+    const [saleCategories, setSaleCategories] = useState([]);
 
     useEffect(() => {
         desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
     }, []);
 
     const loadData = React.useCallback(async () => {
-        const [itemsRows, productRows, categoriesRows] = await Promise.all([
+        const [itemsRows, productRows, categoriesRows, saleCategoriesRows] = await Promise.all([
             fetchTable('purchase_items'),
             fetchProductsSafe(),
             fetchTable('categories'),
+            fetchTable('product_categories'),
         ]);
         setItems(Array.isArray(itemsRows) ? itemsRows : []);
         setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
+        setSaleCategories(Array.isArray(saleCategoriesRows) ? saleCategoriesRows : []);
     }, []);
 
     useEffect(() => {
@@ -49,9 +65,10 @@ const ProductosCompra = () => {
         category_id: '',
         unit: 'kg', // default unit
         type: 'directo', // directo or despostada
+        is_preelaborable: false,
         species: 'vaca', // default species for traceability
         default_iva_rate: 10.5,
-        sale_category: 'vaca',
+        sale_category: 'almacen',
         sale_price: '',
         sale_plu: ''
     });
@@ -71,6 +88,24 @@ const ProductosCompra = () => {
         return categories.sort((a, b) => a.name.localeCompare(b.name));
     }, [categories]);
 
+    const saleCategoryOptions = React.useMemo(() => {
+        const dbOptions = (Array.isArray(saleCategories) ? saleCategories : [])
+            .map((category) => {
+                const value = String(category.code || '').trim().toLowerCase();
+                if (!value) return null;
+                return {
+                    value,
+                    label: String(category.name || value).trim(),
+                    group: ANIMAL_SALE_CATEGORIES.includes(value) ? 'animal' : 'no_animal',
+                };
+            })
+            .filter(Boolean)
+            .sort((left, right) => left.label.localeCompare(right.label));
+
+        if (dbOptions.length > 0) return dbOptions;
+        return DEFAULT_SALE_CATEGORY_OPTIONS;
+    }, [saleCategories]);
+
     // Sugerir el próximo PLU correlativo al crear un item nuevo
     const nextSuggestedPlu = React.useMemo(() => {
         const existingPlus = products
@@ -78,6 +113,14 @@ const ProductosCompra = () => {
             .filter(n => Number.isFinite(n) && n > 0);
         return existingPlus.length > 0 ? Math.max(...existingPlus) + 1 : 1;
     }, [products]);
+
+    useEffect(() => {
+        if (!saleCategoryOptions.length) return;
+        const selectedKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
+        const valid = saleCategoryOptions.some((option) => String(option.value || '').trim().toLowerCase().replace(/-/g, '_') === selectedKey);
+        if (valid) return;
+        setFormData((prev) => ({ ...prev, sale_category: saleCategoryOptions[0].value }));
+    }, [formData.sale_category, saleCategoryOptions]);
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -102,6 +145,7 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                is_preelaborable: formData.is_preelaborable ? 1 : 0,
                 species: formData.type === 'despostada' ? formData.species : null,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
             }, editingItem.id);
@@ -112,6 +156,7 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                is_preelaborable: formData.is_preelaborable ? 1 : 0,
                 species: formData.type === 'despostada' ? formData.species : 'vaca',
                 last_price: 0,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
@@ -119,11 +164,15 @@ const ProductosCompra = () => {
             purchaseItemId = inserted?.insertId || null;
         }
 
+        const selectedCategoryKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
+        const selectedSaleCategory = saleCategoryOptions.find((option) => String(option.value || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
+        const selectedSaleCategoryRow = saleCategories.find((row) => String(row.code || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
         const unifiedProduct = await ensureUnifiedProduct({
             products,
             prices: [],
             name: nameTrimmed,
             category: formData.sale_category,
+            categoryId: selectedSaleCategoryRow?.id || null,
             unit: formData.unit,
             price: salePrice,
             plu: formData.sale_plu.trim(),
@@ -142,7 +191,7 @@ const ProductosCompra = () => {
             await saveTableRecord('stock', 'insert', {
                 product_id: unifiedProduct?.id || null,
                 name: nameTrimmed,
-                type: formData.sale_category,
+                type: selectedSaleCategory?.value || formData.sale_category,
                 quantity: 0,
                 unit: formData.unit,
                 updated_at: new Date().toISOString(),
@@ -158,7 +207,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
@@ -170,15 +219,16 @@ const ProductosCompra = () => {
 
     const openEdit = (item) => {
         const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
-        const existingCategory = productRecord?.category || 'vaca';
+        const existingCategory = String(productRecord?.category_code || productRecord?.category || 'almacen').trim().toLowerCase();
         setEditingItem(item);
         setFormData({
             name: item.name,
             category_id: item.category_id || '',
             unit: item.unit || 'kg',
             type: item.type || 'directo',
+            is_preelaborable: Number(item.is_preelaborable || 0) === 1,
             species: item.species || 'vaca',
-            default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ['vaca', 'cerdo', 'pollo', 'pescado'].includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
+            default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ANIMAL_SALE_CATEGORIES.includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
             sale_price: productRecord?.current_price?.toString() || '',
             sale_plu: productRecord?.plu || ''
@@ -188,7 +238,7 @@ const ProductosCompra = () => {
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', species: 'vaca', default_iva_rate: 10.5, sale_category: 'vaca', sale_price: '', sale_plu: String(nextSuggestedPlu) });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu) });
         setIsModalOpen(true);
     };
 
@@ -214,6 +264,26 @@ const ProductosCompra = () => {
         i.name.toLowerCase().includes(searchTerm.toLowerCase())
     );
 
+    const renderSaleCategoryOptions = () => {
+        const animal = saleCategoryOptions.filter((option) => option.group === 'animal');
+        const nonAnimal = saleCategoryOptions.filter((option) => option.group === 'no_animal');
+
+        return (
+            <>
+                <optgroup label="Origen Animal">
+                    {animal.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                </optgroup>
+                <optgroup label="Origen No Animal">
+                    {nonAnimal.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                </optgroup>
+            </>
+        );
+    };
+
     return (
         <div className="animate-fade-in">
             {qendraSendStatus && (
@@ -230,10 +300,6 @@ const ProductosCompra = () => {
                 </div>
             )}
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">Catálogo de Compras</h1>
-                    <p className="page-description">Define los productos que compras a proveedores</p>
-                </div>
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
                         <Plus size={20} />
@@ -261,19 +327,24 @@ const ProductosCompra = () => {
                     <div key={item.id} className="neo-card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                             <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.name}</div>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>
                                     {item.category_id ? categoryMap[item.category_id] : 'Sin Categoría'}
                                 </span>
-                                <span style={{ background: 'var(--color-bg-main)', padding: '0 0.3rem', borderRadius: '4px' }}>
+                                <span style={{ background: 'var(--color-bg-main)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
                                     {item.unit}
                                 </span>
-                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)' }}>
+                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
                                     IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
                                 </span>
                                 {item.type === 'despostada' && (
-                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0 0.5rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)' }}>
+                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
                                         PARA DESPOSTAR
+                                    </span>
+                                )}
+                                {Number(item.is_preelaborable || 0) === 1 && (
+                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
+                                        INSUMO PRE-ELABORADO
                                     </span>
                                 )}
                             </div>
@@ -387,24 +458,53 @@ const ProductosCompra = () => {
                                 </div>
                             </div>
 
-                            {formData.type === 'despostada' && hasDespostadaModule && (
-                                <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
-                                    <select
-                                        className="neo-input"
-                                        style={{ border: '1px solid var(--color-primary)' }}
-                                        value={formData.species}
-                                        onChange={e => setFormData({ ...formData, species: e.target.value })}
-                                    >
-                                        <option value="vaca">Vaca / Ternera</option>
-                                        <option value="cerdo">Cerdo</option>
-                                        <option value="pollo">Pollo / Ave</option>
-                                        <option value="pescado">Pescado</option>
-                                    </select>
-                                    <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
-                                        Esto determina en qué pantalla de despostada aparecerá el stock.
-                                    </p>
+                            <div style={{ marginBottom: '1.5rem', padding: '0.9rem 1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.02)' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.is_preelaborable}
+                                        onChange={(e) => setFormData({ ...formData, is_preelaborable: e.target.checked })}
+                                    />
+                                    Este producto puede usarse como insumo para pre-elaborados
+                                </label>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.45rem' }}>
+                                    Si lo activás, aparecerá en la pantalla de Pre-elaborados cuando haya stock disponible.
                                 </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Origen del Producto</label>
+                                <select
+                                    className="neo-input"
+                                    value={formData.sale_category}
+                                    onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
+                                >
+                                    {renderSaleCategoryOptions()}
+                                </select>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
+                                    Define de donde viene el producto para clasificarlo correctamente en ventas y stock.
+                                </p>
+                            </div>
+
+                            {ANIMAL_SALE_CATEGORIES.includes(formData.sale_category) && (
+                            <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
+                                <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
+                                <select
+                                    className="neo-input"
+                                    style={{ border: '1px solid var(--color-primary)' }}
+                                    value={formData.species || 'ninguna'}
+                                    onChange={e => setFormData({ ...formData, species: e.target.value })}
+                                >
+                                    <option value="ninguna">Ninguna / No aplica</option>
+                                    <option value="vaca">Vaca / Ternera</option>
+                                    <option value="cerdo">Cerdo</option>
+                                    <option value="pollo">Pollo / Ave</option>
+                                    <option value="pescado">Pescado</option>
+                                </select>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.3rem' }}>
+                                    Categoriza el producto por su origen animal.
+                                </p>
+                            </div>
                             )}
 
                             <div style={{ marginBottom: '1.5rem', padding: '0.75rem', border: '1px dashed var(--color-border)', borderRadius: 'var(--radius-md)' }}>
@@ -417,11 +517,7 @@ const ProductosCompra = () => {
                                             value={formData.sale_category}
                                             onChange={e => setFormData({ ...formData, sale_category: e.target.value })}
                                         >
-                                            <option value="vaca">Vaca</option>
-                                            <option value="cerdo">Cerdo</option>
-                                            <option value="pollo">Pollo</option>
-                                            <option value="pescado">Pescado</option>
-                                            <option value="pre-elaborados">Pre-elaborados</option>
+                                            {renderSaleCategoryOptions()}
                                         </select>
                                     </div>
                                     <div>

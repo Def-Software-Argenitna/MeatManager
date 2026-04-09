@@ -19,6 +19,8 @@ const rateLimit = require('express-rate-limit');
 const mysql = require('mysql2/promise');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { createClient } = require('redis');
 
@@ -108,12 +110,15 @@ const CLIENT_USERS_TABLE = process.env.CLIENT_USERS_TABLE || 'client_users';
 const CLIENT_LICENSES_TABLE = process.env.CLIENT_LICENSES_TABLE || 'client_licenses';
 const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE || 'client_user_permissions';
 const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
+const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
+const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
+const INTERNAL_ADMIN_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
 );
@@ -214,6 +219,25 @@ function maskEmailAddress(email) {
     if (!name) return `***@${domain}`;
     if (name.length <= 2) return `${name[0] || '*'}***@${domain}`;
     return `${name.slice(0, 2)}***@${domain}`;
+}
+
+function signInternalAdminToken(adminPayload) {
+    return jwt.sign(
+        {
+            kind: 'internal_admin',
+            admin: adminPayload,
+        },
+        INTERNAL_ADMIN_JWT_SECRET,
+        { expiresIn: INTERNAL_ADMIN_JWT_EXPIRES_IN }
+    );
+}
+
+function verifyInternalAdminToken(token) {
+    const payload = jwt.verify(token, INTERNAL_ADMIN_JWT_SECRET);
+    if (payload?.kind !== 'internal_admin' || !payload?.admin?.id) {
+        throw new Error('Invalid internal admin token');
+    }
+    return payload.admin;
 }
 
 async function sendCashWithdrawalAuthorizationEmail({
@@ -425,7 +449,7 @@ function licenseAppliesToWebapp(license) {
 }
 
 const TENANT_SCOPED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -433,7 +457,7 @@ const TENANT_SCOPED_TABLES = new Set([
 ]);
 
 const TENANT_ID_TABLES = [
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -505,12 +529,21 @@ function licenseHasLogisticsCapability(license) {
     ));
 }
 
-function tenantHasAssignedLogisticsLicense(licenses = []) {
-    return licenses.some((license) => (
-        licenseHasLogisticsCapability(license)
-        && license.userId != null
-        && String(license.userId).trim() !== ''
-    ));
+function isBaseWebappLicense(license) {
+    return (
+        Number(license?.isMandatory) === 1
+        || normalizeLicenseToken(license?.internalCode) === 'base_mm'
+        || normalizeLicenseToken(license?.category) === 'base_webapp'
+        || isSuperLicenseMatch(license)
+    );
+}
+
+function tenantHasPurchasedBaseWebappLicense(licenses = []) {
+    return licenses.some((license) => isBaseWebappLicense(license) && licenseAppliesToWebapp(license));
+}
+
+function tenantHasPurchasedLogisticsLicense(licenses = []) {
+    return licenses.some((license) => licenseHasLogisticsCapability(license));
 }
 
 function hasSuperLicense(licenses = []) {
@@ -536,6 +569,7 @@ function licenseHasAdminCapability(license) {
 
 function hasAdminPanelAccess(accessContext) {
     if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
     if (accessContext.user.role === 'admin') return true;
 
     const licenses = [
@@ -554,6 +588,8 @@ function hasAdminPanelAccess(accessContext) {
 
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
+    if (!accessContext.client?.tenantHasDeliveryLicense) return false;
     if (accessContext.user.role === 'admin') return true;
     if (hasSuperLicense(accessContext.effectiveLicenses || [])) return true;
 
@@ -657,7 +693,7 @@ function orderBelongsToDriver(row, driverIdentity) {
 }
 
 const TABLES_WITH_NUMERIC_ID = [
-    'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items', 'stock',
+    'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items', 'stock',
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -761,6 +797,17 @@ async function hasForeignKey(conn, dbName, tableName, constraintName) {
          WHERE CONSTRAINT_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ?
          LIMIT 1`,
         [dbName, tableName, constraintName]
+    );
+    return rows.length > 0;
+}
+
+async function hasTable(conn, dbName, tableName) {
+    const [rows] = await conn.query(
+        `SELECT 1
+         FROM information_schema.TABLES
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?
+         LIMIT 1`,
+        [dbName, tableName]
     );
     return rows.length > 0;
 }
@@ -1223,6 +1270,124 @@ async function ensureProductCatalogIntegrity(conn) {
     }
 }
 
+async function ensureProductCategoriesIntegrity(conn) {
+    const codeExpr = (expr) => `LOWER(TRIM(BOTH '_' FROM REPLACE(REPLACE(REPLACE(REPLACE(COALESCE(${expr}, ''), ' ', '_'), '-', '_'), '/', '_'), '__', '_')))`;
+    const textExpr = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
+
+    await conn.query(
+        `CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.product_categories (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            code        VARCHAR(100) NOT NULL,
+            name        VARCHAR(120) NOT NULL,
+            active      TINYINT(1) DEFAULT 1,
+            synced      TINYINT(1) DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_product_categories_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_product_categories_tenant_code (\`${TENANT_COLUMN}\`, code),
+            INDEX idx_product_categories_tenant (\`${TENANT_COLUMN}\`)
+        )`
+    );
+
+    await conn.query(
+        `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
+            (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
+         SELECT
+            dedup.tenant_id,
+            dedup.code,
+            dedup.name,
+            1,
+            0,
+            NOW(),
+            NOW()
+         FROM (
+            SELECT
+                src.tenant_id,
+                src.code,
+                MAX(src.name) AS name
+            FROM (
+                SELECT p.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('p.category')} AS code, ${textExpr('p.category')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.products p
+                WHERE ${textExpr('p.category')} IS NOT NULL
+                UNION ALL
+                SELECT s.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('s.type')} AS code, ${textExpr('s.type')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.stock s
+                WHERE ${textExpr('s.type')} IS NOT NULL
+                UNION ALL
+                SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.type')} AS code, ${textExpr('pi.type')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${textExpr('pi.type')} IS NOT NULL
+                UNION ALL
+                SELECT pi.\`${TENANT_COLUMN}\` AS tenant_id, ${codeExpr('pi.species')} AS code, ${textExpr('pi.species')} AS name
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${textExpr('pi.species')} IS NOT NULL
+            ) src
+            WHERE src.code IS NOT NULL
+              AND src.code <> ''
+              AND src.name IS NOT NULL
+            GROUP BY src.tenant_id, src.code
+         ) dedup
+         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = dedup.tenant_id
+          AND pc.code = dedup.code
+         WHERE pc.id IS NULL`
+    );
+
+    const [tenantRows] = await conn.query(
+        `SELECT DISTINCT \`${TENANT_COLUMN}\` AS tenant_id
+         FROM (
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.products
+            UNION ALL
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.stock
+            UNION ALL
+            SELECT \`${TENANT_COLUMN}\` FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items
+         ) t`
+    );
+    const defaultCategories = [
+        ['vaca', 'Vaca'],
+        ['cerdo', 'Cerdo'],
+        ['pollo', 'Pollo'],
+        ['pescado', 'Pescado'],
+        ['pre_elaborados', 'Pre-elaborados'],
+        ['almacen', 'Almacen'],
+        ['limpieza', 'Limpieza'],
+        ['bebidas', 'Bebidas'],
+        ['insumo', 'Insumo General'],
+        ['otros', 'Otros'],
+    ];
+    for (const row of tenantRows) {
+        const tenantId = Number(row?.tenant_id);
+        if (!Number.isFinite(tenantId) || tenantId <= 0) continue;
+        for (const [code, name] of defaultCategories) {
+            await conn.query(
+                `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.product_categories
+                    (\`${TENANT_COLUMN}\`, code, name, active, synced, created_at, updated_at)
+                 VALUES (?, ?, ?, 1, 0, NOW(), NOW())`,
+                [tenantId, code, name]
+            );
+        }
+    }
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+          AND pc.code = ${codeExpr('p.category')}
+         SET p.category_id = pc.id
+         WHERE p.category_id IS NULL
+           AND ${textExpr('p.category')} IS NOT NULL`
+    );
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+         JOIN \`${OPERATIONAL_DB_NAME}\`.product_categories pc
+           ON pc.\`${TENANT_COLUMN}\` = p.\`${TENANT_COLUMN}\`
+          AND pc.id = p.category_id
+         SET p.category = pc.code`
+    );
+}
+
 async function ensureTenantScopedForeignKeys(conn) {
     const fkDefinitions = [
         {
@@ -1308,6 +1473,18 @@ async function ensureTenantScopedForeignKeys(conn) {
             indexName: 'idx_purchase_items_tenant_product',
             indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.purchase_items
                 ADD INDEX idx_purchase_items_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
+        {
+            table: 'products',
+            constraint: 'products_category_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                ADD CONSTRAINT products_category_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, category_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.product_categories (\`${TENANT_COLUMN}\`, id)
+                ON DELETE SET NULL`,
+            indexName: 'idx_products_tenant_category',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                ADD INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)`,
         },
         {
             table: 'stock',
@@ -1424,7 +1601,14 @@ async function ensureOperationalTenantIsolation() {
 
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
+            await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
+            await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
+            await ensureColumn(conn, 'compras', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `total`');
+            await ensureColumn(conn, 'compras', 'is_account', '`is_account` TINYINT(1) NULL DEFAULT 0 AFTER `payment_method`');
+            await ensureColumn(conn, 'compras', 'items_detail', '`items_detail` JSON NULL AFTER `is_account`');
             await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
@@ -1432,6 +1616,10 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
+            await ensureColumn(conn, 'caja_movimientos', 'supplier', '`supplier` VARCHAR(150) NULL AFTER `description`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'purchase_id', '`purchase_id` INT NULL AFTER `authorization_verified`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
@@ -1462,6 +1650,12 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
             await ensureColumnType(conn, 'prices', 'product_id', '`product_id` VARCHAR(191) NULL', ['varchar']);
+
+            // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
+            await conn.query(
+                `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
+                 WHERE product_id REGEXP '[A-Z ]'`
+            );
 
             await conn.query(
                 `UPDATE ventas
@@ -1513,6 +1707,7 @@ async function ensureOperationalTenantIsolation() {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
 
+            await ensureProductCategoriesIntegrity(conn);
             await ensureProductCatalogIntegrity(conn);
             await ensureTenantScopedForeignKeys(conn);
         } finally {
@@ -1577,6 +1772,197 @@ async function getUserPermissions(conn, userId) {
         .filter(Boolean);
 }
 
+function normalizeClientLicenseIds(value) {
+    if (!Array.isArray(value)) return [];
+    return Array.from(
+        new Set(
+            value
+                .map((licenseId) => Number(licenseId))
+                .filter((licenseId) => Number.isInteger(licenseId) && licenseId > 0)
+        )
+    );
+}
+
+async function getClientLicensePool(conn, clientId) {
+    const [licenseRows] = await conn.query(
+        `SELECT
+            cl.id AS clientLicenseId,
+            cl.clientId,
+            cl.licenseId,
+            cl.branchId,
+            cl.userId,
+            cl.status AS assignmentStatus,
+            l.commercialName,
+            l.internalCode,
+            l.category,
+            l.billingScope,
+            l.isMandatory,
+            l.featureFlags,
+            l.status AS licenseStatus,
+            l.appliesToWebapp,
+            b.name AS branchName,
+            u.name AS userName,
+            u.lastname AS userLastname,
+            u.email AS userEmail
+         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+         INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+            ON l.id = cl.licenseId
+         LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+            ON b.id = cl.branchId
+         LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` u
+            ON u.id = cl.userId
+         WHERE cl.clientId = ?
+           AND cl.status = 'ACTIVE'
+           AND l.status = 'ACTIVE'
+         ORDER BY cl.id ASC`,
+        [clientId]
+    );
+
+    return licenseRows.map((license) => ({
+        id: Number(license.clientLicenseId),
+        clientId: Number(license.clientId),
+        licenseId: Number(license.licenseId),
+        userId: license.userId == null ? null : Number(license.userId),
+        branchId: license.branchId == null ? null : Number(license.branchId),
+        status: license.assignmentStatus,
+        user: license.userId == null ? null : {
+            id: Number(license.userId),
+            name: license.userName || '',
+            lastname: license.userLastname || '',
+            email: license.userEmail || '',
+        },
+        branch: license.branchId == null ? null : {
+            id: Number(license.branchId),
+            name: license.branchName || '',
+        },
+        license: {
+            id: Number(license.licenseId),
+            commercialName: license.commercialName,
+            internalCode: license.internalCode,
+            category: license.category,
+            billingScope: license.billingScope,
+            appliesToWebapp: licenseAppliesToWebapp(license),
+            featureFlags: parseFeatureFlags(license.featureFlags),
+            hasLogisticsCapability: licenseHasLogisticsCapability(license),
+        },
+    }));
+}
+
+async function getAssignablePerUserLicenseRows(conn, clientId, userId, clientLicenseIds = []) {
+    const normalizedIds = normalizeClientLicenseIds(clientLicenseIds);
+    if (normalizedIds.length === 0) return [];
+
+    const placeholders = normalizedIds.map(() => '?').join(', ');
+    const [rows] = await conn.query(
+        `SELECT
+            cl.id AS clientLicenseId,
+            cl.clientId,
+            cl.userId,
+            cl.status AS assignmentStatus,
+            l.id AS licenseId,
+            l.commercialName,
+            l.internalCode,
+            l.category,
+            l.billingScope,
+            l.featureFlags,
+            l.status AS licenseStatus
+         FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+         INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+            ON l.id = cl.licenseId
+         WHERE cl.clientId = ?
+           AND cl.id IN (${placeholders})`,
+        [clientId, ...normalizedIds]
+    );
+
+    if (rows.length !== normalizedIds.length) {
+        const error = new Error('Una o más licencias seleccionadas no pertenecen al cliente');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    for (const license of rows) {
+        if (!isActiveStatus(license.assignmentStatus, false) || !isActiveStatus(license.licenseStatus, false)) {
+            const error = new Error(`La licencia "${license.commercialName}" no está activa`);
+            error.statusCode = 400;
+            throw error;
+        }
+        if (String(license.billingScope || '').trim() !== 'per_user') {
+            const error = new Error(`La licencia "${license.commercialName}" no puede asignarse por usuario`);
+            error.statusCode = 400;
+            throw error;
+        }
+        if (license.userId != null && String(license.userId) !== String(userId)) {
+            const error = new Error(`La licencia "${license.commercialName}" ya está asignada a otro usuario`);
+            error.statusCode = 400;
+            throw error;
+        }
+    }
+
+    return rows;
+}
+
+async function syncClientUserPerUserLicenses(conn, { clientId, userId, clientLicenseIds = [] }) {
+    const normalizedIds = normalizeClientLicenseIds(clientLicenseIds);
+    const assignableRows = await getAssignablePerUserLicenseRows(conn, clientId, userId, normalizedIds);
+
+    await conn.beginTransaction();
+    try {
+        if (normalizedIds.length > 0) {
+            const releasePlaceholders = normalizedIds.map(() => '?').join(', ');
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 SET cl.userId = NULL,
+                     cl.branchId = NULL
+                 WHERE cl.clientId = ?
+                   AND cl.userId = ?
+                   AND l.billingScope = 'per_user'
+                   AND cl.id NOT IN (${releasePlaceholders})`,
+                [clientId, userId, ...normalizedIds]
+            );
+        } else {
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 SET cl.userId = NULL,
+                     cl.branchId = NULL
+                 WHERE cl.clientId = ?
+                   AND cl.userId = ?
+                   AND l.billingScope = 'per_user'`,
+                [clientId, userId]
+            );
+        }
+
+        if (assignableRows.length > 0) {
+            const assignPlaceholders = assignableRows.map(() => '?').join(', ');
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\`
+                 SET userId = ?, branchId = NULL
+                 WHERE clientId = ?
+                   AND id IN (${assignPlaceholders})`,
+                [userId, clientId, ...assignableRows.map((license) => Number(license.clientLicenseId))]
+            );
+        }
+
+        await conn.commit();
+    } catch (error) {
+        await conn.rollback();
+        throw error;
+    }
+
+    return assignableRows.map((license) => ({
+        clientLicenseId: Number(license.clientLicenseId),
+        licenseId: Number(license.licenseId),
+        commercialName: license.commercialName,
+        internalCode: license.internalCode,
+        category: license.category,
+        billingScope: license.billingScope,
+        hasLogisticsCapability: licenseHasLogisticsCapability(license),
+    }));
+}
+
 async function enqueueAuthSync(conn, entityId, action, payload = null) {
     await conn.query(
         `INSERT INTO \`${CLIENTS_DB_NAME}\`.auth_sync_queue (entityType, entityId, action, payload) VALUES ('client_user', ?, ?, ?)`,
@@ -1588,6 +1974,125 @@ async function getClientAccessContext({ uid, email }) {
     const normalizedEmail = normalizeEmail(email);
     const conn = await clientsControlPool.getConnection();
     try {
+        const internalAdmin = arguments[0]?._internalAdmin || null;
+        const supportClientId = Number(arguments[0]?._supportClientId || 0);
+
+        if (internalAdmin) {
+            if (!Number.isFinite(supportClientId) || supportClientId <= 0) {
+                const error = new Error('Seleccioná un tenant para operar como SuperAdmin');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const [clientRows] = await conn.query(
+                `SELECT
+                    c.id AS clientId,
+                    c.businessName,
+                    c.taxId,
+                    c.billingEmail,
+                    c.cashAuthorizationEmail,
+                    c.status AS clientStatus
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                 WHERE c.id = ?
+                 LIMIT 1`,
+                [supportClientId]
+            );
+
+            const client = clientRows[0] || null;
+            if (!client) {
+                const error = new Error('Tenant no encontrado');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            const [licenseRows] = await conn.query(
+                `SELECT
+                    cl.id AS clientLicenseId,
+                    cl.clientId,
+                    cl.licenseId,
+                    cl.branchId,
+                    cl.userId,
+                    cl.status AS assignmentStatus,
+                    l.commercialName,
+                    l.internalCode,
+                    l.category,
+                    l.billingScope,
+                    l.isMandatory,
+                    l.featureFlags,
+                    l.status AS licenseStatus,
+                    l.appliesToWebapp
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 WHERE cl.clientId = ?
+                   AND cl.status = 'ACTIVE'
+                   AND l.status = 'ACTIVE'`,
+                [client.id]
+            );
+
+            const mapResolvedLicense = (license) => ({
+                clientLicenseId: license.clientLicenseId,
+                licenseId: license.licenseId,
+                commercialName: license.commercialName,
+                internalCode: license.internalCode,
+                category: license.category,
+                billingScope: license.billingScope,
+                assignedUserId: license.userId ?? null,
+                assignedBranchId: license.branchId ?? null,
+                appliesToWebapp: licenseAppliesToWebapp(license),
+                featureFlags: parseFeatureFlags(license.featureFlags),
+            });
+
+            const effectiveLicenses = licenseRows
+                .filter((license) => licenseAppliesToWebapp(license))
+                .map(mapResolvedLicense)
+                .filter((license, index, arr) => (
+                    arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+                ));
+
+            const deliveryLicenses = licenseRows
+                .filter((license) => licenseHasLogisticsCapability(license))
+                .map(mapResolvedLicense)
+                .filter((license, index, arr) => (
+                    arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+                ));
+
+            return {
+                user: {
+                    id: `support-${internalAdmin.id}`,
+                    clientId: client.id,
+                    branchId: null,
+                    firebaseUid: null,
+                    name: internalAdmin.name || 'DEF',
+                    lastname: internalAdmin.lastname || 'SuperAdmin',
+                    email: internalAdmin.email,
+                    role: 'admin',
+                    userStatus: 'ACTIVE',
+                    isSynced: 1,
+                    lastLogin: null,
+                    businessName: client.businessName,
+                    taxId: client.taxId,
+                    billingEmail: client.billingEmail,
+                    cashAuthorizationEmail: client.cashAuthorizationEmail,
+                    clientStatus: client.clientStatus,
+                    isGlobalSuperAdmin: true,
+                    supportAdminId: internalAdmin.id,
+                },
+                client: {
+                    id: client.id,
+                    businessName: client.businessName,
+                    taxId: client.taxId,
+                    cashAuthorizationEmail: client.cashAuthorizationEmail,
+                    billingEmail: client.billingEmail,
+                    status: client.clientStatus,
+                    tenantHasBaseLicense: tenantHasPurchasedBaseWebappLicense(licenseRows),
+                    tenantHasDeliveryLicense: tenantHasPurchasedLogisticsLicense(licenseRows),
+                },
+                effectiveLicenses,
+                deliveryLicenses,
+            };
+        }
+
         const [rows] = await conn.query(
             `SELECT
                 cu.id,
@@ -1737,20 +2242,27 @@ async function getClientAccessContext({ uid, email }) {
             [user.clientId]
         );
 
-        const tenantHasDeliveryLicense = tenantHasAssignedLogisticsLicense(licenseRows);
+        const tenantHasBaseLicense = tenantHasPurchasedBaseWebappLicense(licenseRows);
+        const tenantHasDeliveryLicense = tenantHasPurchasedLogisticsLicense(licenseRows);
 
         const licenseMatchesScope = (license) => {
             if (user.isOwnerFallback) {
                 return true;
             }
 
-            const matchesUser = license.userId == null || String(license.userId) === String(user.id);
-            const matchesBranch = license.branchId == null || String(license.branchId) === String(user.branchId);
+            if (user.role === 'admin') {
+                return true;
+            }
 
-            const isMandatoryBase =
-                Number(license.isMandatory) === 1 ||
-                normalizeLicenseToken(license.internalCode) === 'base_mm' ||
-                normalizeLicenseToken(license.category) === 'base_webapp';
+            const billingScope = String(license.billingScope || '').trim();
+            const matchesUser = billingScope === 'per_user'
+                ? String(license.userId || '') === String(user.id)
+                : (license.userId == null || String(license.userId) === String(user.id));
+            const matchesBranch = billingScope === 'per_branch'
+                ? (license.branchId == null || String(license.branchId) === String(user.branchId))
+                : true;
+
+            const isMandatoryBase = isBaseWebappLicense(license);
 
             return (matchesUser && matchesBranch) || isMandatoryBase;
         };
@@ -1794,6 +2306,7 @@ async function getClientAccessContext({ uid, email }) {
                 cashAuthorizationEmail: user.cashAuthorizationEmail,
                 billingEmail: user.billingEmail,
                 status: user.clientStatus,
+                tenantHasBaseLicense,
                 tenantHasDeliveryLicense,
             },
             effectiveLicenses,
@@ -1805,12 +2318,13 @@ async function getClientAccessContext({ uid, email }) {
 }
 
 function assertClientAccess(accessContext, options = {}) {
-    const allowDeliveryOnly = options?.allowDeliveryOnly === true;
-
     if (!accessContext?.user) {
         const error = new Error('Usuario no encontrado en GestionClientes');
         error.statusCode = 404;
         throw error;
+    }
+    if (accessContext.user?.isGlobalSuperAdmin) {
+        return;
     }
     if (!isActiveStatus(accessContext.client?.status, false)) {
         const error = new Error(`Cliente sin acceso (${accessContext.client?.status || 'SIN ESTADO'})`);
@@ -1822,13 +2336,8 @@ function assertClientAccess(accessContext, options = {}) {
         error.statusCode = 403;
         throw error;
     }
-    const effectiveLicenses = Array.isArray(accessContext.effectiveLicenses) ? accessContext.effectiveLicenses : [];
-    const deliveryLicenses = Array.isArray(accessContext.deliveryLicenses) ? accessContext.deliveryLicenses : [];
-    const hasEffectiveAccess = effectiveLicenses.length > 0;
-    const hasDeliveryOnlyAccess = allowDeliveryOnly && deliveryLicenses.length > 0;
-
-    if (!hasEffectiveAccess && !hasDeliveryOnlyAccess) {
-        const error = new Error('El usuario no tiene licencias activas asignadas');
+    if (!accessContext.client?.tenantHasBaseLicense) {
+        const error = new Error('El tenant no tiene una licencia base de MeatManager activa');
         error.statusCode = 403;
         throw error;
     }
@@ -1852,10 +2361,12 @@ function buildAccessResponse(accessContext) {
         username: fullName || accessContext.user.email || 'Usuario',
         role: accessContext.user.role === 'admin' ? 'admin' : 'employee',
         isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
+        isGlobalSuperAdmin: Boolean(accessContext.user.isGlobalSuperAdmin),
         active: isActiveStatus(accessContext.user.userStatus, false) ? 1 : 0,
         perms: Array.isArray(accessContext.user.perms) ? accessContext.user.perms : [],
         clientId: accessContext.client.id,
         clientStatus: accessContext.client.status,
+        businessName: accessContext.client.businessName,
         branch: accessContext.user?.branchRecordId ? {
             id: accessContext.user.branchRecordId,
             name: accessContext.user.branchName || '',
@@ -1863,8 +2374,70 @@ function buildAccessResponse(accessContext) {
             address: accessContext.user.branchAddress || '',
             status: accessContext.user.branchStatus || '',
         } : null,
+        tenantHasBaseLicense: Boolean(accessContext.client.tenantHasBaseLicense),
         tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
         licenses: accessContext.effectiveLicenses,
+    };
+}
+
+function buildScopedLicensesForUser(user, licenseRows = []) {
+    const licenseMatchesScope = (license) => {
+        if (user?.isOwnerFallback) {
+            return true;
+        }
+
+        if (user?.role === 'admin') {
+            return true;
+        }
+
+        const billingScope = String(license.billingScope || '').trim();
+        const matchesUser = billingScope === 'per_user'
+            ? String(license.userId || '') === String(user?.id || '')
+            : (license.userId == null || String(license.userId) === String(user?.id || ''));
+        const matchesBranch = billingScope === 'per_branch'
+            ? (license.branchId == null || String(license.branchId) === String(user?.branchId || ''))
+            : true;
+
+        return (matchesUser && matchesBranch) || isBaseWebappLicense(license);
+    };
+
+    const mapResolvedLicense = (license) => ({
+        clientLicenseId: Number(license.clientLicenseId),
+        licenseId: Number(license.licenseId),
+        commercialName: license.commercialName,
+        internalCode: license.internalCode,
+        category: license.category,
+        billingScope: license.billingScope,
+        assignedUserId: license.userId ?? null,
+        assignedBranchId: license.branchId ?? null,
+        appliesToWebapp: licenseAppliesToWebapp(license),
+        featureFlags: parseFeatureFlags(license.featureFlags),
+        hasLogisticsCapability: licenseHasLogisticsCapability(license),
+    });
+
+    const dedupeByClientLicenseId = (license, index, arr) => (
+        arr.findIndex((item) => String(item.clientLicenseId || '') === String(license.clientLicenseId || '')) === index
+    );
+
+    const effectiveLicenses = licenseRows
+        .filter((license) => licenseAppliesToWebapp(license) && licenseMatchesScope(license))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    const deliveryLicenses = licenseRows
+        .filter((license) => licenseHasLogisticsCapability(license) && licenseMatchesScope(license))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    const assignedLicenses = licenseRows
+        .filter((license) => String(license.userId || '') === String(user?.id || ''))
+        .map(mapResolvedLicense)
+        .filter(dedupeByClientLicenseId);
+
+    return {
+        effectiveLicenses,
+        deliveryLicenses,
+        assignedLicenses,
     };
 }
 
@@ -2145,6 +2718,31 @@ async function runClientUserSync(job) {
 }
 
 // ── Middleware: verifica Firebase ID Token ─────────────────────────────────
+async function resolveInternalAdminFromToken(token) {
+    try {
+        const payload = verifyInternalAdminToken(token);
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const [rows] = await conn.query(
+                `SELECT id, email, username, name, lastname, role, status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 WHERE id = ?
+                 LIMIT 1`,
+                [payload.id]
+            );
+            const internalAdmin = rows[0] || null;
+            if (!internalAdmin || !isActiveStatus(internalAdmin.status, false)) {
+                return null;
+            }
+            return internalAdmin;
+        } finally {
+            conn.release();
+        }
+    } catch {
+        return null;
+    }
+}
+
 async function verifyFirebaseToken(req, res, next) {
     const auth = req.headers.authorization;
     if (!auth || !auth.startsWith('Bearer ')) {
@@ -2152,12 +2750,45 @@ async function verifyFirebaseToken(req, res, next) {
     }
     try {
         const token = auth.split('Bearer ')[1];
+        const internalAdmin = await resolveInternalAdminFromToken(token);
+        if (internalAdmin) {
+            const rawTargetClientId = req.headers['x-mm-target-client-id']
+                || req.query?.clientId
+                || req.body?.clientId;
+            const supportClientId = Number(rawTargetClientId || 0);
+
+            req.internalAdmin = internalAdmin;
+            req.firebaseUser = {
+                uid: `internal-admin-${internalAdmin.id}`,
+                email: internalAdmin.email,
+                _internalAdmin: internalAdmin,
+                _supportClientId: Number.isFinite(supportClientId) && supportClientId > 0 ? supportClientId : null,
+            };
+            return next();
+        }
+
         const decoded = await admin.auth().verifyIdToken(token);
         req.firebaseUser = decoded;
         return next();
     } catch {
         return res.status(401).json({ error: 'Token inválido o expirado' });
     }
+}
+
+async function verifyInternalAdminSession(req, res, next) {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Token requerido' });
+    }
+
+    const token = auth.split('Bearer ')[1];
+    const internalAdmin = await resolveInternalAdminFromToken(token);
+    if (!internalAdmin) {
+        return res.status(401).json({ error: 'Sesión interna inválida o expirada' });
+    }
+
+    req.internalAdmin = internalAdmin;
+    return next();
 }
 
 async function verifyFirebaseTokenWithClient(req, res, next) {
@@ -2258,6 +2889,19 @@ function getSchemaTables() {
             INDEX idx_categories_tenant_parent (\`${TENANT_COLUMN}\`, parent_id),
             CONSTRAINT categories_ibfk_1 FOREIGN KEY (\`${TENANT_COLUMN}\`, parent_id) REFERENCES categories(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
+        `CREATE TABLE IF NOT EXISTS product_categories (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            code        VARCHAR(100) NOT NULL,
+            name        VARCHAR(120) NOT NULL,
+            active      TINYINT(1) DEFAULT 1,
+            synced      TINYINT(1) DEFAULT 0,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_product_categories_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_product_categories_tenant_code (\`${TENANT_COLUMN}\`, code),
+            INDEX idx_product_categories_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS suppliers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -2283,6 +2927,7 @@ function getSchemaTables() {
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
             canonical_key   VARCHAR(191) NOT NULL,
             name            VARCHAR(150) NOT NULL,
+            category_id     INT,
             category        VARCHAR(100),
             unit            VARCHAR(20),
             current_price   DECIMAL(12,2) DEFAULT 0,
@@ -2294,6 +2939,7 @@ function getSchemaTables() {
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
             UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id),
             INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
@@ -2305,6 +2951,7 @@ function getSchemaTables() {
             last_price      DECIMAL(12,2) DEFAULT 0,
             unit            VARCHAR(20),
             type            VARCHAR(50),
+            is_preelaborable TINYINT(1) DEFAULT 0,
             species         VARCHAR(50),
             \`usage\`       VARCHAR(50),
             plu             VARCHAR(20),
@@ -2325,6 +2972,8 @@ function getSchemaTables() {
             price           DECIMAL(12,2) DEFAULT 0,
             category_id     INT,
             reference       VARCHAR(100),
+            barcode         VARCHAR(64),
+            presentation    VARCHAR(50),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_stock_tenant_id (\`${TENANT_COLUMN}\`, id),
@@ -2427,6 +3076,16 @@ function getSchemaTables() {
             INDEX idx_compras_items_tenant_purchase (\`${TENANT_COLUMN}\`, purchase_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, purchase_id) REFERENCES compras(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
+        `CREATE TABLE IF NOT EXISTS supplier_item_tax_profiles (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            supplier_name   VARCHAR(150) NOT NULL,
+            product_name    VARCHAR(150) NOT NULL,
+            last_iva_rate   DECIMAL(5,2) DEFAULT 10.5,
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_sitp_tenant_supplier_product (\`${TENANT_COLUMN}\`, supplier_name(100), product_name(100)),
+            INDEX idx_sitp_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS animal_lots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -2518,6 +3177,7 @@ function getSchemaTables() {
             amount          DECIMAL(12,2),
             category        VARCHAR(100),
             description     VARCHAR(255),
+            supplier        VARCHAR(150),
             date            DATETIME,
             client_id       INT,
             branch_id       INT,
@@ -2753,7 +3413,12 @@ async function getTenantInfo(authUser, options = {}) {
     const email = typeof authUser === 'string' ? '' : authUser?.email;
     tenantInfoCache.delete(uid);
 
-    const accessContext = await getClientAccessContext({ uid, email });
+    const accessContext = await getClientAccessContext({
+        uid,
+        email,
+        _internalAdmin: authUser?._internalAdmin || null,
+        _supportClientId: authUser?._supportClientId || null,
+    });
     if (accessContext) {
         assertClientAccess(accessContext, options);
         const info = {
@@ -2785,7 +3450,12 @@ async function getTenantInfo(authUser, options = {}) {
 async function getTenantClientData(authUser) {
     const uid = typeof authUser === 'string' ? authUser : authUser?.uid;
     const email = typeof authUser === 'string' ? '' : authUser?.email;
-    const accessContext = await getClientAccessContext({ uid, email });
+    const accessContext = await getClientAccessContext({
+        uid,
+        email,
+        _internalAdmin: authUser?._internalAdmin || null,
+        _supportClientId: authUser?._supportClientId || null,
+    });
     if (accessContext) {
         assertClientAccess(accessContext);
         return {
@@ -2798,6 +3468,7 @@ async function getTenantClientData(authUser) {
             role: accessContext.user.role,
             firebaseUid: accessContext.user.firebaseUid,
             licenses: accessContext.effectiveLicenses,
+            isGlobalSuperAdmin: Boolean(accessContext.user.isGlobalSuperAdmin),
         };
     }
 
@@ -2805,6 +3476,21 @@ async function getTenantClientData(authUser) {
     const userDoc = await firestoreDb.collection('clientes').doc(uid).get();
     if (!userDoc.exists) throw new Error('Usuario no registrado como cliente');
     return { id: userDoc.id, ...userDoc.data() };
+}
+
+function requiresLogisticsLicense({ role, perms = [] }) {
+    if (String(role || '').trim().toLowerCase() !== 'employee') return false;
+    return Array.isArray(perms) && perms.some((pathValue) => String(pathValue || '').trim() === '/logistica');
+}
+
+function assertDeliveryLicenseSelection({ role, perms = [], assignedLicenses = [] }) {
+    if (!requiresLogisticsLicense({ role, perms })) return;
+    const hasAssignedDeliveryLicense = assignedLicenses.some((license) => licenseHasLogisticsCapability(license));
+    if (!hasAssignedDeliveryLicense) {
+        const error = new Error('Para habilitar Logística, el usuario debe tener una licencia de entregas asignada');
+        error.statusCode = 400;
+        throw error;
+    }
 }
 
 function getTenantPool(dbName) {
@@ -3244,7 +3930,7 @@ async function getTableDescribe(pool, dbName, table) {
 
 // Tablas permitidas (whitelist contra inyección de nombres de tabla)
 const ALLOWED_TABLES = new Set([
-    'settings', 'payment_methods', 'categories', 'suppliers', 'products', 'purchase_items',
+    'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
@@ -3328,6 +4014,90 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+async function resolveProductRecordCategory(pool, tenantId, record) {
+    if (!record || typeof record !== 'object') return record;
+
+    const next = { ...record };
+    const rawCategoryId = next.category_id;
+    const normalizedCategoryId = Number(rawCategoryId);
+    const categoryNameInput = String(next.category || '').trim();
+
+    if (Number.isFinite(normalizedCategoryId) && normalizedCategoryId > 0) {
+        const category = await findProductCategoryById(pool, tenantId, normalizedCategoryId);
+        if (category) {
+            next.category_id = category.id;
+            next.category = category.code;
+            return next;
+        }
+    }
+
+    if (categoryNameInput) {
+        const category = await findOrCreateProductCategory(pool, tenantId, categoryNameInput);
+        if (category) {
+            next.category_id = category.id;
+            next.category = category.code;
+        }
+        return next;
+    }
+
+    if (rawCategoryId == null || rawCategoryId === '') {
+        next.category_id = null;
+    }
+
+    return next;
+}
+
+function normalizeProductCategoryCode(value) {
+    return String(value || '')
+        .trim()
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 100);
+}
+
+async function findProductCategoryById(pool, tenantId, categoryId) {
+    if (!Number.isFinite(Number(categoryId)) || Number(categoryId) <= 0) return null;
+    const [rows] = await pool.query(
+        `SELECT id, code, name
+         FROM product_categories
+         WHERE \`${TENANT_COLUMN}\` = ? AND id = ?
+         LIMIT 1`,
+        [tenantId, Number(categoryId)]
+    );
+    return rows?.[0] || null;
+}
+
+async function findOrCreateProductCategory(pool, tenantId, rawNameOrCode) {
+    const trimmed = String(rawNameOrCode || '').trim();
+    if (!trimmed) return null;
+    const code = normalizeProductCategoryCode(trimmed);
+    if (!code) return null;
+
+    const [existingRows] = await pool.query(
+        `SELECT id, code, name
+         FROM product_categories
+         WHERE \`${TENANT_COLUMN}\` = ? AND (code = ? OR LOWER(name) = LOWER(?))
+         ORDER BY id ASC
+         LIMIT 1`,
+        [tenantId, code, trimmed]
+    );
+    if (existingRows?.length) return existingRows[0];
+
+    const [insertResult] = await pool.query(
+        `INSERT INTO product_categories (\`${TENANT_COLUMN}\`, code, name, active)
+         VALUES (?, ?, ?, 1)`,
+        [tenantId, code, trimmed]
+    );
+    return {
+        id: insertResult.insertId,
+        code,
+        name: trimmed,
+    };
+}
+
 function normalizeBranchCodeValue(value) {
     const digits = String(value ?? '').replace(/\D/g, '');
     if (!digits) return null;
@@ -3360,7 +4130,12 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
+        const normalizedRecord = table === 'products'
+            ? await resolveProductRecordCategory(pool, tenantId, record)
+            : record;
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
@@ -3391,8 +4166,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         };
 
         if (operation === 'insert') {
-            if (!record) return res.status(400).json({ error: 'record requerido' });
-            const filtered = await filterRecord(record, false); // incluir id si viene (Dexie lo manda)
+            if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
+            const filtered = await filterRecord(normalizedRecord, false); // incluir id si viene (Dexie lo manda)
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
@@ -3418,7 +4193,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         if (operation === 'update') {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para update' });
-            const filtered = await filterRecord(record, true); // excluir id del SET
+            const filtered = await filterRecord(normalizedRecord, true); // excluir id del SET
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
             }
@@ -3437,7 +4212,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
         if (operation === 'upsert') {
             // Para settings (PK = key) u otras tablas con ON DUPLICATE KEY UPDATE
-            if (!record) return res.status(400).json({ error: 'record requerido' });
+            if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
             const validCols = await getTableColumns(pool, dbName, table);
             const filtered = {};
             for (const col of validCols) {
@@ -3446,8 +4221,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     filtered[col] = tenantId;
                     continue;
                 }
-                if (record[col] !== undefined && record[col] !== null) {
-                    filtered[col] = normalizeColumnValue(record[col], tableDesc.get(col) || '');
+                if (normalizedRecord[col] !== undefined && normalizedRecord[col] !== null) {
+                    filtered[col] = normalizeColumnValue(normalizedRecord[col], tableDesc.get(col) || '');
                 }
             }
             if (Object.keys(filtered).length === 0) {
@@ -3523,7 +4298,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -3657,6 +4432,64 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
                 [...scope.params, limit, offset]
             );
+        }
+
+        if (table === 'product_categories' && rows.length === 0) {
+            const CATEGORY_DEFAULTS = [
+                { code: 'vaca', name: 'Vaca' },
+                { code: 'cerdo', name: 'Cerdo' },
+                { code: 'pollo', name: 'Pollo' },
+                { code: 'pescado', name: 'Pescado' },
+                { code: 'pre_elaborados', name: 'Pre-elaborados' },
+                { code: 'almacen', name: 'Almacen' },
+                { code: 'limpieza', name: 'Limpieza' },
+                { code: 'bebidas', name: 'Bebidas' },
+                { code: 'insumo', name: 'Insumo General' },
+                { code: 'otros', name: 'Otros' },
+            ];
+            for (const category of CATEGORY_DEFAULTS) {
+                await pool.query(
+                    `INSERT IGNORE INTO product_categories (\`${TENANT_COLUMN}\`, code, name, active, synced)
+                     VALUES (?, ?, ?, 1, 0)`,
+                    [tenantId, category.code, category.name]
+                );
+            }
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, limit, offset]
+            );
+        }
+
+        if (table === 'products' && rows.length > 0) {
+            const categoryIds = Array.from(
+                new Set(
+                    rows
+                        .map((row) => Number(row?.category_id))
+                        .filter((idValue) => Number.isFinite(idValue) && idValue > 0)
+                )
+            );
+            let categoriesById = new Map();
+            if (categoryIds.length > 0) {
+                const placeholders = categoryIds.map(() => '?').join(', ');
+                const [categoryRows] = await pool.query(
+                    `SELECT id, code, name
+                     FROM product_categories
+                     WHERE \`${TENANT_COLUMN}\` = ?
+                       AND id IN (${placeholders})`,
+                    [tenantId, ...categoryIds]
+                );
+                categoriesById = new Map(categoryRows.map((cat) => [Number(cat.id), cat]));
+            }
+            rows = rows.map((row) => {
+                const category = categoriesById.get(Number(row?.category_id));
+                if (!category) return row;
+                return {
+                    ...row,
+                    category: category.code,
+                    category_code: category.code,
+                    category_name: category.name,
+                };
+            });
         }
 
         return res.json({
@@ -4134,6 +4967,110 @@ app.get('/api/users', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.post('/api/internal-admin/login', async (req, res) => {
+    try {
+        const identifier = String(req.body?.identifier || '').trim();
+        const password = String(req.body?.password || '');
+
+        if (!identifier || !password) {
+            return res.status(400).json({ error: 'Usuario/email y contraseña son obligatorios' });
+        }
+
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const [rows] = await conn.query(
+                `SELECT id, email, username, name, lastname, passwordHash, role, status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 WHERE LOWER(email) = LOWER(?) OR LOWER(username) = LOWER(?)
+                 LIMIT 1`,
+                [identifier, identifier]
+            );
+            const internalAdmin = rows[0] || null;
+
+            if (!internalAdmin) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            const isPasswordValid = await bcrypt.compare(password, internalAdmin.passwordHash);
+            if (!isPasswordValid) {
+                return res.status(401).json({ error: 'Credenciales inválidas' });
+            }
+
+            if (!isActiveStatus(internalAdmin.status, false)) {
+                return res.status(403).json({ error: 'El SuperAdmin está inactivo' });
+            }
+
+            const adminPayload = {
+                id: internalAdmin.id,
+                email: internalAdmin.email,
+                username: internalAdmin.username,
+                name: internalAdmin.name,
+                lastname: internalAdmin.lastname,
+                role: internalAdmin.role,
+                status: internalAdmin.status,
+            };
+
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${INTERNAL_ADMINS_TABLE}\`
+                 SET lastLogin = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = ?`,
+                [internalAdmin.id]
+            );
+
+            return res.json({
+                ok: true,
+                token: signInternalAdminToken(adminPayload),
+                admin: adminPayload,
+            });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[INTERNAL ADMIN LOGIN ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudo iniciar sesión como SuperAdmin' });
+    }
+});
+
+app.get('/api/internal-admin/me', verifyInternalAdminSession, async (req, res) => {
+    return res.json({
+        ok: true,
+        admin: req.internalAdmin,
+    });
+});
+
+app.get('/api/internal-admin/clients', verifyInternalAdminSession, async (req, res) => {
+    try {
+        const search = String(req.query?.search || '').trim();
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const searchLike = `%${search}%`;
+            const [rows] = await conn.query(
+                `SELECT
+                    c.id,
+                    c.businessName,
+                    c.taxId,
+                    c.billingEmail,
+                    c.status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
+                 ${search ? 'WHERE c.businessName LIKE ? OR c.taxId LIKE ? OR c.billingEmail LIKE ?' : ''}
+                 ORDER BY c.businessName ASC
+                 LIMIT 1000`,
+                search ? [searchLike, searchLike, searchLike] : []
+            );
+
+            return res.json({
+                ok: true,
+                clients: rows,
+            });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[INTERNAL ADMIN CLIENTS ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudieron leer los tenants' });
+    }
+});
+
 // ── RUTA: GET /api/firebase-users ──────────────────────────────────────────
 // Lista usuarios web/Firebase de la misma empresa (mismo CUIT).
 app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
@@ -4141,6 +5078,8 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -4150,35 +5089,92 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             [rows] = await conn.query(
                 `SELECT id, clientId, branchId, firebaseUid, name, lastname, email, role, status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 WHERE clientId = ?
-                 ORDER BY id ASC`,
+                 cu
+                 LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                    ON b.id = cu.branchId
+                 WHERE cu.clientId = ?
+                 ORDER BY cu.id ASC`,
                 [accessContext.client.id]
             );
-        } finally {
-            conn.release();
-        }
+            const [licenseRows] = await conn.query(
+                `SELECT
+                    cl.id AS clientLicenseId,
+                    cl.clientId,
+                    cl.licenseId,
+                    cl.branchId,
+                    cl.userId,
+                    cl.status AS assignmentStatus,
+                    l.commercialName,
+                    l.internalCode,
+                    l.category,
+                    l.billingScope,
+                    l.isMandatory,
+                    l.featureFlags,
+                    l.status AS licenseStatus,
+                    l.appliesToWebapp
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\` cl
+                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${LICENSES_TABLE}\` l
+                    ON l.id = cl.licenseId
+                 WHERE cl.clientId = ?
+                   AND cl.status = 'ACTIVE'
+                   AND l.status = 'ACTIVE'`,
+                [accessContext.client.id]
+            );
 
-        const users = [];
-        for (const row of rows) {
-            const perms = await getUserPermissions(conn, row.id);
-            const baseUser = buildAccessResponse({
-                user: {
+            const licensePool = await getClientLicensePool(conn, accessContext.client.id);
+            const users = [];
+            const userRows = [...rows];
+
+            const currentUserId = String(accessContext.user?.id || '');
+            const currentUserAlreadyListed = userRows.some((row) => String(row.id || '') === currentUserId);
+            if (accessContext.user && !currentUserAlreadyListed && !accessContext.user.isGlobalSuperAdmin) {
+                userRows.unshift({
+                    id: accessContext.user.id,
+                    clientId: accessContext.user.clientId,
+                    branchId: accessContext.user.branchId ?? null,
+                    firebaseUid: accessContext.user.firebaseUid || null,
+                    name: accessContext.user.name || accessContext.client.businessName || accessContext.user.email || 'Administrador',
+                    lastname: accessContext.user.lastname || '',
+                    email: accessContext.user.email || '',
+                    role: accessContext.user.role || 'admin',
+                    status: accessContext.user.userStatus || 'ACTIVE',
+                    isOwnerFallback: Boolean(accessContext.user.isOwnerFallback),
+                });
+            }
+
+            for (const row of userRows) {
+                const perms = row.isOwnerFallback ? [] : await getUserPermissions(conn, row.id);
+                const scopedLicenses = buildScopedLicensesForUser({
                     ...row,
                     userStatus: row.status,
                     perms,
-                },
-                client: accessContext.client,
-                effectiveLicenses: accessContext.effectiveLicenses,
-            });
-            users.push({
-                ...baseUser,
-                perms,
-            });
+                }, licenseRows);
+                const baseUser = buildAccessResponse({
+                    user: {
+                        ...row,
+                        userStatus: row.status,
+                        perms,
+                    },
+                    client: accessContext.client,
+                    effectiveLicenses: scopedLicenses.effectiveLicenses,
+                });
+                users.push({
+                    ...baseUser,
+                    licenses: scopedLicenses.assignedLicenses,
+                    perms,
+                    assignedLicenses: scopedLicenses.assignedLicenses,
+                    deliveryLicenses: scopedLicenses.deliveryLicenses,
+                });
+            }
+
+            return res.json({ ok: true, users, licensePool });
+        } finally {
+            conn.release();
         }
-        return res.json({ ok: true, users });
     } catch (err) {
         console.error('[FIREBASE USERS READ ERROR]', err.message);
-        return res.status(500).json({ error: 'No se pudieron leer los usuarios web' });
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudieron leer los usuarios web' });
     }
 });
 
@@ -4189,6 +5185,8 @@ app.get('/api/firebase-users/me', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -4208,7 +5206,15 @@ app.get('/api/firebase-users/me', verifyFirebaseToken, async (req, res) => {
 // Crea usuario en Firebase Auth y su perfil/permisos en Firestore.
 app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
     try {
-        const { email, password, username, role = 'employee', active = 1, perms = [] } = req.body || {};
+        const {
+            email,
+            password,
+            username,
+            role = 'employee',
+            active = 1,
+            perms = [],
+            assignedClientLicenseIds = [],
+        } = req.body || {};
 
         if (!email || !String(email).trim()) {
             return res.status(400).json({ error: 'Email requerido' });
@@ -4223,6 +5229,9 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let insertId;
+        let job;
+        const normalizedRole = role === 'admin' ? 'admin' : 'employee';
+        const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         try {
             const [existingRows] = await conn.query(
                 `SELECT id FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE clientId = ? AND LOWER(email) = ? LIMIT 1`,
@@ -4240,11 +5249,21 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                     ownerData.clientId,
                     String(username).trim(),
                     normalizeEmail(email),
-                    role === 'admin' ? 'admin' : 'employee',
+                    normalizedRole,
                     Number(active) === 1 ? 'ACTIVE' : 'INACTIVE',
                 ]
             );
             insertId = result.insertId;
+            const assignedLicenses = await syncClientUserPerUserLicenses(conn, {
+                clientId: ownerData.clientId,
+                userId: insertId,
+                clientLicenseIds: assignedClientLicenseIds,
+            });
+            assertDeliveryLicenseSelection({
+                role: normalizedRole,
+                perms: userPerms,
+                assignedLicenses,
+            });
             await enqueueAuthSync(conn, insertId, 'CREATE_FIREBASE', {
                 action: 'CREATE',
                 email: normalizeEmail(email),
@@ -4252,24 +5271,16 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 username: String(username).trim(),
                 active: Number(active) === 1 ? 1 : 0,
             });
-        } finally {
-            conn.release();
-        }
-
-        const queueConn = await clientsControlPool.getConnection();
-        let job;
-        try {
-            const [jobs] = await queueConn.query(
+            const [jobs] = await conn.query(
                 `SELECT * FROM \`${CLIENTS_DB_NAME}\`.auth_sync_queue WHERE entityId = ? ORDER BY id DESC LIMIT 1`,
                 [insertId]
             );
             job = jobs[0];
         } finally {
-            queueConn.release();
+            conn.release();
         }
 
         const syncResult = await runClientUserSync(job);
-        const userPerms = role === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         if (userPerms.length > 0) {
             const permConn = await clientsControlPool.getConnection();
             try {
@@ -4291,7 +5302,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 uid: syncResult.uid,
                 email: normalizeEmail(email),
                 username: String(username).trim(),
-                role: role === 'admin' ? 'admin' : 'employee',
+                role: normalizedRole,
                 active: Number(active) === 1 ? 1 : 0,
                 perms: userPerms,
             },
@@ -4301,7 +5312,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         if (err.code === 'auth/email-already-exists') {
             return res.status(400).json({ error: 'Ese email ya existe en Firebase' });
         }
-        return res.status(500).json({ error: 'No se pudo crear el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el usuario web' });
     }
 });
 
@@ -4313,7 +5324,7 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Usuario inválido' });
         }
 
-        const { email, password, username, role, active, perms } = req.body || {};
+        const { email, password, username, role, active, perms, assignedClientLicenseIds = [] } = req.body || {};
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let currentData;
@@ -4346,6 +5357,16 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
                  WHERE id = ?`,
                 [nextUsername, nextEmail, nextRole, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
             );
+            const assignedLicenses = await syncClientUserPerUserLicenses(writeConn, {
+                clientId: ownerData.clientId,
+                userId: Number(userId),
+                clientLicenseIds: assignedClientLicenseIds,
+            });
+            assertDeliveryLicenseSelection({
+                role: nextRole,
+                perms: nextPerms,
+                assignedLicenses,
+            });
             await enqueueAuthSync(writeConn, Number(userId), 'UPDATE_FIREBASE', {
                 action: nextActive ? 'UPDATE' : 'DISABLE',
                 email: nextEmail,
@@ -4385,7 +5406,7 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         if (err.code === 'auth/email-already-exists') {
             return res.status(400).json({ error: 'Ese email ya existe en Firebase' });
         }
-        return res.status(500).json({ error: 'No se pudo actualizar el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo actualizar el usuario web' });
     }
 });
 
@@ -4424,6 +5445,12 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
                  WHERE id = ?`,
                 [userId]
             );
+            await conn.query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_LICENSES_TABLE}\`
+                 SET userId = NULL, branchId = NULL
+                 WHERE clientId = ? AND userId = ?`,
+                [ownerData.clientId, userId]
+            );
             await enqueueAuthSync(conn, Number(userId), 'DISABLE_FIREBASE', {
                 action: 'DELETE',
                 active: 0,
@@ -4451,7 +5478,7 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         return res.json({ ok: true });
     } catch (err) {
         console.error('[FIREBASE USER DELETE ERROR]', err.message);
-        return res.status(500).json({ error: 'No se pudo eliminar el usuario web' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo eliminar el usuario web' });
     }
 });
 
@@ -4588,6 +5615,8 @@ app.post('/api/cash/withdrawals/request-authorization', verifyFirebaseToken, asy
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         const tenantInfo = await getTenantInfo(req.firebaseUser);
@@ -4625,6 +5654,8 @@ app.post('/api/cash/withdrawals/verify-authorization', verifyFirebaseToken, asyn
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         const tenantInfo = await getTenantInfo(req.firebaseUser);
@@ -4657,6 +5688,8 @@ app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -4701,6 +5734,8 @@ app.get('/api/delivery/orders', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -4737,6 +5772,8 @@ app.get('/api/logistics/drivers', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
@@ -4765,6 +5802,8 @@ app.get('/api/client/branches', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
 
@@ -4788,6 +5827,8 @@ app.post('/api/logistics/orders/:id/assign', verifyFirebaseToken, async (req, re
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);
@@ -4846,6 +5887,8 @@ app.post('/api/delivery/orders/:id/status', verifyFirebaseToken, async (req, res
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -4926,6 +5969,8 @@ app.post('/api/delivery/location', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -4996,6 +6041,8 @@ app.get('/api/delivery/locations', verifyFirebaseToken, async (req, res) => {
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext, { allowDeliveryOnly: true });
         assertLogisticsAccess(accessContext);
@@ -5019,6 +6066,8 @@ app.get('/api/logistics/drivers/live', verifyFirebaseToken, async (req, res) => 
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
         assertLogisticsAccess(accessContext);

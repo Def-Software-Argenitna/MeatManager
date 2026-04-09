@@ -1,6 +1,5 @@
 .menu-digital-container {
-    max-width: 1200px;
-    margin: 0 auto;
+    width: 100%;
 }
 
 .bot-config-area {
@@ -250,15 +249,16 @@
 .catalog-selection-item {
     display: flex;
     justify-content: space-between;
+    align-items: center;
     padding: 1rem;
-    border-bottom: 1px solid #eee;
+    border-radius: var(--radius-sm);
     cursor: pointer;
-    transition: background 0.2s;
+    transition: all 0.2s ease;
 }
 
 .catalog-selection-item:hover {
-    background: #f8fafc;
-    color: var(--color-primary);
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--color-primary) !important;
 }
 
 @media (max-width: 900px) {

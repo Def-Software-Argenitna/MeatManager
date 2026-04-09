@@ -1,34 +1,49 @@
 import React from "react";
 import { useLocation } from "react-router-dom";
+import { Beef } from "lucide-react";
 import "./TopBar.css";
 
 const TopBar = ({ onToggleSidebar }) => {
     const location = useLocation();
 
-    const getModuleName = () => {
+    const getModuleNameParts = () => {
         const path = location.pathname;
-        if (path.includes("ventas")) return "CENTRO DE VENTAS";
-        if (path.includes("cierre") || path.includes("caja")) return "CIERRE DE CAJA";
-        if (path.includes("compras")) return "GESTIÓN DE COMPRAS";
-        if (path.includes("productos-compra") || path.includes("catalogo")) return "CATÁLOGO DE COMPRAS";
-        if (path.includes("stock")) return "STOCK E INVENTARIO";
-        if (path.includes("clientes")) return "GESTIÓN DE CLIENTES";
-        if (path.includes("proveedores")) return "PROVEEDORES";
-        if (path.includes("licencia")) return "LICENCIA";
-        if (path.includes("usuarios") || path.includes("seguridad")) return "SEGURIDAD Y USUARIOS";
-        if (path.includes("categorias")) return "CATEGORÍAS";
-        if (path.includes("precios") || path.includes("formato") || path.includes("precio")) return "FORMATO DE PRECIOS";
-        if (path.includes("manual")) return "MANUAL DEL USUARIO";
-        if (path.includes("logistica")) return "LOGÍSTICA";
-        if (path.includes("pedidos")) return "PEDIDOS";
-        if (path.includes("sucursales")) return "SUCURSALES";
-        if (path.includes("despostada")) return "DESPOSTADA";
-        if (path.includes("alimentos")) return "ALIMENTOS";
-        if (path.includes("otros")) return "OTROS ÍTEMS";
-        if (path.includes("informes")) return "INFORMES PRO";
-        if (path.includes("dashboard") || path === "/") return "PANEL DE CONTROL";
-        return "";
+        let name = "";
+        
+        if (path.includes("ventas")) name = "CENTRO DE VENTAS";
+        else if (path.includes("cierre") || path.includes("caja")) name = "CIERRE DE CAJA";
+        else if (path.includes("compras")) name = "GESTIÓN DE COMPRAS";
+        else if (path.includes("productos-compra") || path.includes("catalogo")) name = "ARTÍCULOS";
+        else if (path.includes("stock")) name = "STOCK E INVENTARIO";
+        else if (path.includes("clientes")) name = "GESTIÓN DE CLIENTES";
+        else if (path.includes("proveedores")) name = "PROVEEDORES";
+        else if (path.includes("licencia")) name = "LICENCIA";
+        else if (path.includes("usuarios") || path.includes("seguridad")) name = "SEGURIDAD Y USUARIOS";
+        else if (path.includes("categorias")) name = "CATEGORÍAS";
+        else if (path.includes("precios") || path.includes("formato") || path.includes("precio")) name = "FORMATO DE PRECIOS";
+        else if (path.includes("manual")) name = "MANUAL DEL USUARIO";
+        else if (path.includes("logistica")) name = "LOGÍSTICA";
+        else if (path.includes("pedidos")) name = "PEDIDOS";
+        else if (path.includes("sucursales")) name = "SUCURSALES";
+        else if (path.includes("despostada")) name = "DESPOSTADA";
+        else if (path.includes("alimentos")) name = "ALIMENTOS";
+        else if (path.includes("otros")) name = "OTROS ÍTEMS";
+        else if (path.includes("informes")) name = "INFORMES PRO";
+        else if (path.includes("menu-digital") || path.includes("menudigital") || path.includes("menu")) name = "MENÚ DIGITAL";
+        else if (path.includes("dashboard") || path === "/") name = "PANEL DE CONTROL";
+        
+        if (!name) return { prefix: "", lastWord: "" };
+
+        const words = name.split(" ");
+        if (words.length <= 1) return { prefix: "", lastWord: name };
+
+        const lastWord = words.pop();
+        const prefix = words.join(" ");
+
+        return { prefix, lastWord };
     };
+
+    const { prefix, lastWord } = getModuleNameParts();
 
     return (
         <header className="top-bar">
@@ -40,8 +55,14 @@ const TopBar = ({ onToggleSidebar }) => {
                 </button>
             </div>
             <div className="top-bar-center">
-                <div className="text-logo">
-                    <h1 className="logo-main">{getModuleName()}</h1>
+                <div className="text-logo" style={{ flexDirection: 'row', gap: '0.65rem' }}>
+                    <div className="module-icon">
+                        <Beef size={18} strokeWidth={2.5} color="#000" />
+                    </div>
+                    <h1 className="logo-main">
+                        {prefix && <span style={{ marginRight: '0.35em' }}>{prefix}</span>}
+                        <span style={{ color: "var(--color-primary)" }}>{lastWord}</span>
+                    </h1>
                 </div>
             </div>
             <div className="top-bar-right">

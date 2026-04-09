@@ -389,10 +389,7 @@ const Clientes = () => {
         <div className="clients-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div>
-                    <h1 className="page-title">Clientes y Cuentas</h1>
-                    <p className="page-description">Gestion de clientes y cuentas corrientes</p>
-                </div>
+                
                 <button className="neo-button" onClick={() => setIsModalOpen(true)}>
                     <UserPlus size={20} />
                     Nuevo Cliente

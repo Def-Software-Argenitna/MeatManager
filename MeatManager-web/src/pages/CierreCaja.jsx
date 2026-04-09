@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import mpLogoText from '../assets/mercado-pago-text.svg';
 import {
     Save,
     Calendar as CalendarIcon,
@@ -247,13 +248,13 @@ const CierreCaja = () => {
             totals[method.name] = 0;
         });
 
-        (allSalesUntilDate || []).forEach((sale) => {
+        (sales || []).forEach((sale) => {
             buildSaleParts(sale).forEach((part) => {
                 totals[part.name] = (totals[part.name] || 0) + part.amount;
             });
         });
 
-        (allMovementsUntilDate || []).forEach((movement) => {
+        (movements || []).forEach((movement) => {
             const methodName = movement.payment_method || 'Efectivo';
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             const sign = getMovementSign(movement);
@@ -261,7 +262,7 @@ const CierreCaja = () => {
         });
 
         return totals;
-    }, [activePaymentMethods, allSalesUntilDate, allMovementsUntilDate]);
+    }, [activePaymentMethods, sales, movements]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
@@ -418,7 +419,7 @@ const CierreCaja = () => {
                                     <div className="method-info">
                                         <span className="method-icon"><PaymentMethodIcon method={item} size={38} compact /></span>
                                         <div className="method-balance-text">
-                                            <span className="method-name">{item.name}</span>
+                                            <span className="method-name">{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '18px', verticalAlign: 'middle' }} /> : item.name}</span>
                                             <div className="method-breakdown">
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
                                                 <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
@@ -474,9 +475,9 @@ const CierreCaja = () => {
 
                         {openingMovements.length > 0 && !showOpeningForm && (
                             <div className="opening-preview">
-                                {methodCards.map((item) => (
+                                {methodCards.filter(m => m.type === 'cash').map((item) => (
                                     <div key={item.name} className="opening-chip">
-                                        <span>{item.name}</span>
+                                        <span>{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '14px', verticalAlign: 'middle' }} /> : item.name}</span>
                                         <strong>${item.opening.toLocaleString('es-AR')}</strong>
                                     </div>
                                 ))}
@@ -486,16 +487,16 @@ const CierreCaja = () => {
                         {showOpeningForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleSaveOpening}>
                                 <div className="form-grid">
-                                    {activePaymentMethods.map((method) => (
-                                        <div className="form-group" key={method.name}>
-                                            <label>{method.name}</label>
+                                    {activePaymentMethods.filter(m => m.type === 'cash').map((method) => (
+                                        <div className="form-group full" key={method.name}>
+                                            <label>{method.name} inicial (Apertura)</label>
                                             <input
                                                 type="number"
                                                 min="0"
                                                 step="0.01"
                                                 value={openingDraft[method.name] || ''}
                                                 onChange={(e) => handleOpeningChange(method.name, e.target.value)}
-                                                placeholder="0.00"
+                                                placeholder="Ej: 100000"
                                                 className="neo-input"
                                             />
                                         </div>

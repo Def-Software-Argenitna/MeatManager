@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck, Edit2 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord, createCompra } from '../utils/apiClient';
@@ -84,6 +85,8 @@ const Compras = () => {
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [categories, setCategories] = useState([]);
     const [supplierTaxProfiles, setSupplierTaxProfiles] = useState([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [editingPurchaseId, setEditingPurchaseId] = useState(null);
 
     // Form state now includes a list of items instead of a text blob
     const getLocalDateStr = () => { const n = new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; };
@@ -314,10 +317,34 @@ const Compras = () => {
         });
     };
 
+    const handleDeletePurchase = async (id) => {
+        if (!window.confirm('¿Seguro que querés eliminar esta compra? Se borrarán todos sus ítems.')) return;
+        await saveTableRecord('compras', 'delete', null, id);
+        await loadComprasData();
+    };
+
+    const handleEditPurchase = (compra) => {
+        const items = compra.items_detail || [];
+        setNewPurchase({
+            supplier: compra.supplier || '',
+            invoice_num: compra.invoice_num || '',
+            selectedItems: items,
+            total: compra.total || '',
+            date: compra.date ? compra.date.slice(0, 10) : getLocalDateStr(),
+            destination: 'venta',
+            payment_method: compra.payment_method || '',
+            is_account: !!compra.is_account,
+        });
+        setEditingPurchaseId(compra.id);
+        setIsModalOpen(true);
+    };
+
     const handleAddPurchase = async (e) => {
         e.preventDefault();
 
         if (!newPurchase.supplier) return;
+        if (isSubmitting) return;
+        setIsSubmitting(true);
 
         try {
             // 1. Save the purchase record
@@ -400,6 +427,8 @@ const Compras = () => {
 
             await loadComprasData();
             setIsModalOpen(false);
+            setIsSubmitting(false);
+            setEditingPurchaseId(null);
             setNewPurchase({
                 supplier: '',
                 invoice_num: '',
@@ -412,6 +441,8 @@ const Compras = () => {
             });
         } catch (error) {
             console.error('Error adding purchase:', error);
+            setIsSubmitting(false);
+            setEditingPurchaseId(null);
         }
     };
 
@@ -476,10 +507,7 @@ const Compras = () => {
         <div className="compras-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="compras-header">
-                <div>
-                    <h1 className="page-title">Compras</h1>
-                    <p className="page-description">Ingreso de mercadería y control de proveedores</p>
-                </div>
+                
                 <button className="neo-button" onClick={() => setIsModalOpen(true)}>
                     <Plus size={20} />
                     Registrar Compra
@@ -626,11 +654,16 @@ const Compras = () => {
                             </div>
                             {compra.items_detail ? (
                                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem' }}>
-                                    {compra.items_detail.slice(0, 5).map((d, idx) => (
-                                        <span key={idx} className={`purchase-item-chip ${(d.destination || 'venta') === 'interno' ? 'internal' : ''}`}>
-                                            {d.quantity} {d.name} {(d.destination || 'venta') === 'interno' ? '• interno' : ''}
-                                        </span>
-                                    ))}
+                                    {compra.items_detail.slice(0, 5).map((d, idx) => {
+                                        const qtyValue = d.quantity > 0 ? d.quantity : d.weight;
+                                        const unitText = d.unit ? ` ${d.unit.toLowerCase()}` : '';
+                                        const itemName = d.product_name || d.name || '';
+                                        return (
+                                            <span key={idx} className={`purchase-item-chip ${(d.destination || 'venta') === 'interno' ? 'internal' : ''}`}>
+                                                {qtyValue}{unitText} {itemName} {(d.destination || 'venta') === 'interno' ? '• interno' : ''}
+                                            </span>
+                                        );
+                                    })}
                                     {compra.items_detail.length > 5 && <span style={{ fontSize: '0.8rem' }}>+{compra.items_detail.length - 5} más</span>}
                                 </div>
                             ) : (
@@ -651,16 +684,30 @@ const Compras = () => {
                                 <strong>${Number(breakdown.internal || 0).toLocaleString()}</strong>
                             </div>
                         </div>
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
+                            <button
+                                onClick={() => handleEditPurchase(compra)}
+                                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.3rem 0.75rem', color: '#3b82f6', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem' }}
+                            >
+                                <Edit2 size={14} /> Editar
+                            </button>
+                            <button
+                                onClick={() => handleDeletePurchase(compra.id)}
+                                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.3rem 0.75rem', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem' }}
+                            >
+                                <Trash2 size={14} /> Eliminar
+                            </button>
+                        </div>
                     </DirectionalReveal>
                 )})}
             </div>
 
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '800px', width: '95%' }} onClick={e => e.stopPropagation()}>
+            {isModalOpen && createPortal(
+                <div className="modal-overlay" onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}>
+                    <div className="modal-content neo-card" style={{ maxWidth: '800px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyItems: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>Ingresar Factura / Remito</h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', marginLeft: 'auto' }}>
+                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{editingPurchaseId ? 'Editar Compra' : 'Ingresar Factura / Remito'}</h2>
+                            <button onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', marginLeft: 'auto' }}>
                                 <X size={24} />
                             </button>
                         </div>
@@ -720,7 +767,7 @@ const Compras = () => {
                             </div>
 
                             {/* DYNAMIC ITEM ENTRY */}
-                            <div style={{ background: 'var(--color-bg-main)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', border: '1px solid var(--color-border)' }}>
+                            <div style={{ background: 'var(--color-bg-main)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', border: '1px solid var(--color-border)', marginTop: '1.5rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.8rem', fontSize: '0.9rem', color: 'var(--color-primary)', fontWeight: '600' }}>
                                     Agregar Ítem al Remito
                                 </label>
@@ -807,14 +854,15 @@ const Compras = () => {
                                         </div>
                                     )}
 
-                                    <div style={{ opacity: currentItem.type === 'despostada' && hasDespostadaModule ? 1 : 0.45, pointerEvents: currentItem.type === 'despostada' && hasDespostadaModule ? 'auto' : 'none' }}>
+                                    <div>
                                         <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Especie</label>
                                         <select
                                             className="neo-input"
                                             style={{ marginBottom: 0 }}
-                                            value={currentItem.species}
+                                            value={currentItem.species || 'ninguna'}
                                             onChange={(e) => setCurrentItem({ ...currentItem, species: e.target.value })}
                                         >
+                                            <option value="ninguna">Ninguna / No aplica</option>
                                             <option value="vaca">Vaca / Ternera</option>
                                             <option value="cerdo">Cerdo</option>
                                             <option value="pollo">Pollo / Ave</option>
@@ -982,24 +1030,47 @@ const Compras = () => {
                             </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
-                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-                                    <label>Método de pago:</label>
-                                    <select value={newPurchase.payment_method} onChange={e => setNewPurchase(p => ({ ...p, payment_method: e.target.value }))}>
+                                <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <label style={{ whiteSpace: 'nowrap' }}>Método de pago:</label>
+                                    <select
+                                        className="neo-input"
+                                        style={{ flex: 1, minWidth: '180px', marginBottom: 0 }}
+                                        value={newPurchase.payment_method}
+                                        onChange={e => {
+                                            const val = e.target.value;
+                                            setNewPurchase(p => ({
+                                                ...p,
+                                                payment_method: val,
+                                                is_account: val === 'cta_cte' ? true : p.is_account
+                                            }));
+                                        }}
+                                    >
                                         <option value="">Seleccionar</option>
+                                        {paymentMethods.filter(m => m.enabled).map(m => (
+                                            <option key={m.id} value={m.name}>{m.name}</option>
+                                        ))}
+                                        <option value="cta_cte">Cuenta Corriente</option>
                                         <option value="efectivo">Efectivo</option>
                                         <option value="transferencia">Transferencia</option>
-                                        <option value="cta_cte">Cuenta Corriente</option>
                                     </select>
-                                    <label style={{ marginLeft: '2rem' }}>
-                                        <input type="checkbox" checked={newPurchase.is_account} onChange={e => setNewPurchase(p => ({ ...p, is_account: e.target.checked }))} />
-                                        &nbsp;¿A cuenta corriente?
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={newPurchase.is_account || newPurchase.payment_method === 'cta_cte'}
+                                            onChange={e => setNewPurchase(p => ({
+                                                ...p,
+                                                is_account: e.target.checked,
+                                                payment_method: e.target.checked ? 'cta_cte' : p.payment_method
+                                            }))}
+                                        />
+                                        Cuenta Corriente
                                     </label>
                                 </div>
                                 <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
                                 <div style={{ flex: 1 }}></div>
                                     <button
                                         type="button"
-                                        onClick={() => setIsModalOpen(false)}
+                                        onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}
                                         style={{ padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
                                     >
                                         Cancelar
@@ -1011,8 +1082,8 @@ const Compras = () => {
                             </div>
                         </form>
                     </div>
-                </div>
-            )}
+                </div>,
+            document.body)}
         </div>
     );
 };

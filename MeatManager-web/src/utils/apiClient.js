@@ -3,6 +3,15 @@ import { buildApiUrl } from './runtimeConfig';
 
 export const hasTenantSession = () => !!sessionStorage.getItem('mm_tenant');
 export const getStoredAuthToken = () => sessionStorage.getItem('mm_auth_token');
+const getStoredTenantSession = () => {
+    try {
+        const raw = sessionStorage.getItem('mm_tenant');
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+};
+const isSupportSession = (tenant) => tenant?.authMode === 'support';
 const setStoredAuthToken = (token) => {
     if (token) {
         sessionStorage.setItem('mm_auth_token', token);
@@ -13,6 +22,10 @@ const setStoredAuthToken = (token) => {
 
 export const getAuthToken = async () => {
     if (!hasTenantSession()) return null;
+    const tenant = getStoredTenantSession();
+    if (isSupportSession(tenant)) {
+        return getStoredAuthToken();
+    }
     const user = auth.currentUser;
     if (user) {
         const token = await user.getIdToken();
@@ -30,6 +43,10 @@ let _tokenExpiry = 0; // epoch ms estimado de expiración (55 min margen)
 
 const getCachedToken = (forceRefresh = false) => {
     if (!hasTenantSession()) return Promise.resolve(null);
+    const tenant = getStoredTenantSession();
+    if (isSupportSession(tenant)) {
+        return Promise.resolve(getStoredAuthToken());
+    }
     const user = auth.currentUser;
     if (!user) return Promise.resolve(getStoredAuthToken());
 
@@ -60,9 +77,13 @@ export const apiFetch = async (path, options = {}) => {
             ...(options.body ? { 'Content-Type': 'application/json' } : {}),
             ...(options.headers || {}),
         };
+        const tenant = getStoredTenantSession();
 
         if (token) {
             headers.Authorization = `Bearer ${token}`;
+        }
+        if (isSupportSession(tenant) && tenant?.clientId) {
+            headers['X-MM-Target-Client-Id'] = String(tenant.clientId);
         }
 
         return headers;
@@ -178,6 +199,44 @@ export const fetchCurrentFirebaseUser = async () => {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'No se pudo leer el usuario actual');
     }
+    return res.json();
+};
+
+export const loginInternalAdmin = async (identifier, password) => {
+    const res = await fetch(buildApiUrl('/api/internal-admin/login'), {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ identifier, password }),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo iniciar sesión como SuperAdmin');
+    }
+
+    return res.json();
+};
+
+export const fetchInternalAdminClients = async (token, search = '') => {
+    const query = new URLSearchParams();
+    if (String(search || '').trim()) {
+        query.set('search', String(search).trim());
+    }
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await fetch(buildApiUrl(`/api/internal-admin/clients${suffix}`), {
+        headers: {
+            Authorization: `Bearer ${token}`,
+        },
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudieron leer los tenants');
+    }
+
     return res.json();
 };
 

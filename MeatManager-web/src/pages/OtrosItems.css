@@ -1,0 +1,53 @@
+.otros-items-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+}
+
+.otros-item-card {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 0.9rem;
+    padding: 1rem;
+    min-height: 0;
+}
+
+.otros-item-icon {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    flex-shrink: 0;
+}
+
+.otros-item-info {
+    min-width: 0;
+}
+
+.otros-item-info h3 {
+    margin: 0;
+    font-size: 1.05rem;
+    line-height: 1.2;
+}
+
+.otros-item-quantity {
+    margin-top: 0.2rem;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: var(--color-text-main);
+}
+
+.otros-item-quantity sub {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+.otros-item-barcode {
+    margin-top: 0.2rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
+import { fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
 
 const SESSION_KEY = 'mm_tenant';
 const TOKEN_KEY = 'mm_auth_token';
@@ -16,6 +17,8 @@ const restoreTenant = () => {
     }
 };
 
+const isSupportSessionTenant = (tenant) => tenant?.authMode === 'support';
+
 const mapFirebaseUserToTenant = (user) => ({
     uid: user.uid,
     email: user.email || '',
@@ -30,9 +33,15 @@ export const TenantProvider = ({ children }) => {
     useEffect(() => {
         const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (!user) {
-                setTenant(null);
-                sessionStorage.removeItem(SESSION_KEY);
-                sessionStorage.removeItem(TOKEN_KEY);
+                setTenant((currentTenant) => {
+                    if (isSupportSessionTenant(currentTenant)) {
+                        return currentTenant;
+                    }
+                    sessionStorage.removeItem(SESSION_KEY);
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    setAuthToken('');
+                    return null;
+                });
                 setLoading(false);
                 return;
             }
@@ -62,8 +71,10 @@ export const TenantProvider = ({ children }) => {
     useEffect(() => {
         const unsubscribe = onIdTokenChanged(auth, async (user) => {
             if (!user) {
-                sessionStorage.removeItem(TOKEN_KEY);
-                setAuthToken('');
+                if (!isSupportSessionTenant(tenant)) {
+                    sessionStorage.removeItem(TOKEN_KEY);
+                    setAuthToken('');
+                }
                 return;
             }
 
@@ -79,7 +90,7 @@ export const TenantProvider = ({ children }) => {
         });
 
         return unsubscribe;
-    }, []);
+    }, [tenant]);
 
     const login = async (email, password) => {
         try {
@@ -105,9 +116,58 @@ export const TenantProvider = ({ children }) => {
         }
     };
 
+    const loginSupport = async (identifier, password) => {
+        try {
+            const result = await loginInternalAdmin(identifier.trim(), password);
+            const token = result?.token || '';
+            const clientsPayload = await fetchInternalAdminClients(token);
+            return {
+                ok: true,
+                token,
+                admin: result?.admin || null,
+                clients: clientsPayload?.clients || [],
+            };
+        } catch (error) {
+            return { ok: false, error: error?.message || 'No se pudo iniciar sesión como SuperAdmin' };
+        }
+    };
+
+    const activateSupportSession = async ({ token, admin, client }) => {
+        if (!token || !admin || !client?.id) {
+            return { ok: false, error: 'Faltan datos para ingresar al tenant' };
+        }
+
+        try {
+            if (auth.currentUser) {
+                await signOut(auth);
+            }
+        } catch {
+            // Si Firebase no puede cerrar sesión igual continuamos con la sesión interna.
+        }
+
+        const nextTenant = {
+            uid: `support-admin-${admin.id}`,
+            email: admin.email || '',
+            empresa: client.businessName || client.billingEmail || `Tenant ${client.id}`,
+            clientId: client.id,
+            taxId: client.taxId || '',
+            status: client.status || '',
+            authMode: 'support',
+            supportAdmin: admin,
+        };
+
+        setTenant(nextTenant);
+        setAuthToken(token);
+        sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
+        sessionStorage.setItem(TOKEN_KEY, token);
+        return { ok: true };
+    };
+
     const logout = async () => {
         try {
-            await signOut(auth);
+            if (!isSupportSessionTenant(tenant)) {
+                await signOut(auth);
+            }
         } finally {
             setTenant(null);
             setAuthToken('');
@@ -119,9 +179,12 @@ export const TenantProvider = ({ children }) => {
     const value = useMemo(() => ({
         tenant,
         login,
+        loginSupport,
+        activateSupportSession,
         logout,
         loading,
         authToken,
+        isSupportSession: isSupportSessionTenant(tenant),
     }), [tenant, loading, authToken]);
 
     return (

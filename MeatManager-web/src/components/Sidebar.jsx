@@ -21,7 +21,6 @@ import {
   Settings,
   Truck,
   ShieldCheck,
-  Crown,
   BarChart3,
   ShoppingBag,
   Smartphone,
@@ -32,7 +31,7 @@ import {
   HelpCircle
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useTenant } from '../context/TenantContext';
 import { getRemoteSetting } from '../utils/apiClient';
 import './Sidebar.css';
@@ -40,8 +39,8 @@ import './Sidebar.css';
 const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { isPro, hasModule, isSuperUser } = useLicense();
-  const { currentUser, hasAccess, logout } = useUser();
+  const { isPro, hasModule } = useLicense();
+  const { currentUser, accessProfile, hasAccess, logout } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
@@ -109,6 +108,7 @@ const Sidebar = ({ isCollapsed }) => {
 
   const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
   const avatarInitial = displayName.charAt(0).toUpperCase();
+  const isEffectiveAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
   const operationItems = [
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -135,21 +135,12 @@ const Sidebar = ({ isCollapsed }) => {
   const configItems = [
     { title: 'Medios de Pago', path: '/config/pagos', icon: Settings },
     { title: 'Categorías', path: '/config/categorias', icon: FolderOpen },
-    { title: 'Catálogo Compras', path: '/config/productos-compra', icon: PackageSearch },
+    { title: 'Artículos', path: '/config/productos-compra', icon: PackageSearch },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
-    { title: 'Licencia', path: '/config/licencia', icon: ShieldCheck },
-    { title: 'Usuarios / Seguridad', path: '/config/seguridad', icon: Lock },
+    { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];
-
-  if (isSuperUser) {
-    configItems.splice(configItems.length - 1, 0, {
-      title: 'Panel Administración',
-      path: '/admin-pablo-control-master',
-      icon: Crown,
-    });
-  }
 
   const despostadaItems = [
     { title: 'Vaca', path: '/despostada/vaca', icon: Beef, module: 'despostada' },
@@ -336,7 +327,7 @@ const Sidebar = ({ isCollapsed }) => {
                 {displayName}
               </span>
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                {currentUser?.role === 'admin' ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
+                {isEffectiveAdmin ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
             </div>
           )}

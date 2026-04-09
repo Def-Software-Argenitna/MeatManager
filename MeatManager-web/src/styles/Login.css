@@ -66,6 +66,30 @@
     gap: 1.5rem;
 }
 
+.login-mode-switch {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 1.25rem;
+}
+
+.login-mode-button {
+    border: 1px solid var(--color-border);
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--color-text-muted);
+    border-radius: var(--radius-md);
+    padding: 0.7rem 0.9rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.login-mode-button.active {
+    color: #fff;
+    border-color: rgba(255, 126, 0, 0.4);
+    background: linear-gradient(180deg, rgba(255, 126, 0, 0.22) 0%, rgba(255, 126, 0, 0.1) 100%);
+}
+
 .form-group {
     display: flex;
     flex-direction: column;
@@ -91,6 +115,35 @@
 .form-input:focus {
     outline: none;
     border-color: var(--color-primary);
+}
+
+.login-support-note {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    border: 1px solid rgba(255, 126, 0, 0.18);
+    background: rgba(255, 126, 0, 0.08);
+    color: #fed7aa;
+    padding: 0.7rem 0.85rem;
+    border-radius: var(--radius-md);
+    font-size: 0.86rem;
+}
+
+.login-search-input {
+    position: relative;
+}
+
+.login-search-input svg {
+    position: absolute;
+    left: 0.8rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--color-text-muted);
+    pointer-events: none;
+}
+
+.login-search-input .form-input {
+    padding-left: 2.3rem;
 }
 
 .login-button {

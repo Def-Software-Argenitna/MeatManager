@@ -49,7 +49,6 @@ const Clientes = lazyWithRecovery(() => import('./pages/Clientes'));
 const Categorias = lazyWithRecovery(() => import('./pages/Categorias'));
 const ProductosCompra = lazyWithRecovery(() => import('./pages/ProductosCompra'));
 const Proveedores = lazyWithRecovery(() => import('./pages/Proveedores'));
-const Licencia = lazyWithRecovery(() => import('./pages/Licencia'));
 const InformesPro = lazyWithRecovery(() => import('./pages/InformesPro'));
 const Pedidos = lazyWithRecovery(() => import('./pages/Pedidos'));
 const MenuDigital = lazyWithRecovery(() => import('./pages/MenuDigital'));
@@ -127,7 +126,7 @@ function App() {
                 <Route path="config/productos-compra" element={lazyElement(ProductosCompra)} />
                 <Route path="config/proveedores" element={lazyElement(Proveedores)} />
                 <Route path="config/pagos" element={lazyElement(ConfiguracionPagos)} />
-                <Route path="config/licencia" element={lazyElement(Licencia)} />
+                <Route path="config/licencia" element={<Navigate to="/config/seguridad" replace />} />
                 <Route path="config/mantenimiento" element={lazyElement(Maintenance)} />
                 <Route path="config/seguridad" element={lazyElement(Security)} />
                 <Route path="informes-pro" element={lazyElement(InformesPro)} />

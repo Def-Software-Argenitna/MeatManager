@@ -565,10 +565,7 @@ const InformesPro = () => {
         <div className="informes-pro-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div>
-                    <h1 className="page-title"><Crown size={24} color="gold" style={{ marginRight: '0.5rem' }} /> Informes de Rendimiento PRO</h1>
-                    <p className="page-description">Análisis profundo de rendes por proveedor y costos de despostada</p>
-                </div>
+                
                 <div style={{ display: 'flex', gap: '1rem' }}>
                     <select className="neo-input" style={{ width: 'auto' }} value={filterDays} onChange={e => setFilterDays(e.target.value)}>
                         <option value="7">Últimos 7 días</option>
@@ -920,7 +917,7 @@ const InformesPro = () => {
 
             <DirectionalReveal className="pro-grid" from="left" delay={0.22}>
                 {/* SUPPLIER RANKING CARD */}
-                <div className="neo-card ranking-card">
+                <div className="neo-card ranking-card" style={{ padding: '1.5rem' }}>
                     <div className="card-header">
                         <Users size={20} color="var(--color-primary)" />
                         <h3>Ranking de Proveedores (Mejor Rinde)</h3>
@@ -963,7 +960,7 @@ const InformesPro = () => {
                 </div>
 
                 {/* YIELD PERFORMANCE TREND */}
-                <div className="neo-card trend-card">
+                <div className="neo-card trend-card" style={{ padding: '1.5rem' }}>
                     <div className="card-header">
                         <Target size={20} color="var(--color-primary)" />
                         <h3>Objetivos de Rendimiento</h3>

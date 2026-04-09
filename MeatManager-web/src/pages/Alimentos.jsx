@@ -25,18 +25,99 @@ const Alimentos = () => {
     const [weight, setWeight] = useState('');
     const [unitType, setUnitType] = useState('unidades'); // 'unidades' o 'peso'
     const [preElaborados, setPreElaborados] = useState([]);
+    const [stockRows, setStockRows] = useState([]);
+    const [purchaseItems, setPurchaseItems] = useState([]);
+    const [recipeItems, setRecipeItems] = useState([]);
+    const [recipeDraft, setRecipeDraft] = useState({ stockKey: '', quantity: '' });
 
     const loadPreElaborados = React.useCallback(async () => {
-        const rows = await fetchTable('stock');
-        const filtered = (Array.isArray(rows) ? rows : [])
+        const [rows, purchaseRows] = await Promise.all([
+            fetchTable('stock'),
+            fetchTable('purchase_items'),
+        ]);
+        const stockList = Array.isArray(rows) ? rows : [];
+        const filtered = stockList
             .filter((item) => item.type === 'pre-elaborado')
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
         setPreElaborados(filtered);
+        setStockRows(stockList);
+        setPurchaseItems(Array.isArray(purchaseRows) ? purchaseRows : []);
     }, []);
 
     React.useEffect(() => {
         loadPreElaborados().catch((error) => console.error('Error cargando pre-elaborados:', error));
     }, [loadPreElaborados]);
+
+    const eligibleStockOptions = React.useMemo(() => {
+        const allowedByProductId = new Set(
+            purchaseItems
+                .filter((item) => Number(item.is_preelaborable || 0) === 1 && Number(item.product_id || 0) > 0)
+                .map((item) => Number(item.product_id))
+        );
+        const allowedByName = new Set(
+            purchaseItems
+                .filter((item) => Number(item.is_preelaborable || 0) === 1)
+                .map((item) => String(item.name || '').trim().toLowerCase())
+        );
+
+        const grouped = new Map();
+        stockRows.forEach((row) => {
+            if (row.type === 'pre-elaborado') return;
+            const matches =
+                (Number(row.product_id || 0) > 0 && allowedByProductId.has(Number(row.product_id))) ||
+                allowedByName.has(String(row.name || '').trim().toLowerCase());
+            if (!matches) return;
+
+            const key = `${row.product_id || 0}:${String(row.name || '').trim().toLowerCase()}:${row.unit || 'kg'}`;
+            const current = grouped.get(key) || {
+                key,
+                product_id: row.product_id || null,
+                name: row.name,
+                type: row.type,
+                unit: row.unit || 'kg',
+                quantity: 0,
+            };
+            current.quantity += Number(row.quantity || 0);
+            grouped.set(key, current);
+        });
+
+        return [...grouped.values()]
+            .filter((item) => item.quantity > 0)
+            .sort((a, b) => a.name.localeCompare(b.name));
+    }, [purchaseItems, stockRows]);
+
+    const selectedDraftItem = React.useMemo(
+        () => eligibleStockOptions.find((item) => item.key === recipeDraft.stockKey) || null,
+        [eligibleStockOptions, recipeDraft.stockKey]
+    );
+
+    const addRecipeItem = () => {
+        const selected = selectedDraftItem;
+        const qty = Number(recipeDraft.quantity || 0);
+        if (!selected || qty <= 0) return;
+
+        const alreadyUsed = recipeItems
+            .filter((item) => item.key === selected.key)
+            .reduce((acc, item) => acc + Number(item.quantity || 0), 0);
+        if ((alreadyUsed + qty) > Number(selected.quantity || 0)) {
+            alert('La cantidad supera el stock disponible para ese insumo.');
+            return;
+        }
+
+        setRecipeItems((prev) => [...prev, {
+            key: selected.key,
+            product_id: selected.product_id,
+            name: selected.name,
+            type: selected.type,
+            unit: selected.unit,
+            quantity: qty,
+        }]);
+        setRecipeDraft({ stockKey: '', quantity: '' });
+    };
+
+    const removeRecipeItem = (indexToRemove) => {
+        setRecipeItems((prev) => prev.filter((_, index) => index !== indexToRemove));
+    };
 
     const handleAddProduct = async () => {
         if (unitType === 'unidades' && (!quantity || quantity <= 0)) {
@@ -47,6 +128,10 @@ const Alimentos = () => {
             alert('Por favor ingrese el peso');
             return;
         }
+        if (recipeItems.length === 0) {
+            alert('Seleccioná al menos un producto de stock para armar el pre-elaborado.');
+            return;
+        }
 
         const productType = PRODUCT_TYPES.find(p => p.id === selectedProductType);
         const meatType = MEAT_TYPES.find(m => m.id === selectedMeatType);
@@ -54,19 +139,32 @@ const Alimentos = () => {
         const productName = `${productType.name} de ${meatType.name}`;
 
         try {
+            for (const item of recipeItems) {
+                await saveTableRecord('stock', 'insert', {
+                    product_id: item.product_id || null,
+                    name: item.name,
+                    type: item.type,
+                    quantity: -Math.abs(Number(item.quantity || 0)),
+                    unit: item.unit,
+                    updated_at: new Date().toISOString(),
+                    reference: `preelaborado:${productName}`.slice(0, 100),
+                });
+            }
+
             await saveTableRecord('stock', 'insert', {
                 name: productName,
                 type: 'pre-elaborado',
-                subtype: selectedProductType,
-                meat_type: selectedMeatType,
                 quantity: unitType === 'unidades' ? parseFloat(quantity) : parseFloat(weight),
                 unit: unitType === 'unidades' ? 'unidades' : 'kg',
                 updated_at: new Date().toISOString(),
+                reference: `preelaborado:${selectedProductType}:${selectedMeatType}`.slice(0, 100),
             });
 
             // Reset form
             setQuantity('');
             setWeight('');
+            setRecipeItems([]);
+            setRecipeDraft({ stockKey: '', quantity: '' });
             await loadPreElaborados();
 
             alert(`✅ ${productName} agregado correctamente`);
@@ -87,13 +185,7 @@ const Alimentos = () => {
         <div className="alimentos-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">
-                        <Package size={32} />
-                        Alimentos Pre-elaborados
-                    </h1>
-                    <p className="page-description">Carga de productos preparados (milanesas, hamburguesas, etc.)</p>
-                </div>
+                
             </header>
             </DirectionalReveal>
 
@@ -195,20 +287,54 @@ const Alimentos = () => {
                         )}
                     </div>
 
-                    {/* Preview del producto */}
-                    <div className="product-preview">
-                        <div className="preview-label">Vista previa:</div>
-                        <div className="preview-content">
-                            <span className="preview-icon">
-                                {PRODUCT_TYPES.find(p => p.id === selectedProductType)?.icon}
-                            </span>
-                            <span className="preview-name">
-                                {PRODUCT_TYPES.find(p => p.id === selectedProductType)?.name} de {MEAT_TYPES.find(m => m.id === selectedMeatType)?.name}
-                            </span>
-                            {(quantity || weight) && (
-                                <span className="preview-quantity">
-                                    {unitType === 'unidades' ? `${quantity} unidades` : `${weight} kg`}
-                                </span>
+                    <div className="form-section">
+                        <label className="form-label">Productos desde stock</label>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1.6fr 0.8fr auto', gap: '0.75rem', marginBottom: '0.9rem' }}>
+                            <select
+                                className="quantity-input"
+                                value={recipeDraft.stockKey}
+                                onChange={(e) => setRecipeDraft((prev) => ({ ...prev, stockKey: e.target.value }))}
+                            >
+                                <option value="">Seleccionar insumo habilitado...</option>
+                                {eligibleStockOptions.map((item) => (
+                                    <option key={item.key} value={item.key}>
+                                        {item.name} · {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
+                                    </option>
+                                ))}
+                            </select>
+                            <input
+                                type="number"
+                                className="quantity-input"
+                                placeholder="Cant."
+                                min="0"
+                                step={selectedDraftItem?.unit === 'kg' ? '0.001' : '1'}
+                                value={recipeDraft.quantity}
+                                onChange={(e) => setRecipeDraft((prev) => ({ ...prev, quantity: e.target.value }))}
+                            />
+                            <button type="button" className="action-btn" style={{ marginBottom: 0, paddingInline: '1rem' }} onClick={addRecipeItem}>
+                                <Plus size={18} />
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                            {recipeItems.length === 0 ? (
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+                                    Todavía no agregaste insumos para este pre-elaborado.
+                                </div>
+                            ) : (
+                                recipeItems.map((item, index) => (
+                                    <div key={`${item.key}-${index}`} className="product-item" style={{ padding: '0.85rem 1rem' }}>
+                                        <div className="product-item-info">
+                                            <div className="product-item-name">{item.name}</div>
+                                            <div className="product-item-meta">
+                                                <span>{Number(item.quantity).toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}</span>
+                                            </div>
+                                        </div>
+                                        <button className="delete-btn" type="button" onClick={() => removeRecipeItem(index)} title="Quitar insumo">
+                                            <Trash2 size={18} />
+                                        </button>
+                                    </div>
+                                ))
                             )}
                         </div>
                     </div>

@@ -101,7 +101,11 @@ export const promptPriceConflictResolution = ({ name, existingPrice, incomingPri
 };
 
 export const upsertLegacyPriceMirror = async ({ prices, name, category, price, plu, productId = null }) => {
-    const legacyRecord = findLegacyPriceRecord(prices, name, category);
+    const sortedPrices = Array.isArray(prices) ? [...prices].sort(sortByRecency) : [];
+    const legacyByProductRef = productId != null
+        ? sortedPrices.find((item) => Number(item?.product_ref_id) === Number(productId))
+        : null;
+    const legacyRecord = legacyByProductRef || findLegacyPriceRecord(sortedPrices, name, category);
     const payload = {
         product_id: buildLegacyPriceProductId(name, category),
         product_ref_id: productId,
@@ -115,8 +119,24 @@ export const upsertLegacyPriceMirror = async ({ prices, name, category, price, p
         return { ...legacyRecord, ...payload };
     }
 
-    const result = await saveTableRecord('prices', 'insert', payload);
-    return { id: result?.insertId, ...payload };
+    try {
+        const result = await saveTableRecord('prices', 'insert', payload);
+        return { id: result?.insertId, ...payload };
+    } catch (error) {
+        // Defensa extra para entornos donde ya existe la fila por product_ref_id.
+        const message = String(error?.message || '');
+        const isDuplicate = message.toLowerCase().includes('duplicate entry');
+        if (!isDuplicate || productId == null) throw error;
+
+        const refreshedRows = await fetchTable('prices', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' });
+        const existingByRef = (Array.isArray(refreshedRows) ? refreshedRows : [])
+            .find((item) => Number(item?.product_ref_id) === Number(productId));
+
+        if (!existingByRef?.id) throw error;
+
+        await saveTableRecord('prices', 'update', payload, existingByRef.id);
+        return { ...existingByRef, ...payload };
+    }
 };
 
 export const ensureUnifiedProduct = async ({
@@ -128,6 +148,7 @@ export const ensureUnifiedProduct = async ({
     price,
     plu,
     source,
+    categoryId = null,
     preferredProductId = null,
     resolveConflict = promptPriceConflictResolution,
 }) => {
@@ -157,9 +178,15 @@ export const ensureUnifiedProduct = async ({
         });
     }
 
+    const parsedCategoryId = Number(categoryId);
+    const resolvedCategoryId = Number.isFinite(parsedCategoryId) && parsedCategoryId > 0
+        ? parsedCategoryId
+        : (existingProduct?.category_id ?? null);
+
     const payload = {
         canonical_key: canonicalKey,
         name: trimmedName,
+        category_id: resolvedCategoryId,
         category: existingProduct?.category || trimmedCategory,
         unit: existingProduct?.unit || trimmedUnit,
         current_price: resolvedPrice > 0 ? resolvedPrice : null,

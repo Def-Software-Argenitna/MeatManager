@@ -80,9 +80,7 @@ const Categorias = () => {
                     <span style={{ fontWeight: level === 0 ? '700' : '400', fontSize: level === 0 ? '1rem' : '0.95rem' }}>
                         {node.name}
                     </span>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', background: 'var(--color-bg-main)', padding: '0.1rem 0.4rem', borderRadius: '4px' }}>
-                        ID: {node.id}
-                    </span>
+
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -108,10 +106,7 @@ const Categorias = () => {
     return (
         <div className="animate-fade-in">
             <header className="page-header">
-                <div className="page-header-main">
-                    <h1 className="page-title">Categorías</h1>
-                    <p className="page-description">Estructura de productos (Rubros y Sub-rubros)</p>
-                </div>
+                
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
                         <PlusIcon size={20} />
@@ -157,7 +152,7 @@ const Categorias = () => {
 
                             {newItem.parent_id && (
                                 <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                                    Pertenece a la categoría padre ID: {newItem.parent_id}
+                                    Pertenece a la categoría padre: <strong>{categories.find(c => c.id === newItem.parent_id)?.name || newItem.parent_id}</strong>
                                 </div>
                             )}
 

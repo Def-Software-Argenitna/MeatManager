@@ -78,7 +78,7 @@ const loadGoogleMapsApi = (apiKey) => {
         script.async = true;
         script.defer = true;
         script.dataset.meatmanagerGoogleMaps = 'true';
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=${GMAPS_LIBRARIES.join(',')}&loading=async&callback=${callbackName}`;
+        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=${GMAPS_LIBRARIES.join(',')}&callback=${callbackName}`;
         script.onerror = () => reject(new Error('No se pudo cargar el SDK de Google Maps.'));
         document.head.appendChild(script);
     }).catch((error) => {
@@ -129,6 +129,10 @@ const formatOrderPopup = (order) => `
     </div>
 `;
 
+const EXPAND_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"></polyline><polyline points="9 21 3 21 3 15"></polyline><line x1="21" y1="3" x2="14" y2="10"></line><line x1="3" y1="21" x2="10" y2="14"></line></svg>`;
+
+const COLLAPSE_ICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 14 10 14 10 20"></polyline><polyline points="20 10 14 10 14 4"></polyline><line x1="10" y1="14" x2="3" y2="21"></line><line x1="21" y1="3" x2="14" y2="10"></line></svg>`;
+
 const GoogleLogisticsMap = ({
     center,
     zoom,
@@ -138,6 +142,7 @@ const GoogleLogisticsMap = ({
     formatDriverLastSeen,
     onDriverSelect,
     onOrderSelect,
+    onExpand,
     className = '',
 }) => {
     const containerRef = useRef(null);
@@ -145,6 +150,8 @@ const GoogleLogisticsMap = ({
     const infoWindowRef = useRef(null);
     const markersRef = useRef([]);
     const pendingInfoWindowRef = useRef(null);
+    const expandBtnRef = useRef(null);
+    const onExpandRef = useRef(onExpand);
     const onDriverSelectRef = useRef(onDriverSelect);
     const onOrderSelectRef = useRef(onOrderSelect);
     const getOrderCoordinatesRef = useRef(getOrderCoordinates);
@@ -152,6 +159,10 @@ const GoogleLogisticsMap = ({
     const [mapError, setMapError] = useState('');
     const [isReady, setIsReady] = useState(false);
     const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+
+    useEffect(() => {
+        onExpandRef.current = onExpand;
+    }, [onExpand]);
 
     useEffect(() => {
         onDriverSelectRef.current = onDriverSelect;
@@ -188,6 +199,42 @@ const GoogleLogisticsMap = ({
                     ...GMAPS_OPTIONS,
                 });
                 infoWindowRef.current = new maps.InfoWindow();
+
+                if (onExpandRef.current) {
+                    const btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.title = 'Expandir mapa';
+                    btn.innerHTML = EXPAND_ICON_SVG;
+                    btn.style.cssText = [
+                        'background:rgba(20,20,20,0.92)',
+                        'border:1px solid rgba(255,255,255,0.4)',
+                        'border-radius:8px',
+                        'width:38px',
+                        'height:38px',
+                        'display:flex',
+                        'align-items:center',
+                        'justify-content:center',
+                        'cursor:pointer',
+                        'margin:8px',
+                        'padding:0',
+                        'box-shadow:0 2px 10px rgba(0,0,0,0.5)',
+                        'backdrop-filter:blur(8px)',
+                    ].join(';');
+                    btn.addEventListener('mouseenter', () => {
+                        btn.style.background = '#f97316';
+                        btn.style.borderColor = '#f97316';
+                    });
+                    btn.addEventListener('mouseleave', () => {
+                        btn.style.background = 'rgba(20,20,20,0.92)';
+                        btn.style.borderColor = 'rgba(255,255,255,0.4)';
+                    });
+                    btn.addEventListener('click', () => {
+                        if (onExpandRef.current) onExpandRef.current();
+                    });
+                    expandBtnRef.current = btn;
+                    mapRef.current.controls[maps.ControlPosition.TOP_RIGHT].push(btn);
+                }
+
                 setIsReady(true);
             } catch (error) {
                 if (cancelled) return;
