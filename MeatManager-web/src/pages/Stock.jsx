@@ -5,6 +5,7 @@ import { scaleService, SCALE_PROTOCOLS } from '../utils/SerialScaleService';
 import { desktopApi } from '../utils/desktopApi';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import './Stock.css';
 
 const Stock = () => {
@@ -15,7 +16,7 @@ const Stock = () => {
     const [diagLogs, setDiagLogs] = useState([]);
     const [showDiag, setShowDiag] = useState(false);
     const [qendraAvailable, setQendraAvailable] = useState(false);
-    const [prices, setPrices] = useState([]);
+    const [products, setProducts] = useState([]);
     const [editingPriceId, setEditingPriceId] = useState('');
     const [editingPriceValue, setEditingPriceValue] = useState('');
     const [allStock, setAllStock] = useState([]);
@@ -25,12 +26,12 @@ const Stock = () => {
     }, []);
 
     const loadStockAndPrices = async () => {
-        const [stockRows, priceRows] = await Promise.all([
+        const [stockRows, productRows] = await Promise.all([
             fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
-            fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+            fetchProductsSafe(),
         ]);
         setAllStock(Array.isArray(stockRows) ? stockRows : []);
-        setPrices(Array.isArray(priceRows) ? priceRows : []);
+        setProducts(Array.isArray(productRows) ? productRows : []);
     };
 
     useEffect(() => {
@@ -38,19 +39,30 @@ const Stock = () => {
 
         const loadPrices = async () => {
             try {
-                const [stockRows, priceRows] = await Promise.all([
+                const [stockRows, productRows] = await Promise.all([
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
-                    fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                    fetchProductsSafe(),
                 ]);
+                await syncLegacyProductsToCatalog({
+                    products: productRows,
+                    stockRows,
+                    prices: [],
+                });
+                const syncedProducts = await fetchProductsSafe();
+                await reconcileLegacyProductConflicts({
+                    products: syncedProducts,
+                    prices: [],
+                });
+                const refreshedProducts = await fetchProductsSafe();
                 if (!cancelled) {
                     setAllStock(Array.isArray(stockRows) ? stockRows : []);
-                    setPrices(Array.isArray(priceRows) ? priceRows : []);
+                    setProducts(Array.isArray(refreshedProducts) ? refreshedProducts : []);
                 }
             } catch (error) {
                 console.error('[STOCK] No se pudieron cargar stock/precios desde la API', error);
                 if (!cancelled) {
                     setAllStock([]);
-                    setPrices([]);
+                    setProducts([]);
                 }
             }
         };
@@ -78,13 +90,20 @@ const Stock = () => {
 
         const grouped = {};
         allStock.forEach((item) => {
-            const key = `${item.name}__${item.type}__${item.unit || 'kg'}`;
+            const matchedProduct = findProductByIdentity(products, {
+                id: item.product_id,
+                name: item.name,
+            });
+            const key = matchedProduct?.id
+                ? `product:${matchedProduct.id}`
+                : `${normalizeProductKey(item.name)}__${item.unit || 'kg'}`;
             if (!grouped[key]) {
                 grouped[key] = {
                     id: key,
-                    name: item.name,
-                    type: item.type,
-                    unit: item.unit || 'kg',
+                    product_ref_id: matchedProduct?.id || null,
+                    name: matchedProduct?.name || item.name,
+                    type: matchedProduct?.category || item.type,
+                    unit: matchedProduct?.unit || item.unit || 'kg',
                     quantity: 0,
                     updated_at: item.updated_at
                 };
@@ -100,27 +119,20 @@ const Stock = () => {
         return Object.values(grouped)
             .filter((item) => Math.abs(item.quantity) > 0.0001)
             .map((item) => {
-                const normalizedName = String(item.name || '').trim().toLowerCase().replace(/\s+/g, '_');
-                const normalizedType = String(item.type || '').trim().toLowerCase().replace(/\s+/g, '_');
-                const productId = `${normalizedName}-${normalizedType}`;
-                const priceMatch = (prices || []).find((price) => {
-                    const rawProductId = String(price.product_id || '').trim().toLowerCase();
-                    return (
-                        rawProductId === productId ||
-                        rawProductId === normalizedName ||
-                        rawProductId.startsWith(`${normalizedName}-`)
-                    );
+                const matchedProduct = findProductByIdentity(products, {
+                    id: item.product_ref_id,
+                    name: item.name,
                 });
                 return {
                     ...item,
-                    product_id: productId,
-                    price_record_id: priceMatch?.id || null,
-                    price: Number(priceMatch?.price) || 0,
-                    plu: priceMatch?.plu || '',
+                    product_id: matchedProduct?.id || item.product_ref_id || null,
+                    price_record_id: matchedProduct?.id || null,
+                    price: getProductCurrentPrice(matchedProduct),
+                    plu: matchedProduct?.plu || '',
                 };
             })
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
-    }, [allStock, prices]);
+    }, [allStock, products]);
 
     // Filtrar stock consolidado
     const filteredStock = consolidatedStock.filter(item => {
@@ -186,6 +198,7 @@ const Stock = () => {
         const finalQty = adjustment.type === 'add' ? qty : -qty;
 
         await saveTableRecord('stock', 'insert', {
+            product_id: product.productId || null,
             name: product.name,
             type: product.category,
             quantity: finalQty,
@@ -267,34 +280,27 @@ const Stock = () => {
             let createdCount = 0;
 
             for (const art of articles) {
-                const productId = art.name.toLowerCase().replace(/ /g, '_') + '-vaca';
                 const validPrice = typeof art.price === 'number' && !isNaN(art.price) && art.price > 0;
-
-                // Update or create price — only if price is valid
-                if (validPrice) {
-                    const existingPrice = prices.find((price) => String(price.plu || '') === String(art.plu || ''));
-                    if (existingPrice) {
-                        await saveTableRecord('prices', 'update', {
-                            ...existingPrice,
-                            price: art.price,
-                            updated_at: new Date().toISOString()
-                        }, existingPrice.id);
-                        updatedCount++;
-                    } else {
-                        await saveTableRecord('prices', 'insert', {
-                            product_id: productId,
-                            price: art.price,
-                            plu: art.plu,
-                            updated_at: new Date().toISOString()
-                        });
-                        createdCount++;
-                    }
-                }
+                const unifiedProduct = await ensureUnifiedProduct({
+                    products,
+                    prices: [],
+                    name: art.name,
+                    category: 'vaca',
+                    unit: art.unit || 'kg',
+                    price: validPrice ? art.price : null,
+                    plu: art.plu,
+                    source: 'importacion_balanza',
+                });
+                if (validPrice) updatedCount++;
 
                 // Ensure product exists in stock tracker
-                const inStock = allStock.find((item) => String(item.name || '').trim().toLowerCase() === String(art.name || '').trim().toLowerCase());
+                const inStock = allStock.find((item) => (
+                    Number(item.product_id || 0) === Number(unifiedProduct?.id || 0)
+                    || String(item.name || '').trim().toLowerCase() === String(art.name || '').trim().toLowerCase()
+                ));
                 if (!inStock) {
                     await saveTableRecord('stock', 'insert', {
+                        product_id: unifiedProduct?.id || null,
                         name: art.name,
                         type: 'vaca',
                         quantity: 0,
@@ -302,6 +308,7 @@ const Stock = () => {
                         updated_at: new Date().toISOString(),
                         reference: 'importacion_balanza'
                     });
+                    createdCount++;
                 }
             }
 
@@ -325,6 +332,7 @@ const Stock = () => {
     const productsForAdjustment = React.useMemo(() => {
         return consolidatedStock.map((item) => ({
             id: item.id,
+            productId: item.product_id,
             name: item.name,
             category: item.type,
             unit: item.unit
@@ -348,19 +356,18 @@ const Stock = () => {
             return;
         }
 
-        const payload = {
-            product_id: item.product_id,
-            price: numericPrice,
-            plu: item.plu || null,
-            updated_at: new Date().toISOString(),
-        };
-
         try {
-            if (item.price_record_id) {
-                await saveTableRecord('prices', 'update', payload, item.price_record_id);
-            } else {
-                await saveTableRecord('prices', 'insert', payload);
-            }
+            await ensureUnifiedProduct({
+                products,
+                prices: [],
+                preferredProductId: item.product_id,
+                name: item.name,
+                category: item.type,
+                unit: item.unit,
+                price: numericPrice,
+                plu: item.plu,
+                source: 'stock_manual',
+            });
 
             await loadStockAndPrices();
             cancelPriceEdit();
@@ -486,32 +493,30 @@ const Stock = () => {
 
             // Update or create price — solo si precio es un número válido > 0
             const validPrecio = typeof precio === 'number' && !isNaN(precio) && precio > 0;
+            const unifiedProduct = await ensureUnifiedProduct({
+                products,
+                prices: [],
+                name: nombre,
+                category: tipo,
+                unit: esKg ? 'kg' : 'unidades',
+                price: validPrecio ? precio : null,
+                plu,
+                source: 'qendra',
+            });
             if (plu && validPrecio) {
-                const existing = prices.find((price) => String(price.plu || '') === String(plu || ''));
-                if (existing) {
-                    await saveTableRecord('prices', 'update', {
-                        ...existing,
-                        price: precio,
-                        updated_at: new Date().toISOString(),
-                    }, existing.id);
-                    updated++;
-                } else {
-                    await saveTableRecord('prices', 'insert', {
-                        product_id: nombre.toLowerCase().replace(/ /g,'_'),
-                        price: precio,
-                        plu,
-                        updated_at: new Date().toISOString(),
-                    });
-                    created++;
-                }
+                updated++;
             } else if (plu && !validPrecio) {
                 skipped++;
             }
 
             // Ensure product exists in stock
-            const inStock = allStock.find((item) => String(item.name || '').trim().toLowerCase() === String(nombre || '').trim().toLowerCase());
+            const inStock = allStock.find((item) => (
+                Number(item.product_id || 0) === Number(unifiedProduct?.id || 0)
+                || String(item.name || '').trim().toLowerCase() === String(nombre || '').trim().toLowerCase()
+            ));
             if (!inStock) {
                 await saveTableRecord('stock', 'insert', {
+                    product_id: unifiedProduct?.id || null,
                     name: nombre, type: tipo, quantity: 0,
                     unit: esKg ? 'kg' : 'unidades',
                     updated_at: new Date().toISOString(), reference: 'qendra'

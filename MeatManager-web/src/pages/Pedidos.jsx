@@ -6,6 +6,8 @@ import { BRAND_CONFIG } from '../brandConfig';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
+import { buildProductId, normalizeProductKey } from '../utils/productMatching';
+import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -36,7 +38,6 @@ const qtyStep = (unit) => (unit === 'kg' ? '0.001' : '1');
 const qtySuffix = (unit) => (unit === 'kg' ? 'kg' : 'un');
 const qtyLabel = (unit) => (unit === 'kg' ? 'Kilos' : 'Cantidad');
 const cleanValue = (value) => String(value || '').trim();
-const normalizeProductKey = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, '_');
 const isCompanyClient = (client) => cleanValue(client?.client_type) === 'company';
 const getClientContactName = (client) => [cleanValue(client?.contact_first_name), cleanValue(client?.contact_last_name)].filter(Boolean).join(' ');
 const toNumber = (value) => {
@@ -73,7 +74,7 @@ const Pedidos = () => {
     const [loadingSuggestions, setLoadingSuggestions] = useState(false);
     const [selectedSuggestion, setSelectedSuggestion] = useState(null);
     const [clients, setClients] = useState([]);
-    const [prices, setPrices] = useState([]);
+    const [products, setProducts] = useState([]);
     const [pedidos, setPedidos] = useState([]);
     const [stockRows, setStockRows] = useState([]);
 
@@ -88,15 +89,15 @@ const Pedidos = () => {
 
         const loadRemoteData = async () => {
             try {
-                const [clientRows, priceRows, orderRows, stockTableRows] = await Promise.all([
+                const [clientRows, productRows, orderRows, stockTableRows] = await Promise.all([
                     fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
-                    fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                    fetchProductsSafe(),
                     fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
                 ]);
                 if (!cancelled) {
                     setClients(Array.isArray(clientRows) ? clientRows : []);
-                    setPrices(Array.isArray(priceRows) ? priceRows : []);
+                    setProducts(Array.isArray(productRows) ? productRows : []);
                     setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
                     setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
                 }
@@ -104,7 +105,7 @@ const Pedidos = () => {
                 console.error('[PEDIDOS] No se pudieron cargar datos desde la API', error);
                 if (!cancelled) {
                     setClients([]);
-                    setPrices([]);
+                    setProducts([]);
                     setPedidos([]);
                     setStockRows([]);
                 }
@@ -118,14 +119,14 @@ const Pedidos = () => {
     }, []);
 
     const refreshPedidosData = async () => {
-        const [orderRows, stockTableRows, priceRows] = await Promise.all([
+        const [orderRows, stockTableRows, productRows] = await Promise.all([
             fetchTable('pedidos', { limit: 1000, orderBy: 'created_at', direction: 'DESC' }),
             fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
-            fetchTable('prices', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+            fetchProductsSafe(),
         ]);
         setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
         setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
-        setPrices(Array.isArray(priceRows) ? priceRows : []);
+        setProducts(Array.isArray(productRows) ? productRows : []);
     };
 
     const clientOptions = useMemo(() => (
@@ -158,21 +159,13 @@ const Pedidos = () => {
         return Array.from(grouped.values())
             .filter((item) => item.quantity > 0.0001)
             .map((item) => {
-                const normalizedName = normalizeProductKey(item.name);
                 const normalizedType = slugify(item.type);
-                const productId = `${normalizedName}-${normalizedType}`;
-                const priceMatch = (prices || []).find((price) => {
-                    const rawProductId = normalizeProductKey(price.product_id);
-                    return (
-                        rawProductId === productId ||
-                        rawProductId === normalizedName ||
-                        rawProductId.startsWith(`${normalizedName}-`)
-                    );
-                });
-                return { ...item, productId, price: Number(priceMatch?.price) || 0 };
+                const productId = buildProductId(item.name, normalizedType);
+                const matchedProduct = findProductByIdentity(products, { name: item.name });
+                return { ...item, productId, price: Number(matchedProduct?.current_price) || 0 };
             })
             .sort((a, b) => a.name.localeCompare(b.name));
-    }, [stockRows, prices]);
+    }, [stockRows, products]);
 
     const selectedStockItem = useMemo(() => stockOptions.find((item) => item.key === itemDraft.stockKey) || null, [stockOptions, itemDraft.stockKey]);
     const selectedClient = useMemo(() => clientOptions.find((client) => String(client.id) === String(newPedido.customer_id)) || null, [clientOptions, newPedido.customer_id]);

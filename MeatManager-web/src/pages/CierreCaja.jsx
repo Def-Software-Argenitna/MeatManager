@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import {
     Save,
@@ -10,8 +10,7 @@ import {
     AlertCircle,
     Wallet,
 } from 'lucide-react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db';
+import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './CierreCaja.css';
@@ -100,13 +99,58 @@ const CierreCaja = () => {
     const [openingDraft, setOpeningDraft] = useState({});
     const [feedback, setFeedback] = useState(null);
 
+    const [allSales, setAllSales] = useState([]);
+    const [allMovements, setAllMovements] = useState([]);
+    const [paymentMethods, setPaymentMethods] = useState(null);
+    const [loading, setLoading] = useState(false);
+
+    const loadData = useCallback(async () => {
+        setLoading(true);
+        try {
+            const [salesRows, movRows, pmRows] = await Promise.all([
+                fetchTable('ventas', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+                fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+                fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+            ]);
+            setAllSales(Array.isArray(salesRows) ? salesRows : []);
+            setAllMovements(Array.isArray(movRows) ? movRows : []);
+            setPaymentMethods(Array.isArray(pmRows) ? pmRows : []);
+        } catch (err) {
+            console.error('[CierreCaja] loadData error', err);
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => { loadData(); }, [loadData]);
+
     const { start, end } = useMemo(() => getDayBounds(selectedDate), [selectedDate]);
 
-    const sales = useLiveQuery(() => db.ventas.where('date').between(start, end).toArray(), [start, end]);
-    const allSalesUntilDate = useLiveQuery(() => db.ventas.where('date').belowOrEqual(end).toArray(), [end]);
-    const movements = useLiveQuery(() => db.caja_movimientos.where('date').between(start, end).toArray(), [start, end]);
-    const allMovementsUntilDate = useLiveQuery(() => db.caja_movimientos.where('date').belowOrEqual(end).toArray(), [end]);
-    const paymentMethods = useLiveQuery(() => db.payment_methods.toArray(), []);
+    const parseDate = (val) => {
+        if (!val) return null;
+        const d = new Date(val);
+        return Number.isFinite(d.getTime()) ? d : null;
+    };
+
+    const sales = useMemo(() => allSales.filter((s) => {
+        const d = parseDate(s.date);
+        return d && d >= start && d <= end;
+    }), [allSales, start, end]);
+
+    const allSalesUntilDate = useMemo(() => allSales.filter((s) => {
+        const d = parseDate(s.date);
+        return d && d <= end;
+    }), [allSales, end]);
+
+    const movements = useMemo(() => allMovements.filter((m) => {
+        const d = parseDate(m.date);
+        return d && d >= start && d <= end;
+    }), [allMovements, start, end]);
+
+    const allMovementsUntilDate = useMemo(() => allMovements.filter((m) => {
+        const d = parseDate(m.date);
+        return d && d <= end;
+    }), [allMovements, end]);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -265,18 +309,20 @@ const CierreCaja = () => {
             return;
         }
 
-        const openingDate = new Date(`${selectedDate}T08:00:00`);
-        await db.caja_movimientos.bulkAdd(rows.map(({ method, amount }) => ({
-            type: 'apertura',
-            amount,
-            category: 'Apertura de caja',
-            description: `Apertura inicial ${method.name}`,
-            payment_method: method.name,
-            payment_method_type: method.type,
-            date: openingDate,
-            synced: 0,
-        })));
+        const openingDate = new Date(`${selectedDate}T08:00:00`).toISOString();
+        for (const { method, amount } of rows) {
+            await saveTableRecord('caja_movimientos', 'insert', {
+                type: 'apertura',
+                amount,
+                category: 'Apertura de caja',
+                description: `Apertura inicial ${method.name}`,
+                payment_method: method.name,
+                payment_method_type: method.type,
+                date: openingDate,
+            });
+        }
 
+        await loadData();
         setFeedback({ type: 'success', text: 'Apertura de caja registrada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft({});
@@ -289,17 +335,17 @@ const CierreCaja = () => {
             return;
         }
 
-        await db.caja_movimientos.add({
+        await saveTableRecord('caja_movimientos', 'insert', {
             type: movementType,
             amount: parseFloat(movementAmount),
             category: movementCategory,
             description: movementDesc,
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
-            date: new Date(),
-            synced: 0,
+            date: new Date().toISOString(),
         });
 
+        await loadData();
         setMovementAmount('');
         setMovementDesc('');
         setShowMovementForm(false);
@@ -307,7 +353,8 @@ const CierreCaja = () => {
     };
 
     const handleDeleteMovement = async (movementId) => {
-        await db.caja_movimientos.delete(movementId);
+        await saveTableRecord('caja_movimientos', 'delete', null, movementId);
+        await loadData();
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
     };
 

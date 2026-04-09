@@ -25,20 +25,17 @@ const InformesPro = () => {
     const [logs, setLogs] = useState([]);
     const [animalLots, setAnimalLots] = useState([]);
     const [compras, setCompras] = useState([]);
-    const [prices, setPrices] = useState([]);
 
     React.useEffect(() => {
         const loadReportData = async () => {
-            const [logsRows, lotRows, comprasRows, pricesRows] = await Promise.all([
+            const [logsRows, lotRows, comprasRows] = await Promise.all([
                 fetchTable('despostada_logs', { orderBy: 'date', direction: 'desc' }),
                 fetchTable('animal_lots'),
                 fetchTable('compras'),
-                fetchTable('prices'),
             ]);
             setLogs(Array.isArray(logsRows) ? logsRows : []);
             setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
             setCompras(Array.isArray(comprasRows) ? comprasRows : []);
-            setPrices(Array.isArray(pricesRows) ? pricesRows : []);
         };
 
         loadReportData().catch((error) => console.error('Error cargando informes PRO:', error));

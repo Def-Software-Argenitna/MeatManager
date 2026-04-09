@@ -1,10 +1,13 @@
-import Dexie from 'dexie';
-
 const isElectronAvailable = () => Boolean(window.electronAPI);
 
 async function browserNukeIndexedDb() {
     try {
-        await Dexie.delete('CarniceriaDB');
+        await new Promise((resolve, reject) => {
+            const req = indexedDB.deleteDatabase('CarniceriaDB');
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+            req.onblocked = () => resolve(); // igualmente continuar
+        });
         if (window?.localStorage) window.localStorage.clear();
         if (window?.sessionStorage) window.sessionStorage.clear();
         return { ok: true };
