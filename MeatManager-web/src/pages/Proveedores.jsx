@@ -4,6 +4,8 @@ import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
+
 const Proveedores = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -133,16 +135,16 @@ const Proveedores = () => {
     }, [paymentMethods]);
 
     const getSupplierLedger = React.useCallback((supplierName) => {
-        const supplierKey = String(supplierName || '').trim().toLowerCase();
+        const supplierKey = normalizeText(supplierName);
         const comprasProveedor = (compras || []).filter((c) => {
-            const isSupplier = String(c.supplier || '').trim().toLowerCase() === supplierKey;
-            const isAccount = Boolean(c.is_account) || ['cta_cte', 'cuenta corriente'].includes(String(c.payment_method || '').trim().toLowerCase());
+            const isSupplier = normalizeText(c.supplier) === supplierKey;
+            const isAccount = Boolean(c.is_account) || ['cta_cte', 'cuenta corriente'].includes(normalizeText(c.payment_method));
             return isSupplier && isAccount;
         });
 
         const pagosProveedor = (pagos || []).filter((p) => {
-            const bySupplierColumn = String(p.supplier || '').trim().toLowerCase() === supplierKey;
-            const byDescription = String(p.description || '').trim().toLowerCase().includes(supplierKey);
+            const bySupplierColumn = normalizeText(p.supplier) === supplierKey;
+            const byDescription = normalizeText(p.description).includes(supplierKey);
             return bySupplierColumn || byDescription;
         });
 
@@ -196,12 +198,17 @@ const Proveedores = () => {
             return;
         }
         const selectedMethod = activePaymentMethods.find((m) => m.name === paymentForm.payment_method) || activePaymentMethods[0];
+        const supplierName = String(paymentSupplier.name || '').trim();
+        const userDescription = String(paymentForm.description || '').trim();
+        const description = userDescription
+            ? `[PROVEEDOR:${supplierName}] ${userDescription}`
+            : `Pago a proveedor ${supplierName}`;
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'egreso',
             amount,
             category: 'Pago Proveedor',
-            description: paymentForm.description?.trim() || `Pago a proveedor ${paymentSupplier.name}`,
-            supplier: paymentSupplier.name,
+            description,
+            supplier: supplierName,
             payment_method: selectedMethod?.name || 'Efectivo',
             payment_method_type: selectedMethod?.type || 'cash',
             date: new Date(`${paymentForm.date}T12:00:00`).toISOString(),
@@ -240,11 +247,12 @@ const Proveedores = () => {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '1.5rem' }}>
                 {filteredSuppliers?.map(s => {
                     // Calcular saldo de cuenta corriente
-                    const comprasProveedor = compras?.filter(c => c.supplier === s.name && (c.is_account || ['cta_cte', 'Cuenta Corriente'].includes(String(c.payment_method || '').trim()))) || [];
+                    const supplierKey = normalizeText(s.name);
+                    const comprasProveedor = compras?.filter(c => normalizeText(c.supplier) === supplierKey && (c.is_account || ['cta_cte', 'cuenta corriente'].includes(normalizeText(c.payment_method)))) || [];
                     const totalDebe = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
                     const pagosProveedor = pagos?.filter(p => {
-                        const bySupplier = p.supplier === s.name;
-                        const byDescription = String(p.description || '').toLowerCase().includes(String(s.name || '').toLowerCase());
+                        const bySupplier = normalizeText(p.supplier) === supplierKey;
+                        const byDescription = normalizeText(p.description).includes(supplierKey);
                         return bySupplier || byDescription;
                     }) || [];
                     const totalHaber = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
