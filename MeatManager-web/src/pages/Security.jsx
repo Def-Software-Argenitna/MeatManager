@@ -93,6 +93,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
         };
     });
     const [loading, setLoading] = useState(false);
+    const [submitFeedback, setSubmitFeedback] = useState(null);
     const availablePerUserLicenses = licensePool.filter((assignment) => (
         String(assignment?.license?.billingScope || '').trim() === 'per_user'
     ));
@@ -123,6 +124,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
     const handleSubmit = async (e) => {
         e.preventDefault();
+        setSubmitFeedback(null);
         if (!form.username.trim()) return toast('error', 'El nombre de usuario es requerido');
         if (!form.email.trim()) return toast('error', 'El email es requerido');
         if (!/\S+@\S+\.\S+/.test(form.email.trim())) return toast('error', 'Ingresá un email válido');
@@ -172,12 +174,18 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                 userId = result.insertId;
             }
             await replacePermissions(userId, normalizedPerms);
+            await onSaved();
 
-            toast('success', user ? 'Usuario actualizado' : 'Usuario creado');
-            onSaved();
-            onClose();
+            const successText = user
+                ? `Usuario "${form.username.trim()}" actualizado correctamente`
+                : `Usuario "${form.username.trim()}" creado correctamente`;
+            setSubmitFeedback({ type: 'success', text: successText });
+            toast('success', successText);
+            setTimeout(() => onClose(), 300);
         } catch (err) {
-            toast('error', 'Error al guardar: ' + err.message);
+            const errorText = 'Error al guardar: ' + err.message;
+            setSubmitFeedback({ type: 'error', text: errorText });
+            toast('error', errorText);
         } finally {
             setLoading(false);
         }
@@ -432,6 +440,27 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             )}
                         </div>
                     </div>
+
+                    {submitFeedback && (
+                        <div
+                            style={{
+                                marginBottom: '0.8rem',
+                                padding: '0.75rem 0.9rem',
+                                borderRadius: '10px',
+                                border: submitFeedback.type === 'success'
+                                    ? '1px solid rgba(34,197,94,0.35)'
+                                    : '1px solid rgba(239,68,68,0.35)',
+                                background: submitFeedback.type === 'success'
+                                    ? 'rgba(34,197,94,0.12)'
+                                    : 'rgba(239,68,68,0.12)',
+                                color: submitFeedback.type === 'success' ? '#4ade80' : '#f87171',
+                                fontSize: '0.86rem',
+                                fontWeight: 600,
+                            }}
+                        >
+                            {submitFeedback.text}
+                        </div>
+                    )}
 
                     <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
                         <button type="button" onClick={onClose} className="btn-security secondary">Cancelar</button>
