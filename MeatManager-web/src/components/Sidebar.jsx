@@ -161,7 +161,11 @@ const Sidebar = ({ isCollapsed }) => {
         className={`nav-item ${isActive(item.path) ? 'active' : ''} ${isLocked ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
         onClick={() => {
           if (isLocked) {
-            navigate('/config/licencia');
+            if (isEffectiveAdmin) {
+              navigate(item.path);
+            } else {
+              navigate('/config/licencia');
+            }
           } else {
             navigate(item.path);
           }
