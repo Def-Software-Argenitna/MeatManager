@@ -4734,7 +4734,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                 try {
                     await pool.query(
                         `UPDATE purchase_items
-                         SET last_price = ?, usage = ?, default_iva_rate = ?
+                         SET last_price = ?, \`usage\` = ?, default_iva_rate = ?
                          WHERE tenant_id = ? AND id = ?`,
                         [parseFloat(cu.last_price), cu.usage || 'venta',
                          parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id]
@@ -4928,7 +4928,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, branch_id, product_id, name, type, usage, quantity, unit, reference)
+                 (tenant_id, branch_id, product_id, name, type, \`usage\`, quantity, unit, reference)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
@@ -5045,7 +5045,7 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                 if (prod) productId = prod.id;
             }
             await conn.query(
-                `INSERT INTO stock (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                `INSERT INTO stock (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
@@ -6149,7 +6149,7 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
 
                 await conn.query(
                     `INSERT INTO stock
-                     (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
@@ -6165,7 +6165,7 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
 
                 await conn.query(
                     `INSERT INTO stock
-                     (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
