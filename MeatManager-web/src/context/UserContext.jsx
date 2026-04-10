@@ -72,8 +72,6 @@ const isSuperUserLicense = (license) => {
 
 const hasSuperUserLicense = (licenses, options = {}) => {
     const list = Array.isArray(licenses) ? licenses : [];
-    if (options.role === 'admin') return true;
-
     const currentUserId = String(options.currentUserId || '');
     const isOwnerFallback = Boolean(options.isOwnerFallback);
 

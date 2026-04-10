@@ -537,7 +537,6 @@ function isBaseWebappLicense(license) {
         Number(license?.isMandatory) === 1
         || normalizeLicenseToken(license?.internalCode) === 'base_mm'
         || normalizeLicenseToken(license?.category) === 'base_webapp'
-        || isSuperLicenseMatch(license)
     );
 }
 
@@ -2393,10 +2392,6 @@ function buildAccessResponse(accessContext) {
 function buildScopedLicensesForUser(user, licenseRows = []) {
     const licenseMatchesScope = (license) => {
         if (user?.isOwnerFallback) {
-            return true;
-        }
-
-        if (user?.role === 'admin') {
             return true;
         }
 
