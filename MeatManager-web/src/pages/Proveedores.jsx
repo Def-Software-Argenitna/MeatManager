@@ -152,7 +152,7 @@ const Proveedores = () => {
             ...comprasProveedor.map((c) => ({
                 id: `compra-${c.id}`,
                 date: c.date,
-                kind: 'debe',
+                kind: 'haber',
                 concept: `Compra ${c.invoice_num ? `#${c.invoice_num}` : ''}`.trim(),
                 amount: Number(c.total || 0),
                 payment_method: c.payment_method || 'Cuenta Corriente',
@@ -160,7 +160,7 @@ const Proveedores = () => {
             ...pagosProveedor.map((p) => ({
                 id: `pago-${p.id}`,
                 date: p.date,
-                kind: 'haber',
+                kind: 'debe',
                 concept: p.description || 'Pago a proveedor',
                 amount: Number(p.amount || 0),
                 payment_method: p.payment_method || 'Sin definir',
@@ -169,7 +169,7 @@ const Proveedores = () => {
 
         let running = 0;
         return ledgerRows.map((row) => {
-            running += row.kind === 'debe' ? row.amount : -row.amount;
+            running += row.kind === 'haber' ? row.amount : -row.amount;
             return { ...row, balance: running };
         });
     }, [compras, pagos]);
@@ -249,14 +249,14 @@ const Proveedores = () => {
                     // Calcular saldo de cuenta corriente
                     const supplierKey = normalizeText(s.name);
                     const comprasProveedor = compras?.filter(c => normalizeText(c.supplier) === supplierKey && (c.is_account || ['cta_cte', 'cuenta corriente'].includes(normalizeText(c.payment_method)))) || [];
-                    const totalDebe = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
+                    const totalHaber = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
                     const pagosProveedor = pagos?.filter(p => {
                         const bySupplier = normalizeText(p.supplier) === supplierKey;
                         const byDescription = normalizeText(p.description).includes(supplierKey);
                         return bySupplier || byDescription;
                     }) || [];
-                    const totalHaber = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-                    const saldo = totalDebe - totalHaber;
+                    const totalDebe = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+                    const saldo = totalHaber - totalDebe;
                     return (
                     <div key={s.id} className="neo-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
