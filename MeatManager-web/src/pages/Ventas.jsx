@@ -1607,11 +1607,25 @@ const Ventas = () => {
         showToast('✅ Ticket eliminado y registrado en historial.', 'success');
     };
 
+    const todayRecentSales = React.useMemo(() => {
+        if (!Array.isArray(recentSales)) return [];
+        const today = new Date();
+        return recentSales.filter((sale) => {
+            if (!sale?.date) return false;
+            const saleDate = new Date(sale.date);
+            if (Number.isNaN(saleDate.getTime())) return false;
+            return (
+                saleDate.getFullYear() === today.getFullYear() &&
+                saleDate.getMonth() === today.getMonth() &&
+                saleDate.getDate() === today.getDate()
+            );
+        });
+    }, [recentSales]);
+
     const filteredRecentSales = React.useMemo(() => {
         const term = deleteTicketSearch.trim().toLowerCase();
-        if (!recentSales) return [];
-        if (!term) return recentSales;
-        return recentSales.filter((s) => {
+        if (!term) return todayRecentSales;
+        return todayRecentSales.filter((s) => {
             const fallbackReceiptCode = formatReceiptCode(1, s.receipt_number || s.id);
             return (
                 String(s.id).toLowerCase().includes(term) ||
@@ -1622,7 +1636,7 @@ const Ventas = () => {
                 (s.payment_method || '').toLowerCase().includes(term)
             );
         });
-    }, [recentSales, deleteTicketSearch]);
+    }, [todayRecentSales, deleteTicketSearch]);
 
     return (
         <>
@@ -3035,7 +3049,7 @@ const Ventas = () => {
                         <div>
                             <h2 style={{ margin: 0, fontSize: '1.1rem' }}>🗑️ Eliminar Ticket</h2>
                             <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                                Tickets recientes — {recentSales?.length || 0} registrados
+                                Tickets del día — {todayRecentSales.length} registrados
                             </p>
                         </div>
                         <button

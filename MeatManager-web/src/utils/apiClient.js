@@ -41,6 +41,11 @@ export const getAuthToken = async () => {
 let _tokenPromise = null;
 let _tokenExpiry = 0; // epoch ms estimado de expiración (55 min margen)
 
+export const clearTokenCache = () => {
+    _tokenPromise = null;
+    _tokenExpiry = 0;
+};
+
 const getCachedToken = (forceRefresh = false) => {
     if (!hasTenantSession()) return Promise.resolve(null);
     const tenant = getStoredTenantSession();
