@@ -246,10 +246,7 @@ export const LicenseProvider = ({ children }) => {
         upsertRemoteSetting('isPro', capabilities.isPro).catch(() => {});
     }, [licenseMode, capabilities.isPro]);
 
-    const hasModule = (moduleKey) => {
-        if (String(accessProfile?.role || '').trim().toLowerCase() === 'admin') return true;
-        return capabilities.modules.includes(moduleKey);
-    };
+    const hasModule = (moduleKey) => capabilities.modules.includes(moduleKey);
 
     return (
         <LicenseContext.Provider value={{
