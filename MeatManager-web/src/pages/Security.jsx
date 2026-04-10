@@ -31,11 +31,18 @@ const hasLogisticsCapability = (license) => Boolean(
 const isBaseLicense = (license) => {
     const internalCode = String(license?.internalCode || license?.license?.internalCode || '').trim().toLowerCase();
     const category = String(license?.category || license?.license?.category || '').trim().toLowerCase();
-    const commercialName = String(license?.commercialName || license?.license?.commercialName || '').trim().toLowerCase();
     return (
         internalCode === 'base_mm'
         || category === 'base_webapp'
-        || internalCode === 'superuser'
+    );
+};
+
+const isSuperUserLicense = (license) => {
+    const internalCode = String(license?.internalCode || license?.license?.internalCode || '').trim().toLowerCase();
+    const category = String(license?.category || license?.license?.category || '').trim().toLowerCase();
+    const commercialName = String(license?.commercialName || license?.license?.commercialName || '').trim().toLowerCase();
+    return (
+        internalCode === 'superuser'
         || internalCode === 'su'
         || category.includes('superuser')
         || commercialName.includes('superuser')
@@ -130,7 +137,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
         if (!/\S+@\S+\.\S+/.test(form.email.trim())) return toast('error', 'Ingresá un email válido');
         if (!user && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
         if (form.password && form.password.length < 6) return toast('error', 'La contraseña debe tener al menos 6 caracteres');
-        const normalizedRole = form.accountType === 'admin' ? 'admin' : 'employee';
+        const normalizedRole = user?.role === 'admin' ? 'admin' : 'employee';
         const normalizedPerms = form.accountType === 'driver'
             ? [DRIVER_PATH]
             : form.accountType === 'internal'
@@ -251,11 +258,6 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         <div className="security-account-types">
                             {[
                                 {
-                                    value: 'admin',
-                                    title: 'Administrador',
-                                    description: 'Acceso total a la web de MeatManager para gestionar el tenant.',
-                                },
-                                {
                                     value: 'internal',
                                     title: 'Usuario interno',
                                     description: 'Cajeros, vendedores u operadores con permisos configurables.',
@@ -373,7 +375,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                         </div>
                     )}
 
-                    {(form.accountType === 'internal' || form.accountType === 'admin') && (
+                    {form.accountType === 'internal' && (
                         <div className="security-section" style={{ marginBottom: '1.5rem' }}>
                             <label className="security-section-title">
                                 Licencias adicionales disponibles
@@ -429,7 +431,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             Resumen de acceso
                         </label>
                         <div className="security-summary-box">
-                            {form.accountType === 'admin' && (
+                            {false && (
                                 <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
                             )}
                             {form.accountType === 'internal' && (
@@ -481,6 +483,7 @@ const Security = () => {
     const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
+    const hasAssignedSuperUserLicense = licenses.some((license) => isSuperUserLicense(license));
     const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
     const availableLogisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
     const availableUnassignedLicenses = licensePool.filter((assignment) => assignment?.userId == null);
@@ -764,7 +767,15 @@ const Security = () => {
                                 Licencia base
                             </div>
                             <div style={{ marginTop: '0.45rem', fontWeight: '700', color: hasBaseLicense ? '#34d399' : '#f87171' }}>
-                                {hasBaseLicense ? 'Base / SuperUser activa' : 'No activa'}
+                                {hasBaseLicense ? 'MeatManager activa' : 'No activa'}
+                            </div>
+                        </div>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                SuperUser de esta cuenta
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: hasAssignedSuperUserLicense ? '#f59e0b' : '#9ca3af' }}>
+                                {hasAssignedSuperUserLicense ? 'Asignada al usuario actual' : 'No asignada'}
                             </div>
                         </div>
                         <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>

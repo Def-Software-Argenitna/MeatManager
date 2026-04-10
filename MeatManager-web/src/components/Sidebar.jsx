@@ -28,7 +28,8 @@ import {
   ArrowLeftRight,
   Calculator,
   Lock,
-  HelpCircle
+  HelpCircle,
+  Crown
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
@@ -160,7 +161,11 @@ const Sidebar = ({ isCollapsed }) => {
         className={`nav-item ${isActive(item.path) ? 'active' : ''} ${isLocked ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
         onClick={() => {
           if (isLocked) {
-            navigate('/config/licencia');
+            if (isEffectiveAdmin) {
+              navigate(item.path);
+            } else {
+              navigate('/config/licencia');
+            }
           } else {
             navigate(item.path);
           }
@@ -241,7 +246,7 @@ const Sidebar = ({ isCollapsed }) => {
   };
 
   const renderGroup = (groupKey, title, GroupIcon, items, extraContent = null) => {
-    const visibleItems = items.filter((item) => hasAccess(item.path) || Boolean(item.module));
+    const visibleItems = items.filter((item) => hasAccess(item.path));
     const hasVisibleContent = visibleItems.length > 0 || extraContent;
 
     if (!hasVisibleContent) return null;

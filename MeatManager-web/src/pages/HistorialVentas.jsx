@@ -13,6 +13,30 @@ const formatCurrency = (amount) =>
 const normalize = (value) => String(value || '').toLowerCase().trim();
 const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
 const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
+const normalizePaymentMethodLabel = (value) => {
+    const raw = String(value || '').trim();
+    const lower = raw.toLowerCase();
+    if (lower.includes('postnet') || lower.includes('posnet')) return 'Postnet';
+    if (lower.includes('mercado pago')) return 'Mercado Pago';
+    if (lower.includes('cuenta dni')) return 'Cuenta DNI';
+    if (lower.includes('cuenta corriente')) return 'Cuenta Corriente';
+    if (lower.includes('mixto') || lower.includes('mixed')) return 'Pago Mixto';
+    if (lower.includes('efectivo')) return 'Efectivo';
+    return raw || 'Sin método';
+};
+const parsePaymentBreakdown = (value) => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === 'string') {
+        try {
+            const parsed = JSON.parse(value);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+};
 
 const HistorialVentas = () => {
     const navigate = useNavigate();
@@ -47,9 +71,13 @@ const HistorialVentas = () => {
         return sales.filter((sale) => {
             const receiptCode = sale.receipt_code || formatReceiptCode(1, sale.receipt_number || sale.id);
             const itemNames = (sale.items || []).map((item) => item.product_name).join(' ');
+            const paymentBreakdownText = parsePaymentBreakdown(sale.payment_breakdown)
+                .map((part) => `${part.method_name || part.method_type || ''} ${part.amount_charged || part.amount || ''}`)
+                .join(' ');
             return [
                 receiptCode,
                 sale.payment_method,
+                paymentBreakdownText,
                 sale.source,
                 sale.total,
                 itemNames,
@@ -132,6 +160,18 @@ const HistorialVentas = () => {
                         {filteredSales.map((sale) => {
                             const receiptCode = sale.receipt_code || formatReceiptCode(1, sale.receipt_number || sale.id);
                             const saleDate = new Date(sale.date);
+                            const paymentBreakdown = parsePaymentBreakdown(sale.payment_breakdown);
+                            const paymentRows = paymentBreakdown.length > 0
+                                ? paymentBreakdown
+                                    .map((part) => ({
+                                        method: normalizePaymentMethodLabel(part.method_name || part.method_type),
+                                        amount: Number(part.amount_charged ?? part.amount ?? 0) || 0,
+                                    }))
+                                    .filter((row) => row.amount > 0)
+                                : [{
+                                    method: normalizePaymentMethodLabel(sale.payment_method),
+                                    amount: Number(sale.total) || 0,
+                                }];
                             return (
                                 <article
                                     key={sale.id}
@@ -157,9 +197,38 @@ const HistorialVentas = () => {
                                                 {formatCurrency(sale.total)}
                                             </div>
                                             <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
-                                                {sale.payment_method || 'Sin método'}
+                                                {normalizePaymentMethodLabel(sale.payment_method)}
                                             </div>
                                         </div>
+                                    </div>
+
+                                    <div style={{
+                                        marginBottom: '0.75rem',
+                                        padding: '0.55rem 0.65rem',
+                                        borderRadius: '10px',
+                                        border: '1px solid var(--color-border)',
+                                        background: 'rgba(255,255,255,0.02)',
+                                        display: 'grid',
+                                        gap: '0.3rem',
+                                    }}>
+                                        <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                                            Desglose de cobro
+                                        </div>
+                                        {paymentRows.map((row, index) => (
+                                            <div
+                                                key={`${sale.id}-payment-${row.method}-${index}`}
+                                                style={{
+                                                    display: 'flex',
+                                                    justifyContent: 'space-between',
+                                                    gap: '0.7rem',
+                                                    fontSize: '0.84rem',
+                                                    color: 'var(--color-text-main)',
+                                                }}
+                                            >
+                                                <span>{row.method}</span>
+                                                <strong>{formatCurrency(row.amount)}</strong>
+                                            </div>
+                                        ))}
                                     </div>
 
                                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>

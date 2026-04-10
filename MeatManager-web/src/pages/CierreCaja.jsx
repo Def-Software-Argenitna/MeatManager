@@ -56,6 +56,10 @@ const getMovementSign = (movement) => {
     return toNumber(movement.amount) >= 0 ? 1 : -1;
 };
 
+const isAutoSaleMovement = (movement) => (
+    movement?.type === 'venta' || movement?.type === 'anulacion_venta'
+);
+
 const getDayBounds = (selectedDate) => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     return {
@@ -64,24 +68,43 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
-const buildSaleParts = (sale) => {
-    if (Array.isArray(sale.payment_breakdown) && sale.payment_breakdown.length > 0) {
-        return sale.payment_breakdown
-            .filter((part) => !isCurrentAccount(part.method_name, part.method_type))
+const getSalePaymentBreakdown = (sale) => {
+    if (!sale?.payment_breakdown) return [];
+    if (Array.isArray(sale.payment_breakdown)) return sale.payment_breakdown;
+    if (typeof sale.payment_breakdown === 'string') {
+        try {
+            const parsed = JSON.parse(sale.payment_breakdown);
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+    return [];
+};
+
+const buildSaleParts = (sale, { includeCurrentAccount = false } = {}) => {
+    const breakdown = getSalePaymentBreakdown(sale);
+    if (breakdown.length > 0) {
+        return breakdown
             .map((part) => ({
-                name: part.method_name || 'Efectivo',
-                type: part.method_type || 'cash',
-                amount: toNumber(part.amount_charged),
-            }));
+                name: part?.method_name || 'Efectivo',
+                type: part?.method_type || 'cash',
+                amount: toNumber(part?.amount_charged ?? part?.amount ?? 0),
+            }))
+            .filter((part) => (
+                includeCurrentAccount
+                    ? part.amount > 0
+                    : (part.amount > 0 && !isCurrentAccount(part.name, part.type))
+            ));
     }
 
-    if (isCurrentAccount(sale.payment_method)) return [];
-
-    return [{
-        name: sale.payment_method || 'Efectivo',
+    const fallback = {
+        name: sale?.payment_method || 'Efectivo',
         type: 'cash',
-        amount: toNumber(sale.total),
-    }];
+        amount: toNumber(sale?.total),
+    };
+    if (!includeCurrentAccount && isCurrentAccount(fallback.name, fallback.type)) return [];
+    return fallback.amount > 0 ? [fallback] : [];
 };
 
 const CierreCaja = () => {
@@ -191,7 +214,7 @@ const CierreCaja = () => {
 
         const totals = {};
         sales.forEach((sale) => {
-            buildSaleParts(sale).forEach((part) => {
+            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
                 totals[part.name] = (totals[part.name] || 0) + part.amount;
             });
         });
@@ -207,6 +230,16 @@ const CierreCaja = () => {
         });
     }, [sales, activePaymentMethods]);
 
+    const salesCountByMethod = useMemo(() => {
+        const totals = {};
+        (sales || []).forEach((sale) => {
+            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
+                totals[part.name] = (totals[part.name] || 0) + 1;
+            });
+        });
+        return totals;
+    }, [sales]);
+
     const openingMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type === 'apertura')
     ), [movements]);
@@ -221,7 +254,7 @@ const CierreCaja = () => {
     }, [openingMovements]);
 
     const manualMovements = useMemo(() => (
-        (movements || []).filter((movement) => movement.type !== 'apertura')
+        (movements || []).filter((movement) => movement.type !== 'apertura' && !isAutoSaleMovement(movement))
     ), [movements]);
 
     const totalSales = (sales || []).reduce((sum, sale) => sum + toNumber(sale.total), 0);
@@ -232,8 +265,9 @@ const CierreCaja = () => {
         .filter((movement) => movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const currentAccountSales = (sales || []).reduce((sum, sale) => {
-        if (Array.isArray(sale.payment_breakdown) && sale.payment_breakdown.length > 0) {
-            const ccPart = sale.payment_breakdown
+        const breakdown = getSalePaymentBreakdown(sale);
+        if (breakdown.length > 0) {
+            const ccPart = breakdown
                 .filter((part) => isCurrentAccount(part.method_name, part.method_type))
                 .reduce((acc, part) => acc + toNumber(part.amount_charged), 0);
             return sum + ccPart;
@@ -249,12 +283,13 @@ const CierreCaja = () => {
         });
 
         (sales || []).forEach((sale) => {
-            buildSaleParts(sale).forEach((part) => {
+            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
                 totals[part.name] = (totals[part.name] || 0) + part.amount;
             });
         });
 
         (movements || []).forEach((movement) => {
+            if (isAutoSaleMovement(movement)) return;
             const methodName = movement.payment_method || 'Efectivo';
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             const sign = getMovementSign(movement);
@@ -279,10 +314,37 @@ const CierreCaja = () => {
             ...method,
             opening: openingByMethod[method.name] || 0,
             sales: salesByMethod.find((item) => item.name === method.name)?.total || 0,
+            salesCount: salesCountByMethod[method.name] || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, openingByMethod, salesByMethod, dailyManualNetByMethod, accumulatedByMethod]);
+    ), [activePaymentMethods, openingByMethod, salesByMethod, salesCountByMethod, dailyManualNetByMethod, accumulatedByMethod]);
+
+    const salesDetails = useMemo(() => (
+        (sales || []).map((sale) => {
+            const fullParts = buildSaleParts(sale, { includeCurrentAccount: true });
+            const cajaParts = fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
+            const cuentaCorrienteParts = fullParts.filter((part) => isCurrentAccount(part.name, part.type));
+            const isMixed = fullParts.length > 1;
+            const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+            const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+            return {
+                id: sale.id,
+                receiptCode: sale.receipt_code || (sale.receipt_number ? `0001-${String(sale.receipt_number).padStart(6, '0')}` : `Venta #${sale.id}`),
+                date: sale.date ? new Date(sale.date) : null,
+                total: toNumber(sale.total),
+                isMixed,
+                fullParts,
+                cajaParts,
+                cuentaCorrienteParts,
+                cajaAmount,
+                ccAmount,
+            };
+        })
+    ), [sales]);
+
+    const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
+    const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);
 
     const cashInDrawer = methodCards
         .filter((method) => method.type === 'cash')
@@ -402,6 +464,14 @@ const CierreCaja = () => {
                     <span className="label">Ventas a cuenta corriente</span>
                     <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
+                <div className="stat-box income">
+                    <span className="label">Cobros en caja por ventas</span>
+                    <span className="val">+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="stat-box">
+                    <span className="label">Ventas mixtas del día</span>
+                    <span className="val">{mixedSalesCount}</span>
+                </div>
             </DirectionalReveal>
 
             <div className="cierre-grid">
@@ -423,6 +493,7 @@ const CierreCaja = () => {
                                             <div className="method-breakdown">
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
                                                 <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
+                                                <span>Cobros: {item.salesCount}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
@@ -440,6 +511,10 @@ const CierreCaja = () => {
                         <div className="total-row">
                             <span>Ventas brutas del día</span>
                             <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="total-row">
+                            <span>Cobros que ingresan a caja</span>
+                            <span className="total-val" style={{ fontSize: '1.15rem' }}>+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
                 </DirectionalReveal>
@@ -607,9 +682,54 @@ const CierreCaja = () => {
                                         </span>
                                     </div>
                                     <span className="m-amount">
-                                        {movement.type === 'ingreso' ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
+                                        {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                     </span>
                                     <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div className="section-header section-header-secondary">
+                            <h3>Detalle de cobros de ventas (hoy)</h3>
+                        </div>
+                        <div className="sales-detail-list">
+                            {salesDetails.length === 0 && (
+                                <div className="empty-state">No hay ventas registradas en esta fecha.</div>
+                            )}
+                            {salesDetails.map((sale) => (
+                                <div key={sale.id} className="sale-detail-item">
+                                    <div className="sale-detail-top">
+                                        <div className="sale-detail-main">
+                                            <span className="sale-detail-receipt">#{sale.receiptCode}</span>
+                                            <span className="sale-detail-time">
+                                                {sale.date ? sale.date.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '--:--'}
+                                            </span>
+                                            {sale.isMixed && <span className="sale-detail-badge">Mixto</span>}
+                                        </div>
+                                        <div className="sale-detail-total">
+                                            Total: ${sale.total.toLocaleString('es-AR')}
+                                        </div>
+                                    </div>
+                                    <div className="sale-detail-parts">
+                                        {sale.fullParts.map((part, index) => {
+                                            const isCC = isCurrentAccount(part.name, part.type);
+                                            return (
+                                                <span
+                                                    key={`${sale.id}-${part.name}-${index}`}
+                                                    className={`sale-part-chip ${isCC ? 'cc' : 'cashbox'}`}
+                                                >
+                                                    {part.name}: ${toNumber(part.amount).toLocaleString('es-AR')}
+                                                    {isCC ? ' (cta cte)' : ''}
+                                                </span>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="sale-detail-foot">
+                                        <span>Ingresa en caja: +${sale.cajaAmount.toLocaleString('es-AR')}</span>
+                                        {sale.ccAmount > 0 && (
+                                            <span>Cuenta corriente: ${sale.ccAmount.toLocaleString('es-AR')}</span>
+                                        )}
+                                    </div>
                                 </div>
                             ))}
                         </div>

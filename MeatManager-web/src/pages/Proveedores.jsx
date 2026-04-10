@@ -1,8 +1,9 @@
 import React, { useState, useMemo } from 'react';
-import { Truck, Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe } from 'lucide-react';
+import { Truck, Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe, Printer } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
@@ -152,7 +153,7 @@ const Proveedores = () => {
             ...comprasProveedor.map((c) => ({
                 id: `compra-${c.id}`,
                 date: c.date,
-                kind: 'debe',
+                kind: 'haber',
                 concept: `Compra ${c.invoice_num ? `#${c.invoice_num}` : ''}`.trim(),
                 amount: Number(c.total || 0),
                 payment_method: c.payment_method || 'Cuenta Corriente',
@@ -160,7 +161,7 @@ const Proveedores = () => {
             ...pagosProveedor.map((p) => ({
                 id: `pago-${p.id}`,
                 date: p.date,
-                kind: 'haber',
+                kind: 'debe',
                 concept: p.description || 'Pago a proveedor',
                 amount: Number(p.amount || 0),
                 payment_method: p.payment_method || 'Sin definir',
@@ -169,7 +170,7 @@ const Proveedores = () => {
 
         let running = 0;
         return ledgerRows.map((row) => {
-            running += row.kind === 'debe' ? row.amount : -row.amount;
+            running += row.kind === 'haber' ? row.amount : -row.amount;
             return { ...row, balance: running };
         });
     }, [compras, pagos]);
@@ -189,6 +190,38 @@ const Proveedores = () => {
         });
         setShowPaymentModal(true);
     };
+
+    const handlePrintSupplierLedger = React.useCallback((supplier) => {
+        if (!supplier) return;
+        const rows = getSupplierLedger(supplier.name);
+        const totalDebe = rows
+            .filter((row) => row.kind === 'debe')
+            .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const totalHaber = rows
+            .filter((row) => row.kind === 'haber')
+            .reduce((sum, row) => sum + Number(row.amount || 0), 0);
+        const saldoFinal = rows.length > 0 ? Number(rows[rows.length - 1].balance || 0) : 0;
+        printCurrentAccountA4({
+            entityLabel: 'Proveedor',
+            entityName: supplier.name || '-',
+            entityDocument: supplier.cuit || '',
+            title: 'Detalle de Cuenta Corriente',
+            subtitle: 'Proveedor',
+            rows: rows.map((row) => ({
+                date: row.date,
+                concept: row.concept,
+                paymentMethod: row.payment_method || '-',
+                debe: row.kind === 'debe' ? Number(row.amount || 0) : 0,
+                haber: row.kind === 'haber' ? Number(row.amount || 0) : 0,
+                balance: Number(row.balance || 0)
+            })),
+            summary: {
+                totalDebe,
+                totalHaber,
+                saldoFinal
+            }
+        });
+    }, [getSupplierLedger]);
 
     const handleRegisterPayment = async (e) => {
         e.preventDefault();
@@ -249,14 +282,14 @@ const Proveedores = () => {
                     // Calcular saldo de cuenta corriente
                     const supplierKey = normalizeText(s.name);
                     const comprasProveedor = compras?.filter(c => normalizeText(c.supplier) === supplierKey && (c.is_account || ['cta_cte', 'cuenta corriente'].includes(normalizeText(c.payment_method)))) || [];
-                    const totalDebe = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
+                    const totalHaber = comprasProveedor.reduce((sum, c) => sum + (parseFloat(c.total) || 0), 0);
                     const pagosProveedor = pagos?.filter(p => {
                         const bySupplier = normalizeText(p.supplier) === supplierKey;
                         const byDescription = normalizeText(p.description).includes(supplierKey);
                         return bySupplier || byDescription;
                     }) || [];
-                    const totalHaber = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
-                    const saldo = totalDebe - totalHaber;
+                    const totalDebe = pagosProveedor.reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0);
+                    const saldo = totalHaber - totalDebe;
                     return (
                     <div key={s.id} className="neo-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
@@ -429,7 +462,17 @@ const Proveedores = () => {
                     <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px', width: '92%', padding: '1.5rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                             <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Cuenta Corriente · {ledgerSupplier.name}</h2>
-                            <button onClick={() => setShowLedgerModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <button
+                                    type="button"
+                                    className="neo-button"
+                                    onClick={() => handlePrintSupplierLedger(ledgerSupplier)}
+                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
+                                >
+                                    <Printer size={15} /> Imprimir
+                                </button>
+                                <button onClick={() => setShowLedgerModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
+                            </div>
                         </div>
                         <div style={{ maxHeight: '60vh', overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: '10px' }}>
                             <table style={{ width: '100%', borderCollapse: 'collapse' }}>

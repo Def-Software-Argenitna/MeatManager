@@ -71,6 +71,23 @@ const loadGoogleMapsApi = (apiKey) => {
         };
 
         if (existingScript) {
+            if (window.google?.maps) {
+                resolve(window.google.maps);
+                delete window[callbackName];
+                return;
+            }
+            existingScript.addEventListener('load', () => {
+                if (window.google?.maps) {
+                    resolve(window.google.maps);
+                } else {
+                    reject(new Error('Google Maps no se inicializó correctamente.'));
+                }
+                delete window[callbackName];
+            });
+            existingScript.addEventListener('error', () => {
+                delete window[callbackName];
+                reject(new Error('No se pudo cargar el SDK de Google Maps.'));
+            });
             return;
         }
 
@@ -78,8 +95,11 @@ const loadGoogleMapsApi = (apiKey) => {
         script.async = true;
         script.defer = true;
         script.dataset.meatmanagerGoogleMaps = 'true';
-        script.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(apiKey)}&libraries=${GMAPS_LIBRARIES.join(',')}&callback=${callbackName}`;
-        script.onerror = () => reject(new Error('No se pudo cargar el SDK de Google Maps.'));
+        script.src = `https://maps.googleapis.com/maps/api/js?loading=async&key=${encodeURIComponent(apiKey)}&libraries=${GMAPS_LIBRARIES.join(',')}&callback=${callbackName}`;
+        script.onerror = () => {
+            delete window[callbackName];
+            reject(new Error('No se pudo cargar el SDK de Google Maps.'));
+        };
         document.head.appendChild(script);
     }).catch((error) => {
         googleMapsLoaderPromise = null;

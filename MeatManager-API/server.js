@@ -119,6 +119,9 @@ const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
 const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
 const INTERNAL_ADMIN_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
+const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.SKIP_SCHEMA_BOOT || '').trim().toLowerCase()
+);
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
 );
@@ -453,7 +456,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
 ]);
 
 const TENANT_ID_TABLES = [
@@ -461,7 +464,7 @@ const TENANT_ID_TABLES = [
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
 ];
 
 const DELIVERY_STATUS_MAP = {
@@ -534,7 +537,6 @@ function isBaseWebappLicense(license) {
         Number(license?.isMandatory) === 1
         || normalizeLicenseToken(license?.internalCode) === 'base_mm'
         || normalizeLicenseToken(license?.category) === 'base_webapp'
-        || isSuperLicenseMatch(license)
     );
 }
 
@@ -697,9 +699,9 @@ const TABLES_WITH_NUMERIC_ID = [
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
 ];
-const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures']);
+const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock']);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -1604,6 +1606,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
@@ -1618,9 +1621,14 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method_id', '`payment_method_id` INT NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'client_id', '`client_id` INT NULL AFTER `date`');
             await ensureColumn(conn, 'caja_movimientos', 'supplier', '`supplier` VARCHAR(150) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'receipt_number', '`receipt_number` INT NULL AFTER `authorized_recipient_email`');
+            await ensureColumn(conn, 'caja_movimientos', 'receipt_code', '`receipt_code` VARCHAR(32) NULL AFTER `receipt_number`');
             await ensureColumn(conn, 'caja_movimientos', 'purchase_id', '`purchase_id` INT NULL AFTER `authorization_verified`');
+            await ensureColumn(conn, 'caja_movimientos', 'sale_id', '`sale_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
@@ -2387,10 +2395,6 @@ function buildScopedLicensesForUser(user, licenseRows = []) {
             return true;
         }
 
-        if (user?.role === 'admin') {
-            return true;
-        }
-
         const billingScope = String(license.billingScope || '').trim();
         const matchesUser = billingScope === 'per_user'
             ? String(license.userId || '') === String(user?.id || '')
@@ -2965,6 +2969,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS stock (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             product_id      INT,
             name            VARCHAR(150) NOT NULL,
             type            VARCHAR(50),
@@ -3172,6 +3177,46 @@ function getSchemaTables() {
             UNIQUE KEY uniq_menu_digital_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS branch_transfers (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            from_branch_id  INT NOT NULL,
+            to_branch_id    INT NOT NULL,
+            status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            remito_number   INT,
+            remito_code     VARCHAR(32),
+            note            TEXT,
+            created_by_user_id BIGINT,
+            created_by_username VARCHAR(150),
+            received_by_user_id BIGINT,
+            received_by_username VARCHAR(150),
+            created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            received_at     DATETIME NULL,
+            cancelled_at    DATETIME NULL,
+            cancelled_by_user_id BIGINT,
+            cancelled_by_username VARCHAR(150),
+            UNIQUE KEY uniq_branch_transfers_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_branch_transfers_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_branch_transfers_status (\`${TENANT_COLUMN}\`, status),
+            INDEX idx_branch_transfers_from (\`${TENANT_COLUMN}\`, from_branch_id),
+            INDEX idx_branch_transfers_to (\`${TENANT_COLUMN}\`, to_branch_id)
+        )`,
+        `CREATE TABLE IF NOT EXISTS branch_transfer_items (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            transfer_id     INT NOT NULL,
+            product_id      INT,
+            product_name    VARCHAR(150),
+            quantity        DECIMAL(12,3) DEFAULT 0,
+            unit            VARCHAR(20),
+            UNIQUE KEY uniq_branch_transfer_items_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_branch_transfer_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_branch_transfer_items_transfer (\`${TENANT_COLUMN}\`, transfer_id),
+            INDEX idx_branch_transfer_items_product (\`${TENANT_COLUMN}\`, product_id),
+            CONSTRAINT branch_transfer_items_fk FOREIGN KEY (\`${TENANT_COLUMN}\`, transfer_id)
+                REFERENCES branch_transfers(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
+        )`,
         `CREATE TABLE IF NOT EXISTS caja_movimientos (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -3375,6 +3420,15 @@ function getSchemaTables() {
 // crea la BD si no existe, devuelve la config de conexión.
 async function handleProvision(req, res) {
     try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin' && !accessContext.user.isGlobalSuperAdmin;
+
         const ownerData = await getTenantClientData(req.firebaseUser);
         const { cuit, empresa, clientId } = ownerData;
         if (!cuit) {
@@ -3936,7 +3990,7 @@ const ALLOWED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items',
 ]);
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
@@ -4524,6 +4578,15 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
     const conn = await pool.getConnection();
     try {
         await conn.beginTransaction();
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+        }
 
         const {
             supplier, invoice_num, date, total, payment_method, is_account,
@@ -4578,6 +4641,15 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             );
         }
 
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: { branch_id: req.body?.branch_id },
+            })
+            : null;
+
         // 3. Stock / animal_lots por item
         for (const item of items) {
             const isDespostada = item.type === 'despostada';
@@ -4610,10 +4682,11 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
 
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, product_id, name, type, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, branch_id, product_id, name, type, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
+                    resolvedBranchId,
                     item.product_id || null,
                     String(item.product_name || '').trim(),
                     item.species || item.type || 'vaca',
@@ -4660,7 +4733,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                 try {
                     await pool.query(
                         `UPDATE purchase_items
-                         SET last_price = ?, usage = ?, default_iva_rate = ?
+                         SET last_price = ?, \`usage\` = ?, default_iva_rate = ?
                          WHERE tenant_id = ? AND id = ?`,
                         [parseFloat(cu.last_price), cu.usage || 'venta',
                          parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id]
@@ -4698,6 +4771,54 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+const inferPaymentTypeByName = (paymentMethodName) => {
+    const normalized = String(paymentMethodName || '').trim().toLowerCase();
+    if (!normalized) return 'cash';
+    if (normalized.includes('cuenta corriente')) return 'cuenta_corriente';
+    if (normalized.includes('mercado pago') || normalized.includes('cuenta dni')) return 'wallet';
+    if (normalized.includes('postnet') || normalized.includes('posnet') || normalized.includes('tarjeta')) return 'card';
+    if (normalized.includes('mixto') || normalized.includes('mixed')) return 'mixed';
+    if (normalized.includes('efectivo')) return 'cash';
+    return 'cash';
+};
+
+const isCurrentAccountPayment = (paymentMethodName, paymentMethodType) => {
+    const normalizedName = String(paymentMethodName || '').trim().toLowerCase();
+    const normalizedType = String(paymentMethodType || '').trim().toLowerCase();
+    return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
+};
+
+const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
+    const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
+    if (!breakdown || breakdown.length === 0) {
+        const safeTotal = parseFloat(totalAmount) || 0;
+        if (safeTotal <= 0) return [];
+        const methodName = String(paymentMethod || 'Efectivo').trim();
+        const methodType = String(paymentMethodType || inferPaymentTypeByName(methodName)).trim();
+        if (isCurrentAccountPayment(methodName, methodType)) return [];
+        return [{ methodName, methodType, amount: safeTotal }];
+    }
+
+    const parts = [];
+    for (const part of breakdown) {
+        const amount = parseFloat(
+            part?.amount_charged ?? part?.amount ?? part?.total ?? 0
+        ) || 0;
+        if (amount <= 0) continue;
+
+        const methodName = String(
+            part?.method_name || part?.name || paymentMethod || 'Efectivo'
+        ).trim();
+        const methodType = String(
+            part?.method_type || part?.type || inferPaymentTypeByName(methodName)
+        ).trim();
+        if (isCurrentAccountPayment(methodName, methodType)) continue;
+
+        parts.push({ methodName, methodType, amount });
+    }
+    return parts;
+};
+
 // ── RUTA: POST /api/ventas ─────────────────────────────────────────────────
 // Registra una venta de forma ATÓMICA: ventas + ventas_items + stock (descuento)
 // + ajuste de balance de cliente (cta cte) — todo en una sola transacción MySQL.
@@ -4716,6 +4837,15 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
     const conn = await pool.getConnection();
     try {
         await conn.beginTransaction();
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+        }
 
         const {
             date, subtotal, adjustment, total,
@@ -4738,16 +4868,25 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const safeAdj = parseFloat(adjustment) || 0;
         const now = date ? new Date(date) : new Date();
 
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: { branch_id: req.body?.branch_id, receipt_code },
+            })
+            : null;
+
         // 1. INSERT ventas
         const [ventaResult] = await conn.query(
             `INSERT INTO ventas
-             (tenant_id, date, subtotal, adjustment, total,
+             (tenant_id, branch_id, date, subtotal, adjustment, total,
               receipt_number, receipt_code,
               payment_method, payment_method_id, payment_breakdown,
               clientId, qendra_ticket_id, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                tenantId, now, safeSubtotal, safeAdj, safeTotal,
+                tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
@@ -4788,10 +4927,11 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, product_id, name, type, usage, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, branch_id, product_id, name, type, \`usage\`, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
+                    resolvedBranchId,
                     productId,
                     String(item.product_name || '').trim(),
                     String(item.category || '').trim() || null,
@@ -4814,6 +4954,37 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                     `UPDATE clients SET balance = balance - ?, last_updated = NOW()
                      WHERE tenant_id = ? AND id = ?`,
                     [safeTotal, tenantId, clientId]
+                );
+            }
+        }
+
+        // 5. Registrar ingreso en caja por métodos que impactan caja (no cuenta corriente)
+        const salePaymentParts = buildCajaPartsFromSale({
+            paymentMethod: payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: payment_breakdown,
+            totalAmount: safeTotal,
+        });
+        if (salePaymentParts.length > 0) {
+            const saleReceiptLabel = receipt_code || (receipt_number ? `Ticket ${receipt_number}` : `Venta #${saleId}`);
+            for (const part of salePaymentParts) {
+                await conn.query(
+                    `INSERT INTO caja_movimientos
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        parseFloat(part.amount) || 0,
+                        `Cobro ${saleReceiptLabel}`,
+                        part.methodName,
+                        part.methodType || inferPaymentTypeByName(part.methodName),
+                        now,
+                        clientId || null,
+                        resolvedBranchId || null,
+                        receipt_number || null,
+                        receipt_code || null,
+                        saleId,
+                    ]
                 );
             }
         }
@@ -4873,10 +5044,11 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                 if (prod) productId = prod.id;
             }
             await conn.query(
-                `INSERT INTO stock (tenant_id, product_id, name, usage, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                `INSERT INTO stock (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
+                    venta.branch_id || null,
                     productId,
                     String(item.product_name || '').trim(),
                     'venta',
@@ -4908,7 +5080,47 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             }
         }
 
-        // 3. Registrar en historial de eliminaciones
+        // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
+        const ventaBreakdown = (() => {
+            try {
+                if (!venta.payment_breakdown) return null;
+                return typeof venta.payment_breakdown === 'string'
+                    ? JSON.parse(venta.payment_breakdown)
+                    : venta.payment_breakdown;
+            } catch {
+                return null;
+            }
+        })();
+        const reversalParts = buildCajaPartsFromSale({
+            paymentMethod: venta.payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: ventaBreakdown,
+            totalAmount: venta.total,
+        });
+        if (reversalParts.length > 0) {
+            const saleReceiptLabel = venta.receipt_code || (venta.receipt_number ? `Ticket ${venta.receipt_number}` : `Venta #${saleId}`);
+            for (const part of reversalParts) {
+                await conn.query(
+                    `INSERT INTO caja_movimientos
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        parseFloat(part.amount) || 0,
+                        `Anulación ${saleReceiptLabel}`,
+                        part.methodName,
+                        part.methodType || inferPaymentTypeByName(part.methodName),
+                        venta.clientId || null,
+                        venta.branch_id || null,
+                        venta.receipt_number || null,
+                        venta.receipt_code || null,
+                        saleId,
+                    ]
+                );
+            }
+        }
+
+        // 4. Registrar en historial de eliminaciones
         const deletedBy = req.body?.deleted_by_user_id || null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
@@ -4933,7 +5145,7 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             ]
         );
 
-        // 4. Eliminar items y venta
+        // 5. Eliminar items y venta
         await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
         await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
 
@@ -5238,11 +5450,22 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Nombre de usuario requerido' });
         }
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin';
+        const requestedRole = String(role || 'employee').trim().toLowerCase();
+        const effectiveRole = isRequesterAdmin ? 'employee' : requestedRole;
+
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let insertId;
         let job;
-        const normalizedRole = role === 'admin' ? 'admin' : 'employee';
+        const normalizedRole = effectiveRole === 'admin' ? 'admin' : 'employee';
         const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
         try {
             const [existingRows] = await conn.query(
@@ -5337,6 +5560,14 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         const { email, password, username, role, active, perms, assignedClientLicenseIds = [] } = req.body || {};
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const isRequesterAdmin = accessContext.user.role === 'admin';
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let currentData;
@@ -5356,7 +5587,11 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
 
         const nextEmail = email ? normalizeEmail(email) : normalizeEmail(currentData.email);
         const nextUsername = username ? String(username).trim() : String(currentData.name || '').trim();
-        const nextRole = role === 'admin' ? 'admin' : (role === 'employee' ? 'employee' : currentData.role || 'employee');
+        const requestedRole = String(role || '').trim().toLowerCase();
+        const safeRequestedRole = isRequesterAdmin && requestedRole === 'admin' ? 'employee' : requestedRole;
+        const nextRole = safeRequestedRole === 'admin'
+            ? 'admin'
+            : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
         const nextActive = active === undefined ? currentData.status === 'ACTIVE' : Number(active) === 1;
         const nextPerms = nextRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
 
@@ -5549,6 +5784,33 @@ app.post('/api/users/:id/permissions', verifyFirebaseToken, async (req, res) => 
     }
 });
 
+async function getNextSequenceData({ tenantConn, tenantId, counterKey, branchKey = 'branch_code', branchCodeOverride = null }) {
+    const [counterRows] = await tenantConn.query(
+        'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? FOR UPDATE',
+        [tenantId, counterKey]
+    );
+
+    const currentValue = Number(counterRows[0]?.value || 0);
+    const nextValue = currentValue + 1;
+
+    await tenantConn.query(
+        'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        [tenantId, counterKey, String(nextValue)]
+    );
+
+    let branchCode = Number(branchCodeOverride || 0);
+    if (!Number.isFinite(branchCode) || branchCode <= 0) {
+        const [branchRows] = await tenantConn.query(
+            'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+            [tenantId, branchKey]
+        );
+        branchCode = Number(branchRows[0]?.value || 1);
+    }
+
+    const receiptCode = `${String(branchCode).padStart(4, '0')}-${String(nextValue).padStart(6, '0')}`;
+    return { nextValue, receiptCode, branchCode };
+}
+
 // ── RUTA: POST /api/sequences/next ─────────────────────────────────────────
 // Incrementa un contador en settings y devuelve correlativo + código.
 app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
@@ -5568,26 +5830,12 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
         try {
             await tenantConn.beginTransaction();
 
-            const [counterRows] = await tenantConn.query(
-                'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? FOR UPDATE',
-                [tenantId, counterKey]
-            );
-
-            const currentValue = Number(counterRows[0]?.value || 0);
-            const nextValue = currentValue + 1;
-
-            await tenantConn.query(
-                'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
-                [tenantId, counterKey, String(nextValue)]
-            );
-
-            const [branchRows] = await tenantConn.query(
-                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
-                [tenantId, branchKey]
-            );
-
-            const branchCode = Number(branchRows[0]?.value || 1);
-            const receiptCode = `${String(branchCode).padStart(4, '0')}-${String(nextValue).padStart(6, '0')}`;
+            const { nextValue, receiptCode, branchCode } = await getNextSequenceData({
+                tenantConn,
+                tenantId,
+                counterKey,
+                branchKey,
+            });
 
             await tenantConn.commit();
 
@@ -5609,6 +5857,350 @@ app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ error: 'Error generando correlativo: ' + err.message });
     } finally {
         conn.release();
+    }
+});
+
+// â”€â”€ RUTA: GET /api/branch-transfers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+app.get('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const conn = await pool.getConnection();
+        try {
+            const direction = String(req.query?.direction || 'incoming').trim().toLowerCase();
+            const status = String(req.query?.status || '').trim().toLowerCase();
+            const userBranchId = Number(accessContext.user?.branchRecordId ?? accessContext.user?.branchId ?? 0);
+            const canSeeAll = hasAdminPanelAccess(accessContext);
+
+            if (!canSeeAll && (!Number.isFinite(userBranchId) || userBranchId <= 0)) {
+                return res.status(400).json({ error: 'Sucursal no asignada para ver transferencias' });
+            }
+
+            const where = ['tenant_id = ?'];
+            const params = [tenantId];
+
+            if (direction === 'incoming') {
+                where.push('to_branch_id = ?');
+                params.push(userBranchId);
+            } else if (direction === 'outgoing') {
+                where.push('from_branch_id = ?');
+                params.push(userBranchId);
+            } else if (!canSeeAll) {
+                where.push('(from_branch_id = ? OR to_branch_id = ?)');
+                params.push(userBranchId, userBranchId);
+            }
+
+            if (status) {
+                where.push('status = ?');
+                params.push(status);
+            }
+
+            const [rows] = await conn.query(
+                `SELECT * FROM branch_transfers WHERE ${where.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT 200`,
+                params
+            );
+
+            const transferIds = rows.map((row) => row.id);
+            let itemsByTransfer = new Map();
+            if (transferIds.length > 0) {
+                const placeholders = transferIds.map(() => '?').join(', ');
+                const [items] = await conn.query(
+                    `SELECT * FROM branch_transfer_items WHERE tenant_id = ? AND transfer_id IN (${placeholders})`,
+                    [tenantId, ...transferIds]
+                );
+                itemsByTransfer = items.reduce((acc, item) => {
+                    const list = acc.get(item.transfer_id) || [];
+                    list.push(item);
+                    acc.set(item.transfer_id, list);
+                    return acc;
+                }, new Map());
+            }
+
+            const branches = await listClientBranches(accessContext.client.id);
+            const branchesById = new Map(branches.map((branch) => [Number(branch.id), branch]));
+
+            const payload = rows.map((row) => ({
+                ...row,
+                items: itemsByTransfer.get(row.id) || [],
+                from_branch: branchesById.get(Number(row.from_branch_id)) || null,
+                to_branch: branchesById.get(Number(row.to_branch_id)) || null,
+            }));
+
+            return res.json({ ok: true, count: payload.length, transfers: payload });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[BRANCH TRANSFERS READ ERROR]', err.message);
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudieron leer las transferencias' });
+    }
+});
+
+// â”€â”€ RUTA: POST /api/branch-transfers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+
+            const userBranchId = Number(accessContext.user?.branchRecordId ?? accessContext.user?.branchId ?? 0);
+            const fromBranchId = Number(req.body?.from_branch_id || req.body?.fromBranchId || userBranchId);
+            const toBranchId = Number(req.body?.to_branch_id || req.body?.toBranchId || 0);
+
+            if (!Number.isFinite(fromBranchId) || fromBranchId <= 0) {
+                throw new Error('Sucursal remitente inválida');
+            }
+            if (!Number.isFinite(toBranchId) || toBranchId <= 0) {
+                throw new Error('Sucursal destino inválida');
+            }
+            if (fromBranchId === toBranchId) {
+                throw new Error('La sucursal destino debe ser distinta a la remitente');
+            }
+
+            const items = Array.isArray(req.body?.items) ? req.body.items : [];
+            if (!items.length) {
+                throw new Error('items requeridos');
+            }
+
+            const branches = await listClientBranches(accessContext.client.id);
+            const fromBranch = branches.find((branch) => Number(branch.id) === fromBranchId);
+            const toBranch = branches.find((branch) => Number(branch.id) === toBranchId);
+            if (!fromBranch || !toBranch) {
+                throw new Error('Sucursal remitente o destino no encontrada');
+            }
+
+            const branchCodeOverride = normalizeBranchCodeValue(fromBranch.internalCode) || null;
+            const { nextValue, receiptCode, branchCode } = await getNextSequenceData({
+                tenantConn: conn,
+                tenantId,
+                counterKey: 'remito',
+                branchKey: 'branch_code',
+                branchCodeOverride,
+            });
+
+            const note = String(req.body?.note || '').trim() || null;
+            const createdBy = getAccessDisplayName(accessContext.user);
+
+            const [result] = await conn.query(
+                `INSERT INTO branch_transfers
+                 (tenant_id, from_branch_id, to_branch_id, status, remito_number, remito_code, note,
+                  created_by_user_id, created_by_username)
+                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+                [
+                    tenantId,
+                    fromBranchId,
+                    toBranchId,
+                    nextValue,
+                    receiptCode,
+                    note,
+                    accessContext.user?.id || null,
+                    createdBy,
+                ]
+            );
+
+            const transferId = result.insertId;
+            for (const item of items) {
+                const qty = parseFloat(item.quantity) || 0;
+                if (qty <= 0) {
+                    throw new Error('Cantidad inválida en item');
+                }
+                let productId = item.product_id || item.productId || null;
+                const productName = String(item.product_name || item.productName || '').trim();
+                if (!productId && productName) {
+                    const [[prod]] = await conn.query(
+                        `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
+                        [tenantId, productName.toLowerCase().replace(/\s+/g, '_')]
+                    );
+                    if (prod) productId = prod.id;
+                }
+
+                await conn.query(
+                    `INSERT INTO branch_transfer_items
+                     (tenant_id, transfer_id, product_id, product_name, quantity, unit)
+                     VALUES (?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        transferId,
+                        productId,
+                        productName || (productId ? `Producto ${productId}` : ''),
+                        qty,
+                        String(item.unit || 'kg').trim(),
+                    ]
+                );
+            }
+
+            await conn.commit();
+            return res.json({
+                ok: true,
+                transferId,
+                remito_number: nextValue,
+                remito_code: receiptCode,
+                branch_code: branchCode,
+            });
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[BRANCH TRANSFER CREATE ERROR]', err.message);
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el remito' });
+    }
+});
+
+// â”€â”€ RUTA: POST /api/branch-transfers/:id/receive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, res) => {
+    const transferId = Number(req.params.id || 0);
+    if (!Number.isFinite(transferId) || transferId <= 0) {
+        return res.status(400).json({ error: 'id inválido' });
+    }
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const conn = await pool.getConnection();
+        try {
+            await conn.beginTransaction();
+
+            const [[transfer]] = await conn.query(
+                'SELECT * FROM branch_transfers WHERE tenant_id = ? AND id = ? LIMIT 1',
+                [tenantId, transferId]
+            );
+            if (!transfer) {
+                await conn.rollback();
+                return res.status(404).json({ error: 'Remito no encontrado' });
+            }
+            if (transfer.status !== 'pending') {
+                await conn.rollback();
+                return res.status(400).json({ error: 'El remito ya fue procesado' });
+            }
+
+            const userBranchId = Number(accessContext.user?.branchRecordId ?? accessContext.user?.branchId ?? 0);
+            const canSeeAll = hasAdminPanelAccess(accessContext);
+            if (!canSeeAll && userBranchId !== Number(transfer.to_branch_id)) {
+                await conn.rollback();
+                return res.status(403).json({ error: 'No autorizado para recibir este remito' });
+            }
+
+            const [items] = await conn.query(
+                'SELECT * FROM branch_transfer_items WHERE tenant_id = ? AND transfer_id = ?',
+                [tenantId, transferId]
+            );
+            if (!items.length) {
+                await conn.rollback();
+                return res.status(400).json({ error: 'El remito no tiene ítems' });
+            }
+
+            for (const item of items) {
+                const qty = parseFloat(item.quantity) || 0;
+                if (qty <= 0) continue;
+
+                if (item.product_id) {
+                    const [[stockRow]] = await conn.query(
+                        `SELECT COALESCE(SUM(quantity), 0) AS total
+                         FROM stock
+                         WHERE tenant_id = ?
+                           AND product_id = ?
+                           AND (branch_id = ? OR branch_id IS NULL)`,
+                        [tenantId, item.product_id, transfer.from_branch_id]
+                    );
+                    const available = Number(stockRow?.total || 0);
+                    if (available < qty) {
+                        await conn.rollback();
+                        return res.status(400).json({
+                            error: `Stock insuficiente en sucursal origen para ${item.product_name || 'producto'} (${available} disponible, ${qty} requerido)`,
+                        });
+                    }
+                }
+            }
+
+            for (const item of items) {
+                const qty = parseFloat(item.quantity) || 0;
+                if (qty <= 0) continue;
+                const unit = String(item.unit || 'kg').trim();
+                const productName = String(item.product_name || '').trim();
+
+                await conn.query(
+                    `INSERT INTO stock
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        transfer.from_branch_id,
+                        item.product_id || null,
+                        productName,
+                        'transfer_out',
+                        -qty,
+                        unit,
+                        `transfer_${transferId}`,
+                    ]
+                );
+
+                await conn.query(
+                    `INSERT INTO stock
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        transfer.to_branch_id,
+                        item.product_id || null,
+                        productName,
+                        'transfer_in',
+                        qty,
+                        unit,
+                        `transfer_${transferId}`,
+                    ]
+                );
+            }
+
+            const receivedBy = getAccessDisplayName(accessContext.user);
+            await conn.query(
+                `UPDATE branch_transfers
+                 SET status = 'received',
+                     received_at = NOW(),
+                     received_by_user_id = ?,
+                     received_by_username = ?
+                 WHERE tenant_id = ? AND id = ?`,
+                [accessContext.user?.id || null, receivedBy, tenantId, transferId]
+            );
+
+            await conn.commit();
+            return res.json({ ok: true, transferId });
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[BRANCH TRANSFER RECEIVE ERROR]', err.message);
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo confirmar la recepción' });
     }
 });
 
@@ -6114,10 +6706,16 @@ const PORT = process.env.PORT || 3001;
 ensureClientsControlStore()
     .then(() => {
         console.log('[BOOT] Clients control store OK');
+        if (SKIP_SCHEMA_BOOT) {
+            console.warn('[BOOT] SKIP_SCHEMA_BOOT activo. Se omite la verificación/migración de schema.');
+            return null;
+        }
         return ensureOperationalTenantIsolation();
     })
     .then(async () => {
-        console.log('[BOOT] Operational tenant isolation OK');
+        if (!SKIP_SCHEMA_BOOT) {
+            console.log('[BOOT] Operational tenant isolation OK');
+        }
         await connectRedisSafely();
     })
     .then(() => {

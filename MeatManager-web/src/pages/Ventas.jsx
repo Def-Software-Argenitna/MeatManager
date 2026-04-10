@@ -57,7 +57,6 @@ const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => to
 const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
 const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
 const PAYMENT_METHOD_ORDER = ['Efectivo', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
-const ALLOWED_PAYMENT_METHOD_NAMES = new Set(PAYMENT_METHOD_ORDER.map((name) => name.toLowerCase()));
 
 const canonicalizePaymentMethodName = (name) => {
     const normalized = String(name || '').trim().toLowerCase();
@@ -85,10 +84,9 @@ const normalizePaymentMethodType = (rawType, canonicalName) => {
 const normalizePaymentMethods = (rows = []) => {
     const dedup = new Map();
     rows
-        .filter((method) => method && method.enabled)
+        .filter((method) => method && (method.enabled === true || Number(method.enabled) === 1))
         .forEach((method) => {
             const canonicalName = canonicalizePaymentMethodName(method.name);
-            if (!ALLOWED_PAYMENT_METHOD_NAMES.has(canonicalName.toLowerCase())) return;
             if (!dedup.has(canonicalName)) {
                 dedup.set(canonicalName, {
                     ...method,
@@ -98,9 +96,14 @@ const normalizePaymentMethods = (rows = []) => {
             }
         });
 
-    return [...dedup.values()].sort((left, right) => (
-        PAYMENT_METHOD_ORDER.indexOf(left.name) - PAYMENT_METHOD_ORDER.indexOf(right.name)
-    ));
+    return [...dedup.values()].sort((left, right) => {
+        const leftIdx = PAYMENT_METHOD_ORDER.indexOf(left.name);
+        const rightIdx = PAYMENT_METHOD_ORDER.indexOf(right.name);
+        const safeLeft = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
+        const safeRight = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
+        if (safeLeft !== safeRight) return safeLeft - safeRight;
+        return String(left.name || '').localeCompare(String(right.name || ''), 'es', { sensitivity: 'base' });
+    });
 };
 
 const Ventas = () => {
@@ -218,7 +221,8 @@ const Ventas = () => {
     }, []);
 
     const navigate = useNavigate();
-    const { currentUser } = useUser();
+    const { currentUser, accessProfile } = useUser();
+    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -253,7 +257,12 @@ const Ventas = () => {
         });
         const refreshedProducts = await fetchProductsSafe();
 
-        setStockItems(Array.isArray(stockRows) ? stockRows : []);
+        const filteredStockRows = Array.isArray(stockRows)
+            ? stockRows.filter((row) => (
+                !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId
+            ))
+            : [];
+        setStockItems(filteredStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
         const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
@@ -1115,6 +1124,7 @@ const Ventas = () => {
             });
 
             await saveTableRecord('stock', 'insert', {
+                branch_id: currentBranchId || null,
                 product_id: unifiedProduct?.id || null,
                 name: quickProductName,
                 type: quickProductCategory,
@@ -1304,35 +1314,16 @@ const Ventas = () => {
     }, 0);
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
-    const currentAccountMethod = React.useMemo(() => (
-        selectedClientId && selectedClientHasCurrentAccount
-            ? { id: 'current_account', name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0 }
-            : null
-    ), [selectedClientId, selectedClientHasCurrentAccount]);
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
-    const availableSplitMethods = React.useMemo(() => (
-        currentAccountMethod ? [...(dbPaymentMethods || []), currentAccountMethod] : (dbPaymentMethods || [])
-    ), [currentAccountMethod, dbPaymentMethods]);
+    const availableSplitMethods = React.useMemo(() => (dbPaymentMethods || []), [dbPaymentMethods]);
 
     const getMethodById = React.useCallback((id) => {
-        if (id === 'current_account') return currentAccountMethod;
         return dbPaymentMethods?.find(m => m.id === id) || null;
-    }, [currentAccountMethod, dbPaymentMethods]);
+    }, [dbPaymentMethods]);
 
     const activeMethod = getMethodById(selectedPaymentMethod);
     const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
     const finalTotal = cartTotal + cartAdjustment;
-    const quickPaymentMethods = React.useMemo(() => {
-        const preferred = ['Efectivo', 'Mercado Pago'];
-        const selected = preferred
-            .map((name) => dbPaymentMethods?.find((method) => method.name === name))
-            .filter(Boolean);
-        if (selected.length >= 2) return selected.slice(0, 2);
-        const fallback = (dbPaymentMethods || [])
-            .filter((method) => method.type !== 'mixed')
-            .slice(0, 2);
-        return selected.length ? [...selected, ...fallback.filter((item) => !selected.some((s) => s.id === item.id))].slice(0, 2) : fallback;
-    }, [dbPaymentMethods]);
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -1553,6 +1544,15 @@ const Ventas = () => {
                 showToast('⚠️ El pago mixto no cubre exactamente el subtotal de la venta.', 'warning');
                 return;
             }
+            const usesCurrentAccount = splitPaymentSummary.rows.some((row) => row.method?.type === 'cuenta_corriente');
+            if (usesCurrentAccount && !selectedClientId) {
+                showToast('⚠️ Para usar Cuenta Corriente en pago mixto, seleccioná un cliente.', 'warning');
+                return;
+            }
+            if (usesCurrentAccount && !selectedClientHasCurrentAccount) {
+                showToast('⚠️ El cliente seleccionado no tiene cuenta corriente habilitada.', 'warning');
+                return;
+            }
             handleCheckout({ name: 'Pago Mixto', type: 'mixed', id: null, percentage: 0 }, splitPaymentSummary);
             return;
         }
@@ -1611,11 +1611,25 @@ const Ventas = () => {
         showToast('✅ Ticket eliminado y registrado en historial.', 'success');
     };
 
+    const todayRecentSales = React.useMemo(() => {
+        if (!Array.isArray(recentSales)) return [];
+        const today = new Date();
+        return recentSales.filter((sale) => {
+            if (!sale?.date) return false;
+            const saleDate = new Date(sale.date);
+            if (Number.isNaN(saleDate.getTime())) return false;
+            return (
+                saleDate.getFullYear() === today.getFullYear() &&
+                saleDate.getMonth() === today.getMonth() &&
+                saleDate.getDate() === today.getDate()
+            );
+        });
+    }, [recentSales]);
+
     const filteredRecentSales = React.useMemo(() => {
         const term = deleteTicketSearch.trim().toLowerCase();
-        if (!recentSales) return [];
-        if (!term) return recentSales;
-        return recentSales.filter((s) => {
+        if (!term) return todayRecentSales;
+        return todayRecentSales.filter((s) => {
             const fallbackReceiptCode = formatReceiptCode(1, s.receipt_number || s.id);
             return (
                 String(s.id).toLowerCase().includes(term) ||
@@ -1626,7 +1640,7 @@ const Ventas = () => {
                 (s.payment_method || '').toLowerCase().includes(term)
             );
         });
-    }, [recentSales, deleteTicketSearch]);
+    }, [todayRecentSales, deleteTicketSearch]);
 
     return (
         <>
@@ -1998,18 +2012,6 @@ const Ventas = () => {
                                 </button>
                             </div>
                         )}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                            {quickPaymentMethods.map(m => (
-                                <button 
-                                    key={m.id} 
-                                    className={`payment-method-btn ${selectedPaymentMethod === m.id ? 'active' : ''}`} 
-                                    onClick={() => setSelectedPaymentMethod(m.id)}
-                                    style={{ padding: '0.6rem', fontSize: '0.75rem', fontWeight: '800' }}
-                                >
-                                    {m.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '24px' }} /> : m.name.toUpperCase()}
-                                </button>
-                            ))}
-                        </div>
                     </div>
 
                     <div className="action-buttons">
@@ -2272,21 +2274,31 @@ const Ventas = () => {
                                         <button
                                             key={m.id}
                                             onClick={() => {
+                                                if (m.type === 'cuenta_corriente' && !currentAccountAvailable) return;
                                                 setSelectedPaymentMethod(m.id);
                                                 setCashReceived('');
                                             }}
+                                            disabled={m.type === 'cuenta_corriente' && !currentAccountAvailable}
+                                            title={
+                                                m.type === 'cuenta_corriente'
+                                                    ? (currentAccountAvailable
+                                                        ? 'Registrar venta en cuenta corriente'
+                                                        : 'Seleccioná un cliente con cuenta corriente habilitada')
+                                                    : m.name
+                                            }
                                             style={{
                                                 padding: '0.75rem',
                                                 borderRadius: 'var(--radius-md)',
                                                 border: selectedPaymentMethod === m.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
                                                 background: selectedPaymentMethod === m.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
-                                                color: 'var(--color-text-main)',
-                                                cursor: 'pointer',
+                                                color: m.type === 'cuenta_corriente' && !currentAccountAvailable ? 'var(--color-text-muted)' : 'var(--color-text-main)',
+                                                cursor: m.type === 'cuenta_corriente' && !currentAccountAvailable ? 'not-allowed' : 'pointer',
                                                 display: 'flex',
                                                 flexDirection: 'column',
                                                 alignItems: 'center',
                                                 gap: '0.2rem',
-                                                transition: 'all 0.2s'
+                                                transition: 'all 0.2s',
+                                                opacity: m.type === 'cuenta_corriente' && !currentAccountAvailable ? 0.55 : 1
                                             }}
                                         >
                                             {m.name.toLowerCase().includes('mercado pago') ? (
@@ -2304,35 +2316,6 @@ const Ventas = () => {
                                             )}
                                         </button>
                                     ))}
-                                    <button
-                                        onClick={() => {
-                                            if (!currentAccountAvailable || !currentAccountMethod) return;
-                                            setSelectedPaymentMethod(currentAccountMethod.id);
-                                            setCashReceived('');
-                                        }}
-                                        disabled={!currentAccountAvailable}
-                                        title={currentAccountAvailable ? 'Registrar venta en cuenta corriente' : 'Seleccioná un cliente con cuenta corriente habilitada'}
-                                        style={{
-                                            padding: '0.75rem',
-                                            borderRadius: 'var(--radius-md)',
-                                            border: selectedPaymentMethod === currentAccountMethod?.id ? '2px solid var(--color-primary)' : '1px solid var(--color-border)',
-                                            background: selectedPaymentMethod === currentAccountMethod?.id ? 'rgba(var(--color-primary-rgb), 0.1)' : 'var(--color-bg-card)',
-                                            color: currentAccountAvailable ? 'var(--color-text-main)' : 'var(--color-text-muted)',
-                                            cursor: currentAccountAvailable ? 'pointer' : 'not-allowed',
-                                            display: 'flex',
-                                            flexDirection: 'column',
-                                            alignItems: 'center',
-                                            gap: '0.2rem',
-                                            transition: 'all 0.2s',
-                                            opacity: currentAccountAvailable ? 1 : 0.55
-                                        }}
-                                    >
-                                        <div style={{ fontSize: '1.8rem', lineHeight: 1 }}>📋</div>
-                                        <div style={{ fontSize: '0.8rem', fontWeight: '600', textAlign: 'center' }}>Cuenta Corriente</div>
-                                        <div style={{ fontSize: '0.68rem', textAlign: 'center', color: currentAccountAvailable ? '#f59e0b' : 'var(--color-text-muted)' }}>
-                                            {currentAccountAvailable ? 'Cliente habilitado' : 'Elegí un cliente'}
-                                        </div>
-                                    </button>
                                 </div>
                             ) : (
                                 <div style={{ display: 'grid', gap: '0.75rem' }}>
@@ -2353,7 +2336,13 @@ const Ventas = () => {
                                                             style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
                                                         >
                                                             {availableSplitMethods?.map(m => (
-                                                                <option key={m.id} value={m.id}>{m.name}</option>
+                                                                <option
+                                                                    key={m.id}
+                                                                    value={m.id}
+                                                                    disabled={m.type === 'cuenta_corriente' && !currentAccountAvailable}
+                                                                >
+                                                                    {m.name}
+                                                                </option>
                                                             ))}
                                                         </select>
                                                     </label>
@@ -3051,7 +3040,7 @@ const Ventas = () => {
                         <div>
                             <h2 style={{ margin: 0, fontSize: '1.1rem' }}>🗑️ Eliminar Ticket</h2>
                             <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                                Tickets recientes — {recentSales?.length || 0} registrados
+                                Tickets del día — {todayRecentSales.length} registrados
                             </p>
                         </div>
                         <button
