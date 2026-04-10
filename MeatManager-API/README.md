@@ -19,7 +19,7 @@ npm run dev
 ## Variables de entorno (.env)
 
 ```
-DB_HOST=35.225.156.199
+DB_HOST=34.136.100.63
 DB_PORT=3306
 DB_USER=root
 DB_PASS=tu_password
