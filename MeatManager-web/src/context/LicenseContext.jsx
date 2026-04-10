@@ -7,8 +7,8 @@ import { useUser } from './UserContext';
 const LicenseContext = createContext();
 const DEFAULT_SUPPORT = BRAND_CONFIG.support_whatsapp;
 
-const BASE_MODULES = ['dashboard', 'ventas', 'stock', 'compras', 'clientes', 'billing'];
-const PREMIUM_MODULES = ['despostada', 'informes-pro', 'logistica', 'menu-digital', 'costos-reales', 'proveedores-pro'];
+const BASE_MODULES = ['dashboard', 'ventas', 'stock', 'compras', 'clientes', 'billing', 'despostada'];
+const PREMIUM_MODULES = ['informes-pro', 'logistica', 'menu-digital', 'costos-reales', 'proveedores-pro'];
 const ALL_MODULES = [...new Set([...BASE_MODULES, ...PREMIUM_MODULES])];
 
 const FEATURE_ALIASES = {
