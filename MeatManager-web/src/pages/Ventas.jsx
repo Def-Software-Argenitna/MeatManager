@@ -1329,17 +1329,6 @@ const Ventas = () => {
     const activeMethod = getMethodById(selectedPaymentMethod);
     const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
     const finalTotal = cartTotal + cartAdjustment;
-    const quickPaymentMethods = React.useMemo(() => {
-        const preferred = ['Efectivo', 'Mercado Pago'];
-        const selected = preferred
-            .map((name) => dbPaymentMethods?.find((method) => method.name === name))
-            .filter(Boolean);
-        if (selected.length >= 2) return selected.slice(0, 2);
-        const fallback = (dbPaymentMethods || [])
-            .filter((method) => method.type !== 'mixed')
-            .slice(0, 2);
-        return selected.length ? [...selected, ...fallback.filter((item) => !selected.some((s) => s.id === item.id))].slice(0, 2) : fallback;
-    }, [dbPaymentMethods]);
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -2005,18 +1994,6 @@ const Ventas = () => {
                                 </button>
                             </div>
                         )}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                            {quickPaymentMethods.map(m => (
-                                <button 
-                                    key={m.id} 
-                                    className={`payment-method-btn ${selectedPaymentMethod === m.id ? 'active' : ''}`} 
-                                    onClick={() => setSelectedPaymentMethod(m.id)}
-                                    style={{ padding: '0.6rem', fontSize: '0.75rem', fontWeight: '800' }}
-                                >
-                                    {m.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '24px' }} /> : m.name.toUpperCase()}
-                                </button>
-                            ))}
-                        </div>
                     </div>
 
                     <div className="action-buttons">
