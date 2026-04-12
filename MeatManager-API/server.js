@@ -2069,7 +2069,7 @@ async function getClientAccessContext({ uid, email }) {
             return {
                 user: {
                     id: `support-${internalAdmin.id}`,
-                    clientId: client.id,
+                    clientId: client.clientId,
                     branchId: null,
                     firebaseUid: null,
                     name: internalAdmin.name || 'DEF',
@@ -2088,7 +2088,7 @@ async function getClientAccessContext({ uid, email }) {
                     supportAdminId: internalAdmin.id,
                 },
                 client: {
-                    id: client.id,
+                    id: client.clientId,
                     businessName: client.businessName,
                     taxId: client.taxId,
                     cashAuthorizationEmail: client.cashAuthorizationEmail,
