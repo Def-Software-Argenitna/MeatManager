@@ -39,6 +39,14 @@ Usá:
 para los envs de cada API.
 El JSON de Firebase Admin ahora se escribe automaticamente desde el secret `FIREBASE_SERVICE_ACCOUNT_JSON`.
 
+Si MySQL y Redis corren en el mismo host Docker, usá `host.docker.internal` en:
+
+- `DB_HOST`
+- `CLIENTS_DB_HOST`
+- `REDIS_HOST`
+
+El compose ya agrega `host-gateway` para resolverlo correctamente dentro de los contenedores.
+
 ## Primer arranque manual
 
 ```bash

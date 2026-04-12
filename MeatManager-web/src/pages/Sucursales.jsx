@@ -308,8 +308,8 @@ const Sucursales = () => {
                             <ArrowLeftRight size={20} />
                         </div>
                         <div>
-                            <h2>Enviar mercaderÃ­a</h2>
-                            <p>GenerÃ¡ un remito y notificÃ¡ a la sucursal destino.</p>
+                            <h2>Enviar mercadería</h2>
+                            <p>Generá un remito y notificá a la sucursal destino.</p>
                         </div>
                     </div>
 
@@ -363,7 +363,7 @@ const Sucursales = () => {
                         <div className="bucket-list">
                             {transferItems.length === 0 ? (
                                 <div style={{ color: 'var(--color-text-muted)' }}>
-                                    ArrastrÃ¡ o clickeÃ¡ productos para armar el remito.
+                                    Arrastrá o clickeá productos para armar el remito.
                                 </div>
                             ) : (
                                 transferItems.map((item) => (
@@ -371,7 +371,7 @@ const Sucursales = () => {
                                         <div>
                                             <strong>{item.name}</strong>
                                             <div style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>
-                                                MÃ¡x: {item.available?.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
+                                                Máx: {item.available?.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
                                             </div>
                                         </div>
                                         <div className="qty-edit">
@@ -383,7 +383,7 @@ const Sucursales = () => {
                                                 onChange={(e) => updateTransferQty(item.key, e.target.value)}
                                             />
                                             <span>{item.unit}</span>
-                                            <button onClick={() => removeTransferItem(item.key)}>Ã—</button>
+                                            <button onClick={() => removeTransferItem(item.key)}>×</button>
                                         </div>
                                     </div>
                                 ))
@@ -421,8 +421,8 @@ const Sucursales = () => {
                             <ArrowLeftRight size={20} />
                         </div>
                         <div>
-                            <h2>Recibir mercaderÃ­a</h2>
-                            <p>ConfirmÃ¡ los remitos pendientes para actualizar tu stock.</p>
+                            <h2>Recibir mercadería</h2>
+                            <p>Confirmá los remitos pendientes para actualizar tu stock.</p>
                         </div>
                     </div>
 
@@ -441,7 +441,7 @@ const Sucursales = () => {
                                     <div style={{ marginTop: '0.5rem' }}>
                                         {(transfer.items || []).map((item) => (
                                             <div key={`${transfer.id}-${item.id}`} style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                                                {item.product_name} â€” {Number(item.quantity).toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
+                                                {item.product_name} — {Number(item.quantity).toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
                                             </div>
                                         ))}
                                     </div>
@@ -453,7 +453,7 @@ const Sucursales = () => {
                                         disabled={receiveLoadingId === transfer.id}
                                         onClick={() => handleReceiveTransfer(transfer.id)}
                                     >
-                                        {receiveLoadingId === transfer.id ? 'Confirmando...' : 'Confirmar recepciÃ³n'}
+                                        {receiveLoadingId === transfer.id ? 'Confirmando...' : 'Confirmar recepción'}
                                     </button>
                                 </div>
                             </div>
@@ -465,7 +465,7 @@ const Sucursales = () => {
                             <h3 style={{ margin: '0 0 0.6rem', color: 'var(--color-text-main)' }}>Enviados recientes</h3>
                             {outgoingTransfers.slice(0, 5).map((transfer) => (
                                 <div key={`out-${transfer.id}`} style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
-                                    {transfer.remito_code || transfer.remito_number} â€” {transfer.to_branch?.name || transfer.to_branch_id} ({transfer.status})
+                                    {transfer.remito_code || transfer.remito_number} — {transfer.to_branch?.name || transfer.to_branch_id} ({transfer.status})
                                 </div>
                             ))}
                         </div>

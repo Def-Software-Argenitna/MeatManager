@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check } from 'lucide-react';
+import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
+import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -71,6 +72,13 @@ const getMovementPaymentMethod = (movement) => {
     if (cleanValue(movement.payment_method)) return cleanValue(movement.payment_method);
     const match = String(movement.description || '').match(/\(([^()]+)\)\s*$/);
     return cleanValue(match?.[1]);
+};
+
+const getClientLedgerPaymentMethod = (row) => {
+    if (!row) return '-';
+    if (Number(row.debe || 0) > 0) return 'Cuenta Corriente';
+    const parts = String(row.comprobante || '').split(' - ');
+    return cleanValue(parts[parts.length - 1]) || '-';
 };
 
 const Clientes = () => {
@@ -385,6 +393,31 @@ const Clientes = () => {
         );
     });
 
+    const handlePrintClientLedger = useCallback(() => {
+        if (!historyClientData || !clientLedger) return;
+        printCurrentAccountA4({
+            entityLabel: 'Cliente',
+            entityName: getClientFullName(historyClientData) || '-',
+            entityDocument: getPrimaryPhone(historyClientData) || '',
+            title: 'Detalle de Cuenta Corriente',
+            subtitle: `Cliente · ${new Date(historyMonth + '-15').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' })}`,
+            rows: (clientLedger.rows || []).map((row) => ({
+                date: row.fecha,
+                concept: row.comprobante,
+                paymentMethod: getClientLedgerPaymentMethod(row),
+                debe: Number(row.debe || 0),
+                haber: Number(row.haber || 0),
+                balance: Number(row.saldo || 0)
+            })),
+            summary: {
+                openingBalance: Number(clientLedger.openingBalance || 0),
+                totalDebe: Number(clientLedger.salesTotal || 0),
+                totalHaber: Number(clientLedger.paymentTotal || 0),
+                saldoFinal: Number(clientLedger.currentBalance || 0)
+            }
+        });
+    }, [clientLedger, historyClientData, historyMonth]);
+
     return (
         <div className="clients-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
@@ -609,9 +642,19 @@ const Clientes = () => {
                                     </div>
                                 )}
                             </div>
-                            <button onClick={() => setHistoryClient(null)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
-                                <X size={24} />
-                            </button>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                <button
+                                    type="button"
+                                    className="neo-button"
+                                    onClick={handlePrintClientLedger}
+                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
+                                >
+                                    <Printer size={15} /> Imprimir A4
+                                </button>
+                                <button onClick={() => setHistoryClient(null)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
+                                    <X size={24} />
+                                </button>
+                            </div>
                         </div>
 
                         <div style={{

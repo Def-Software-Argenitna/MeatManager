@@ -7,7 +7,7 @@ const TopBar = ({ onToggleSidebar }) => {
     const location = useLocation();
 
     const getModuleNameParts = () => {
-        const path = location.pathname;
+        const path = String(location.pathname || '').toLowerCase();
         let name = "";
         
         if (path.includes("ventas")) name = "CENTRO DE VENTAS";
@@ -31,8 +31,24 @@ const TopBar = ({ onToggleSidebar }) => {
         else if (path.includes("informes")) name = "INFORMES PRO";
         else if (path.includes("menu-digital") || path.includes("menudigital") || path.includes("menu")) name = "MENÚ DIGITAL";
         else if (path.includes("dashboard") || path === "/") name = "PANEL DE CONTROL";
-        
-        if (!name) return { prefix: "", lastWord: "" };
+
+        if (!name) {
+            const cleaned = path
+                .replace(/^\/+/, '')
+                .split('/')
+                .filter(Boolean)
+                .slice(-2)
+                .join(' ');
+            if (cleaned) {
+                name = cleaned
+                    .replace(/-/g, ' ')
+                    .replace(/\s+/g, ' ')
+                    .trim()
+                    .toUpperCase();
+            }
+        }
+
+        if (!name) return { prefix: "", lastWord: "MÓDULO" };
 
         const words = name.split(" ");
         if (words.length <= 1) return { prefix: "", lastWord: name };

@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
-import { fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
+import { clearTokenCache, fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
 
 const SESSION_KEY = 'mm_tenant';
 const TOKEN_KEY = 'mm_auth_token';
@@ -169,6 +169,7 @@ export const TenantProvider = ({ children }) => {
                 await signOut(auth);
             }
         } finally {
+            clearTokenCache();
             setTenant(null);
             setAuthToken('');
             sessionStorage.removeItem(SESSION_KEY);

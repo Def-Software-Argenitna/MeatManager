@@ -537,7 +537,6 @@ function isBaseWebappLicense(license) {
         Number(license?.isMandatory) === 1
         || normalizeLicenseToken(license?.internalCode) === 'base_mm'
         || normalizeLicenseToken(license?.category) === 'base_webapp'
-        || isSuperLicenseMatch(license)
     );
 }
 
@@ -1622,9 +1621,14 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
+            await ensureColumn(conn, 'caja_movimientos', 'payment_method_id', '`payment_method_id` INT NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'client_id', '`client_id` INT NULL AFTER `date`');
             await ensureColumn(conn, 'caja_movimientos', 'supplier', '`supplier` VARCHAR(150) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'receipt_number', '`receipt_number` INT NULL AFTER `authorized_recipient_email`');
+            await ensureColumn(conn, 'caja_movimientos', 'receipt_code', '`receipt_code` VARCHAR(32) NULL AFTER `receipt_number`');
             await ensureColumn(conn, 'caja_movimientos', 'purchase_id', '`purchase_id` INT NULL AFTER `authorization_verified`');
+            await ensureColumn(conn, 'caja_movimientos', 'sale_id', '`sale_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
@@ -2388,10 +2392,6 @@ function buildAccessResponse(accessContext) {
 function buildScopedLicensesForUser(user, licenseRows = []) {
     const licenseMatchesScope = (license) => {
         if (user?.isOwnerFallback) {
-            return true;
-        }
-
-        if (user?.role === 'admin') {
             return true;
         }
 
@@ -4733,7 +4733,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                 try {
                     await pool.query(
                         `UPDATE purchase_items
-                         SET last_price = ?, usage = ?, default_iva_rate = ?
+                         SET last_price = ?, \`usage\` = ?, default_iva_rate = ?
                          WHERE tenant_id = ? AND id = ?`,
                         [parseFloat(cu.last_price), cu.usage || 'venta',
                          parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id]
@@ -4770,6 +4770,54 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+const inferPaymentTypeByName = (paymentMethodName) => {
+    const normalized = String(paymentMethodName || '').trim().toLowerCase();
+    if (!normalized) return 'cash';
+    if (normalized.includes('cuenta corriente')) return 'cuenta_corriente';
+    if (normalized.includes('mercado pago') || normalized.includes('cuenta dni')) return 'wallet';
+    if (normalized.includes('postnet') || normalized.includes('posnet') || normalized.includes('tarjeta')) return 'card';
+    if (normalized.includes('mixto') || normalized.includes('mixed')) return 'mixed';
+    if (normalized.includes('efectivo')) return 'cash';
+    return 'cash';
+};
+
+const isCurrentAccountPayment = (paymentMethodName, paymentMethodType) => {
+    const normalizedName = String(paymentMethodName || '').trim().toLowerCase();
+    const normalizedType = String(paymentMethodType || '').trim().toLowerCase();
+    return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
+};
+
+const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
+    const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
+    if (!breakdown || breakdown.length === 0) {
+        const safeTotal = parseFloat(totalAmount) || 0;
+        if (safeTotal <= 0) return [];
+        const methodName = String(paymentMethod || 'Efectivo').trim();
+        const methodType = String(paymentMethodType || inferPaymentTypeByName(methodName)).trim();
+        if (isCurrentAccountPayment(methodName, methodType)) return [];
+        return [{ methodName, methodType, amount: safeTotal }];
+    }
+
+    const parts = [];
+    for (const part of breakdown) {
+        const amount = parseFloat(
+            part?.amount_charged ?? part?.amount ?? part?.total ?? 0
+        ) || 0;
+        if (amount <= 0) continue;
+
+        const methodName = String(
+            part?.method_name || part?.name || paymentMethod || 'Efectivo'
+        ).trim();
+        const methodType = String(
+            part?.method_type || part?.type || inferPaymentTypeByName(methodName)
+        ).trim();
+        if (isCurrentAccountPayment(methodName, methodType)) continue;
+
+        parts.push({ methodName, methodType, amount });
+    }
+    return parts;
+};
 
 // ── RUTA: POST /api/ventas ─────────────────────────────────────────────────
 // Registra una venta de forma ATÓMICA: ventas + ventas_items + stock (descuento)
@@ -4879,7 +4927,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
             await conn.query(
                 `INSERT INTO stock
-                 (tenant_id, branch_id, product_id, name, type, usage, quantity, unit, reference)
+                 (tenant_id, branch_id, product_id, name, type, \`usage\`, quantity, unit, reference)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
@@ -4906,6 +4954,37 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                     `UPDATE clients SET balance = balance - ?, last_updated = NOW()
                      WHERE tenant_id = ? AND id = ?`,
                     [safeTotal, tenantId, clientId]
+                );
+            }
+        }
+
+        // 5. Registrar ingreso en caja por métodos que impactan caja (no cuenta corriente)
+        const salePaymentParts = buildCajaPartsFromSale({
+            paymentMethod: payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: payment_breakdown,
+            totalAmount: safeTotal,
+        });
+        if (salePaymentParts.length > 0) {
+            const saleReceiptLabel = receipt_code || (receipt_number ? `Ticket ${receipt_number}` : `Venta #${saleId}`);
+            for (const part of salePaymentParts) {
+                await conn.query(
+                    `INSERT INTO caja_movimientos
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        parseFloat(part.amount) || 0,
+                        `Cobro ${saleReceiptLabel}`,
+                        part.methodName,
+                        part.methodType || inferPaymentTypeByName(part.methodName),
+                        now,
+                        clientId || null,
+                        resolvedBranchId || null,
+                        receipt_number || null,
+                        receipt_code || null,
+                        saleId,
+                    ]
                 );
             }
         }
@@ -4965,7 +5044,7 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                 if (prod) productId = prod.id;
             }
             await conn.query(
-                `INSERT INTO stock (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                `INSERT INTO stock (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
@@ -5001,7 +5080,47 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             }
         }
 
-        // 3. Registrar en historial de eliminaciones
+        // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
+        const ventaBreakdown = (() => {
+            try {
+                if (!venta.payment_breakdown) return null;
+                return typeof venta.payment_breakdown === 'string'
+                    ? JSON.parse(venta.payment_breakdown)
+                    : venta.payment_breakdown;
+            } catch {
+                return null;
+            }
+        })();
+        const reversalParts = buildCajaPartsFromSale({
+            paymentMethod: venta.payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: ventaBreakdown,
+            totalAmount: venta.total,
+        });
+        if (reversalParts.length > 0) {
+            const saleReceiptLabel = venta.receipt_code || (venta.receipt_number ? `Ticket ${venta.receipt_number}` : `Venta #${saleId}`);
+            for (const part of reversalParts) {
+                await conn.query(
+                    `INSERT INTO caja_movimientos
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
+                    [
+                        tenantId,
+                        parseFloat(part.amount) || 0,
+                        `Anulación ${saleReceiptLabel}`,
+                        part.methodName,
+                        part.methodType || inferPaymentTypeByName(part.methodName),
+                        venta.clientId || null,
+                        venta.branch_id || null,
+                        venta.receipt_number || null,
+                        venta.receipt_code || null,
+                        saleId,
+                    ]
+                );
+            }
+        }
+
+        // 4. Registrar en historial de eliminaciones
         const deletedBy = req.body?.deleted_by_user_id || null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
@@ -5026,7 +5145,7 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             ]
         );
 
-        // 4. Eliminar items y venta
+        // 5. Eliminar items y venta
         await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
         await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
 
@@ -6029,7 +6148,7 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
 
                 await conn.query(
                     `INSERT INTO stock
-                     (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
@@ -6045,7 +6164,7 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
 
                 await conn.query(
                     `INSERT INTO stock
-                     (tenant_id, branch_id, product_id, name, usage, quantity, unit, reference)
+                     (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
                      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,

@@ -7,8 +7,8 @@ import { useUser } from './UserContext';
 const LicenseContext = createContext();
 const DEFAULT_SUPPORT = BRAND_CONFIG.support_whatsapp;
 
-const BASE_MODULES = ['dashboard', 'ventas', 'stock', 'compras', 'clientes', 'billing'];
-const PREMIUM_MODULES = ['despostada', 'informes-pro', 'logistica', 'menu-digital', 'costos-reales', 'proveedores-pro'];
+const BASE_MODULES = ['dashboard', 'ventas', 'stock', 'compras', 'clientes', 'billing', 'despostada'];
+const PREMIUM_MODULES = ['informes-pro', 'logistica', 'menu-digital', 'costos-reales', 'proveedores-pro'];
 const ALL_MODULES = [...new Set([...BASE_MODULES, ...PREMIUM_MODULES])];
 
 const FEATURE_ALIASES = {
@@ -74,7 +74,6 @@ const isSuperUserLicense = (license) => {
 
 const hasScopedSuperUserLicense = (license, options = {}) => {
     if (!isSuperUserLicense(license)) return false;
-    if (options.role === 'admin') return true;
     if (options.isOwnerFallback) return true;
 
     return String(license?.assignedUserId || '') === String(options.currentUserId || '');
@@ -169,27 +168,7 @@ const buildLicenseCapabilities = (licenses, options = {}) => {
     };
 };
 
-const normalizeVisibleLicenses = (licenses) => {
-    const normalizedLicenses = Array.isArray(licenses) ? [...licenses] : [];
-    const hasSuperUser = normalizedLicenses.some(isSuperUserLicense);
-    const hasBase = normalizedLicenses.some(isBaseLicense);
-
-    if (hasSuperUser && !hasBase) {
-        normalizedLicenses.unshift({
-            clientLicenseId: 'implicit-base-mm',
-            licenseId: 'implicit-base-mm',
-            commercialName: 'Licencia MeatManager',
-            internalCode: 'BASE_MM',
-            category: 'base_webapp',
-            billingScope: 'implicit',
-            appliesToWebapp: true,
-            featureFlags: ['dashboard', 'clients', 'billing'],
-            implicit: true,
-        });
-    }
-
-    return normalizedLicenses;
-};
+const normalizeVisibleLicenses = (licenses) => (Array.isArray(licenses) ? [...licenses] : []);
 
 const syncRemoteBranding = async () => {
     if (!BRAND_CONFIG.sync_url) return;
