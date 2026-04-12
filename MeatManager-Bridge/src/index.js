@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const { Logger } = require('./logger');
-const { loadState, saveState } = require('./state');
+const { loadState, resetState, saveState } = require('./state');
 const { buildMySqlPool } = require('./mysql');
 const { QendraBridge } = require('./bridge');
 const { query: firebirdQuery } = require('./firebird');
@@ -26,7 +26,9 @@ fs.mkdirSync(config.logsDir, { recursive: true });
 const publicDir = path.join(config.rootDir, 'public');
 
 const logger = new Logger({ logFile: config.logFile, level: config.logLevel });
-const state = loadState(config.stateFile);
+const state = config.resetStateOnStart
+    ? resetState(config.stateFile)
+    : loadState(config.stateFile);
 const stateStore = {
     save(nextState) {
         saveState(config.stateFile, nextState);

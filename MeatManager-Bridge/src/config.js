@@ -45,6 +45,7 @@ const config = {
     overridesFile,
     stateFile: path.resolve(rootDir, strEnv('STATE_FILE', './data/state.json')),
     logFile: path.resolve(rootDir, strEnv('LOG_FILE', './logs/bridge.log')),
+    resetStateOnStart: boolEnv('RESET_STATE_ON_START', true),
     deviceId: strEnv('BRIDGE_DEVICE_ID', 'QENDRA-LOCAL-01'),
     bridgeName: strEnv('BRIDGE_NAME', 'Qendra Bridge'),
     siteName: strEnv('BRIDGE_SITE_NAME', ''),
