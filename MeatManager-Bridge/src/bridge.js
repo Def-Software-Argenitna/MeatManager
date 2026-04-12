@@ -15,6 +15,7 @@ const {
     decodeFirebirdText,
 } = require('./helpers');
 const { ensureBridgeSchema } = require('./schema');
+const fs = require('fs');
 
 function chunkArray(values, size) {
     const chunks = [];
@@ -55,6 +56,7 @@ class QendraBridge {
 
     async ensureRuntime() {
         if (this.runtimeReady) return;
+        await this.ensureImportDatabase();
         await ensureBridgeSchema(this.mysqlPool, this.logger);
         await mysqlExecute(
             this.mysqlPool,
@@ -77,6 +79,77 @@ class QendraBridge {
         );
 
         this.runtimeReady = true;
+    }
+
+    async ensureImportDatabase() {
+        const importDb = this.getImportFirebirdConfig();
+        if (fs.existsSync(importDb.dbFile)) {
+            return;
+        }
+
+        const template = this.config.firebird.templateDbFile;
+        if (!template || !fs.existsSync(template)) {
+            throw new Error(`No existe la plantilla Firebird de importacion: ${template}`);
+        }
+
+        fs.copyFileSync(template, importDb.dbFile);
+        this.logger.info('Base Firebird de importacion creada desde plantilla', {
+            importDb: importDb.dbFile,
+            template,
+        });
+    }
+
+    getImportFirebirdConfig() {
+        return {
+            ...this.config.firebird,
+            dbFile: this.config.firebird.importDbFile || this.config.firebird.dbFile,
+        };
+    }
+
+    getImportWorkFirebirdConfig() {
+        return {
+            ...this.config.firebird,
+            dbFile: this.config.firebird.importWorkDbFile || this.config.firebird.importDbFile || this.config.firebird.dbFile,
+        };
+    }
+
+    async prepareImportWorkDatabase() {
+        const importDb = this.getImportFirebirdConfig();
+        const workDb = this.getImportWorkFirebirdConfig();
+        const source = fs.existsSync(importDb.dbFile)
+            ? importDb.dbFile
+            : this.config.firebird.templateDbFile;
+
+        if (!source || !fs.existsSync(source)) {
+            throw new Error(`No existe el origen para preparar la base de trabajo: ${source}`);
+        }
+
+        fs.copyFileSync(source, workDb.dbFile);
+        return workDb;
+    }
+
+    async publishImportDatabase(workDb) {
+        const importDb = this.getImportFirebirdConfig();
+        const attempts = 5;
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            try {
+                fs.copyFileSync(workDb.dbFile, importDb.dbFile);
+                const now = new Date();
+                fs.utimesSync(importDb.dbFile, now, now);
+                this.logger.info('Base Firebird de importacion publicada', {
+                    importDb: importDb.dbFile,
+                    workDb: workDb.dbFile,
+                    attempt,
+                });
+                return;
+            } catch (error) {
+                if (attempt === attempts) {
+                    throw new Error(`No se pudo publicar la base de importacion: ${error.message}`);
+                }
+                await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+            }
+        }
     }
 
     async loadSyncState() {
@@ -204,15 +277,16 @@ class QendraBridge {
         }
 
         const summary = { ok: true, processed: 0, skipped: 0, written: 0 };
+        const importFirebird = await this.prepareImportWorkDatabase();
 
-        const hasPlu = await tableExists(this.config.firebird, 'PLU');
+        const hasPlu = await tableExists(importFirebird, 'PLU');
         if (!hasPlu) {
             throw new Error('La tabla PLU no existe en Firebird');
         }
 
-        const pluColumns = await getColumns(this.config.firebird, 'PLU');
-        const sectionMap = await this.loadSectionMap();
-        const sectionColumns = await getColumns(this.config.firebird, 'SECCIONES').catch(() => []);
+        const pluColumns = await getColumns(importFirebird, 'PLU');
+        const sectionMap = await this.loadSectionMap(importFirebird);
+        const sectionColumns = await getColumns(importFirebird, 'SECCIONES').catch(() => []);
 
         for (const product of products) {
             summary.processed += 1;
@@ -225,19 +299,6 @@ class QendraBridge {
                 current_price: product.current_price,
                 updated_at: product.updated_at,
             });
-
-            const mapRows = await mysqlQuery(
-                this.mysqlPool,
-                `SELECT * FROM qendra_bridge_product_map
-                 WHERE device_id = ? AND tenant_id = ? AND (product_id = ? OR firebird_plu_id = ?)
-                 LIMIT 1`,
-                [this.config.deviceId, this.config.tenantId, product.id, pluId]
-            );
-            const mapRow = mapRows[0] || null;
-            if (mapRow && mapRow.fingerprint === productFingerprint) {
-                summary.skipped += 1;
-                continue;
-            }
 
             const description = asText(product.name).slice(0, 250) || `Producto ${pluId}`;
             const sectionId = this.resolveSectionId(product.category, sectionMap) || this.config.firebird.defaultSectionId;
@@ -256,12 +317,39 @@ class QendraBridge {
             if (pluColumns.includes('ULTIMA_MODIF')) row.ULTIMA_MODIF = new Date();
             if (pluColumns.includes('IMPFLAG')) row.IMPFLAG = 0;
 
-            await this.upsertFirebirdRow('PLU', 'ID', row, pluColumns);
-            const targets = await this.ensureProductAssignments({
-                pluId,
-                numero: row.COD_LOCAL || String(pluId),
-                sectionId,
-            });
+            const mapRows = await mysqlQuery(
+                this.mysqlPool,
+                `SELECT * FROM qendra_bridge_product_map
+                 WHERE device_id = ? AND tenant_id = ? AND (product_id = ? OR firebird_plu_id = ?)
+                 LIMIT 1`,
+                [this.config.deviceId, this.config.tenantId, product.id, pluId]
+            );
+            const mapRow = mapRows[0] || null;
+            if (mapRow && mapRow.fingerprint === productFingerprint) {
+                const importRows = await firebirdQuery(
+                    importFirebird,
+                    `SELECT ID, ID_SECCION, DESCRIPCION, COD_LOCAL, TIPO_VENTA, PRECIO
+                     FROM PLU
+                     WHERE ID = ?`,
+                    [firebirdValue(row.ID)]
+                );
+                const importRow = importRows[0] || null;
+                const matchesImport =
+                    importRow
+                    && String(importRow.ID ?? '') === String(row.ID)
+                    && String(importRow.ID_SECCION ?? '') === String(row.ID_SECCION)
+                    && asText(importRow.DESCRIPCION) === String(row.DESCRIPCION)
+                    && String(importRow.COD_LOCAL ?? '') === String(row.COD_LOCAL ?? '')
+                    && String(importRow.TIPO_VENTA ?? '') === String(row.TIPO_VENTA ?? '')
+                    && Number(toNumber(importRow.PRECIO, 0)) === Number(toNumber(row.PRECIO, 0));
+                if (matchesImport) {
+                    summary.skipped += 1;
+                    continue;
+                }
+            }
+
+            await this.upsertFirebirdRow(importFirebird, 'PLU', 'ID', row, pluColumns);
+            await this.ensureImportSection(importFirebird, sectionId, product.category);
 
             await mysqlExecute(
                 this.mysqlPool,
@@ -286,11 +374,20 @@ class QendraBridge {
             );
 
             summary.written += 1;
-            await this.markProductNeedsSync({
+            await this.recordLog('mysql-to-firebird', 'notification', String(pluId), 'ok', 'Producto escrito en base de importacion de Qendra', {
                 pluId,
-                numero: row.COD_LOCAL || String(pluId),
-                targets,
+                importDb: importFirebird.dbFile,
             });
+        }
+
+        if (summary.written > 0) {
+            await this.publishImportDatabase(importFirebird);
+        } else if (fs.existsSync(importFirebird.dbFile) && importFirebird.dbFile !== this.getImportFirebirdConfig().dbFile) {
+            try {
+                fs.unlinkSync(importFirebird.dbFile);
+            } catch {
+                // noop
+            }
         }
 
         this.state.productCursor = new Date().toISOString();
@@ -625,16 +722,16 @@ class QendraBridge {
         return lookup;
     }
 
-    async loadSectionMap() {
+    async loadSectionMap(firebirdConfig = this.config.firebird) {
         const map = new Map();
         try {
-            const columns = await getColumns(this.config.firebird, 'SECCIONES');
+            const columns = await getColumns(firebirdConfig, 'SECCIONES');
             const idColumn = firstMatchingColumn(columns, ['ID']);
             const nameColumn = firstMatchingColumn(columns, ['DESCRIPCION', 'NOMBRE', 'DESC', 'NOMBRE_SECCION', 'DESCRIP']);
             if (!idColumn || !nameColumn) return map;
 
             const rows = await firebirdQuery(
-                this.config.firebird,
+                firebirdConfig,
                 `SELECT ${idColumn} AS ID, CAST(${nameColumn} AS VARCHAR(250) CHARACTER SET OCTETS) AS NOMBRE
                  FROM SECCIONES`
             );
@@ -645,6 +742,26 @@ class QendraBridge {
             this.logger.warn('No se pudo leer SECCIONES de Firebird', { error: error.message });
         }
         return map;
+    }
+
+    async ensureImportSection(firebirdConfig, sectionId, sectionName) {
+        if (!(await tableExists(firebirdConfig, 'SECCIONES'))) {
+            return;
+        }
+
+        const columns = await getColumns(firebirdConfig, 'SECCIONES');
+        const rows = await firebirdQuery(
+            firebirdConfig,
+            'SELECT COUNT(*) AS TOTAL FROM SECCIONES WHERE ID = ?',
+            [firebirdValue(sectionId)]
+        );
+        const exists = Number(rows?.[0]?.TOTAL || rows?.[0]?.total || 0) > 0;
+        if (exists) return;
+
+        const row = { ID: firebirdValue(sectionId) };
+        if (columns.includes('NOMBRE')) row.NOMBRE = asText(sectionName) || `SECCION ${sectionId}`;
+        if (columns.includes('IMPFLAG')) row.IMPFLAG = 0;
+        await this.upsertFirebirdRow(firebirdConfig, 'SECCIONES', 'ID', row, columns);
     }
 
     resolveSectionId(category, sectionMap) {
@@ -711,10 +828,10 @@ class QendraBridge {
         return targets;
     }
 
-    async upsertFirebirdRow(tableName, keyColumn, row, columns) {
+    async upsertFirebirdRow(firebirdConfig, tableName, keyColumn, row, columns) {
         const keyValue = row[keyColumn];
         const countRows = await firebirdQuery(
-            this.config.firebird,
+            firebirdConfig,
             `SELECT COUNT(*) AS TOTAL FROM ${tableName} WHERE ${keyColumn} = ?`,
             [firebirdValue(keyValue)]
         );
@@ -732,7 +849,7 @@ class QendraBridge {
             if (!setClause) return;
             params.push(firebirdValue(keyValue));
             await firebirdQuery(
-                this.config.firebird,
+                firebirdConfig,
                 `UPDATE ${tableName} SET ${setClause} WHERE ${keyColumn} = ?`,
                 params
             );
@@ -779,7 +896,7 @@ class QendraBridge {
         const placeholders = allowedColumns.map(() => '?').join(', ');
         const params = allowedColumns.map((column) => firebirdValue(row[column]));
         await firebirdQuery(
-            this.config.firebird,
+            firebirdConfig,
             `INSERT INTO ${tableName} (${fields}) VALUES (${placeholders})`,
             params
         );
