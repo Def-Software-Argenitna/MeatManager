@@ -90,6 +90,11 @@ npm start
 - `MYSQL_PASSWORD`
 - `MYSQL_DATABASE`
 - `MYSQL_SSL`
+- `CLIENTS_DB_HOST`
+- `CLIENTS_DB_PORT`
+- `CLIENTS_DB_USER`
+- `CLIENTS_DB_PASS`
+- `CLIENTS_DB_NAME`
 - `SYNC_INTERVAL_MS`
 - `TICKET_LOOKBACK_DAYS`
 - `PRODUCT_LOOKBACK_HOURS`
@@ -101,6 +106,7 @@ npm start
 
 - Abrir `http://127.0.0.1:4045`
 - Permite:
+  - seleccionar cliente y sucursal desde `GestionClientes`
   - editar configuracion operativa
   - guardar overrides en `data/config-overrides.json`
   - probar Firebird y MySQL

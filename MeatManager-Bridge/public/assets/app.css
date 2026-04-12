@@ -141,11 +141,18 @@ select {
 
 .actions,
 .button-row,
-.diag-grid {
+.diag-grid,
+.selection-grid {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
     align-items: center;
+}
+
+.selection-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-bottom: 14px;
 }
 
 .button {
@@ -183,6 +190,10 @@ select {
 
 .output-logs {
     min-height: 280px;
+}
+
+.output-small {
+    min-height: 110px;
 }
 
 @media (max-width: 900px) {

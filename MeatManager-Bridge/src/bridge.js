@@ -34,6 +34,15 @@ function firebirdValue(value) {
     return value;
 }
 
+function inferTipoVenta(unit) {
+    const normalized = normalizeText(unit).toLowerCase();
+    if (!normalized) return 0;
+    if (['kg', 'kilo', 'kilos', 'gr', 'gramo', 'gramos'].includes(normalized)) {
+        return 0;
+    }
+    return 1;
+}
+
 class QendraBridge {
     constructor({ config, logger, state, stateStore, mysqlPool }) {
         this.config = config;
@@ -239,11 +248,20 @@ class QendraBridge {
                 DESCRIPCION: description,
                 PRECIO: price,
             };
+            if (pluColumns.includes('COD_LOCAL')) row.COD_LOCAL = String(pluId);
+            if (pluColumns.includes('TIPO_VENTA')) row.TIPO_VENTA = inferTipoVenta(product.unit);
             if (pluColumns.includes('PRECIO2')) row.PRECIO2 = price;
             if (pluColumns.includes('TARA')) row.TARA = 0;
             if (pluColumns.includes('VENCIMIENTO')) row.VENCIMIENTO = null;
+            if (pluColumns.includes('ULTIMA_MODIF')) row.ULTIMA_MODIF = new Date();
+            if (pluColumns.includes('IMPFLAG')) row.IMPFLAG = 0;
 
             await this.upsertFirebirdRow('PLU', 'ID', row, pluColumns);
+            const targets = await this.ensureProductAssignments({
+                pluId,
+                numero: row.COD_LOCAL || String(pluId),
+                sectionId,
+            });
 
             await mysqlExecute(
                 this.mysqlPool,
@@ -268,11 +286,10 @@ class QendraBridge {
             );
 
             summary.written += 1;
-        }
-
-        if (summary.written > 0) {
-            await this.markFirebirdNeedsSync('Productos actualizados desde MySQL', {
-                count: summary.written,
+            await this.markProductNeedsSync({
+                pluId,
+                numero: row.COD_LOCAL || String(pluId),
+                targets,
             });
         }
 
@@ -394,11 +411,12 @@ class QendraBridge {
             const ventaId = await withTransaction(this.mysqlPool, async (conn) => {
                 const [ventaRows] = await conn.query(
                     `SELECT id FROM ventas
-                     WHERE tenant_id = ? AND qendra_ticket_id = ?
+                     WHERE tenant_id = ? AND qendra_ticket_id = ? AND COALESCE(bridge_device_id, '') = ?
                      LIMIT 1`,
-                    [this.config.tenantId, ticket.ticketId]
+                    [this.config.tenantId, ticket.ticketId, this.config.deviceId]
                 );
                 let saleId = ventaRows[0]?.id || null;
+                const isUpdate = Boolean(saleId);
 
                 if (!saleId) {
                     const [saleInsert] = await conn.execute(
@@ -426,45 +444,69 @@ class QendraBridge {
                         ]
                     );
                     saleId = saleInsert.insertId;
+                } else {
+                    await conn.execute(
+                        `UPDATE ventas
+                         SET date = ?, total = ?, receipt_number = ?, receipt_code = ?, ticket_barcode = ?,
+                             branch_id = ?, bridge_device_id = ?, bridge_synced_at = NOW(), synced = 1
+                         WHERE id = ?`,
+                        [
+                            ticket.firstDate || new Date(),
+                            Number(ticket.total.toFixed(2)),
+                            ticket.ticketId,
+                            barcode,
+                            barcode,
+                            this.config.branchId || null,
+                            this.config.deviceId,
+                            saleId,
+                        ]
+                    );
+                    await conn.execute(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [this.config.tenantId, saleId]);
+                    await conn.execute(
+                        `DELETE FROM stock
+                         WHERE tenant_id = ? AND COALESCE(branch_id, 0) = COALESCE(?, 0)
+                           AND reference = ? AND usage = 'venta'`,
+                        [this.config.tenantId, this.config.branchId || null, barcode]
+                    );
+                }
 
-                    for (const item of enrichedItems) {
-                        const product = await this.ensureMySqlProduct(conn, item);
-                        await conn.execute(
-                            `INSERT INTO ventas_items
-                             (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal, synced)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
-                            [
-                                this.config.tenantId,
-                                saleId,
-                                product.id,
-                                item.productName,
-                                item.weightKg || 1,
-                                item.unitPrice,
-                                Number((item.weightKg || 1) * item.unitPrice),
-                            ]
-                        );
+                for (const item of enrichedItems) {
+                    const product = await this.ensureMySqlProduct(conn, item);
+                    await conn.execute(
+                        `INSERT INTO ventas_items
+                         (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal, synced)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`,
+                        [
+                            this.config.tenantId,
+                            saleId,
+                            product.id,
+                            item.productName,
+                            item.weightKg || 1,
+                            item.unitPrice,
+                            Number((item.weightKg || 1) * item.unitPrice),
+                        ]
+                    );
 
-                        await conn.execute(
-                            `INSERT INTO stock
-                             (tenant_id, branch_id, product_id, name, type, usage, quantity, unit, price, category_id, reference, barcode, presentation, updated_at, synced)
-                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
-                            [
-                                this.config.tenantId,
-                                this.config.branchId || null,
-                                product.id,
-                                item.productName,
-                                'salida',
-                                'venta',
-                                -(item.weightKg || 1),
-                                'kg',
-                                item.unitPrice,
-                                null,
-                                barcode,
-                                barcode,
-                                'bridge',
-                            ]
-                        );
-                    }
+                    await conn.execute(
+                        `INSERT INTO stock
+                         (tenant_id, branch_id, product_id, name, type, usage, quantity, unit, price, category_id, reference, barcode, presentation, updated_at, synced)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), 1)`,
+                        [
+                            this.config.tenantId,
+                            this.config.branchId || null,
+                            product.id,
+                            item.productName,
+                            'salida',
+                            'venta',
+                            -(item.weightKg || 1),
+                            'kg',
+                            item.unitPrice,
+                            null,
+                            barcode,
+                            barcode,
+                            isUpdate ? 'bridge-update' : 'bridge',
+                        ]
+                    );
                 }
 
                 await conn.execute(
@@ -618,6 +660,57 @@ class QendraBridge {
         return this.config.firebird.defaultSectionId;
     }
 
+    async loadTargetEquipments(sectionId) {
+        const targets = new Set();
+        if (await tableExists(this.config.firebird, 'EQ_SECCION')) {
+            const rows = await firebirdQuery(
+                this.config.firebird,
+                `SELECT IP
+                 FROM EQ_SECCION
+                 WHERE ID_SECCION = ?`,
+                [firebirdValue(sectionId)]
+            );
+            for (const row of rows) {
+                const ip = String(row.IP ?? '').trim();
+                if (ip) targets.add(ip);
+            }
+        }
+
+        if (targets.size === 0 && await tableExists(this.config.firebird, 'EQUIPOS')) {
+            const rows = await firebirdQuery(this.config.firebird, 'SELECT IP FROM EQUIPOS');
+            for (const row of rows) {
+                const ip = String(row.IP ?? '').trim();
+                if (ip) targets.add(ip);
+            }
+        }
+
+        return [...targets];
+    }
+
+    async ensureProductAssignments({ pluId, numero, sectionId }) {
+        if (!(await tableExists(this.config.firebird, 'EQ_PLUS'))) {
+            return [];
+        }
+
+        const targets = await this.loadTargetEquipments(sectionId);
+        const columns = await getColumns(this.config.firebird, 'EQ_PLUS');
+        for (const ip of targets) {
+            await this.upsertCompositeFirebirdRow(
+                'EQ_PLUS',
+                ['IP', 'ID_PLU'],
+                {
+                    IP: ip,
+                    ID_PLU: firebirdValue(Number.isNaN(Number(pluId)) ? pluId : Number(pluId)),
+                    NUMERO: String(numero),
+                    ID_SECCION: firebirdValue(sectionId),
+                    MODIF: 3,
+                },
+                columns
+            );
+        }
+        return targets;
+    }
+
     async upsertFirebirdRow(tableName, keyColumn, row, columns) {
         const keyValue = row[keyColumn];
         const countRows = await firebirdQuery(
@@ -656,12 +749,53 @@ class QendraBridge {
         );
     }
 
-    async markFirebirdNeedsSync(message, payload) {
+    async upsertCompositeFirebirdRow(tableName, keyColumns, row, columns) {
+        const allowedColumns = columns.filter((column) => Object.prototype.hasOwnProperty.call(row, column));
+        if (!allowedColumns.length) return;
+
+        const whereClause = keyColumns.map((column) => `${column} = ?`).join(' AND ');
+        const whereParams = keyColumns.map((column) => firebirdValue(row[column]));
+        const countRows = await firebirdQuery(
+            this.config.firebird,
+            `SELECT COUNT(*) AS TOTAL FROM ${tableName} WHERE ${whereClause}`,
+            whereParams
+        );
+        const exists = Number(countRows?.[0]?.TOTAL || countRows?.[0]?.total || 0) > 0;
+
+        if (exists) {
+            const updateColumns = allowedColumns.filter((column) => !keyColumns.includes(column));
+            if (!updateColumns.length) return;
+            const setClause = updateColumns.map((column) => `"${column}" = ?`).join(', ');
+            const params = updateColumns.map((column) => firebirdValue(row[column])).concat(whereParams);
+            await firebirdQuery(
+                this.config.firebird,
+                `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`,
+                params
+            );
+            return;
+        }
+
+        const fields = allowedColumns.map((column) => `"${column}"`).join(', ');
+        const placeholders = allowedColumns.map(() => '?').join(', ');
+        const params = allowedColumns.map((column) => firebirdValue(row[column]));
+        await firebirdQuery(
+            this.config.firebird,
+            `INSERT INTO ${tableName} (${fields}) VALUES (${placeholders})`,
+            params
+        );
+    }
+
+    async markProductNeedsSync({ pluId, numero, targets }) {
         try {
             if (await tableExists(this.config.firebird, 'EQUIPOS')) {
                 const columns = await getColumns(this.config.firebird, 'EQUIPOS');
-                if (columns.includes('NOVEDADES')) {
-                    await firebirdQuery(this.config.firebird, `UPDATE EQUIPOS SET NOVEDADES = 1`);
+                if (columns.includes('NOVEDADES') && targets.length > 0) {
+                    const placeholders = targets.map(() => '?').join(', ');
+                    await firebirdQuery(
+                        this.config.firebird,
+                        `UPDATE EQUIPOS SET NOVEDADES = 1 WHERE IP IN (${placeholders})`,
+                        targets
+                    );
                 }
             }
         } catch (error) {
@@ -671,22 +805,26 @@ class QendraBridge {
         try {
             if (await tableExists(this.config.firebird, 'NOVEDADES')) {
                 const columns = await getColumns(this.config.firebird, 'NOVEDADES');
-                const row = {};
-                if (columns.includes('FECHA')) row.FECHA = new Date();
-                if (columns.includes('DESCRIPCION')) row.DESCRIPCION = message;
-                if (columns.includes('MENSAJE')) row.MENSAJE = message;
-                if (columns.includes('TIPO')) row.TIPO = 'bridge';
-                if (columns.includes('ORIGEN')) row.ORIGEN = 'MEATMANAGER';
-                const insert = this.buildFirebirdInsert('NOVEDADES', columns, row);
-                if (insert) {
-                    await firebirdQuery(this.config.firebird, insert.sql, insert.params);
+                for (const ip of targets) {
+                    const row = {};
+                    if (columns.includes('IP')) row.IP = ip;
+                    if (columns.includes('TABLA')) row.TABLA = 1;
+                    if (columns.includes('VALOR')) row.VALOR = String(numero || pluId);
+                    const insert = this.buildFirebirdInsert('NOVEDADES', columns, row);
+                    if (insert) {
+                        await firebirdQuery(this.config.firebird, insert.sql, insert.params);
+                    }
                 }
             }
         } catch (error) {
             this.logger.warn('No se pudo insertar NOVEDADES', { error: error.message });
         }
 
-        await this.recordLog('mysql-to-firebird', 'notification', payload?.pluId || '*', 'ok', message, payload);
+        await this.recordLog('mysql-to-firebird', 'notification', String(pluId), 'ok', 'Producto marcado para publicacion en Qendra', {
+            pluId,
+            numero,
+            targets,
+        });
     }
 
     buildFirebirdInsert(tableName, columns, row) {

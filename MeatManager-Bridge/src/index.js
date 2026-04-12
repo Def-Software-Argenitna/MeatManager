@@ -3,10 +3,17 @@ const fs = require('fs');
 const path = require('path');
 const config = require('./config');
 const { Logger } = require('./logger');
-const { loadState, saveState } = require('./state');
+const { loadState, resetState, saveState } = require('./state');
 const { buildMySqlPool } = require('./mysql');
 const { QendraBridge } = require('./bridge');
-const { attach } = require('./firebird');
+const { query: firebirdQuery } = require('./firebird');
+const {
+    buildClientDirectoryPool,
+    listClients,
+    getClientById,
+    listBranches,
+    getBranchById,
+} = require('./client-directory');
 const {
     loadOverrides,
     saveOverrides,
@@ -19,13 +26,16 @@ fs.mkdirSync(config.logsDir, { recursive: true });
 const publicDir = path.join(config.rootDir, 'public');
 
 const logger = new Logger({ logFile: config.logFile, level: config.logLevel });
-const state = loadState(config.stateFile);
+const state = config.resetStateOnStart
+    ? resetState(config.stateFile)
+    : loadState(config.stateFile);
 const stateStore = {
     save(nextState) {
         saveState(config.stateFile, nextState);
     },
 };
 const mysqlPool = buildMySqlPool(config.mysql);
+const clientsDbPool = buildClientDirectoryPool(config.clientsDb);
 const bridge = new QendraBridge({
     config,
     logger,
@@ -67,6 +77,7 @@ function getRuntimeSnapshot() {
         deviceId: config.deviceId,
         bridgeName: config.bridgeName,
         siteName: config.siteName,
+        clientId: config.clientId,
         tenantId: config.tenantId,
         branchId: config.branchId,
         syncIntervalMs: config.syncIntervalMs,
@@ -76,6 +87,20 @@ function getRuntimeSnapshot() {
         logFile: config.logFile,
         stateFile: config.stateFile,
         overridesFile: config.overridesFile,
+    };
+}
+
+async function getClientSelectionSnapshot() {
+    const client = await getClientById(clientsDbPool, config.clientId);
+    const branch = await getBranchById(clientsDbPool, config.branchId);
+    return {
+        selectedClientId: config.clientId || null,
+        selectedBranchId: config.branchId || null,
+        selectedClient: client || null,
+        selectedBranch: branch || null,
+        tenantId: config.tenantId || null,
+        branchId: config.branchId || null,
+        belongsToExpectedClient: Boolean(client),
     };
 }
 
@@ -117,28 +142,32 @@ async function testMySqlConnection() {
     }
 }
 
-async function testFirebirdConnection() {
-    const connection = await attach(config.firebird);
+async function testClientsDbConnection() {
+    const pool = buildClientDirectoryPool(config.clientsDb);
     try {
-        const rows = await new Promise((resolve, reject) => {
-            connection.db.query('SELECT CURRENT_TIMESTAMP AS NOW_TS FROM RDB$DATABASE', (error, result) => {
-                if (error) return reject(error);
-                resolve(result || []);
-            });
-        });
+        const [rows] = await pool.query('SELECT DATABASE() AS db_name, NOW() AS now_ts');
+        const client = await getClientById(pool, config.clientId);
+        const branch = await getBranchById(pool, config.branchId);
         return {
             ok: true,
-            mode: connection.mode,
-            now: rows?.[0]?.NOW_TS || rows?.[0]?.now_ts || null,
-            database: config.firebird.dbFile,
+            now: rows?.[0]?.now_ts || null,
+            database: rows?.[0]?.db_name || config.clientsDb.database,
+            client: client || null,
+            branch: branch || null,
         };
     } finally {
-        try {
-            connection.db.detach();
-        } catch {
-            // noop
-        }
+        await pool.end().catch(() => {});
     }
+}
+
+async function testFirebirdConnection() {
+    const rows = await firebirdQuery(config.firebird, 'SELECT CURRENT_TIMESTAMP AS NOW_TS FROM RDB$DATABASE');
+    return {
+        ok: true,
+        mode: 'local-helper',
+        now: rows?.[0]?.NOW_TS || rows?.[0]?.now_ts || null,
+        database: config.firebird.dbFile,
+    };
 }
 
 async function runCycle(reason = 'scheduled') {
@@ -188,10 +217,12 @@ function startHttpServer() {
         }
 
         if (pathname === '/api/config' && req.method === 'GET') {
+            const selection = await getClientSelectionSnapshot().catch(() => null);
             sendJson(res, 200, {
                 ok: true,
                 values: buildEditableConfigView(config),
                 source: loadOverrides(config.overridesFile),
+                selection,
                 requiresRestartNote: 'Los cambios se guardan en config-overrides.json y aplican al reiniciar el bridge.',
             });
             return;
@@ -223,9 +254,51 @@ function startHttpServer() {
             return;
         }
 
+        if (pathname === '/api/clients' && req.method === 'GET') {
+            try {
+                const search = url.searchParams.get('search') || '';
+                const clients = await listClients(clientsDbPool, search);
+                sendJson(res, 200, { ok: true, clients });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/branches' && req.method === 'GET') {
+            try {
+                const clientId = Number(url.searchParams.get('clientId') || 0);
+                const branches = await listBranches(clientsDbPool, clientId);
+                sendJson(res, 200, { ok: true, branches });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/selection' && req.method === 'GET') {
+            try {
+                const snapshot = await getClientSelectionSnapshot();
+                sendJson(res, 200, { ok: true, ...snapshot });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
         if (pathname === '/api/test/mysql' && req.method === 'POST') {
             try {
                 const result = await testMySqlConnection();
+                sendJson(res, 200, result);
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/test/clients-db' && req.method === 'POST') {
+            try {
+                const result = await testClientsDbConnection();
                 sendJson(res, 200, result);
             } catch (error) {
                 sendJson(res, 500, { ok: false, error: error.message });
@@ -260,15 +333,15 @@ function startHttpServer() {
 }
 
 async function main() {
-    server = startHttpServer();
-
     if (config.once) {
         const result = await runCycle('once');
         await mysqlPool.end().catch(() => {});
+        await clientsDbPool.end().catch(() => {});
         process.exit(result.ok ? 0 : 1);
         return;
     }
 
+    server = startHttpServer();
     await runCycle('startup');
     timer = setInterval(() => {
         runCycle('interval');
@@ -282,6 +355,7 @@ async function shutdown(signal) {
         await new Promise((resolve) => server.close(resolve));
     }
     await mysqlPool.end().catch(() => {});
+    await clientsDbPool.end().catch(() => {});
     process.exit(0);
 }
 
@@ -291,5 +365,6 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 main().catch(async (error) => {
     logger.error('No se pudo iniciar el bridge', { error: error.message });
     await mysqlPool.end().catch(() => {});
+    await clientsDbPool.end().catch(() => {});
     process.exit(1);
 });

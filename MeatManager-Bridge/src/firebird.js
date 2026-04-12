@@ -1,6 +1,10 @@
 const fs = require('fs');
 const path = require('path');
+const { execFile } = require('child_process');
 const Firebird = require('node-firebird');
+
+const rootDir = path.resolve(__dirname, '..');
+const helperScript = path.join(rootDir, 'tools', 'firebird_helper.py');
 
 const QENDRA_DLL_PATHS = [
     'C:\\Qendra',
@@ -32,7 +36,54 @@ function buildConfigs(config) {
     };
 }
 
-function attach(config) {
+function resolveHelperPython(config) {
+    return config?.pythonPath || path.join(rootDir, 'tools', 'python32', 'runtime', 'python.exe');
+}
+
+function hasPythonHelper(config) {
+    return fs.existsSync(resolveHelperPython(config)) && fs.existsSync(helperScript);
+}
+
+function runPythonHelper(config, payload) {
+    return new Promise((resolve, reject) => {
+        const pythonPath = resolveHelperPython(config);
+        const child = execFile(
+            pythonPath,
+            [helperScript],
+            {
+                cwd: rootDir,
+                windowsHide: true,
+                env: {
+                    ...process.env,
+                    PATH: `${path.dirname(config.dbFile)};${process.env.PATH || ''}`,
+                },
+                maxBuffer: 10 * 1024 * 1024,
+            },
+            (error, stdout, stderr) => {
+                if (error) {
+                    const details = [stdout, stderr].filter(Boolean).join(' ').trim();
+                    reject(new Error(details || error.message));
+                    return;
+                }
+
+                try {
+                    const response = JSON.parse(stdout || '{}');
+                    if (!response.ok) {
+                        reject(new Error(response.error || 'Error desconocido al consultar Firebird'));
+                        return;
+                    }
+                    resolve(response);
+                } catch (parseError) {
+                    reject(new Error(`Respuesta invalida del helper Firebird: ${stdout || stderr || parseError.message}`));
+                }
+            }
+        );
+
+        child.stdin.end(JSON.stringify({ config, ...payload }));
+    });
+}
+
+function attachLegacy(config) {
     injectDllPaths();
     const { tcp, embedded } = buildConfigs(config);
 
@@ -48,11 +99,28 @@ function attach(config) {
     });
 }
 
-function query(config, sql, params = []) {
+async function attach(config) {
+    if (hasPythonHelper(config)) {
+        await runPythonHelper(config, { action: 'ping' });
+        return { db: null, mode: 'python-helper' };
+    }
+    return attachLegacy(config);
+}
+
+async function query(config, sql, params = []) {
+    if (hasPythonHelper(config)) {
+        const response = await runPythonHelper(config, {
+            action: 'query',
+            sql,
+            params,
+        });
+        return response.rows || [];
+    }
+
     return new Promise(async (resolve, reject) => {
         let connection;
         try {
-            connection = await attach(config);
+            connection = await attachLegacy(config);
         } catch (error) {
             return reject(error);
         }
@@ -67,19 +135,6 @@ function query(config, sql, params = []) {
             resolve(rows || []);
         });
     });
-}
-
-async function withDb(config, handler) {
-    const connection = await attach(config);
-    try {
-        return await handler(connection.db, connection.mode);
-    } finally {
-        try {
-            connection.db.detach();
-        } catch {
-            // noop
-        }
-    }
 }
 
 async function getTables(config) {
@@ -134,7 +189,6 @@ function buildInsertSql(tableName, columns, row) {
 module.exports = {
     attach,
     query,
-    withDb,
     getTables,
     tableExists,
     getColumns,

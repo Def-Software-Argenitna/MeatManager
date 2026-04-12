@@ -31,6 +31,12 @@ function loadState(stateFile) {
     }
 }
 
+function resetState(stateFile) {
+    const state = defaultState();
+    saveState(stateFile, state);
+    return state;
+}
+
 function saveState(stateFile, state) {
     fs.mkdirSync(path.dirname(stateFile), { recursive: true });
     fs.writeFileSync(stateFile, JSON.stringify(state, null, 2), 'utf8');
@@ -39,5 +45,6 @@ function saveState(stateFile, state) {
 module.exports = {
     defaultState,
     loadState,
+    resetState,
     saveState,
 };
