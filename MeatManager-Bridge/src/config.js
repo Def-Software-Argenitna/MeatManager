@@ -55,6 +55,7 @@ const config = {
     firebird: {
         dbFile: strEnv('FIREBIRD_DB_FILE', 'C:\\Qendra\\qendra.fdb'),
         importDbFile: strEnv('FIREBIRD_IMPORT_DB_FILE', 'C:\\Qendra\\bridge_import.fdb'),
+        importWorkDbFile: strEnv('FIREBIRD_IMPORT_WORK_DB_FILE', 'C:\\Qendra\\bridge_import_work.fdb'),
         templateDbFile: strEnv('FIREBIRD_TEMPLATE_DB_FILE', 'C:\\Qendra\\qendra_vacia.fdb'),
         host: strEnv('FIREBIRD_HOST', '127.0.0.1'),
         port: intEnv('FIREBIRD_PORT', 3050),

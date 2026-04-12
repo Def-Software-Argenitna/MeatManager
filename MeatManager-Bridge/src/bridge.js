@@ -106,6 +106,52 @@ class QendraBridge {
         };
     }
 
+    getImportWorkFirebirdConfig() {
+        return {
+            ...this.config.firebird,
+            dbFile: this.config.firebird.importWorkDbFile || this.config.firebird.importDbFile || this.config.firebird.dbFile,
+        };
+    }
+
+    async prepareImportWorkDatabase() {
+        const importDb = this.getImportFirebirdConfig();
+        const workDb = this.getImportWorkFirebirdConfig();
+        const source = fs.existsSync(importDb.dbFile)
+            ? importDb.dbFile
+            : this.config.firebird.templateDbFile;
+
+        if (!source || !fs.existsSync(source)) {
+            throw new Error(`No existe el origen para preparar la base de trabajo: ${source}`);
+        }
+
+        fs.copyFileSync(source, workDb.dbFile);
+        return workDb;
+    }
+
+    async publishImportDatabase(workDb) {
+        const importDb = this.getImportFirebirdConfig();
+        const attempts = 5;
+
+        for (let attempt = 1; attempt <= attempts; attempt += 1) {
+            try {
+                fs.copyFileSync(workDb.dbFile, importDb.dbFile);
+                const now = new Date();
+                fs.utimesSync(importDb.dbFile, now, now);
+                this.logger.info('Base Firebird de importacion publicada', {
+                    importDb: importDb.dbFile,
+                    workDb: workDb.dbFile,
+                    attempt,
+                });
+                return;
+            } catch (error) {
+                if (attempt === attempts) {
+                    throw new Error(`No se pudo publicar la base de importacion: ${error.message}`);
+                }
+                await new Promise((resolve) => setTimeout(resolve, attempt * 1000));
+            }
+        }
+    }
+
     async loadSyncState() {
         const rows = await mysqlQuery(
             this.mysqlPool,
@@ -231,7 +277,7 @@ class QendraBridge {
         }
 
         const summary = { ok: true, processed: 0, skipped: 0, written: 0 };
-        const importFirebird = this.getImportFirebirdConfig();
+        const importFirebird = await this.prepareImportWorkDatabase();
 
         const hasPlu = await tableExists(importFirebird, 'PLU');
         if (!hasPlu) {
@@ -332,6 +378,16 @@ class QendraBridge {
                 pluId,
                 importDb: importFirebird.dbFile,
             });
+        }
+
+        if (summary.written > 0) {
+            await this.publishImportDatabase(importFirebird);
+        } else if (fs.existsSync(importFirebird.dbFile) && importFirebird.dbFile !== this.getImportFirebirdConfig().dbFile) {
+            try {
+                fs.unlinkSync(importFirebird.dbFile);
+            } catch {
+                // noop
+            }
         }
 
         this.state.productCursor = new Date().toISOString();
