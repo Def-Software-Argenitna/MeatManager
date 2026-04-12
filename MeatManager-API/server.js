@@ -3482,15 +3482,12 @@ async function getTenantInfo(authUser, options = {}) {
         if (!Number.isFinite(resolvedTenantId) || resolvedTenantId <= 0) {
             console.error('[getTenantInfo] client.id inválido:', accessContext.client.id, '— usando DEFAULT_OPERATIONAL_TENANT_ID');
         }
-        const safeTenantId = (Number.isFinite(resolvedTenantId) && resolvedTenantId > 0)
-            ? resolvedTenantId
-            : DEFAULT_OPERATIONAL_TENANT_ID;
         const info = {
             dbName: OPERATIONAL_DB_NAME,
             cuit: accessContext.client.taxId,
             empresa: accessContext.client.businessName,
             clientId: accessContext.client.id,
-            tenantId: safeTenantId,
+            tenantId: resolvedTenantId,
             licenses: accessContext.effectiveLicenses,
         };
         tenantInfoCache.set(uid, { value: info, expiresAt: 0 });
@@ -4216,7 +4213,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                 if (AUTO_COLS.has(col)) continue;
                 if (excludeId && col === 'id') continue;
                 if (col === TENANT_COLUMN) {
-                    out[col] = tenantId || DEFAULT_OPERATIONAL_TENANT_ID;
+                    out[col] = tenantId;
                     continue;
                 }
                 if (col === 'branch_id') {
@@ -4286,7 +4283,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             for (const col of validCols) {
                 if (AUTO_COLS.has(col)) continue;
                 if (col === TENANT_COLUMN) {
-                    filtered[col] = tenantId || DEFAULT_OPERATIONAL_TENANT_ID;
+                    filtered[col] = tenantId;
                     continue;
                 }
                 if (normalizedRecord[col] !== undefined && normalizedRecord[col] !== null) {
