@@ -5,6 +5,11 @@ const Firebird = require('node-firebird');
 
 const rootDir = path.resolve(__dirname, '..');
 const helperScript = path.join(rootDir, 'tools', 'firebird_helper.py');
+const TABLE_CACHE_TTL_MS = 60 * 1000;
+const COLUMN_CACHE_TTL_MS = 60 * 1000;
+
+const tableCache = new Map();
+const columnCache = new Map();
 
 const QENDRA_DLL_PATHS = [
     'C:\\Qendra',
@@ -138,11 +143,19 @@ async function query(config, sql, params = []) {
 }
 
 async function getTables(config) {
+    const cacheKey = String(config?.dbFile || '').toLowerCase();
+    const cached = tableCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < TABLE_CACHE_TTL_MS) {
+        return cached.value;
+    }
+
     const rows = await query(
         config,
         "SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY RDB$RELATION_NAME"
     );
-    return rows.map((row) => String(row.TABLE_NAME || row.table_name || '').trim()).filter(Boolean);
+    const value = rows.map((row) => String(row.TABLE_NAME || row.table_name || '').trim()).filter(Boolean);
+    tableCache.set(cacheKey, { ts: Date.now(), value });
+    return value;
 }
 
 async function tableExists(config, tableName) {
@@ -151,15 +164,24 @@ async function tableExists(config, tableName) {
 }
 
 async function getColumns(config, tableName) {
+    const normalizedTable = String(tableName || '').trim().toUpperCase();
+    const cacheKey = `${String(config?.dbFile || '').toLowerCase()}::${normalizedTable}`;
+    const cached = columnCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < COLUMN_CACHE_TTL_MS) {
+        return cached.value;
+    }
+
     const rows = await query(
         config,
         `SELECT TRIM(RDB$FIELD_NAME) AS COLUMN_NAME
          FROM RDB$RELATION_FIELDS
          WHERE TRIM(RDB$RELATION_NAME) = ?
          ORDER BY RDB$FIELD_POSITION`,
-        [String(tableName || '').trim().toUpperCase()]
+        [normalizedTable]
     );
-    return rows.map((row) => String(row.COLUMN_NAME || '').trim()).filter(Boolean);
+    const value = rows.map((row) => String(row.COLUMN_NAME || '').trim()).filter(Boolean);
+    columnCache.set(cacheKey, { ts: Date.now(), value });
+    return value;
 }
 
 function firstMatchingColumn(columns, candidates) {

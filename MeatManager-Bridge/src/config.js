@@ -55,6 +55,7 @@ const config = {
     firebird: {
         dbFile: strEnv('FIREBIRD_DB_FILE', 'C:\\Qendra\\qendra.fdb'),
         productTarget: strEnv('FIREBIRD_PRODUCT_TARGET', 'live').toLowerCase(),
+        importDirectWrite: boolEnv('FIREBIRD_IMPORT_DIRECT_WRITE', true),
         importDbFile: strEnv('FIREBIRD_IMPORT_DB_FILE', 'C:\\Qendra\\bridge_import.fdb'),
         importWorkDbFile: strEnv('FIREBIRD_IMPORT_WORK_DB_FILE', 'C:\\Qendra\\bridge_import_work.fdb'),
         templateDbFile: strEnv('FIREBIRD_TEMPLATE_DB_FILE', 'C:\\Qendra\\qendra_vacia.fdb'),

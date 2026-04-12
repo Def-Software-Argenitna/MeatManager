@@ -262,6 +262,10 @@ class QendraBridge {
 
     async prepareImportWorkDatabase() {
         const importDb = this.getImportFirebirdConfig();
+        if (this.config.firebird.importDirectWrite) {
+            return importDb;
+        }
+
         const workDb = this.getImportWorkFirebirdConfig();
         const source = fs.existsSync(importDb.dbFile)
             ? importDb.dbFile
@@ -291,16 +295,54 @@ class QendraBridge {
 
         const rows = await firebirdQuery(
             this.config.firebird,
-            `SELECT ${sharedColumns.map((column) => `"${column}"`).join(', ')} FROM EQUIPOS`
+            `SELECT ${sharedColumns.map((column) => `"${column}"`).join(', ')}
+             FROM EQUIPOS
+             WHERE COALESCE(PUERTO, 0) > 0 OR COALESCE(ESTADO, 0) IN (1, 3)`
         );
 
         for (const row of rows) {
             await this.upsertFirebirdRow(importFirebirdConfig, 'EQUIPOS', 'IP', row, targetColumns);
         }
+
+        // Also copy EQ_SECCION so Qendra knows which sections each equipment handles
+        if (
+            (await tableExists(this.config.firebird, 'EQ_SECCION'))
+            && (await tableExists(importFirebirdConfig, 'EQ_SECCION'))
+        ) {
+            const srcEqSec = await getColumns(this.config.firebird, 'EQ_SECCION');
+            const tgtEqSec = await getColumns(importFirebirdConfig, 'EQ_SECCION');
+            const sharedEqSec = tgtEqSec.filter((c) => srcEqSec.includes(c));
+            if (sharedEqSec.includes('IP') && sharedEqSec.includes('ID_SECCION')) {
+                const equipIps = rows.map((r) => String(r.IP ?? '').trim()).filter(Boolean);
+                if (equipIps.length > 0) {
+                    const placeholders = equipIps.map(() => '?').join(', ');
+                    const eqSecRows = await firebirdQuery(
+                        this.config.firebird,
+                        `SELECT ${sharedEqSec.map((c) => `"${c}"`).join(', ')}
+                         FROM EQ_SECCION
+                         WHERE IP IN (${placeholders})`,
+                        equipIps
+                    );
+                    for (const eqSecRow of eqSecRows) {
+                        await this.upsertCompositeFirebirdRow(
+                            importFirebirdConfig,
+                            'EQ_SECCION',
+                            ['IP', 'ID_SECCION'],
+                            eqSecRow,
+                            tgtEqSec
+                        );
+                    }
+                }
+            }
+        }
     }
 
     async publishImportDatabase(workDb) {
         const importDb = this.getImportFirebirdConfig();
+        if (!workDb || workDb.dbFile === importDb.dbFile) {
+            return;
+        }
+
         const attempts = 5;
 
         for (let attempt = 1; attempt <= attempts; attempt += 1) {
@@ -466,6 +508,11 @@ class QendraBridge {
         const sectionMap = await this.loadSectionMap(targetFirebird);
         const sectionColumns = await getColumns(targetFirebird, 'SECCIONES').catch(() => []);
 
+        // Track sections already ensured this cycle to avoid redundant Firebird calls
+        const ensuredSections = new Set();
+        // Cache loadTargetEquipments results per sectionId within this cycle
+        const targetEquipmentsCache = new Map();
+
         for (const product of products) {
             summary.processed += 1;
             const pluId = String(product.plu || product.id);
@@ -496,9 +543,15 @@ class QendraBridge {
             if (pluColumns.includes('IMPFLAG')) row.IMPFLAG = 0;
             applyPluDefaults(row, pluColumns, price);
 
-            await this.ensureImportSection(targetFirebird, sectionId, product.category);
-            await this.ensureSectionAssignedToEquipments(targetFirebird, sectionId);
-            const expectedTargets = await this.loadTargetEquipments(targetFirebird, sectionId);
+            if (!ensuredSections.has(String(sectionId))) {
+                await this.ensureImportSection(targetFirebird, sectionId, product.category);
+                await this.ensureSectionAssignedToEquipments(targetFirebird, sectionId);
+                ensuredSections.add(String(sectionId));
+            }
+            if (!targetEquipmentsCache.has(String(sectionId))) {
+                targetEquipmentsCache.set(String(sectionId), await this.loadTargetEquipments(targetFirebird, sectionId));
+            }
+            const expectedTargets = targetEquipmentsCache.get(String(sectionId));
             const assignmentsReady = await this.areProductAssignmentsReady(targetFirebird, {
                 pluId,
                 numero: row.COD_LOCAL || String(pluId),
@@ -514,33 +567,11 @@ class QendraBridge {
                 [this.config.deviceId, this.config.tenantId, product.id, pluId]
             );
             const mapRow = mapRows[0] || null;
-            if (mapRow && mapRow.fingerprint === productFingerprint) {
-                const targetRows = await firebirdQuery(
-                    targetFirebird,
-                    `SELECT ID, ID_SECCION, DESCRIPCION, COD_LOCAL, TIPO_VENTA, PRECIO,
-                            PRECIO2, IMPFLAG, TN_ACTIVA, EAN_TIPO, VENCIMIENTO
-                     FROM PLU
-                     WHERE ID = ?`,
-                    [firebirdValue(row.ID)]
-                );
-                const targetRow = targetRows[0] || null;
-                const matchesTarget =
-                    targetRow
-                    && String(targetRow.ID ?? '') === String(row.ID)
-                    && String(targetRow.ID_SECCION ?? '') === String(row.ID_SECCION)
-                    && asText(targetRow.DESCRIPCION) === String(row.DESCRIPCION)
-                    && String(targetRow.COD_LOCAL ?? '') === String(row.COD_LOCAL ?? '')
-                    && String(targetRow.TIPO_VENTA ?? '') === String(row.TIPO_VENTA ?? '')
-                    && Number(toNumber(targetRow.PRECIO, 0)) === Number(toNumber(row.PRECIO, 0))
-                    && Number(toNumber(targetRow.PRECIO2, 0)) === Number(toNumber(row.PRECIO2, 0))
-                    && Number(toNumber(targetRow.IMPFLAG, 0)) === Number(toNumber(row.IMPFLAG, 0))
-                    && Number(toNumber(targetRow.TN_ACTIVA, 0)) === Number(toNumber(row.TN_ACTIVA, 0))
-                    && Number(toNumber(targetRow.EAN_TIPO, 0)) === Number(toNumber(row.EAN_TIPO, 0))
-                    && Number(toNumber(targetRow.VENCIMIENTO, 0)) === Number(toNumber(row.VENCIMIENTO, 0));
-                if (matchesTarget && assignmentsReady) {
-                    summary.skipped += 1;
-                    continue;
-                }
+            // If fingerprint matches (all product fields unchanged) and assignments are ready, skip.
+            // The fingerprint covers name/category/price/unit/updated_at so trusting it is safe.
+            if (mapRow && mapRow.fingerprint === productFingerprint && assignmentsReady) {
+                summary.skipped += 1;
+                continue;
             }
 
             await this.upsertFirebirdRow(targetFirebird, 'PLU', 'ID', row, pluColumns);
@@ -954,19 +985,12 @@ class QendraBridge {
         }
 
         const columns = await getColumns(firebirdConfig, 'SECCIONES');
-        const rows = await firebirdQuery(
-            firebirdConfig,
-            'SELECT COUNT(*) AS TOTAL FROM SECCIONES WHERE ID = ?',
-            [firebirdValue(sectionId)]
-        );
-        const exists = Number(rows?.[0]?.TOTAL || rows?.[0]?.total || 0) > 0;
-        if (exists) return;
-
         const row = { ID: firebirdValue(sectionId) };
         const resolvedName = Number(sectionId) === 2
             ? 'CARNICERIA'
             : (asText(sectionName) || `SECCION ${sectionId}`);
         if (columns.includes('NOMBRE')) row.NOMBRE = resolvedName;
+        if (columns.includes('DESCRIPCION')) row.DESCRIPCION = resolvedName;
         if (columns.includes('IMPFLAG')) row.IMPFLAG = 0;
         await this.upsertFirebirdRow(firebirdConfig, 'SECCIONES', 'ID', row, columns);
     }
@@ -998,9 +1022,21 @@ class QendraBridge {
              WHERE COALESCE(PUERTO, 0) > 0 OR COALESCE(ESTADO, 0) IN (1, 3)
              ORDER BY IP`
         );
+        const existingRows = await firebirdQuery(
+            firebirdConfig,
+            `SELECT IP
+             FROM EQ_SECCION
+             WHERE ID_SECCION = ?`,
+            [firebirdValue(sectionId)]
+        );
+        const existingIps = new Set(
+            existingRows
+                .map((row) => String(row.IP ?? '').trim())
+                .filter(Boolean)
+        );
         for (const equipo of equipos) {
             const ip = String(equipo.IP ?? '').trim();
-            if (!ip) continue;
+            if (!ip || existingIps.has(ip)) continue;
             await this.upsertCompositeFirebirdRow(
                 firebirdConfig,
                 'EQ_SECCION',

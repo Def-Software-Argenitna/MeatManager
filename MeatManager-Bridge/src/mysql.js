@@ -8,7 +8,12 @@ function buildMySqlPool(config) {
         password: config.password,
         database: config.database,
         waitForConnections: true,
-        connectionLimit: 5,
+        connectionLimit: 10,
+        maxIdle: 10,
+        idleTimeout: 60000,
+        enableKeepAlive: true,
+        keepAliveInitialDelay: 0,
+        connectTimeout: 10000,
         namedPlaceholders: false,
         multipleStatements: false,
         ssl: config.ssl ? { rejectUnauthorized: false } : undefined,
@@ -16,12 +21,12 @@ function buildMySqlPool(config) {
 }
 
 async function query(pool, sql, params = []) {
-    const [rows] = await pool.query(sql, params);
+    const [rows] = await pool.query({ sql, timeout: 30000 }, params);
     return rows;
 }
 
 async function execute(pool, sql, params = []) {
-    const [result] = await pool.execute(sql, params);
+    const [result] = await pool.execute({ sql, timeout: 30000 }, params);
     return result;
 }
 

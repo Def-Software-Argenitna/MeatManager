@@ -1,10 +1,11 @@
 {
-  "lastProductSyncAt": null,
-  "lastTicketSyncAt": null,
-  "lastRunAt": null,
-  "lastRunStatus": "idle",
-  "lastRunMessage": null,
+  "lastProductSyncAt": "2026-04-12T09:05:06.911Z",
+  "lastTicketSyncAt": "2026-04-12T09:05:06.911Z",
+  "lastRunAt": "2026-04-12T09:05:06.911Z",
+  "lastRunStatus": "ok",
+  "lastRunMessage": "Sincronizacion completada",
   "lastError": null,
   "ticketFingerprints": {},
-  "productFingerprints": {}
+  "productFingerprints": {},
+  "productCursor": "2026-04-12T09:05:03.565Z"
 }
