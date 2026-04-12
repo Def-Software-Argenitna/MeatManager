@@ -4,25 +4,36 @@ const dotenv = require('dotenv');
 
 const rootDir = path.resolve(__dirname, '..');
 const envFile = path.join(rootDir, '.env');
+const overridesFile = path.join(rootDir, 'data', 'config-overrides.json');
 if (fs.existsSync(envFile)) {
     dotenv.config({ path: envFile });
 } else {
     dotenv.config();
 }
 
+let overrides = {};
+if (fs.existsSync(overridesFile)) {
+    try {
+        overrides = JSON.parse(fs.readFileSync(overridesFile, 'utf8'));
+    } catch {
+        overrides = {};
+    }
+}
+
 const boolEnv = (name, fallback = false) => {
-    const value = String(process.env[name] ?? '').trim().toLowerCase();
+    const overrideValue = overrides[name];
+    const value = String(overrideValue ?? process.env[name] ?? '').trim().toLowerCase();
     if (!value) return fallback;
     return ['1', 'true', 'yes', 'on'].includes(value);
 };
 
 const intEnv = (name, fallback) => {
-    const raw = Number.parseInt(process.env[name] ?? '', 10);
+    const raw = Number.parseInt(overrides[name] ?? process.env[name] ?? '', 10);
     return Number.isFinite(raw) ? raw : fallback;
 };
 
 const strEnv = (name, fallback = '') => {
-    const value = String(process.env[name] ?? '').trim();
+    const value = String(overrides[name] ?? process.env[name] ?? '').trim();
     return value || fallback;
 };
 
@@ -30,6 +41,8 @@ const config = {
     rootDir,
     dataDir: path.join(rootDir, 'data'),
     logsDir: path.join(rootDir, 'logs'),
+    envFile,
+    overridesFile,
     stateFile: path.resolve(rootDir, strEnv('STATE_FILE', './data/state.json')),
     logFile: path.resolve(rootDir, strEnv('LOG_FILE', './logs/bridge.log')),
     deviceId: strEnv('BRIDGE_DEVICE_ID', 'QENDRA-LOCAL-01'),

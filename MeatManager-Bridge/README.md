@@ -97,11 +97,28 @@ npm start
 - `STATE_FILE`
 - `LOG_FILE`
 
+## Panel local
+
+- Abrir `http://127.0.0.1:4045`
+- Permite:
+  - editar configuracion operativa
+  - guardar overrides en `data/config-overrides.json`
+  - probar Firebird y MySQL
+  - lanzar una sincronizacion manual
+  - ver logs recientes
+
+Los cambios de configuracion quedan guardados y aplican al reiniciar el bridge.
+
 ## Endpoints locales
 
 - `GET /health`
 - `GET /state`
 - `POST /run`
+- `GET /api/config`
+- `POST /api/config`
+- `POST /api/test/firebird`
+- `POST /api/test/mysql`
+- `GET /api/logs`
 
 ## Supuestos
 
