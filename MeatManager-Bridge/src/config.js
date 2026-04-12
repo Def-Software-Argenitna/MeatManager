@@ -54,6 +54,7 @@ const config = {
     branchId: intEnv('BRIDGE_BRANCH_ID', intEnv('MYSQL_BRANCH_ID', 1)),
     firebird: {
         dbFile: strEnv('FIREBIRD_DB_FILE', 'C:\\Qendra\\qendra.fdb'),
+        productTarget: strEnv('FIREBIRD_PRODUCT_TARGET', 'live').toLowerCase(),
         importDbFile: strEnv('FIREBIRD_IMPORT_DB_FILE', 'C:\\Qendra\\bridge_import.fdb'),
         importWorkDbFile: strEnv('FIREBIRD_IMPORT_WORK_DB_FILE', 'C:\\Qendra\\bridge_import_work.fdb'),
         templateDbFile: strEnv('FIREBIRD_TEMPLATE_DB_FILE', 'C:\\Qendra\\qendra_vacia.fdb'),
