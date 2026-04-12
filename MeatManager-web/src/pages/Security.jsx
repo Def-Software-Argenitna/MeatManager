@@ -28,11 +28,18 @@ const hasLogisticsCapability = (license) => Boolean(
     || license?.license?.hasLogisticsCapability
 );
 
+const normalizeLicenseToken = (value) => String(value || '').trim().toLowerCase();
+const normalizeLicenseKey = (value) => normalizeLicenseToken(value).replace(/[^a-z0-9]/g, '');
+
 const hasDespostadaCapability = (license) => Boolean(
     license?.hasDespostadaCapability
     || license?.license?.hasDespostadaCapability
     || String(license?.modules || '').includes('despostada')
     || String(license?.license?.modules || '').includes('despostada')
+    || ['mm_desp', 'mmdesp'].includes(normalizeLicenseToken(license?.internalCode || license?.license?.internalCode))
+    || ['depostada', 'despostada'].includes(normalizeLicenseToken(license?.commercialName || license?.license?.commercialName))
+    || ['mmdesp', 'depostada', 'despostada'].includes(normalizeLicenseKey(license?.internalCode || license?.license?.internalCode))
+    || ['depostada', 'despostada'].includes(normalizeLicenseKey(license?.commercialName || license?.license?.commercialName))
 );
 
 const isBaseLicense = (license) => {
