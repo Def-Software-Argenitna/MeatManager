@@ -1,0 +1,21 @@
+{
+  "name": "meatmanager-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Bridge local entre Firebird/Qendra y MySQL cloud para sincronizacion de balanzas",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "once": "node src/index.js --once",
+    "lint": "echo \"No lint configured yet\""
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "mysql2": "^3.9.1",
+    "node-firebird": "^2.0.2"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
