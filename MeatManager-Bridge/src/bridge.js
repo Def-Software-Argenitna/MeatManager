@@ -35,6 +35,21 @@ function firebirdValue(value) {
     return value;
 }
 
+function computeSafeSince(since, lookbackSeconds = 120) {
+    if (!since) return null;
+    const parsed = new Date(since);
+    if (Number.isNaN(parsed.getTime())) return since;
+    const safeTs = new Date(parsed.getTime() - Math.max(0, Number(lookbackSeconds) || 0) * 1000);
+    return safeTs.toISOString();
+}
+
+function shouldRunRecoveryRepublish(lastRunAtIso, minIntervalMs = 10 * 60 * 1000) {
+    if (!lastRunAtIso) return true;
+    const last = new Date(lastRunAtIso);
+    if (Number.isNaN(last.getTime())) return true;
+    return (Date.now() - last.getTime()) >= minIntervalMs;
+}
+
 function inferTipoVenta(unit) {
     const normalized = normalizeText(unit).toLowerCase();
     if (!normalized) return 0;
@@ -488,7 +503,8 @@ class QendraBridge {
 
     async syncProducts(syncState) {
         const since = syncState?.last_product_sync_at || null;
-        this.logger.info('Sincronizando productos desde MySQL hacia Firebird', { since });
+        const safeSince = computeSafeSince(since, this.config.productSinceLookbackSeconds || 120);
+        this.logger.info('Sincronizando productos desde MySQL hacia Firebird', { since, safeSince });
 
         const params = [this.config.tenantId];
         let sql = `
@@ -496,13 +512,37 @@ class QendraBridge {
             FROM products
             WHERE tenant_id = ?
               AND COALESCE(current_price, 0) > 0`;
-        if (since) {
+        if (safeSince) {
             sql += ` AND COALESCE(updated_at, created_at) > ?`;
-            params.push(since);
+            params.push(safeSince);
         }
         sql += ` ORDER BY updated_at ASC, id ASC`;
 
-        const products = await mysqlQuery(this.mysqlPool, sql, params);
+        let products = await mysqlQuery(this.mysqlPool, sql, params);
+        let usedRecovery = false;
+        if (products.length === 0 && since) {
+            const recoveryLimit = Math.max(20, Number(this.config.productRecoveryLimit || 250));
+            const recovered = await mysqlQuery(
+                this.mysqlPool,
+                `SELECT id, canonical_key, name, category, unit, current_price, plu, updated_at
+                 FROM products
+                 WHERE tenant_id = ?
+                   AND COALESCE(current_price, 0) > 0
+                   AND COALESCE(updated_at, created_at) > DATE_SUB(NOW(), INTERVAL 1 DAY)
+                 ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
+                 LIMIT ${recoveryLimit}`,
+                [this.config.tenantId]
+            );
+            products = recovered.reverse();
+            usedRecovery = true;
+            this.logger.info('Recuperacion acotada de productos aplicada', {
+                since,
+                safeSince,
+                recovered: products.length,
+                recoveryLimit,
+            });
+        }
+
         if (products.length === 0) {
             this.logger.info('No hay productos nuevos para sincronizar');
             return { ok: true, processed: 0, skipped: 0 };
@@ -543,7 +583,7 @@ class QendraBridge {
             if (pluIdKey) mapByPluId.set(pluIdKey, row);
         }
 
-        const removedOrDisabledProducts = await this.loadRemovedOrDisabledProducts(since);
+        const removedOrDisabledProducts = await this.loadRemovedOrDisabledProducts(safeSince);
         for (const product of removedOrDisabledProducts) {
             const fallbackPluId = String(product.plu || product.id || '').trim();
             const mapRow = mapByProductId.get(String(product.id))
@@ -667,6 +707,73 @@ class QendraBridge {
                 pluId,
                 targetDb: targetFirebird.dbFile,
             });
+        }
+
+        const shouldRepublishOnRecovery = usedRecovery && summary.written === 0 && products.length > 0;
+        const shouldRepublishOnAllSkipped = summary.written === 0 && summary.processed > 0 && summary.skipped === summary.processed;
+        if (shouldRepublishOnRecovery || shouldRepublishOnAllSkipped) {
+            const republishIntervalMs = Math.max(60_000, Number(this.config.productRecoveryRepublishIntervalMs || 60_000));
+            if (shouldRunRecoveryRepublish(this.state.lastRecoveryRepublishAt, republishIntervalMs)) {
+                const republishLimit = Math.max(1, Number(this.config.productRecoveryRepublishLimit || 20));
+                const republishProducts = products.slice(-republishLimit);
+                let republished = 0;
+                let rewritten = 0;
+
+                for (const product of republishProducts) {
+                    const pluId = String(product.plu || product.id);
+                    const sectionId = this.resolveSectionId(product.category, sectionMap) || this.config.firebird.defaultSectionId;
+                    const description = asText(product.name).slice(0, 250) || `Producto ${pluId}`;
+                    const price = toNumber(product.current_price, 0);
+                    const row = {
+                        ID: Number.isNaN(Number(pluId)) ? pluId : Number(pluId),
+                        ID_SECCION: sectionColumns.includes('ID_SECCION') ? sectionId : sectionId,
+                        DESCRIPCION: description,
+                        PRECIO: price,
+                    };
+                    if (pluColumns.includes('COD_LOCAL')) row.COD_LOCAL = String(pluId);
+                    if (pluColumns.includes('TIPO_VENTA')) row.TIPO_VENTA = inferTipoVenta(product.unit);
+                    if (pluColumns.includes('PRECIO2')) row.PRECIO2 = price;
+                    if (pluColumns.includes('TARA')) row.TARA = 0;
+                    if (pluColumns.includes('VENCIMIENTO')) row.VENCIMIENTO = null;
+                    if (pluColumns.includes('ULTIMA_MODIF')) row.ULTIMA_MODIF = new Date();
+                    if (pluColumns.includes('IMPFLAG')) row.IMPFLAG = 0;
+                    applyPluDefaults(row, pluColumns, price);
+
+                    if (!ensuredSections.has(String(sectionId))) {
+                        await this.ensureImportSection(targetFirebird, sectionId, product.category);
+                        await this.ensureSectionAssignedToEquipments(targetFirebird, sectionId);
+                        ensuredSections.add(String(sectionId));
+                    }
+
+                    await this.upsertFirebirdRow(targetFirebird, 'PLU', 'ID', row, pluColumns);
+                    rewritten += 1;
+
+                    const targets = await this.ensureProductAssignments(targetFirebird, {
+                        pluId,
+                        numero: row.COD_LOCAL || String(pluId),
+                        sectionId,
+                    });
+                    if (!targets.length) continue;
+                    await this.markProductNeedsSync(targetFirebird, {
+                        pluId,
+                        numero: row.COD_LOCAL || String(pluId),
+                        targets,
+                    });
+                    republished += 1;
+                }
+
+                if (republished > 0) {
+                    summary.written += rewritten;
+                    this.state.lastRecoveryRepublishAt = new Date().toISOString();
+                    this.stateStore.save(this.state);
+                    this.logger.info('Republicacion periodica de novedades aplicada', {
+                        republished,
+                        rewritten,
+                        republishLimit,
+                        mode: shouldRepublishOnRecovery ? 'recovery' : 'all-skipped',
+                    });
+                }
+            }
         }
 
         if (targetMode === 'import' && summary.written > 0) {
