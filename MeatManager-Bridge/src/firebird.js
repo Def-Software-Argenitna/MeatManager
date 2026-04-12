@@ -1,0 +1,143 @@
+const fs = require('fs');
+const path = require('path');
+const Firebird = require('node-firebird');
+
+const QENDRA_DLL_PATHS = [
+    'C:\\Qendra',
+    'C:\\Soluciones\\Systel\\Qendra_PC',
+    'C:\\Soluciones\\Systel',
+    'C:\\Systel',
+];
+
+function injectDllPaths() {
+    for (const dllPath of QENDRA_DLL_PATHS) {
+        if (fs.existsSync(dllPath) && !(process.env.PATH || '').includes(dllPath)) {
+            process.env.PATH = `${dllPath};${process.env.PATH || ''}`;
+        }
+    }
+}
+
+function buildConfigs(config) {
+    const base = {
+        database: config.dbFile,
+        user: config.user,
+        password: config.password,
+        lowercase_keys: false,
+        charset: 'NONE',
+    };
+
+    return {
+        embedded: { ...base },
+        tcp: { ...base, host: config.host, port: config.port },
+    };
+}
+
+function attach(config) {
+    injectDllPaths();
+    const { tcp, embedded } = buildConfigs(config);
+
+    return new Promise((resolve, reject) => {
+        Firebird.attach(tcp, (tcpErr, tcpDb) => {
+            if (!tcpErr) return resolve({ db: tcpDb, mode: 'tcp' });
+
+            Firebird.attach(embedded, (embeddedErr, embeddedDb) => {
+                if (!embeddedErr) return resolve({ db: embeddedDb, mode: 'embedded' });
+                reject(new Error(`TCP: ${tcpErr.message} | Embedded: ${embeddedErr.message}`));
+            });
+        });
+    });
+}
+
+function query(config, sql, params = []) {
+    return new Promise(async (resolve, reject) => {
+        let connection;
+        try {
+            connection = await attach(config);
+        } catch (error) {
+            return reject(error);
+        }
+
+        connection.db.query(sql, params, (error, rows) => {
+            try {
+                connection.db.detach();
+            } catch {
+                // noop
+            }
+            if (error) return reject(error);
+            resolve(rows || []);
+        });
+    });
+}
+
+async function withDb(config, handler) {
+    const connection = await attach(config);
+    try {
+        return await handler(connection.db, connection.mode);
+    } finally {
+        try {
+            connection.db.detach();
+        } catch {
+            // noop
+        }
+    }
+}
+
+async function getTables(config) {
+    const rows = await query(
+        config,
+        "SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY RDB$RELATION_NAME"
+    );
+    return rows.map((row) => String(row.TABLE_NAME || row.table_name || '').trim()).filter(Boolean);
+}
+
+async function tableExists(config, tableName) {
+    const tables = await getTables(config);
+    return tables.includes(String(tableName || '').trim().toUpperCase());
+}
+
+async function getColumns(config, tableName) {
+    const rows = await query(
+        config,
+        `SELECT TRIM(RDB$FIELD_NAME) AS COLUMN_NAME
+         FROM RDB$RELATION_FIELDS
+         WHERE TRIM(RDB$RELATION_NAME) = ?
+         ORDER BY RDB$FIELD_POSITION`,
+        [String(tableName || '').trim().toUpperCase()]
+    );
+    return rows.map((row) => String(row.COLUMN_NAME || '').trim()).filter(Boolean);
+}
+
+function firstMatchingColumn(columns, candidates) {
+    const normalized = columns.map((col) => col.toUpperCase());
+    for (const candidate of candidates) {
+        const index = normalized.indexOf(candidate.toUpperCase());
+        if (index >= 0) return columns[index];
+    }
+    return null;
+}
+
+function buildInsertSql(tableName, columns, row) {
+    const available = columns.filter((column) => Object.prototype.hasOwnProperty.call(row, column));
+    if (available.length === 0) {
+        return null;
+    }
+
+    const fields = available.map((column) => `"${column}"`).join(', ');
+    const placeholders = available.map(() => '?').join(', ');
+    const params = available.map((column) => row[column]);
+    return {
+        sql: `INSERT INTO ${tableName} (${fields}) VALUES (${placeholders})`,
+        params,
+    };
+}
+
+module.exports = {
+    attach,
+    query,
+    withDb,
+    getTables,
+    tableExists,
+    getColumns,
+    firstMatchingColumn,
+    buildInsertSql,
+};
