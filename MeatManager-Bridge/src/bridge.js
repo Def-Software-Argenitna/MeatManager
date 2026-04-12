@@ -136,7 +136,9 @@ class QendraBridge {
     async ensureRuntime() {
         if (this.runtimeReady) return;
         await this.ensureImportDatabase();
-        await this.normalizeFirebirdCompatibility();
+        if (this.config.normalizeFirebirdOnStart) {
+            await this.normalizeFirebirdCompatibility();
+        }
         await ensureBridgeSchema(this.mysqlPool, this.logger);
         await mysqlExecute(
             this.mysqlPool,
@@ -525,10 +527,24 @@ class QendraBridge {
         const sectionMap = await this.loadSectionMap(targetFirebird);
         const sectionColumns = await getColumns(targetFirebird, 'SECCIONES').catch(() => []);
 
+        const mapRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT product_id, firebird_plu_id, fingerprint
+             FROM qendra_bridge_product_map
+             WHERE device_id = ? AND tenant_id = ?`,
+            [this.config.deviceId, this.config.tenantId]
+        );
+        const mapByProductId = new Map();
+        const mapByPluId = new Map();
+        for (const row of mapRows) {
+            const productIdKey = row.product_id == null ? '' : String(row.product_id).trim();
+            const pluIdKey = row.firebird_plu_id == null ? '' : String(row.firebird_plu_id).trim();
+            if (productIdKey) mapByProductId.set(productIdKey, row);
+            if (pluIdKey) mapByPluId.set(pluIdKey, row);
+        }
+
         // Track sections already ensured this cycle to avoid redundant Firebird calls
         const ensuredSections = new Set();
-        // Cache loadTargetEquipments results per sectionId within this cycle
-        const targetEquipmentsCache = new Map();
 
         for (const product of products) {
             summary.processed += 1;
@@ -541,6 +557,12 @@ class QendraBridge {
                 current_price: product.current_price,
                 updated_at: product.updated_at,
             });
+
+            const mapRow = mapByProductId.get(String(product.id)) || mapByPluId.get(pluId) || null;
+            if (mapRow && mapRow.fingerprint === productFingerprint) {
+                summary.skipped += 1;
+                continue;
+            }
 
             const description = asText(product.name).slice(0, 250) || `Producto ${pluId}`;
             const sectionId = this.resolveSectionId(product.category, sectionMap) || this.config.firebird.defaultSectionId;
@@ -564,31 +586,6 @@ class QendraBridge {
                 await this.ensureImportSection(targetFirebird, sectionId, product.category);
                 await this.ensureSectionAssignedToEquipments(targetFirebird, sectionId);
                 ensuredSections.add(String(sectionId));
-            }
-            if (!targetEquipmentsCache.has(String(sectionId))) {
-                targetEquipmentsCache.set(String(sectionId), await this.loadTargetEquipments(targetFirebird, sectionId));
-            }
-            const expectedTargets = targetEquipmentsCache.get(String(sectionId));
-            const assignmentsReady = await this.areProductAssignmentsReady(targetFirebird, {
-                pluId,
-                numero: row.COD_LOCAL || String(pluId),
-                sectionId,
-                targets: expectedTargets,
-            });
-
-            const mapRows = await mysqlQuery(
-                this.mysqlPool,
-                `SELECT * FROM qendra_bridge_product_map
-                 WHERE device_id = ? AND tenant_id = ? AND (product_id = ? OR firebird_plu_id = ?)
-                 LIMIT 1`,
-                [this.config.deviceId, this.config.tenantId, product.id, pluId]
-            );
-            const mapRow = mapRows[0] || null;
-            // If fingerprint matches (all product fields unchanged) and assignments are ready, skip.
-            // The fingerprint covers name/category/price/unit/updated_at so trusting it is safe.
-            if (mapRow && mapRow.fingerprint === productFingerprint && assignmentsReady) {
-                summary.skipped += 1;
-                continue;
             }
 
             await this.upsertFirebirdRow(targetFirebird, 'PLU', 'ID', row, pluColumns);
@@ -626,6 +623,9 @@ class QendraBridge {
             );
 
             summary.written += 1;
+            const persistedMap = { product_id: product.id, firebird_plu_id: pluId, fingerprint: productFingerprint };
+            mapByProductId.set(String(product.id), persistedMap);
+            mapByPluId.set(pluId, persistedMap);
             await this.recordLog('mysql-to-firebird', 'notification', String(pluId), 'ok', targetMode === 'import' ? 'Producto escrito en base de importacion de Qendra' : 'Producto escrito en base viva de Qendra', {
                 pluId,
                 targetDb: targetFirebird.dbFile,
