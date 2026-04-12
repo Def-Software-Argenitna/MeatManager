@@ -325,6 +325,37 @@ function startHttpServer() {
             return;
         }
 
+        if (pathname === '/api/scales' && req.method === 'GET') {
+            try {
+                const result = await bridge.getScalesStatus();
+                sendJson(res, result.ok ? 200 : 500, result);
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/scales/force' && req.method === 'POST') {
+            try {
+                const forcedTargets = await bridge.forceScaleSyncNow('http-manual');
+                sendJson(res, 200, { ok: true, forcedTargets });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/scales/push-products' && req.method === 'POST') {
+            try {
+                const reset = await bridge.resetProductFingerprintsAndSync();
+                const cycleResult = await runCycle('push-products');
+                sendJson(res, 200, { ok: true, reset, cycle: cycleResult });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
         sendJson(res, 404, { ok: false, error: 'not_found' });
     });
 

@@ -1,5 +1,6 @@
 const {
     query: firebirdQuery,
+    batchQuery: firebirdBatchQuery,
     getColumns,
     tableExists,
     firstMatchingColumn,
@@ -522,16 +523,17 @@ class QendraBridge {
         let usedRecovery = false;
         if (products.length === 0 && since) {
             const recoveryLimit = Math.max(20, Number(this.config.productRecoveryLimit || 250));
+            const recoveryLookbackHours = Math.max(1, Number(this.config.productRecoveryLookbackHours || 24));
             const recovered = await mysqlQuery(
                 this.mysqlPool,
                 `SELECT id, canonical_key, name, category, unit, current_price, plu, updated_at
                  FROM products
                  WHERE tenant_id = ?
                    AND COALESCE(current_price, 0) > 0
-                   AND COALESCE(updated_at, created_at) > DATE_SUB(NOW(), INTERVAL 1 DAY)
+                   AND COALESCE(updated_at, created_at) > DATE_SUB(NOW(), INTERVAL ? HOUR)
                  ORDER BY COALESCE(updated_at, created_at) DESC, id DESC
                  LIMIT ${recoveryLimit}`,
-                [this.config.tenantId]
+                [this.config.tenantId, recoveryLookbackHours]
             );
             products = recovered.reverse();
             usedRecovery = true;
@@ -549,6 +551,7 @@ class QendraBridge {
         }
 
         const summary = { ok: true, processed: 0, skipped: 0, written: 0, deleted: 0, forcedTargets: 0 };
+        const writtenProducts = [];
         const targetMode = this.config.firebird.productTarget === 'import' ? 'import' : 'live';
         const targetFirebird = targetMode === 'import'
             ? await this.prepareImportWorkDatabase()
@@ -566,6 +569,11 @@ class QendraBridge {
         const pluColumns = await getColumns(targetFirebird, 'PLU');
         const sectionMap = await this.loadSectionMap(targetFirebird);
         const sectionColumns = await getColumns(targetFirebird, 'SECCIONES').catch(() => []);
+        const hasEqPlus = await tableExists(targetFirebird, 'EQ_PLUS');
+        const eqPlusColumns = hasEqPlus ? await getColumns(targetFirebird, 'EQ_PLUS') : [];
+        const hasNovedades = await tableExists(targetFirebird, 'NOVEDADES');
+        const novedadesColumns = hasNovedades ? await getColumns(targetFirebird, 'NOVEDADES') : [];
+        const sectionTargetsCache = new Map();
 
         const mapRows = await mysqlQuery(
             this.mysqlPool,
@@ -665,17 +673,18 @@ class QendraBridge {
                 ensuredSections.add(String(sectionId));
             }
 
-            await this.upsertFirebirdRow(targetFirebird, 'PLU', 'ID', row, pluColumns);
-            const targets = await this.ensureProductAssignments(targetFirebird, {
-                pluId,
-                numero: row.COD_LOCAL || String(pluId),
-                sectionId,
-            });
-            await this.markProductNeedsSync(targetFirebird, {
-                pluId,
-                numero: row.COD_LOCAL || String(pluId),
-                targets,
-            });
+            // Load targets once per section (cached per cycle)
+            let targets = sectionTargetsCache.get(String(sectionId));
+            if (!targets) {
+                targets = await this.loadTargetEquipments(targetFirebird, sectionId);
+                sectionTargetsCache.set(String(sectionId), targets);
+            }
+
+            // Execute all Firebird writes in a single Python process (PLU + EQ_PLUS + EQUIPOS + NOVEDADES)
+            const productOps = this.buildProductWriteOps(row, pluColumns, hasEqPlus, eqPlusColumns, hasNovedades, novedadesColumns, targets, pluId);
+            if (productOps.length > 0) {
+                await firebirdBatchQuery(targetFirebird, productOps);
+            }
 
             await mysqlExecute(
                 this.mysqlPool,
@@ -700,6 +709,7 @@ class QendraBridge {
             );
 
             summary.written += 1;
+            writtenProducts.push({ product, row, pluId, sectionId });
             const persistedMap = { product_id: product.id, firebird_plu_id: pluId, fingerprint: productFingerprint };
             mapByProductId.set(String(product.id), persistedMap);
             mapByPluId.set(pluId, persistedMap);
@@ -745,20 +755,20 @@ class QendraBridge {
                         ensuredSections.add(String(sectionId));
                     }
 
-                    await this.upsertFirebirdRow(targetFirebird, 'PLU', 'ID', row, pluColumns);
-                    rewritten += 1;
+                    // Load targets (from cache populated in main loop, lazy-load if needed)
+                    let targets = sectionTargetsCache.get(String(sectionId));
+                    if (!targets) {
+                        targets = await this.loadTargetEquipments(targetFirebird, sectionId);
+                        sectionTargetsCache.set(String(sectionId), targets);
+                    }
 
-                    const targets = await this.ensureProductAssignments(targetFirebird, {
-                        pluId,
-                        numero: row.COD_LOCAL || String(pluId),
-                        sectionId,
-                    });
+                    // All Firebird writes (PLU + EQ_PLUS + EQUIPOS + NOVEDADES) in one Python process
+                    const republishOps = this.buildProductWriteOps(row, pluColumns, hasEqPlus, eqPlusColumns, hasNovedades, novedadesColumns, targets, pluId);
+                    if (republishOps.length > 0) {
+                        await firebirdBatchQuery(targetFirebird, republishOps);
+                    }
+                    rewritten += 1;
                     if (!targets.length) continue;
-                    await this.markProductNeedsSync(targetFirebird, {
-                        pluId,
-                        numero: row.COD_LOCAL || String(pluId),
-                        targets,
-                    });
                     republished += 1;
                 }
 
@@ -772,6 +782,33 @@ class QendraBridge {
                         republishLimit,
                         mode: shouldRepublishOnRecovery ? 'recovery' : 'all-skipped',
                     });
+                    // Also push to bridge_import.fdb to trigger Qendra import → scale sync
+                    if (targetMode === 'live') {
+                        const republishWritten = republishProducts
+                            .filter((p) => true) // all that were republished
+                            .map((p) => {
+                                const pid = String(p.plu || p.id);
+                                const sid = this.resolveSectionId(p.category, sectionMap) || this.config.firebird.defaultSectionId;
+                                const pr = toNumber(p.current_price, 0);
+                                const r = {
+                                    ID: Number.isNaN(Number(pid)) ? pid : Number(pid),
+                                    ID_SECCION: sid,
+                                    DESCRIPCION: asText(p.name).slice(0, 250) || `Producto ${pid}`,
+                                    PRECIO: pr,
+                                };
+                                if (pluColumns.includes('COD_LOCAL')) r.COD_LOCAL = String(pid);
+                                if (pluColumns.includes('TIPO_VENTA')) r.TIPO_VENTA = inferTipoVenta(p.unit);
+                                if (pluColumns.includes('PRECIO2')) r.PRECIO2 = pr;
+                                if (pluColumns.includes('TARA')) r.TARA = 0;
+                                if (pluColumns.includes('ULTIMA_MODIF')) r.ULTIMA_MODIF = new Date();
+                                if (pluColumns.includes('IMPFLAG')) r.IMPFLAG = 0;
+                                applyPluDefaults(r, pluColumns, pr);
+                                return { product: p, row: r, pluId: pid, sectionId: sid };
+                            });
+                        await this.syncProductsToImportDb(republishWritten, pluColumns, sectionColumns).catch((err) => {
+                            this.logger.warn('No se pudo escribir republicacion en base de importacion', { error: err.message });
+                        });
+                    }
                 }
             }
         }
@@ -791,6 +828,14 @@ class QendraBridge {
             summary.forcedTargets = forcedTargets;
         }
 
+        // Dual-write: when in live mode, also push changed PLU records to bridge_import.fdb
+        // This changes the file hash → Qendra auto-imports (every AutoInterval=1 min) → TxNews=1 → scale sync via COM3
+        if (targetMode === 'live' && writtenProducts.length > 0) {
+            await this.syncProductsToImportDb(writtenProducts, pluColumns, sectionColumns).catch((err) => {
+                this.logger.warn('No se pudo escribir en base de importacion', { error: err.message });
+            });
+        }
+
         this.state.productCursor = new Date().toISOString();
         this.state.lastProductSyncAt = this.state.productCursor;
         this.stateStore.save(this.state);
@@ -798,6 +843,68 @@ class QendraBridge {
         this.logger.info('Sincronizacion de productos finalizada', summary);
         await this.recordLog('mysql-to-firebird', 'product', '*', 'ok', 'Productos sincronizados', summary);
         return summary;
+    }
+
+    /**
+     * Write changed PLU records to bridge_import.fdb so Qendra detects the hash change,
+     * auto-imports (AutoInterval=1 min), and fires TxNews=1 → scale sync via COM3.
+     * Only updates PLU + SECCIONES — Qendra handles NOVEDADES during its import.
+     */
+    async syncProductsToImportDb(writtenProducts, pluColumns, sectionColumns) {
+        const importConfig = this.getImportFirebirdConfig();
+        if (!importConfig.dbFile || importConfig.dbFile === this.config.firebird.dbFile) {
+            return;
+        }
+        if (!fs.existsSync(importConfig.dbFile)) {
+            return;
+        }
+        if (!(await tableExists(importConfig, 'PLU'))) {
+            return;
+        }
+
+        const importPluColumns = await getColumns(importConfig, 'PLU');
+        const hasImportSecciones = await tableExists(importConfig, 'SECCIONES');
+        const importSecCols = hasImportSecciones ? await getColumns(importConfig, 'SECCIONES') : [];
+        const ensuredImportSections = new Set();
+        const ops = [];
+
+        for (const { product, row, pluId, sectionId } of writtenProducts) {
+            // Ensure section exists in import db (deduplicated per sectionId)
+            if (hasImportSecciones && !ensuredImportSections.has(String(sectionId))) {
+                const resolvedName = Number(sectionId) === 2
+                    ? 'CARNICERIA'
+                    : (String(product.category || `SECCION ${sectionId}`).toUpperCase().slice(0, 40));
+                const secRow = { ID: firebirdValue(sectionId) };
+                if (importSecCols.includes('NOMBRE')) secRow.NOMBRE = resolvedName;
+                if (importSecCols.includes('DESCRIPCION')) secRow.DESCRIPCION = resolvedName;
+                if (importSecCols.includes('IMPFLAG')) secRow.IMPFLAG = 0;
+                const secAllowed = importSecCols.filter((c) => Object.prototype.hasOwnProperty.call(secRow, c));
+                if (secAllowed.length > 0) {
+                    ops.push({
+                        sql: `UPDATE OR INSERT INTO SECCIONES (${secAllowed.map((c) => `"${c}"`).join(', ')}) VALUES (${secAllowed.map(() => '?').join(', ')}) MATCHING (ID)`,
+                        params: secAllowed.map((c) => secRow[c]),
+                    });
+                }
+                ensuredImportSections.add(String(sectionId));
+            }
+
+            // PLU record
+            const allowedPlu = importPluColumns.filter((c) => Object.prototype.hasOwnProperty.call(row, c));
+            if (allowedPlu.length > 0) {
+                ops.push({
+                    sql: `UPDATE OR INSERT INTO PLU (${allowedPlu.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedPlu.map(() => '?').join(', ')}) MATCHING (ID)`,
+                    params: allowedPlu.map((c) => firebirdValue(row[c])),
+                });
+            }
+        }
+
+        if (ops.length > 0) {
+            await firebirdBatchQuery(importConfig, ops);
+            this.logger.info('Productos escritos en base de importacion para disparo de sincronizacion a balanza', {
+                count: writtenProducts.length,
+                importDb: importConfig.dbFile,
+            });
+        }
     }
 
     async loadRemovedOrDisabledProducts(since) {
@@ -895,6 +1002,62 @@ class QendraBridge {
             forcedTargets,
         });
         return forcedTargets;
+    }
+
+    async getScalesStatus() {
+        try {
+            if (!(await tableExists(this.config.firebird, 'EQUIPOS'))) {
+                return { ok: true, scales: [], message: 'Tabla EQUIPOS no existe' };
+            }
+            const columns = await getColumns(this.config.firebird, 'EQUIPOS');
+            const wantedCols = ['IP', 'NOMBRE', 'MODELO', 'ESTADO', 'PUERTO', 'NOVEDADES', 'SUBVERSION', 'UNIDAD_PESAJE'];
+            const available = wantedCols.filter((c) => columns.includes(c));
+            if (!available.includes('IP')) {
+                return { ok: true, scales: [], message: 'Tabla EQUIPOS sin columna IP' };
+            }
+            const rows = await firebirdQuery(
+                this.config.firebird,
+                `SELECT ${available.map((c) => `"${c}"`).join(', ')} FROM EQUIPOS ORDER BY IP`
+            );
+            const scales = rows.map((row) => {
+                const ip = String(row.IP ?? row.ip ?? '').trim();
+                const estado = Number(row.ESTADO ?? row.estado ?? -1);
+                const novedades = Number(row.NOVEDADES ?? row.novedades ?? 0);
+                const puerto = Number(row.PUERTO ?? row.puerto ?? 0);
+                return {
+                    ip,
+                    nombre: String(row.NOMBRE ?? row.nombre ?? '').trim() || null,
+                    modelo: String(row.MODELO ?? row.modelo ?? '').trim() || null,
+                    estado,
+                    estadoLabel: { 0: 'inactivo', 1: 'activo', 3: 'activo-secundario' }[estado] ?? 'desconocido',
+                    puerto,
+                    active: puerto > 0 || estado === 1 || estado === 3,
+                    novedades: novedades,
+                    pendingSync: novedades === 1,
+                };
+            });
+            const pending = scales.filter((s) => s.pendingSync).length;
+            const active = scales.filter((s) => s.active).length;
+            return { ok: true, scales, active, pending };
+        } catch (error) {
+            return { ok: false, error: error.message, scales: [] };
+        }
+    }
+
+    async resetProductFingerprintsAndSync() {
+        // Borra huellas en MySQL para que el próximo ciclo reescriba todos los productos
+        await mysqlExecute(
+            this.mysqlPool,
+            `DELETE FROM qendra_bridge_product_map WHERE device_id = ? AND tenant_id = ?`,
+            [this.config.deviceId, this.config.tenantId]
+        );
+        // Limpia el cursor para rescatar todos los productos recientes
+        delete this.state.productCursor;
+        this.state.lastProductSyncAt = null;
+        this.state.lastRecoveryRepublishAt = null;
+        this.stateStore.save(this.state);
+        this.logger.info('Huellas de productos reseteadas para forzar resincronizacion completa');
+        return { ok: true, message: 'Huellas reseteadas. El proximo ciclo reescribira todos los productos.' };
     }
 
     async syncTickets(syncState) {
@@ -1419,40 +1582,82 @@ class QendraBridge {
         return !resolvedTargets.some((ip) => !notifiedIps.has(String(ip)));
     }
 
-    async upsertFirebirdRow(firebirdConfig, tableName, keyColumn, row, columns) {
-        const keyValue = row[keyColumn];
-        const countRows = await firebirdQuery(
-            firebirdConfig,
-            `SELECT COUNT(*) AS TOTAL FROM ${tableName} WHERE ${keyColumn} = ?`,
-            [firebirdValue(keyValue)]
-        );
-        const exists = Number(countRows?.[0]?.TOTAL || countRows?.[0]?.total || 0) > 0;
+    /**
+     * Build the array of Firebird SQL operations needed to write a single product.
+     * All ops are executed in one Python subprocess via firebirdBatchQuery — much faster than per-query subprocesses.
+     */
+    buildProductWriteOps(row, pluColumns, hasEqPlus, eqPlusColumns, hasNovedades, novedadesColumns, targets, pluId) {
+        const ops = [];
+        const numero = row.COD_LOCAL || String(pluId);
+        const pluIdNum = Number.isNaN(Number(pluId)) ? pluId : Number(pluId);
+        const sectionId = row.ID_SECCION;
 
-        const allowedColumns = columns.filter((column) => Object.prototype.hasOwnProperty.call(row, column));
-        if (!allowedColumns.length) return;
-
-        if (exists) {
-            const setClause = allowedColumns
-                .filter((column) => column !== keyColumn)
-                .map((column) => `"${column}" = ?`)
-                .join(', ');
-            const params = allowedColumns.filter((column) => column !== keyColumn).map((column) => firebirdValue(row[column]));
-            if (!setClause) return;
-            params.push(firebirdValue(keyValue));
-            await firebirdQuery(
-                firebirdConfig,
-                `UPDATE ${tableName} SET ${setClause} WHERE ${keyColumn} = ?`,
-                params
-            );
-            return;
+        // 1. PLU upsert (UPDATE OR INSERT)
+        const allowedPlu = pluColumns.filter((col) => Object.prototype.hasOwnProperty.call(row, col));
+        if (allowedPlu.length > 0) {
+            ops.push({
+                sql: `UPDATE OR INSERT INTO PLU (${allowedPlu.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedPlu.map(() => '?').join(', ')}) MATCHING (ID)`,
+                params: allowedPlu.map((c) => firebirdValue(row[c])),
+            });
         }
 
+        // 2. EQ_PLUS assignments per target (UPDATE OR INSERT)
+        if (hasEqPlus && eqPlusColumns.length > 0) {
+            for (const ip of targets) {
+                const eqRow = {
+                    IP: ip,
+                    ID_PLU: firebirdValue(pluIdNum),
+                    NUMERO: String(numero),
+                };
+                if (eqPlusColumns.includes('ID_SECCION')) eqRow.ID_SECCION = firebirdValue(sectionId);
+                if (eqPlusColumns.includes('MODIF')) eqRow.MODIF = 3;
+                const allowedEq = eqPlusColumns.filter((c) => Object.prototype.hasOwnProperty.call(eqRow, c));
+                if (allowedEq.length > 0) {
+                    ops.push({
+                        sql: `UPDATE OR INSERT INTO EQ_PLUS (${allowedEq.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedEq.map(() => '?').join(', ')}) MATCHING (IP, ID_PLU)`,
+                        params: allowedEq.map((c) => firebirdValue(eqRow[c])),
+                    });
+                }
+            }
+        }
+
+        // 3. Mark EQUIPOS.NOVEDADES = 1
+        if (targets.length > 0) {
+            ops.push({
+                sql: `UPDATE EQUIPOS SET NOVEDADES = 1 WHERE IP IN (${targets.map(() => '?').join(', ')})`,
+                params: [...targets],
+            });
+        }
+
+        // 4. Insert NOVEDADES notifications per target
+        if (hasNovedades && novedadesColumns.length > 0) {
+            for (const ip of targets) {
+                const novRow = {};
+                if (novedadesColumns.includes('IP')) novRow.IP = ip;
+                if (novedadesColumns.includes('TABLA')) novRow.TABLA = 3;
+                if (novedadesColumns.includes('VALOR')) novRow.VALOR = Number(numero || pluId);
+                const allowedNov = novedadesColumns.filter((c) => Object.prototype.hasOwnProperty.call(novRow, c));
+                if (allowedNov.length > 0) {
+                    ops.push({
+                        sql: `INSERT INTO NOVEDADES (${allowedNov.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedNov.map(() => '?').join(', ')})`,
+                        params: allowedNov.map((c) => novRow[c]),
+                    });
+                }
+            }
+        }
+
+        return ops;
+    }
+
+    async upsertFirebirdRow(firebirdConfig, tableName, keyColumn, row, columns) {
+        const allowedColumns = columns.filter((column) => Object.prototype.hasOwnProperty.call(row, column));
+        if (!allowedColumns.length) return;
         const fields = allowedColumns.map((column) => `"${column}"`).join(', ');
         const placeholders = allowedColumns.map(() => '?').join(', ');
         const params = allowedColumns.map((column) => firebirdValue(row[column]));
         await firebirdQuery(
             firebirdConfig,
-            `INSERT INTO ${tableName} (${fields}) VALUES (${placeholders})`,
+            `UPDATE OR INSERT INTO ${tableName} (${fields}) VALUES (${placeholders}) MATCHING (${keyColumn})`,
             params
         );
     }
@@ -1460,35 +1665,13 @@ class QendraBridge {
     async upsertCompositeFirebirdRow(firebirdConfig, tableName, keyColumns, row, columns) {
         const allowedColumns = columns.filter((column) => Object.prototype.hasOwnProperty.call(row, column));
         if (!allowedColumns.length) return;
-
-        const whereClause = keyColumns.map((column) => `${column} = ?`).join(' AND ');
-        const whereParams = keyColumns.map((column) => firebirdValue(row[column]));
-        const countRows = await firebirdQuery(
-            firebirdConfig,
-            `SELECT COUNT(*) AS TOTAL FROM ${tableName} WHERE ${whereClause}`,
-            whereParams
-        );
-        const exists = Number(countRows?.[0]?.TOTAL || countRows?.[0]?.total || 0) > 0;
-
-        if (exists) {
-            const updateColumns = allowedColumns.filter((column) => !keyColumns.includes(column));
-            if (!updateColumns.length) return;
-            const setClause = updateColumns.map((column) => `"${column}" = ?`).join(', ');
-            const params = updateColumns.map((column) => firebirdValue(row[column])).concat(whereParams);
-            await firebirdQuery(
-                firebirdConfig,
-                `UPDATE ${tableName} SET ${setClause} WHERE ${whereClause}`,
-                params
-            );
-            return;
-        }
-
         const fields = allowedColumns.map((column) => `"${column}"`).join(', ');
         const placeholders = allowedColumns.map(() => '?').join(', ');
         const params = allowedColumns.map((column) => firebirdValue(row[column]));
+        const matchingClause = keyColumns.join(', ');
         await firebirdQuery(
             firebirdConfig,
-            `INSERT INTO ${tableName} (${fields}) VALUES (${placeholders})`,
+            `UPDATE OR INSERT INTO ${tableName} (${fields}) VALUES (${placeholders}) MATCHING (${matchingClause})`,
             params
         );
     }

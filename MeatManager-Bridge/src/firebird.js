@@ -142,6 +142,50 @@ async function query(config, sql, params = []) {
     });
 }
 
+/**
+ * Execute multiple SQL operations in a single Python subprocess / Firebird connection.
+ * Each operation is { sql, params }. Returns array of result sets (one per operation).
+ */
+async function batchQuery(config, operations) {
+    if (!operations || operations.length === 0) return [];
+
+    if (hasPythonHelper(config)) {
+        const response = await runPythonHelper(config, {
+            action: 'batch',
+            operations,
+        });
+        return response.results || [];
+    }
+
+    // Legacy fallback: run in a single attached connection sequentially
+    return new Promise(async (resolve, reject) => {
+        let connection;
+        try {
+            connection = await attachLegacy(config);
+        } catch (error) {
+            return reject(error);
+        }
+
+        const results = [];
+        let firstError = null;
+        const runNext = (index) => {
+            if (index >= operations.length) {
+                try { connection.db.detach(); } catch { /* noop */ }
+                if (firstError) reject(firstError);
+                else resolve(results);
+                return;
+            }
+            const op = operations[index];
+            connection.db.query(op.sql, op.params || [], (error, rows) => {
+                if (error && !firstError) firstError = error;
+                results.push(rows || []);
+                runNext(index + 1);
+            });
+        };
+        runNext(0);
+    });
+}
+
 async function getTables(config) {
     const cacheKey = String(config?.dbFile || '').toLowerCase();
     const cached = tableCache.get(cacheKey);
@@ -211,6 +255,7 @@ function buildInsertSql(tableName, columns, row) {
 module.exports = {
     attach,
     query,
+    batchQuery,
     getTables,
     tableExists,
     getColumns,
