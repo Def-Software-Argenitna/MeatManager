@@ -126,20 +126,6 @@ const DespostadaBase = ({
     const scaleState = connectionLabel(isScaleConnected, isSimulated);
     const hasWorkingState = isSessionStarted && Boolean(selectedCutId);
 
-    if (!hasDespostadaModule) {
-        return (
-            <ModuleLicenseGate locked moduleName="Despostada">
-                <div
-                    className="despostada-lock-backdrop"
-                    style={{
-                        minHeight: 'calc(100vh - 4.5rem)',
-                        background: "radial-gradient(circle at 20% 20%, rgba(255,126,0,0.08), transparent 28%), radial-gradient(circle at 80% 30%, rgba(255,126,0,0.06), transparent 24%), linear-gradient(180deg, rgba(7,8,12,0.92), rgba(5,6,10,0.98))"
-                    }}
-                />
-            </ModuleLicenseGate>
-        );
-    }
-
     const resetSession = (withConfirmation = false) => {
         const shouldReset = !withConfirmation || window.confirm('¿Reiniciar sesión?');
         if (!shouldReset) return;
@@ -283,6 +269,7 @@ const DespostadaBase = ({
     const totalCuts = logs.length;
 
     return (
+        <ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
         <div
             className="despostada-module animate-fade-in"
             style={{
@@ -619,6 +606,7 @@ const DespostadaBase = ({
                 </div>
             </DirectionalReveal>
         </div>
+        </ModuleLicenseGate>
     );
 };
 
