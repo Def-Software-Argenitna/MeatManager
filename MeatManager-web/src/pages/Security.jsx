@@ -491,7 +491,7 @@ const Security = () => {
     const [activeTab, setActiveTab] = useState('usuarios');
     const [message, setMessage] = useState(null);
     const displayModules = useMemo(() => ([
-        { key: 'despostada', label: 'Trazabilidad de Lotes' },
+        { key: 'despostada', label: 'Despostada' },
         { key: 'informes-pro', label: 'Análisis de Rinde' },
         { key: 'costos-reales', label: 'Costos Reales' },
         { key: 'proveedores-pro', label: 'Cuentas de Proveedores' },

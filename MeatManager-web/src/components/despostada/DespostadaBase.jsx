@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
 import DirectionalReveal from '../DirectionalReveal';
+import ModuleLicenseGate from '../ModuleLicenseGate';
 import { scaleService } from '../../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../../utils/apiClient';
@@ -127,23 +128,15 @@ const DespostadaBase = ({
 
     if (!hasDespostadaModule) {
         return (
-            <div className="despostada-locked animate-fade-in">
-                <DirectionalReveal className="despostada-locked-card" from="down" delay={0.04}>
-                    <div className="despostada-kicker">
-                        <ShieldCheck size={14} /> Módulo premium
-                    </div>
-                    <h2>Módulo de Despostada</h2>
-                    <p>{lockedDescription}</p>
-                    <div style={{ marginTop: '1.25rem' }}>
-                        <button
-                            className="despostada-button"
-                            onClick={() => { window.location.hash = '#/config/licencia'; }}
-                        >
-                            {lockedCtaLabel}
-                        </button>
-                    </div>
-                </DirectionalReveal>
-            </div>
+            <ModuleLicenseGate locked moduleName="Despostada">
+                <div
+                    className="despostada-lock-backdrop"
+                    style={{
+                        minHeight: 'calc(100vh - 4.5rem)',
+                        background: "radial-gradient(circle at 20% 20%, rgba(255,126,0,0.08), transparent 28%), radial-gradient(circle at 80% 30%, rgba(255,126,0,0.06), transparent 24%), linear-gradient(180deg, rgba(7,8,12,0.92), rgba(5,6,10,0.98))"
+                    }}
+                />
+            </ModuleLicenseGate>
         );
     }
 
