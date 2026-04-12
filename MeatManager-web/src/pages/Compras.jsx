@@ -10,6 +10,7 @@ import './Compras.css';
 const IVA_OPTIONS = [10.5, 21];
 
 const normalizeLookupValue = (value) => String(value || '').trim().toLowerCase();
+const isCurrentAccountMethod = (value) => ['cta_cte', 'cuenta corriente'].includes(normalizeLookupValue(value));
 
 const getCategoryNameById = (categories, categoryId) => {
     if (!categoryId || !categories?.length) return '';
@@ -97,8 +98,7 @@ const Compras = () => {
         total: '',
         date: getLocalDateStr(),
         destination: 'venta',
-        payment_method: '',
-        is_account: false
+        payment_method: ''
     });
 
     // Current Item Entry State
@@ -333,7 +333,6 @@ const Compras = () => {
             date: compra.date ? compra.date.slice(0, 10) : getLocalDateStr(),
             destination: 'venta',
             payment_method: compra.payment_method || '',
-            is_account: !!compra.is_account,
         });
         setEditingPurchaseId(compra.id);
         setIsModalOpen(true);
@@ -361,7 +360,8 @@ const Compras = () => {
             }, { sale: 0, internal: 0, total: 0 });
 
             const normalizedPaymentMethod = String(newPurchase.payment_method || '').trim().toLowerCase();
-            const shouldAffectCash = purchaseBreakdown.internal > 0 && !newPurchase.is_account && normalizedPaymentMethod !== 'cta_cte';
+            const isAccountPurchase = isCurrentAccountMethod(newPurchase.payment_method);
+            const shouldAffectCash = purchaseBreakdown.internal > 0 && !isAccountPurchase && normalizedPaymentMethod !== 'cta_cte';
 
             if (shouldAffectCash && !newPurchase.payment_method) {
                 window.alert('Seleccioná el medio de pago para registrar la compra interna y descontarla de caja.');
@@ -416,7 +416,7 @@ const Compras = () => {
                 date: newPurchase.date,
                 total: purchaseTotal,
                 payment_method: newPurchase.payment_method,
-                is_account: newPurchase.is_account,
+                is_account: isAccountPurchase,
                 payment_method_type: selectedPaymentMethod?.type || (normalizedPaymentMethod === 'transferencia' ? 'transfer' : 'cash'),
                 should_affect_cash: shouldAffectCash,
                 cash_amount: purchaseBreakdown.internal,
@@ -436,8 +436,7 @@ const Compras = () => {
                 total: '',
                 date: getLocalDateStr(),
                 destination: 'venta',
-                payment_method: '',
-                is_account: false
+                payment_method: ''
             });
         } catch (error) {
             console.error('Error adding purchase:', error);
@@ -1036,14 +1035,7 @@ const Compras = () => {
                                         className="neo-input"
                                         style={{ flex: 1, minWidth: '180px', marginBottom: 0 }}
                                         value={newPurchase.payment_method}
-                                        onChange={e => {
-                                            const val = e.target.value;
-                                            setNewPurchase(p => ({
-                                                ...p,
-                                                payment_method: val,
-                                                is_account: val === 'cta_cte' ? true : p.is_account
-                                            }));
-                                        }}
+                                        onChange={e => setNewPurchase(p => ({ ...p, payment_method: e.target.value }))}
                                     >
                                         <option value="">Seleccionar</option>
                                         {paymentMethods.filter(m => m.enabled).map(m => (
@@ -1053,18 +1045,6 @@ const Compras = () => {
                                         <option value="efectivo">Efectivo</option>
                                         <option value="transferencia">Transferencia</option>
                                     </select>
-                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', whiteSpace: 'nowrap', cursor: 'pointer' }}>
-                                        <input
-                                            type="checkbox"
-                                            checked={newPurchase.is_account || newPurchase.payment_method === 'cta_cte'}
-                                            onChange={e => setNewPurchase(p => ({
-                                                ...p,
-                                                is_account: e.target.checked,
-                                                payment_method: e.target.checked ? 'cta_cte' : p.payment_method
-                                            }))}
-                                        />
-                                        Cuenta Corriente
-                                    </label>
                                 </div>
                                 <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
                                 <div style={{ flex: 1 }}></div>
