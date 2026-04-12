@@ -6,6 +6,10 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const isCurrentAccountPurchase = (purchase) => (
+    Boolean(purchase?.is_account)
+    || ['cta_cte', 'cuenta corriente'].includes(normalizeText(purchase?.payment_method))
+);
 
 const Proveedores = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -562,7 +566,7 @@ const Proveedores = () => {
                             </div>
                             <div className="neo-card" style={{ padding: '0.75rem' }}>
                                 <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Cuenta corriente</div>
-                                <div style={{ fontWeight: 700 }}>{selectedPurchaseDetail.is_account ? 'Si' : 'No'}</div>
+                                <div style={{ fontWeight: 700 }}>{isCurrentAccountPurchase(selectedPurchaseDetail) ? 'Si' : 'No'}</div>
                             </div>
                         </div>
 
