@@ -51,7 +51,6 @@ const DashboardLayout = () => {
     const location = useLocation();
     const prefersReducedMotion = useReducedMotion();
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
-    const hideTopBar = location.pathname.startsWith('/ventas');
 
     const toggleSidebar = () => {
         setIsSidebarCollapsed(!isSidebarCollapsed);
@@ -110,7 +109,7 @@ const DashboardLayout = () => {
 
     return (
         <div className="layout-wrapper">
-            {!hideTopBar && <TopBar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />}
+            <TopBar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
             <div className={`dashboard-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
                 <Sidebar isCollapsed={isSidebarCollapsed} />
                 <main className="main-content">

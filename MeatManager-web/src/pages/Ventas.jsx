@@ -1678,37 +1678,6 @@ const Ventas = () => {
                 ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
             </div>
         )}
-        {/* TOP BAR - Premium TPV Style */}
-        <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.75rem 1.5rem', background: 'rgba(10, 10, 10, 0.8)',
-            backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.05)',
-            color: 'var(--color-text-main)', zIndex: 100
-        }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ width: '32px', height: '32px', background: 'var(--color-primary)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Beef size={20} color="#000" />
-                    </div>
-                    <span style={{ fontWeight: '800', fontSize: '1.1rem', letterSpacing: '0.02em' }}>CENTRO DE <span style={{ color: 'var(--color-primary)' }}>VENTAS</span></span>
-                </div>
-                <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.1)' }}></div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', fontWeight: '500' }}>
-                    {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
-                    <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <User size={14} />
-                    </div>
-                    <span style={{ color: 'var(--color-text-muted)' }}>Cajero:</span>
-                    <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
-                </div>
-            </div>
-        </div>
-
         <div className={`pos-container animate-fade-in ${showCartMobile ? 'show-cart-mobile' : ''}`}>
             {/* Mobile Cart FAB */}
             <button
