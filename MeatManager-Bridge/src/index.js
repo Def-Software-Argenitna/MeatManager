@@ -47,6 +47,7 @@ const bridge = new QendraBridge({
 let running = false;
 let timer = null;
 let server = null;
+let schedulerActive = false;
 
 function sendJson(res, status, payload) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -343,14 +344,24 @@ async function main() {
 
     server = startHttpServer();
     await runCycle('startup');
-    timer = setInterval(() => {
-        runCycle('interval');
-    }, config.syncIntervalMs);
+
+    schedulerActive = true;
+    const scheduleNext = (delayMs = config.syncIntervalMs) => {
+        if (!schedulerActive) return;
+        const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+        timer = setTimeout(async () => {
+            timer = null;
+            await runCycle('interval');
+            scheduleNext(config.syncIntervalMs);
+        }, nextDelay);
+    };
+    scheduleNext(config.syncIntervalMs);
 }
 
 async function shutdown(signal) {
     logger.info(`Cerrando bridge por ${signal}`);
-    if (timer) clearInterval(timer);
+    schedulerActive = false;
+    if (timer) clearTimeout(timer);
     if (server) {
         await new Promise((resolve) => server.close(resolve));
     }
