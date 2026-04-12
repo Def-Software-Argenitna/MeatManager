@@ -83,6 +83,7 @@ const config = {
         ssl: boolEnv('MYSQL_SSL', false),
     },
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
+    syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     ticketLookbackDays: intEnv('TICKET_LOOKBACK_DAYS', 30),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
     httpPort: intEnv('HTTP_PORT', 4045),

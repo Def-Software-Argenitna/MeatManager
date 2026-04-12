@@ -412,6 +412,23 @@ class QendraBridge {
         }
     }
 
+    async runWithTimeout(label, task) {
+        const timeoutMs = Math.max(10000, Number(this.config.syncStepTimeoutMs || 180000));
+        let timer = null;
+        try {
+            return await Promise.race([
+                Promise.resolve().then(task),
+                new Promise((_, reject) => {
+                    timer = setTimeout(() => {
+                        reject(new Error(`${label} excedio el tiempo maximo de ${timeoutMs} ms`));
+                    }, timeoutMs);
+                }),
+            ]);
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
     async runOnce() {
         await this.ensureRuntime();
         const startedAt = new Date();
@@ -423,8 +440,8 @@ class QendraBridge {
 
         try {
             const currentState = await this.loadSyncState();
-            result.products = await this.syncProducts(currentState);
-            result.tickets = await this.syncTickets(currentState);
+            result.products = await this.runWithTimeout('syncProducts', () => this.syncProducts(currentState));
+            result.tickets = await this.runWithTimeout('syncTickets', () => this.syncTickets(currentState));
             result.ok = true;
 
             const finishedAt = new Date();
