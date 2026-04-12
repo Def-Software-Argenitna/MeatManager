@@ -182,7 +182,9 @@ async function runCycle(reason = 'scheduled') {
     try {
         const result = await bridge.runOnce();
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
-        return { ok: true, result };
+        const forcedTargets = await bridge.forceScaleSyncNow(`post-cycle:${reason}`);
+        logger.info('Forzado de sincronizacion a balanza ejecutado despues del ciclo', { reason, forcedTargets });
+        return { ok: true, result, forcedTargets };
     } catch (error) {
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
         return { ok: false, error: error.message };

@@ -508,7 +508,7 @@ class QendraBridge {
             return { ok: true, processed: 0, skipped: 0 };
         }
 
-        const summary = { ok: true, processed: 0, skipped: 0, written: 0 };
+        const summary = { ok: true, processed: 0, skipped: 0, written: 0, deleted: 0, forcedTargets: 0 };
         const targetMode = this.config.firebird.productTarget === 'import' ? 'import' : 'live';
         const targetFirebird = targetMode === 'import'
             ? await this.prepareImportWorkDatabase()
@@ -541,6 +541,43 @@ class QendraBridge {
             const pluIdKey = row.firebird_plu_id == null ? '' : String(row.firebird_plu_id).trim();
             if (productIdKey) mapByProductId.set(productIdKey, row);
             if (pluIdKey) mapByPluId.set(pluIdKey, row);
+        }
+
+        const removedOrDisabledProducts = await this.loadRemovedOrDisabledProducts(since);
+        for (const product of removedOrDisabledProducts) {
+            const fallbackPluId = String(product.plu || product.id || '').trim();
+            const mapRow = mapByProductId.get(String(product.id))
+                || (fallbackPluId ? mapByPluId.get(fallbackPluId) : null)
+                || null;
+            if (!mapRow) continue;
+
+            const syncedPluId = String(mapRow.firebird_plu_id || fallbackPluId || '').trim();
+            if (!syncedPluId) continue;
+
+            const targets = await this.loadTargetsForPlu(targetFirebird, syncedPluId);
+            await this.removeProductFromFirebird(targetFirebird, syncedPluId);
+            if (targets.length > 0) {
+                await this.markProductNeedsSync(targetFirebird, {
+                    pluId: syncedPluId,
+                    numero: syncedPluId,
+                    targets,
+                });
+            }
+
+            await mysqlExecute(
+                this.mysqlPool,
+                `DELETE FROM qendra_bridge_product_map
+                 WHERE device_id = ? AND tenant_id = ? AND product_id = ?`,
+                [this.config.deviceId, this.config.tenantId, product.id]
+            );
+
+            mapByProductId.delete(String(product.id));
+            mapByPluId.delete(syncedPluId);
+            summary.deleted += 1;
+            await this.recordLog('mysql-to-firebird', 'notification', String(syncedPluId), 'ok', 'Producto dado de baja en Firebird y marcado para publicacion en Qendra', {
+                pluId: syncedPluId,
+                targets,
+            });
         }
 
         // Track sections already ensured this cycle to avoid redundant Firebird calls
@@ -642,6 +679,11 @@ class QendraBridge {
             }
         }
 
+        if (summary.written > 0 || summary.deleted > 0) {
+            const forcedTargets = await this.forceScaleSyncAfterProducts(targetFirebird);
+            summary.forcedTargets = forcedTargets;
+        }
+
         this.state.productCursor = new Date().toISOString();
         this.state.lastProductSyncAt = this.state.productCursor;
         this.stateStore.save(this.state);
@@ -649,6 +691,103 @@ class QendraBridge {
         this.logger.info('Sincronizacion de productos finalizada', summary);
         await this.recordLog('mysql-to-firebird', 'product', '*', 'ok', 'Productos sincronizados', summary);
         return summary;
+    }
+
+    async loadRemovedOrDisabledProducts(since) {
+        const params = [this.config.tenantId];
+        let sql = `
+            SELECT id, plu, current_price, updated_at
+            FROM products
+            WHERE tenant_id = ?
+              AND COALESCE(current_price, 0) <= 0`;
+        if (since) {
+            sql += ` AND COALESCE(updated_at, created_at) > ?`;
+            params.push(since);
+        }
+        sql += ` ORDER BY updated_at ASC, id ASC`;
+        return mysqlQuery(this.mysqlPool, sql, params);
+    }
+
+    async loadTargetsForPlu(firebirdConfig, pluId) {
+        if (!(await tableExists(firebirdConfig, 'EQ_PLUS'))) {
+            return [];
+        }
+
+        const rows = await firebirdQuery(
+            firebirdConfig,
+            `SELECT DISTINCT IP
+             FROM EQ_PLUS
+             WHERE ID_PLU = ?`,
+            [firebirdValue(Number.isNaN(Number(pluId)) ? pluId : Number(pluId))]
+        );
+        return rows
+            .map((row) => String(row.IP ?? '').trim())
+            .filter(Boolean);
+    }
+
+    async removeProductFromFirebird(firebirdConfig, pluId) {
+        const pluValue = firebirdValue(Number.isNaN(Number(pluId)) ? pluId : Number(pluId));
+        try {
+            if (await tableExists(firebirdConfig, 'EQ_PLUS')) {
+                await firebirdQuery(
+                    firebirdConfig,
+                    `DELETE FROM EQ_PLUS WHERE ID_PLU = ?`,
+                    [pluValue]
+                );
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo eliminar EQ_PLUS para la baja del producto', { pluId, error: error.message });
+        }
+
+        try {
+            if (await tableExists(firebirdConfig, 'PLU')) {
+                await firebirdQuery(
+                    firebirdConfig,
+                    `DELETE FROM PLU WHERE ID = ?`,
+                    [pluValue]
+                );
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo eliminar PLU para la baja del producto', { pluId, error: error.message });
+        }
+    }
+
+    async forceScaleSyncAfterProducts(firebirdConfig) {
+        try {
+            if (!(await tableExists(firebirdConfig, 'EQUIPOS'))) {
+                return 0;
+            }
+            const columns = await getColumns(firebirdConfig, 'EQUIPOS');
+            if (!columns.includes('NOVEDADES')) {
+                return 0;
+            }
+
+            const targets = await this.loadTargetEquipments(firebirdConfig, null);
+            if (targets.length === 0) {
+                return 0;
+            }
+
+            const placeholders = targets.map(() => '?').join(', ');
+            await firebirdQuery(
+                firebirdConfig,
+                `UPDATE EQUIPOS SET NOVEDADES = 1 WHERE IP IN (${placeholders})`,
+                targets
+            );
+            this.logger.info('Forzado de sincronizacion hacia balanzas aplicado al finalizar productos', { targets });
+            return targets.length;
+        } catch (error) {
+            this.logger.warn('No se pudo forzar la sincronizacion hacia balanzas al finalizar productos', { error: error.message });
+            return 0;
+        }
+    }
+
+    async forceScaleSyncNow(reason = 'manual') {
+        const forcedTargets = await this.forceScaleSyncAfterProducts(this.config.firebird);
+        this.logger.info('Forzado de sincronizacion a balanza ejecutado', {
+            reason,
+            forcedTargets,
+        });
+        return forcedTargets;
     }
 
     async syncTickets(syncState) {
