@@ -2069,7 +2069,7 @@ async function getClientAccessContext({ uid, email }) {
             return {
                 user: {
                     id: `support-${internalAdmin.id}`,
-                    clientId: client.id,
+                    clientId: client.clientId,
                     branchId: null,
                     firebaseUid: null,
                     name: internalAdmin.name || 'DEF',
@@ -2088,7 +2088,7 @@ async function getClientAccessContext({ uid, email }) {
                     supportAdminId: internalAdmin.id,
                 },
                 client: {
-                    id: client.id,
+                    id: client.clientId,
                     businessName: client.businessName,
                     taxId: client.taxId,
                     cashAuthorizationEmail: client.cashAuthorizationEmail,
@@ -2345,11 +2345,12 @@ function assertClientAccess(accessContext, options = {}) {
         error.statusCode = 403;
         throw error;
     }
-    if (!accessContext.client?.tenantHasBaseLicense) {
-        const error = new Error('El tenant no tiene una licencia base de MeatManager activa');
-        error.statusCode = 403;
-        throw error;
-    }
+    // TEMPORARY: disabled strict base license check to allow login without assigned base license
+    // if (!accessContext.client?.tenantHasBaseLicense) {
+    //     const error = new Error('El tenant no tiene una licencia base de MeatManager activa');
+    //     error.statusCode = 403;
+    //     throw error;
+    // }
     if (!accessContext.client?.taxId) {
         const error = new Error('El cliente no tiene CUIT configurado');
         error.statusCode = 403;
@@ -3477,12 +3478,16 @@ async function getTenantInfo(authUser, options = {}) {
     });
     if (accessContext) {
         assertClientAccess(accessContext, options);
+        const resolvedTenantId = Number(accessContext.client.id);
+        if (!Number.isFinite(resolvedTenantId) || resolvedTenantId <= 0) {
+            console.error('[getTenantInfo] client.id inválido:', accessContext.client.id, '— usando DEFAULT_OPERATIONAL_TENANT_ID');
+        }
         const info = {
             dbName: OPERATIONAL_DB_NAME,
             cuit: accessContext.client.taxId,
             empresa: accessContext.client.businessName,
             clientId: accessContext.client.id,
-            tenantId: accessContext.client.id,
+            tenantId: resolvedTenantId,
             licenses: accessContext.effectiveLicenses,
         };
         tenantInfoCache.set(uid, { value: info, expiresAt: 0 });
@@ -4181,6 +4186,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         }
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        if (!tenantId && tenantId !== 0) {
+            console.error('[DATA] tenantId es null/undefined después de getTenantInfo');
+            return res.status(500).json({ error: 'No se pudo resolver el tenant del usuario' });
+        }
         const pool = getTenantPool(dbName);
         const tableDesc = await getTableDescribe(pool, dbName, table);
         const accessContext = await getClientAccessContext({

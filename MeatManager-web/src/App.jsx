@@ -125,6 +125,20 @@ function RequirePermission({ path, children }) {
 }
 
 function App() {
+  return (
+    <TenantProvider>
+      <UserProvider>
+        <LicenseProvider>
+          <AppRoutes />
+        </LicenseProvider>
+      </UserProvider>
+    </TenantProvider>
+  );
+}
+
+function AppRoutes() {
+  const { tenant } = useTenant();
+  const tenantRenderKey = tenant?.clientId || tenant?.uid || 'anonymous';
   const protect = (path, element) => (
     <RequirePermission path={path}>
       {element}
@@ -132,10 +146,7 @@ function App() {
   );
 
   return (
-    <TenantProvider>
-      <UserProvider>
-        <LicenseProvider>
-          <Routes>
+          <Routes key={tenantRenderKey}>
             <Route path="/login" element={lazyElement(Login)} />
 
             <Route element={<RequireAuth />}>
@@ -175,9 +186,6 @@ function App() {
               </Route>
             </Route>
           </Routes>
-        </LicenseProvider>
-      </UserProvider>
-    </TenantProvider>
   );
 }
 
