@@ -198,20 +198,6 @@ const Sidebar = ({ isCollapsed }) => {
   const renderDespostadaBlock = () => {
     const hasVisibleItems = despostadaItems.some((item) => hasAccess(item.path));
 
-    if (!hasModule('despostada')) {
-      return (
-        <button
-          className="nav-item locked"
-          style={{ opacity: 0.5, cursor: 'not-allowed' }}
-          onClick={() => navigate('/config/licencia')}
-        >
-          <Utensils className="nav-icon" title="Despostada" />
-          {!isCollapsed && <span>Despostada</span>}
-          {!isCollapsed && <ShieldCheck size={14} style={{ marginLeft: 'auto', color: 'var(--color-primary)' }} />}
-        </button>
-      );
-    }
-
     if (!hasVisibleItems) return null;
 
     return (

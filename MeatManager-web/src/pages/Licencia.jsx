@@ -9,7 +9,7 @@ const Licencia = () => {
     const [copied, setCopied] = useState(false);
 
     const displayModules = useMemo(() => ([
-        { key: 'despostada', label: 'Trazabilidad de Lotes' },
+        { key: 'despostada', label: 'Despostada' },
         { key: 'informes-pro', label: 'Análisis de Rinde' },
         { key: 'costos-reales', label: 'Costos Reales' },
         { key: 'proveedores-pro', label: 'Cuentas de Proveedores' },

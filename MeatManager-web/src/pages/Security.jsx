@@ -28,6 +28,13 @@ const hasLogisticsCapability = (license) => Boolean(
     || license?.license?.hasLogisticsCapability
 );
 
+const hasDespostadaCapability = (license) => Boolean(
+    license?.hasDespostadaCapability
+    || license?.license?.hasDespostadaCapability
+    || String(license?.modules || '').includes('despostada')
+    || String(license?.license?.modules || '').includes('despostada')
+);
+
 const isBaseLicense = (license) => {
     const internalCode = String(license?.internalCode || license?.license?.internalCode || '').trim().toLowerCase();
     const category = String(license?.category || license?.license?.category || '').trim().toLowerCase();
@@ -486,12 +493,13 @@ const Security = () => {
     const hasAssignedSuperUserLicense = licenses.some((license) => isSuperUserLicense(license));
     const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
     const availableLogisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
+    const availableDespostadaLicenses = availablePerUserLicenses.filter((assignment) => hasDespostadaCapability(assignment));
     const availableUnassignedLicenses = licensePool.filter((assignment) => assignment?.userId == null);
     const activeLicenseCount = licenses.length;
     const [activeTab, setActiveTab] = useState('usuarios');
     const [message, setMessage] = useState(null);
     const displayModules = useMemo(() => ([
-        { key: 'despostada', label: 'Trazabilidad de Lotes' },
+        { key: 'despostada', label: 'Despostada' },
         { key: 'informes-pro', label: 'Análisis de Rinde' },
         { key: 'costos-reales', label: 'Costos Reales' },
         { key: 'proveedores-pro', label: 'Cuentas de Proveedores' },
@@ -792,6 +800,14 @@ const Security = () => {
                             </div>
                             <div style={{ marginTop: '0.45rem', fontWeight: '700', color: availableLogisticsLicenses.length > 0 ? '#f59e0b' : '#9ca3af' }}>
                                 {availableLogisticsLicenses.length}
+                            </div>
+                        </div>
+                        <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
+                            <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                                Licencias de despostada disponibles
+                            </div>
+                            <div style={{ marginTop: '0.45rem', fontWeight: '700', color: availableDespostadaLicenses.length > 0 ? '#f59e0b' : '#9ca3af' }}>
+                                {availableDespostadaLicenses.length}
                             </div>
                         </div>
                     </div>
