@@ -12,6 +12,26 @@ const getStoredTenantSession = () => {
     }
 };
 const isSupportSession = (tenant) => tenant?.authMode === 'support';
+const appendSupportClientIdToPath = (path, clientId) => {
+    if (!clientId) return path;
+    const separator = path.includes('?') ? '&' : '?';
+    return `${path}${separator}clientId=${encodeURIComponent(String(clientId))}`;
+};
+const injectSupportClientIdIntoBody = (body, clientId) => {
+    if (!clientId || body == null || typeof body !== 'string') {
+        return body;
+    }
+
+    try {
+        const parsed = JSON.parse(body);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || parsed.clientId) {
+            return body;
+        }
+        return JSON.stringify({ ...parsed, clientId });
+    } catch {
+        return body;
+    }
+};
 const setStoredAuthToken = (token) => {
     if (token) {
         sessionStorage.setItem('mm_auth_token', token);
@@ -74,15 +94,22 @@ const getCachedToken = (forceRefresh = false) => {
 };
 
 export const apiFetch = async (path, options = {}) => {
+    const tenant = getStoredTenantSession();
+    const scopedPath = isSupportSession(tenant) && tenant?.clientId
+        ? appendSupportClientIdToPath(path, tenant.clientId)
+        : path;
+    const scopedBody = isSupportSession(tenant) && tenant?.clientId
+        ? injectSupportClientIdIntoBody(options.body, tenant.clientId)
+        : options.body;
+
     const buildHeaders = async (forcedRefresh = false) => {
         const token = await getCachedToken(forcedRefresh);
         if (forcedRefresh) { _tokenPromise = null; _tokenExpiry = 0; } // invalidar cache en retry
 
         const headers = {
-            ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+            ...(scopedBody ? { 'Content-Type': 'application/json' } : {}),
             ...(options.headers || {}),
         };
-        const tenant = getStoredTenantSession();
 
         if (token) {
             headers.Authorization = `Bearer ${token}`;
@@ -94,14 +121,16 @@ export const apiFetch = async (path, options = {}) => {
         return headers;
     };
 
-    let response = await fetch(buildApiUrl(path), {
+    let response = await fetch(buildApiUrl(scopedPath), {
         ...options,
+        body: scopedBody,
         headers: await buildHeaders(false),
     });
 
     if (response.status === 401 && auth.currentUser) {
-        response = await fetch(buildApiUrl(path), {
+        response = await fetch(buildApiUrl(scopedPath), {
             ...options,
+            body: scopedBody,
             headers: await buildHeaders(true),
         });
     }
