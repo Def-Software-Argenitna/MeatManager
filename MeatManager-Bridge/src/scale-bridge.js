@@ -35,6 +35,11 @@ function deriveItemMetrics({ units, grams }) {
     };
 }
 
+function normalizePriceFormat(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === '6d' ? '6d' : '4d2d';
+}
+
 class ScaleBridge {
     constructor({ config, logger, state, stateStore, mysqlPool }) {
         this.config = config;
@@ -375,14 +380,33 @@ class ScaleBridge {
         return { ok: true, updated: true };
     }
 
+    async getPriceFormatSetting() {
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT value
+             FROM settings
+             WHERE tenant_id = ?
+                             AND \`key\` = ?
+             LIMIT 1`,
+            [this.config.tenantId, 'precio_formato']
+        );
+        return normalizePriceFormat(rows[0]?.value);
+    }
+
     async syncProducts() {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
+        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
+        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
+            ? 1
+            : this.config.scale.legacyPriceMultiplier;
         this.logger.info('Firma digital de balanza detectada', {
             protocolVersion,
             protocolData: signature.data,
             useLegacyPlu4,
+            priceFormat,
+            effectiveLegacyPriceMultiplier,
         });
 
         try {
@@ -490,7 +514,8 @@ class ScaleBridge {
                 price: product.current_price,
                 updatedAt: product.updated_at,
                 protocolMode: useLegacyPlu4 ? 'v6-func4' : 'v7-func61',
-                legacyPriceMultiplier: useLegacyPlu4 ? this.config.scale.legacyPriceMultiplier : null,
+                priceFormat,
+                legacyPriceMultiplier: useLegacyPlu4 ? effectiveLegacyPriceMultiplier : null,
                 legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v1' : null,
             });
 
@@ -524,7 +549,8 @@ class ScaleBridge {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
                         maintainTotals: Boolean(mapRows[0]),
-                        priceMultiplier: this.config.scale.legacyPriceMultiplier,
+                        priceMultiplier: effectiveLegacyPriceMultiplier,
+                        priceFormat,
                     })
                     : buildPlu61Payload(product, {
                         sectionId: section.id,
