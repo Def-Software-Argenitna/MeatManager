@@ -123,9 +123,7 @@ function buildPlu4Payload(product, options = {}) {
         if (priceFormat === '6d') {
             return Math.max(0, Math.min(999999, integerPrice));
         }
-        const fallbackWholePrice = Math.round(rawPrice);
         if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
-        if (fallbackWholePrice >= 0 && fallbackWholePrice <= 999999) return fallbackWholePrice;
         return Math.max(0, Math.min(999999, scaledPrice));
     })();
     const price = padNum(safePrice, 6);
