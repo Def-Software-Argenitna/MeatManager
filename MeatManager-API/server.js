@@ -27,8 +27,23 @@ const { isAdminOnlySettingKey } = require('./config/security-policy');
 
 // ── Firebase Admin init ────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT || 'firebase-service-account.json');
-const serviceAccount = require(serviceAccountPath);
-admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+const localDevAuthBypass = String(process.env.ALLOW_LOCAL_UNVERIFIED_AUTH || 'true').trim().toLowerCase() !== 'false';
+let firebaseAdminAvailable = false;
+
+if (fs.existsSync(serviceAccountPath)) {
+    const serviceAccount = require(serviceAccountPath);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    firebaseAdminAvailable = true;
+} else if (process.env.FIREBASE_SERVICE_ACCOUNT_JSON) {
+    const serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    firebaseAdminAvailable = true;
+} else {
+    console.warn(`[AUTH] Firebase Admin deshabilitado: no existe ${serviceAccountPath}.`);
+    if (localDevAuthBypass) {
+        console.warn('[AUTH] Se habilita fallback local por decodificacion de token sin verificar firma. Solo usar en desarrollo local.');
+    }
+}
 
 // ── Express setup ──────────────────────────────────────────────────────────
 const app = express();
@@ -50,6 +65,27 @@ app.use(cors({
     credentials: true,
 }));
 app.use(express.json());
+
+function isLocalRequest(req) {
+    const host = String(req.headers.host || '').toLowerCase();
+    const forwardedHost = String(req.headers['x-forwarded-host'] || '').toLowerCase();
+    return host.includes('127.0.0.1')
+        || host.includes('localhost')
+        || forwardedHost.includes('127.0.0.1')
+        || forwardedHost.includes('localhost');
+}
+
+function decodeFirebaseJwtWithoutVerification(token) {
+    const decoded = jwt.decode(token);
+    if (!decoded || typeof decoded !== 'object') {
+        throw new Error('Token inválido o expirado');
+    }
+    return {
+        ...decoded,
+        uid: decoded.uid || decoded.user_id || decoded.sub || null,
+        email: decoded.email || null,
+    };
+}
 
 const readHeavyPaths = [
     '/api/health',
@@ -2811,9 +2847,29 @@ async function verifyFirebaseToken(req, res, next) {
             return next();
         }
 
-        const decoded = await admin.auth().verifyIdToken(token);
-        req.firebaseUser = decoded;
-        return next();
+        if (firebaseAdminAvailable) {
+            const decoded = await admin.auth().verifyIdToken(token);
+            req.firebaseUser = decoded;
+            return next();
+        }
+
+        if (localDevAuthBypass && isLocalRequest(req)) {
+            const decoded = decodeFirebaseJwtWithoutVerification(token);
+            if (!decoded.uid) {
+                return res.status(401).json({ error: 'Token inválido o expirado' });
+            }
+            const rawTargetClientId = req.headers['x-mm-target-client-id']
+                || req.query?.clientId
+                || req.body?.clientId;
+            const supportClientId = Number(rawTargetClientId || 0);
+            req.firebaseUser = {
+                ...decoded,
+                _supportClientId: Number.isFinite(supportClientId) && supportClientId > 0 ? supportClientId : null,
+            };
+            return next();
+        }
+
+        return res.status(503).json({ error: 'Firebase Admin no configurado en este entorno local' });
     } catch {
         return res.status(401).json({ error: 'Token inválido o expirado' });
     }
@@ -4962,6 +5018,47 @@ async function ensureScaleTicketLifecycleColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
 }
 
+async function ensureScaleTicketItemColumns(conn) {
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'printed_ticket_barcode', '`printed_ticket_barcode` VARCHAR(32) NULL AFTER `ticket_barcode`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_total_amount', '`ticket_total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `amount`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_item_count', '`ticket_item_count` INT NOT NULL DEFAULT 0 AFTER `ticket_total_amount`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'item_quantity', '`item_quantity` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `ticket_item_count`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'item_quantity_unit', '`item_quantity_unit` VARCHAR(8) NOT NULL DEFAULT \'un\' AFTER `item_quantity`');
+
+        await conn.query(
+        `UPDATE scale_bridge_sales_item s
+         LEFT JOIN scale_bridge_ticket_map t
+           ON t.device_id = s.device_id
+          AND t.tenant_id = s.tenant_id
+          AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+          AND t.ticket_id = s.ticket_id
+         SET s.printed_ticket_barcode = COALESCE(t.printed_ticket_barcode, s.printed_ticket_barcode),
+             s.ticket_total_amount = CASE
+                WHEN t.total_amount IS NOT NULL THEN t.total_amount
+                ELSE s.ticket_total_amount
+             END,
+             s.ticket_item_count = CASE
+                WHEN t.item_count IS NOT NULL THEN t.item_count
+                ELSE s.ticket_item_count
+             END,
+             s.item_quantity = CASE
+                WHEN COALESCE(s.grams, 0) > 0 THEN ROUND(COALESCE(s.grams, 0) / 1000, 3)
+                ELSE COALESCE(s.units, 0)
+             END,
+             s.item_quantity_unit = CASE
+                WHEN COALESCE(s.grams, 0) > 0 THEN 'kg'
+                ELSE 'un'
+             END
+         WHERE (
+                t.printed_ticket_barcode IS NOT NULL
+                OR t.total_amount IS NOT NULL
+                OR t.item_count IS NOT NULL
+                OR COALESCE(s.item_quantity, 0) = 0
+                OR COALESCE(s.item_quantity_unit, '') = ''
+         )`
+    ).catch(() => {});
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
@@ -4971,6 +5068,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         await ensureScaleTicketLifecycleColumns(pool);
+        await ensureScaleTicketItemColumns(pool);
 
         let [ticketRows] = await pool.query(
             `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
