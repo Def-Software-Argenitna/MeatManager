@@ -6,6 +6,8 @@ import ModuleLicenseGate from '../ModuleLicenseGate';
 import { scaleService } from '../../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../../utils/apiClient';
+import { buildDespostadaPricingSummary, DEFAULT_DESPOSTADA_MARGIN } from '../../utils/despostadaPricing';
+import { ensureUnifiedProduct, fetchProductsSafe } from '../../utils/productCatalog';
 import './DespostadaBase.css';
 
 const toNumber = (value) => {
@@ -99,6 +101,7 @@ const DespostadaBase = ({
     const [isSimulated, setIsSimulated] = useState(false);
     const [logs, setLogs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
+    const [marginPercentage, setMarginPercentage] = useState(DEFAULT_DESPOSTADA_MARGIN);
 
     const loadDespostadaData = React.useCallback(async () => {
         const [lotRows, comprasRows] = await Promise.all([
@@ -122,6 +125,13 @@ const DespostadaBase = ({
     const mermaWeight = Math.max(totalWeight - toNumber(processedWeight), 0);
     const mermaPercentage = totalWeight > 0 ? ((mermaWeight / totalWeight) * 100).toFixed(1) : 0;
     const estimatedTotalCost = totalWeight * toNumber(costPerKg);
+    const pricingSummary = React.useMemo(() => buildDespostadaPricingSummary({
+        species,
+        cuts: logs,
+        totalInputWeight: totalWeight,
+        originCostPerKg: costPerKg,
+        marginPercentage,
+    }), [costPerKg, logs, marginPercentage, species, totalWeight]);
     const selectedCut = cutMap.find((cut) => cut.id === selectedCutId) || null;
     const scaleState = connectionLabel(isScaleConnected, isSimulated);
     const hasWorkingState = isSessionStarted && Boolean(selectedCutId);
@@ -140,6 +150,7 @@ const DespostadaBase = ({
         setCurrentWeight('');
         setIsScaleConnected(false);
         setIsSimulated(false);
+        setMarginPercentage(DEFAULT_DESPOSTADA_MARGIN);
     };
 
     const handleSelectLot = (lot) => {
@@ -164,6 +175,36 @@ const DespostadaBase = ({
 
         setIsSaving(true);
         try {
+            const products = await fetchProductsSafe();
+            const prices = await fetchTable('prices', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' });
+            const priceRows = Array.isArray(prices) ? prices : [];
+
+            for (const row of pricingSummary?.rows || []) {
+                const unifiedProduct = await ensureUnifiedProduct({
+                    products,
+                    prices: priceRows,
+                    name: row.cutName,
+                    category: species,
+                    unit: 'kg',
+                    price: row.suggestedPricePerKg,
+                    source: 'despostada',
+                    resolveConflict: ({ incomingPrice, existingPrice }) => incomingPrice || existingPrice,
+                });
+
+                if (unifiedProduct?.id && !products.some((item) => Number(item?.id) === Number(unifiedProduct.id))) {
+                    products.push(unifiedProduct);
+                }
+
+                const matchingLogs = logs.filter((log) => log.cutId === row.cutId && Number(log.stockEntryId) > 0);
+                for (const log of matchingLogs) {
+                    await saveTableRecord('stock', 'update', {
+                        product_id: unifiedProduct?.id || null,
+                        unit: 'kg',
+                        price: row.suggestedPricePerKg,
+                    }, log.stockEntryId);
+                }
+            }
+
             if (selectedLotId) {
                 await saveTableRecord('animal_lots', 'update', { status: 'despostado' }, selectedLotId);
             }
@@ -176,7 +217,8 @@ const DespostadaBase = ({
                 yieldPercentage,
                 cuts: logs,
                 selectedLot,
-                costPerKg
+                costPerKg,
+                pricingSummary
             }));
 
             await loadDespostadaData();
@@ -239,29 +281,35 @@ const DespostadaBase = ({
         const weightVal = toNumber(currentWeight);
         if (weightVal <= 0) return;
 
-        const newLog = {
-            cutId: selectedCutId,
-            cutNumber: cutInfo.number,
-            cutName: cutInfo.name,
-            cutCategory: cutInfo.category,
-            weight: weightVal,
-            timestamp: new Date()
-        };
-
-        setLogs((prev) => [newLog, ...prev]);
-        setSelectedCutId(null);
-        setCurrentWeight('');
-
+        setIsSaving(true);
         try {
-            await saveTableRecord('stock', 'insert', {
+            const stockResult = await saveTableRecord('stock', 'insert', {
                 name: cutInfo.name,
                 type: species,
                 quantity: weightVal,
+                unit: 'kg',
+                price: 0,
                 updated_at: new Date().toISOString(),
             });
+
+            const newLog = {
+                cutId: selectedCutId,
+                cutNumber: cutInfo.number,
+                cutName: cutInfo.name,
+                cutCategory: cutInfo.category,
+                weight: weightVal,
+                stockEntryId: stockResult?.insertId || null,
+                timestamp: new Date()
+            };
+
+            setLogs((prev) => [newLog, ...prev]);
+            setSelectedCutId(null);
+            setCurrentWeight('');
         } catch (error) {
             console.error(`Error guardando corte ${species}:`, error);
             window.alert('No se pudo guardar el corte en stock.');
+        } finally {
+            setIsSaving(false);
         }
     };
 
@@ -385,6 +433,21 @@ const DespostadaBase = ({
                         </div>
                     </div>
 
+                    <div className="despostada-field">
+                        <label>Margen sugerido</label>
+                        <div className="despostada-number-row">
+                            <input
+                                type="number"
+                                className="despostada-number"
+                                placeholder="30"
+                                value={marginPercentage}
+                                disabled={isSaving}
+                                onChange={(event) => setMarginPercentage(event.target.value)}
+                            />
+                            <span>%</span>
+                        </div>
+                    </div>
+
                     <div className="despostada-actions">
                         {!isSessionStarted ? (
                             <button className="despostada-button" onClick={startSession}>
@@ -413,6 +476,73 @@ const DespostadaBase = ({
                     <div className="despostada-helper ghost" style={{ marginTop: '0.45rem' }}>
                         Procesado: {formatKg(processedWeight, 2)} · Merma: {formatKg(mermaWeight, 2)}
                     </div>
+                    {pricingSummary.cleanOutputWeight > 0 && (
+                        <div className="despostada-helper ghost" style={{ marginTop: '0.35rem' }}>
+                            Carne limpia: {formatKg(pricingSummary.cleanOutputWeight, 2)} · Costo limpio: {formatCurrency(pricingSummary.cleanAverageCostPerKg)} por kg
+                        </div>
+                    )}
+                </div>
+            </DirectionalReveal>
+
+            <DirectionalReveal className="despostada-panel despostada-pricing-panel" from="up" delay={0.145}>
+                <div className="despostada-panel-header">
+                    <div className="despostada-panel-title">
+                        <DollarSign size={16} /> Valorizacion sugerida
+                    </div>
+                    <div className="despostada-panel-subtitle">{pricingSummary.rows.length} cortes valorizados</div>
+                </div>
+                <div className="despostada-pricing-meta">
+                    <div className="despostada-pricing-stat">
+                        <span>Costo carne limpia</span>
+                        <strong>{pricingSummary.cleanAverageCostPerKg > 0 ? formatCurrency(pricingSummary.cleanAverageCostPerKg) : 'Sin datos'}</strong>
+                    </div>
+                    <div className="despostada-pricing-stat">
+                        <span>Base prorrateada</span>
+                        <strong>{pricingSummary.normalizedBaseCostPerKg > 0 ? formatCurrency(pricingSummary.normalizedBaseCostPerKg) : 'Sin datos'}</strong>
+                    </div>
+                    <div className="despostada-pricing-stat">
+                        <span>Factor de equilibrio</span>
+                        <strong>x{toNumber(pricingSummary.normalizationFactor).toFixed(3)}</strong>
+                    </div>
+                    <div className="despostada-pricing-stat">
+                        <span>Validacion</span>
+                        <strong>{formatCurrency(pricingSummary.validationDifference)}</strong>
+                    </div>
+                </div>
+                <div className="despostada-pricing-table-wrap">
+                    {pricingSummary.rows.length === 0 ? (
+                        <div className="despostada-pricing-empty">
+                            Registra cortes para ver costo real y precio sugerido por kilo.
+                        </div>
+                    ) : (
+                        <table className="despostada-pricing-table">
+                            <thead>
+                                <tr>
+                                    <th>Corte</th>
+                                    <th>Kg</th>
+                                    <th>Indice</th>
+                                    <th>Costo</th>
+                                    <th>Margen</th>
+                                    <th>Sugerido</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {pricingSummary.rows.map((row) => (
+                                    <tr key={row.cutId}>
+                                        <td>
+                                            <div className="despostada-pricing-name">{row.cutName}</div>
+                                            <div className="despostada-pricing-bucket">{row.bucketLabel}</div>
+                                        </td>
+                                        <td>{formatKg(row.weight, 2)}</td>
+                                        <td>{toNumber(row.valueIndex).toFixed(2)}</td>
+                                        <td>{formatCurrency(row.specificCostPerKg)}</td>
+                                        <td>{toNumber(marginPercentage).toFixed(0)}%</td>
+                                        <td>{formatCurrency(row.suggestedPricePerKg)}</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
             </DirectionalReveal>
 
