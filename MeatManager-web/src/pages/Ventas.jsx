@@ -169,94 +169,32 @@ const Ventas = () => {
     const refreshVentasData = React.useCallback(async () => {
         const [
             stockRows,
-<<<<<<< HEAD
-            productsRows,
-            promotionsRows,
+            productRows,
+            pricesRows,
             clientRows,
-            paymentMethodRows,
+            paymentRows,
+            promotionRows,
             shopName,
             shopAddress,
             whatsappNumber,
             remotePriceFormat,
             salesRows,
             salesItemsRows,
-            cashRows,
+            movementsRows,
         ] = await Promise.all([
-            fetchTable('stock', { limit: 10000, orderBy: 'updated_at', direction: 'DESC' }).catch(() => []),
+            fetchTable('stock').catch(() => []),
             fetchProductsSafe().catch(() => []),
-            fetchTable('promotions', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }).catch(() => []),
-            fetchTable('clients', { limit: 5000, orderBy: 'id', direction: 'DESC' }).catch(() => []),
-            fetchTable('payment_methods', { limit: 200, orderBy: 'name', direction: 'ASC' }).catch(() => []),
+            fetchTable('prices').catch(() => []),
+            fetchTable('clients').catch(() => []),
+            fetchTable('payment_methods').catch(() => []),
+            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
             getRemoteSetting('shop_name').catch(() => null),
             getRemoteSetting('shop_address').catch(() => null),
             getRemoteSetting('whatsapp_number').catch(() => null),
             getRemoteSetting('precio_formato').catch(() => null),
-            fetchTable('ventas', { limit: 500, orderBy: 'date', direction: 'DESC' }).catch(() => []),
-            fetchTable('ventas_items', { limit: 5000, orderBy: 'id', direction: 'DESC' }).catch(() => []),
-            fetchTable('caja_movimientos', { limit: 1000, orderBy: 'date', direction: 'DESC' }).catch(() => []),
-        ]);
-
-        const branchMatches = (row) => {
-            if (currentBranchId == null) return true;
-            if (row?.branch_id == null || row?.branch_id === '') return true;
-            return Number(row.branch_id) === Number(currentBranchId);
-        };
-
-        const normalizedStockRows = (Array.isArray(stockRows) ? stockRows : []).filter(branchMatches);
-        const normalizedProducts = Array.isArray(productsRows) ? productsRows : [];
-        const normalizedPromotions = normalizePromotions((Array.isArray(promotionsRows) ? promotionsRows : []).filter(branchMatches));
-        const normalizedClients = Array.isArray(clientRows) ? clientRows : [];
-        const normalizedPaymentMethods = normalizePaymentMethods(Array.isArray(paymentMethodRows) ? paymentMethodRows : []);
-        const normalizedSales = (Array.isArray(salesRows) ? salesRows : []).filter(branchMatches);
-        const normalizedSalesItems = Array.isArray(salesItemsRows) ? salesItemsRows : [];
-        const normalizedCashRows = (Array.isArray(cashRows) ? cashRows : []).filter(branchMatches);
-        const todayKey = new Date().toISOString().slice(0, 10);
-
-        setStockItems(normalizedStockRows);
-        setProductsCatalog(normalizedProducts);
-        setPromotions(normalizedPromotions);
-        setClients(normalizedClients);
-        setDbPaymentMethods(normalizedPaymentMethods);
-        setPriceFormat(String(remotePriceFormat || '').trim().toLowerCase() === '6d' ? '6d' : '4d2d');
-        setShopInfo({
-            name: String(shopName || '').trim() || 'Nuestra Carnicería',
-            address: String(shopAddress || '').trim(),
-            phone: String(whatsappNumber || '').trim(),
-        });
-        setTodayOpeningMovements(
-            normalizedCashRows.filter((movement) => (
-                String(movement?.type || '').trim().toLowerCase() === 'apertura'
-                && String(movement?.date || '').slice(0, 10) === todayKey
-            ))
-        );
-        setRecentSales(normalizedSales);
-        setRecentSalesItems(
-            normalizedSalesItems.reduce((acc, item) => {
-                const saleId = Number(item?.venta_id);
-                if (!Number.isFinite(saleId)) return acc;
-                if (!acc[saleId]) acc[saleId] = [];
-                acc[saleId].push(item);
-                return acc;
-            }, {})
-=======
-            productRows,
-            pricesRows,
-            clientRows,
-            paymentRows,
-            promotionRows,
-            salesRows,
-            salesItemsRows,
-            movementsRows,
-        ] = await Promise.all([
-            fetchTable('stock'),
-            fetchProductsSafe(),
-            fetchTable('prices').catch(() => []),
-            fetchTable('clients'),
-            fetchTable('payment_methods'),
-            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
-            fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
-            fetchTable('ventas_items'),
-            fetchTable('caja_movimientos'),
+            fetchTable('ventas', { orderBy: 'date', direction: 'DESC', limit: 150 }).catch(() => []),
+            fetchTable('ventas_items').catch(() => []),
+            fetchTable('caja_movimientos').catch(() => []),
         ]);
 
         await syncLegacyProductsToCatalog({
@@ -272,41 +210,46 @@ const Ventas = () => {
         });
         const refreshedProducts = await fetchProductsSafe();
 
-        const filteredStockRows = Array.isArray(stockRows)
-            ? stockRows.filter((row) => !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId)
-            : [];
+        const branchMatches = (row) => {
+            if (currentBranchId == null) return true;
+            if (row?.branch_id == null || row?.branch_id === '') return true;
+            return Number(row.branch_id) === Number(currentBranchId);
+        };
 
-        setStockItems(filteredStockRows);
+        const normalizedStockRows = (Array.isArray(stockRows) ? stockRows : []).filter(branchMatches);
+        const normalizedClients = Array.isArray(clientRows) ? clientRows : [];
+        const normalizedPaymentMethods = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+        const normalizedSales = (Array.isArray(salesRows) ? salesRows : []).filter(branchMatches);
+        const normalizedSalesItems = Array.isArray(salesItemsRows) ? salesItemsRows : [];
+        const normalizedMovements = (Array.isArray(movementsRows) ? movementsRows : []).filter(branchMatches);
+        const todayKey = new Date().toISOString().slice(0, 10);
+
+        setStockItems(normalizedStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
-        setClients(Array.isArray(clientRows) ? clientRows : []);
-        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
-
-        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
-        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
-
-        const recentRows = Array.isArray(salesRows) ? salesRows : [];
-        setRecentSales(recentRows);
-
-        const recentIds = new Set(recentRows.map((sale) => Number(sale.id)));
-        const groupedItems = {};
-        for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
-            const ventaId = Number(item.venta_id);
-            if (!recentIds.has(ventaId)) continue;
-            if (!groupedItems[ventaId]) groupedItems[ventaId] = [];
-            groupedItems[ventaId].push(item);
-        }
-        setRecentSalesItems(groupedItems);
-
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
+        setPromotions(normalizePromotions((Array.isArray(promotionRows) ? promotionRows : []).filter(branchMatches), { currentBranchId }));
+        setClients(normalizedClients);
+        setDbPaymentMethods(normalizedPaymentMethods.filter((method) => method.type !== 'mixed'));
+        setPriceFormat(String(remotePriceFormat || '').trim().toLowerCase() === '6d' ? '6d' : '4d2d');
+        setShopInfo({
+            name: String(shopName || '').trim() || 'Nuestra Carnicería',
+            address: String(shopAddress || '').trim(),
+            phone: String(whatsappNumber || '').trim(),
+        });
+        setRecentSales(normalizedSales);
+        setRecentSalesItems(
+            normalizedSalesItems.reduce((acc, item) => {
+                const saleId = Number(item?.venta_id);
+                if (!Number.isFinite(saleId)) return acc;
+                if (!acc[saleId]) acc[saleId] = [];
+                acc[saleId].push(item);
+                return acc;
+            }, {})
+        );
         setTodayOpeningMovements(
-            (Array.isArray(movementsRows) ? movementsRows : []).filter((movement) => {
-                const movementDate = movement?.date ? new Date(movement.date) : null;
-                return movementDate && !Number.isNaN(movementDate.getTime()) && movementDate >= start && movementDate <= end && movement.type === 'apertura';
-            })
->>>>>>> 6b8e6e48fbbffaa35f4cf432e35f2216545394f0
+            normalizedMovements.filter((movement) => (
+                String(movement?.type || '').trim().toLowerCase() === 'apertura'
+                && String(movement?.date || '').slice(0, 10) === todayKey
+            ))
         );
     }, [currentBranchId]);
 
