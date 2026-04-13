@@ -35,7 +35,9 @@ export const ALL_ROUTES = [
     { path: '/config/pagos',            label: 'Medios de Pago',    group: 'Configuración' },
     { path: '/config/categorias',       label: 'Categorías',        group: 'Configuración' },
     { path: '/config/productos-compra', label: 'Artículos',         group: 'Configuración' },
+    { path: '/config/promociones',      label: 'Promociones',       group: 'Configuración' },
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
+    { path: '/config/sucursales-transfer', label: 'Transferencias Sucursales', group: 'Configuración' },
     { path: '/config/seguridad',        label: 'Usuarios y Licencias',group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];

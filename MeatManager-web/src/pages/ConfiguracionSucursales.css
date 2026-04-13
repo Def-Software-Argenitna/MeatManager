@@ -1,0 +1,175 @@
+.config-sucursales-page {
+    padding: 1.25rem;
+}
+
+.config-sucursales-card {
+    padding: 1.25rem;
+}
+
+.config-sucursales-header h1 {
+    margin: 0 0 0.35rem;
+    color: var(--color-text-main);
+    font-size: 1.35rem;
+}
+
+.config-sucursales-header p {
+    margin: 0;
+    color: var(--color-text-muted);
+    line-height: 1.45;
+}
+
+.config-sucursales-readonly {
+    margin-top: 0.75rem;
+    border: 1px solid rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.1);
+    color: #fcd34d;
+    border-radius: 8px;
+    padding: 0.55rem 0.7rem;
+    font-size: 0.83rem;
+    font-weight: 700;
+}
+
+.config-sucursales-section {
+    margin-top: 1.15rem;
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    padding: 0.85rem;
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.config-sucursales-section h2 {
+    margin: 0 0 0.65rem;
+    color: var(--color-text-main);
+    font-size: 1rem;
+}
+
+.config-sucursales-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(120px, 220px));
+    gap: 0.65rem;
+}
+
+.config-sucursales-grid label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+}
+
+.config-sucursales-grid input,
+.config-sucursales-add-row input,
+.config-sucursales-category-inputs input {
+    background: var(--color-bg-main);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    color: #fff;
+    padding: 0.45rem 0.55rem;
+    font-size: 0.85rem;
+}
+
+.config-sucursales-add-row {
+    display: flex;
+    gap: 0.6rem;
+    margin-bottom: 0.7rem;
+}
+
+.config-sucursales-add-row input {
+    flex: 1;
+}
+
+.config-sucursales-add-row button,
+.config-sucursales-category-inputs button,
+.config-sucursales-footer .save-btn {
+    background: #f59e0b;
+    color: #000;
+    border: none;
+    border-radius: 8px;
+    padding: 0.45rem 0.72rem;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.config-sucursales-category-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+
+.config-sucursales-category-row {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.55rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.65rem;
+}
+
+.config-sucursales-category-row strong {
+    color: var(--color-text-main);
+    text-transform: capitalize;
+    font-size: 0.86rem;
+}
+
+.config-sucursales-category-inputs {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.config-sucursales-category-inputs input {
+    width: 84px;
+}
+
+.config-sucursales-category-inputs .danger {
+    background: rgba(239, 68, 68, 0.2);
+    color: #fecaca;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+}
+
+.config-sucursales-empty {
+    color: var(--color-text-muted);
+    font-size: 0.84rem;
+}
+
+.config-sucursales-footer {
+    margin-top: 0.95rem;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.7rem;
+}
+
+.config-sucursales-footer .save-btn:disabled,
+.config-sucursales-add-row button:disabled,
+.config-sucursales-category-inputs button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.status-ok {
+    color: #86efac;
+    font-size: 0.83rem;
+    font-weight: 700;
+}
+
+.status-error {
+    color: #fca5a5;
+    font-size: 0.83rem;
+    font-weight: 700;
+}
+
+.current-rules {
+    color: var(--color-text-muted);
+    font-size: 0.8rem;
+}
+
+.config-sucursales-loading {
+    min-height: 35vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--color-text-muted);
+}

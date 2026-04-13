@@ -3,7 +3,8 @@ import { ArrowLeftRight, Building2, MapPin, Phone, ShieldCheck, User } from 'luc
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useTenant } from '../context/TenantContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
-import { createBranchTransfer, fetchBranchTransfers, fetchClientBranches, fetchTable, receiveBranchTransfer } from '../utils/apiClient';
+import { createBranchTransfer, fetchBranchTransfers, fetchClientBranches, fetchTable, getRemoteSetting, receiveBranchTransfer } from '../utils/apiClient';
+import { COVERAGE_SETTINGS_KEY, DEFAULT_COVERAGE_RULES, normalizeCoverageRules, resolveCoverageThresholds } from '../utils/branchTransferCoverage';
 import './Sucursales.css';
 
 const Sucursales = () => {
@@ -14,6 +15,7 @@ const Sucursales = () => {
     const [branches, setBranches] = useState([]);
     const [stockRows, setStockRows] = useState([]);
     const [stockSearch, setStockSearch] = useState('');
+    const [sourceBranchId, setSourceBranchId] = useState('');
     const [destinationBranchId, setDestinationBranchId] = useState('');
     const [transferItems, setTransferItems] = useState([]);
     const [transferNote, setTransferNote] = useState('');
@@ -23,6 +25,7 @@ const Sucursales = () => {
     const [transferError, setTransferError] = useState(null);
     const [transferLoading, setTransferLoading] = useState(false);
     const [receiveLoadingId, setReceiveLoadingId] = useState(null);
+    const [coverageRules, setCoverageRules] = useState(DEFAULT_COVERAGE_RULES);
 
     useEffect(() => {
         let cancelled = false;
@@ -83,6 +86,21 @@ const Sucursales = () => {
         refreshTransfers();
     }, []);
 
+    useEffect(() => {
+        let cancelled = false;
+        const loadCoverageRules = async () => {
+            try {
+                const raw = await getRemoteSetting(COVERAGE_SETTINGS_KEY);
+                if (cancelled) return;
+                setCoverageRules(normalizeCoverageRules(raw));
+            } catch {
+                if (!cancelled) setCoverageRules({ ...DEFAULT_COVERAGE_RULES });
+            }
+        };
+        loadCoverageRules();
+        return () => { cancelled = true; };
+    }, []);
+
     const currentBranch = useMemo(() => {
         if (branch?.id) {
             const matchedBranch = branches.find((item) => String(item.id) === String(branch.id));
@@ -92,11 +110,42 @@ const Sucursales = () => {
     }, [branch, branches]);
 
     const currentBranchId = currentBranch?.id ? Number(currentBranch.id) : null;
+    const effectiveSourceBranchId = useMemo(() => {
+        if (isAdmin) {
+            const selected = Number(sourceBranchId);
+            return Number.isFinite(selected) && selected > 0 ? selected : null;
+        }
+        return currentBranchId;
+    }, [isAdmin, sourceBranchId, currentBranchId]);
+
+    useEffect(() => {
+        if (!isAdmin) return;
+        if (sourceBranchId) return;
+        const fallbackId = branches[0]?.id ? String(branches[0].id) : '';
+        if (fallbackId) setSourceBranchId(fallbackId);
+    }, [isAdmin, sourceBranchId, branches]);
     const branchStockRows = useMemo(() => {
         if (!Array.isArray(stockRows)) return [];
-        if (!currentBranchId) return stockRows;
-        return stockRows.filter((row) => row.branch_id == null || Number(row.branch_id) === currentBranchId);
-    }, [stockRows, currentBranchId]);
+        if (!effectiveSourceBranchId) return [];
+        return stockRows.filter((row) => Number(row.branch_id) === Number(effectiveSourceBranchId));
+    }, [stockRows, effectiveSourceBranchId]);
+
+    const destinationStockRows = useMemo(() => {
+        const destinationId = Number(destinationBranchId);
+        if (!Array.isArray(stockRows) || !Number.isFinite(destinationId) || destinationId <= 0) return [];
+        return stockRows.filter((row) => Number(row.branch_id) === destinationId);
+    }, [stockRows, destinationBranchId]);
+
+    const destinationStockByKey = useMemo(() => {
+        const grouped = new Map();
+        destinationStockRows.forEach((row) => {
+            const key = row.product_id
+                ? `product:${row.product_id}`
+                : `name:${String(row.name || '').trim().toLowerCase()}::${String(row.unit || 'kg').trim()}`;
+            grouped.set(key, (grouped.get(key) || 0) + (Number(row.quantity) || 0));
+        });
+        return grouped;
+    }, [destinationStockRows]);
 
     const availableStock = useMemo(() => {
         const grouped = new Map();
@@ -124,6 +173,37 @@ const Sucursales = () => {
         if (!term) return availableStock;
         return availableStock.filter((item) => item.name.toLowerCase().includes(term));
     }, [availableStock, stockSearch]);
+
+    const sourceBranchLabel = useMemo(() => {
+        if (!effectiveSourceBranchId) return 'Sin origen';
+        const branchData = branches.find((item) => Number(item.id) === Number(effectiveSourceBranchId));
+        return branchData?.name || `Sucursal ${effectiveSourceBranchId}`;
+    }, [branches, effectiveSourceBranchId]);
+
+    const destinationBranchLabel = useMemo(() => {
+        const destinationId = Number(destinationBranchId);
+        if (!Number.isFinite(destinationId) || destinationId <= 0) return 'Sin destino';
+        const branchData = branches.find((item) => Number(item.id) === destinationId);
+        return branchData?.name || `Sucursal ${destinationId}`;
+    }, [branches, destinationBranchId]);
+
+    const getDestinationCoverage = (item, destinationQty) => {
+        if (!destinationBranchId) {
+            return { level: 'neutral', label: 'Sin destino seleccionado' };
+        }
+        if (destinationQty <= 0) {
+            return { level: 'critical', label: 'Destino sin stock' };
+        }
+        const sourceQty = Number(item.quantity) || 0;
+        if (sourceQty <= 0) {
+            return { level: 'neutral', label: 'Sin referencia' };
+        }
+        const thresholds = resolveCoverageThresholds(coverageRules, item.type);
+        const ratio = destinationQty / sourceQty;
+        if (ratio < thresholds.low) return { level: 'low', label: 'Destino bajo' };
+        if (ratio < thresholds.medium) return { level: 'medium', label: 'Destino medio' };
+        return { level: 'good', label: 'Destino cubierto' };
+    };
 
     const addToTransfer = (item) => {
         setTransferItems((prev) => {
@@ -154,8 +234,16 @@ const Sucursales = () => {
     };
 
     const handleCreateTransfer = async () => {
+        if (!effectiveSourceBranchId) {
+            setTransferError('Seleccioná la sucursal origen');
+            return;
+        }
         if (!destinationBranchId) {
             setTransferError('Seleccioná la sucursal destino');
+            return;
+        }
+        if (Number(destinationBranchId) === Number(effectiveSourceBranchId)) {
+            setTransferError('La sucursal destino debe ser distinta a la sucursal origen');
             return;
         }
         if (!transferItems.length) {
@@ -167,7 +255,7 @@ const Sucursales = () => {
             setTransferLoading(true);
             setTransferError(null);
             const payload = {
-                from_branch_id: currentBranchId,
+                from_branch_id: Number(effectiveSourceBranchId),
                 to_branch_id: Number(destinationBranchId),
                 note: transferNote,
                 items: transferItems.map((item) => ({
@@ -314,25 +402,64 @@ const Sucursales = () => {
                     </div>
 
                     <div className="destination-config">
+                        {isAdmin && (
+                            <>
+                                <label>Sucursal origen</label>
+                                <select
+                                    value={sourceBranchId}
+                                    onChange={(e) => {
+                                        setSourceBranchId(e.target.value);
+                                        setDestinationBranchId('');
+                                        setTransferItems([]);
+                                    }}
+                                    className="neo-input-mini"
+                                    style={{ width: '100%', marginBottom: '0.75rem' }}
+                                >
+                                    <option value="">Seleccionar sucursal origen</option>
+                                    {branches.map((item) => (
+                                        <option key={`src-${item.id}`} value={item.id}>
+                                            {item.name} {item.internalCode ? `(${item.internalCode})` : ''}
+                                        </option>
+                                    ))}
+                                </select>
+                            </>
+                        )}
                         <label>Sucursal destino</label>
                         <select
                             value={destinationBranchId}
                             onChange={(e) => setDestinationBranchId(e.target.value)}
                             className="neo-input-mini"
                             style={{ width: '100%' }}
+                            disabled={!effectiveSourceBranchId}
                         >
                             <option value="">Seleccionar sucursal</option>
                             {branches
-                                .filter((item) => String(item.id) !== String(currentBranchId))
+                                .filter((item) => String(item.id) !== String(effectiveSourceBranchId))
                                 .map((item) => (
                                     <option key={item.id} value={item.id}>
                                         {item.name} {item.internalCode ? `(${item.internalCode})` : ''}
                                     </option>
                                 ))}
                         </select>
+
                     </div>
 
                     <div className="stock-selector">
+                        <div style={{
+                            marginBottom: '0.75rem',
+                            padding: '0.6rem 0.75rem',
+                            border: '1px solid var(--color-border)',
+                            borderRadius: '8px',
+                            background: 'rgba(255,255,255,0.02)',
+                            fontSize: '0.82rem',
+                            color: 'var(--color-text-muted)',
+                            display: 'flex',
+                            flexWrap: 'wrap',
+                            gap: '0.45rem 0.9rem',
+                        }}>
+                            <span><strong style={{ color: 'var(--color-text-main)' }}>Origen:</strong> {sourceBranchLabel}</span>
+                            <span><strong style={{ color: 'var(--color-text-main)' }}>Destino:</strong> {destinationBranchLabel}</span>
+                        </div>
                         <div className="search-box">
                             <input
                                 placeholder="Buscar en stock..."
@@ -351,6 +478,20 @@ const Sucursales = () => {
                                         <div className="item-details">
                                             <span className="name">{item.name}</span>
                                             <span className="qty">Disponible: {item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}</span>
+                                            {(() => {
+                                                const destinationQty = destinationStockByKey.get(item.key) || 0;
+                                                const coverage = getDestinationCoverage(item, destinationQty);
+                                                return (
+                                                    <div className="stock-destination-line">
+                                                        <span className="qty">
+                                                            Destino: {destinationQty.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit}
+                                                        </span>
+                                                        <span className={`stock-health-pill ${coverage.level}`}>
+                                                            {coverage.label}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
                                         <button className="add-btn">+</button>
                                     </div>

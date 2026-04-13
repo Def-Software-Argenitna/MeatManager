@@ -23,6 +23,7 @@ import {
   ShieldCheck,
   BarChart3,
   ShoppingBag,
+  Tag,
   Smartphone,
   MapPin,
   ArrowLeftRight,
@@ -137,8 +138,10 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Medios de Pago', path: '/config/pagos', icon: Settings },
     { title: 'Categorías', path: '/config/categorias', icon: FolderOpen },
     { title: 'Artículos', path: '/config/productos-compra', icon: PackageSearch },
+    { title: 'Promociones', path: '/config/promociones', icon: Tag },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
+    { title: 'Transferencias Sucursales', path: '/config/sucursales-transfer', icon: ArrowLeftRight },
     { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
   ];

@@ -23,6 +23,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { createClient } = require('redis');
+const { isAdminOnlySettingKey } = require('./config/security-policy');
 
 // ── Firebase Admin init ────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT || 'firebase-service-account.json');
@@ -456,7 +457,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ]);
 
 const TENANT_ID_TABLES = [
@@ -464,7 +465,7 @@ const TENANT_ID_TABLES = [
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ];
 
 const DELIVERY_STATUS_MAP = {
@@ -588,6 +589,31 @@ function hasAdminPanelAccess(accessContext) {
     ));
 }
 
+function canWriteProtectedSettings(accessContext) {
+    if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
+    if (accessContext.user.role === 'admin') return true;
+    if (accessContext.user.isOwnerFallback) return true;
+    return false;
+}
+
+async function resolveTargetSettingKey({ pool, tenantId, operation, record, id }) {
+    const normalizedOperation = String(operation || '').trim().toLowerCase();
+    const directKey = String(record?.key || '').trim().toLowerCase();
+    if (directKey) return directKey;
+
+    if (!['update', 'delete'].includes(normalizedOperation)) return '';
+
+    const numId = Number(id);
+    if (!Number.isFinite(numId) || numId <= 0) return '';
+
+    const [rows] = await pool.query(
+        'SELECT `key` FROM settings WHERE tenant_id = ? AND id = ? LIMIT 1',
+        [tenantId, numId]
+    );
+    return String(rows?.[0]?.key || '').trim().toLowerCase();
+}
+
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
     if (accessContext.user.isGlobalSuperAdmin) return true;
@@ -699,7 +725,7 @@ const TABLES_WITH_NUMERIC_ID = [
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ];
 const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock']);
 
@@ -1654,6 +1680,15 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'ventas', 'subtotal', '`subtotal` DECIMAL(12,2) NULL AFTER `total`');
             await ensureColumn(conn, 'ventas', 'adjustment', '`adjustment` DECIMAL(12,2) NULL DEFAULT 0 AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
+            await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
+            await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
+            await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
+            await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
+            await ensureColumn(conn, 'promotions', 'sold_kg_limit', '`sold_kg_limit` DECIMAL(12,3) NULL AFTER `end_condition`');
+            await ensureColumn(conn, 'promotions', 'end_date', '`end_date` DATETIME NULL AFTER `sold_kg_limit`');
+            await ensureColumn(conn, 'promotions', 'used_kg', '`used_kg` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `end_date`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
@@ -3048,10 +3083,14 @@ function getSchemaTables() {
             quantity        DECIMAL(12,3),
             price           DECIMAL(12,2),
             subtotal        DECIMAL(12,2),
+            promo_id        INT NULL,
+            promo_kg_applied DECIMAL(12,3) NULL,
+            promo_payload   JSON NULL,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_ventas_items_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_ventas_items_tenant (\`${TENANT_COLUMN}\`),
             INDEX idx_ventas_items_tenant_venta (\`${TENANT_COLUMN}\`, venta_id),
+            INDEX idx_ventas_items_tenant_promo (\`${TENANT_COLUMN}\`, promo_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, venta_id) REFERENCES ventas(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS compras (
@@ -3179,6 +3218,28 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_menu_digital_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`)
+        )`,
+        `CREATE TABLE IF NOT EXISTS promotions (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            product_id          INT NULL,
+            product_name        VARCHAR(150) NOT NULL,
+            min_qty_kg          DECIMAL(12,3) NOT NULL,
+            promo_total_price   DECIMAL(12,2) NOT NULL,
+            stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
+            stock_cap_kg_limit  DECIMAL(12,3) NULL,
+            end_condition       VARCHAR(20) NOT NULL DEFAULT 'none',
+            sold_kg_limit       DECIMAL(12,3) NULL,
+            end_date            DATETIME NULL,
+            used_kg             DECIMAL(12,3) NOT NULL DEFAULT 0,
+            active              TINYINT(1) NOT NULL DEFAULT 1,
+            notes               VARCHAR(255),
+            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_promotions_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_promotions_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
+            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name)
         )`,
         `CREATE TABLE IF NOT EXISTS branch_transfers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -4001,12 +4062,12 @@ const ALLOWED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'promotions',
 ]);
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
 const AUTO_COLS = new Set(['created_at', 'updated_at']);
-const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot']);
+const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot', 'promo_payload']);
 
 function deserializeRow(row) {
     const out = {};
@@ -4207,6 +4268,25 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         const normalizedRecord = table === 'products'
             ? await resolveProductRecordCategory(pool, tenantId, record)
             : record;
+        const normalizedOperation = String(operation || '').trim().toLowerCase();
+        if (table === 'settings' && ['insert', 'upsert', 'update', 'delete'].includes(normalizedOperation)) {
+            const targetSettingKey = await resolveTargetSettingKey({
+                pool,
+                tenantId,
+                operation: normalizedOperation,
+                record: normalizedRecord || record || {},
+                id,
+            });
+
+            if (targetSettingKey && isAdminOnlySettingKey(targetSettingKey) && !canWriteProtectedSettings(accessContext)) {
+                return res.status(403).json({ error: 'Solo un administrador puede modificar esta configuración' });
+            }
+        }
+        if (table === 'promotions' && ['insert', 'upsert', 'update', 'delete'].includes(normalizedOperation)) {
+            if (!canWriteProtectedSettings(accessContext)) {
+                return res.status(403).json({ error: 'Solo un administrador puede modificar promociones' });
+            }
+        }
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
@@ -4369,7 +4449,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'promotions', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -4912,12 +4992,20 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const saleId = ventaResult.insertId;
 
         // 2. INSERT ventas_items
+        const promoUsageById = new Map();
         for (const item of items) {
             const itemSubtotal = parseFloat(item.subtotal) || (parseFloat(item.price) * parseFloat(item.quantity));
+            const promoId = item?.promo_payload?.id != null
+                ? Number(item.promo_payload.id)
+                : (item?.promo_id != null ? Number(item.promo_id) : null);
+            const promoKgApplied = item?.promo_payload?.covered_qty != null
+                ? parseFloat(item.promo_payload.covered_qty)
+                : parseFloat(item?.promo_kg_applied);
+
             await conn.query(
                 `INSERT INTO ventas_items
-                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal, promo_id, promo_kg_applied, promo_payload)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId, saleId,
                     item.product_id || null,
@@ -4925,7 +5013,24 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                     parseFloat(item.quantity) || 0,
                     parseFloat(item.price) || 0,
                     itemSubtotal,
+                    Number.isFinite(promoId) && promoId > 0 ? promoId : null,
+                    Number.isFinite(promoKgApplied) && promoKgApplied > 0 ? promoKgApplied : null,
+                    item?.promo_payload ? JSON.stringify(item.promo_payload) : null,
                 ]
+            );
+
+            if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKgApplied) && promoKgApplied > 0) {
+                promoUsageById.set(promoId, (promoUsageById.get(promoId) || 0) + promoKgApplied);
+            }
+        }
+
+        // 2.1 Acumular uso de promociones (kg vendidos con promo)
+        for (const [promoId, usedKg] of promoUsageById.entries()) {
+            await conn.query(
+                `UPDATE promotions
+                 SET used_kg = used_kg + ?
+                 WHERE tenant_id = ? AND id = ?`,
+                [usedKg, tenantId, promoId]
             );
         }
 
@@ -5047,6 +5152,24 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             `SELECT * FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`,
             [tenantId, saleId]
         );
+
+        // 0. Revertir el consumo de promociones aplicado por esta venta
+        const promoUsageToRevert = new Map();
+        for (const item of items) {
+            const promoId = item?.promo_id != null ? Number(item.promo_id) : null;
+            const promoKg = item?.promo_kg_applied != null ? parseFloat(item.promo_kg_applied) : 0;
+            if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKg) && promoKg > 0) {
+                promoUsageToRevert.set(promoId, (promoUsageToRevert.get(promoId) || 0) + promoKg);
+            }
+        }
+        for (const [promoId, usedKg] of promoUsageToRevert.entries()) {
+            await conn.query(
+                `UPDATE promotions
+                 SET used_kg = GREATEST(used_kg - ?, 0)
+                 WHERE tenant_id = ? AND id = ?`,
+                [usedKg, tenantId, promoId]
+            );
+        }
 
         // 1. Restaurar stock (movimiento positivo por cada item)
         for (const item of items) {
