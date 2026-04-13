@@ -387,9 +387,23 @@ class ScaleBridge {
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         const responseData = String(response.data || '');
         if (responseData.startsWith('E7')) {
+            this.logger.info('Funcion 72 sin datos', {
+                from: new Date(fromDate).toISOString(),
+                to: new Date(toDate).toISOString(),
+                payload,
+                response: responseData,
+            });
             return { ok: true, fetched: 0, stored: 0, tickets: 0, noData: true };
         }
-        if (responseData.startsWith('E')) throw new Error(`Error al leer ventas: ${responseData}`);
+        if (responseData.startsWith('E')) {
+            this.logger.warn('Funcion 72 devolvio error', {
+                from: new Date(fromDate).toISOString(),
+                to: new Date(toDate).toISOString(),
+                payload,
+                response: responseData,
+            });
+            throw new Error(`Error al leer ventas: ${responseData}`);
+        }
 
         const rows = parseSales72(response.data);
         let inserted = 0;
