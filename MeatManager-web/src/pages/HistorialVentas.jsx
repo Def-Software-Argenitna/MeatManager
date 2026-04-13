@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt, Search } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
+import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -38,21 +39,11 @@ const parsePaymentBreakdown = (value) => {
     return [];
 };
 
-const isDigitalPaymentLabel = (value) => {
-    const label = normalizePaymentMethodLabel(value).toLowerCase();
-    return (
-        label === 'mercado pago'
-        || label === 'cuenta dni'
-        || label === 'postnet'
-        || label.includes('transferencia')
-    );
-};
-
 const HistorialVentas = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
     const [sales, setSales] = useState([]);
-    const [paymentFilterMode, setPaymentFilterMode] = useState('all');
+    const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
 
     React.useEffect(() => {
         const loadSales = async () => {
@@ -75,43 +66,12 @@ const HistorialVentas = () => {
         loadSales().catch((error) => console.error('Error cargando historial de ventas:', error));
     }, []);
 
-    React.useEffect(() => {
-        const handleHiddenShortcuts = (e) => {
-            if (!(e.ctrlKey && e.altKey)) return;
-
-            const key = String(e.key || '').toLowerCase();
-            if (key === 'd') {
-                e.preventDefault();
-                setPaymentFilterMode('digital');
-            }
-            if (key === 't') {
-                e.preventDefault();
-                setPaymentFilterMode('all');
-            }
-        };
-
-        window.addEventListener('keydown', handleHiddenShortcuts);
-        return () => window.removeEventListener('keydown', handleHiddenShortcuts);
-    }, []);
-
     const filteredSales = useMemo(() => {
         const term = normalize(search);
         return sales.filter((sale) => {
             const paymentBreakdown = parsePaymentBreakdown(sale.payment_breakdown);
-            const paymentRows = paymentBreakdown.length > 0
-                ? paymentBreakdown
-                    .map((part) => ({
-                        method: normalizePaymentMethodLabel(part.method_name || part.method_type),
-                        amount: Number(part.amount_charged ?? part.amount ?? 0) || 0,
-                    }))
-                    .filter((row) => row.amount > 0)
-                : [{
-                    method: normalizePaymentMethodLabel(sale.payment_method),
-                    amount: Number(sale.total) || 0,
-                }];
-
-            const matchesPaymentFilter = paymentFilterMode !== 'digital'
-                || (paymentRows.length > 0 && paymentRows.every((row) => isDigitalPaymentLabel(row.method)));
+            const matchesPaymentFilter = hiddenDigitalPaymentFilterMode !== 'digital'
+                || saleUsesOnlyDigitalPayments(sale);
 
             if (!matchesPaymentFilter) return false;
             if (!term) return true;
@@ -130,7 +90,7 @@ const HistorialVentas = () => {
                 itemNames,
             ].some((value) => normalize(value).includes(term));
         });
-    }, [paymentFilterMode, sales, search]);
+    }, [hiddenDigitalPaymentFilterMode, sales, search]);
 
     return (
         <div className="animate-fade-in">

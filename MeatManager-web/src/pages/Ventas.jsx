@@ -12,6 +12,7 @@ import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -107,19 +108,6 @@ const normalizePaymentMethods = (rows = []) => {
     });
 };
 
-const isDigitalPaymentMethod = (method) => {
-    const normalizedType = String(method?.type || '').trim().toLowerCase();
-    const normalizedName = String(method?.name || '').trim().toLowerCase();
-    if (normalizedType === 'card' || normalizedType === 'wallet' || normalizedType === 'transfer') return true;
-    return (
-        normalizedName.includes('mercado pago')
-        || normalizedName.includes('cuenta dni')
-        || normalizedName.includes('postnet')
-        || normalizedName.includes('posnet')
-        || normalizedName.includes('transferencia')
-    );
-};
-
 const Ventas = () => {
     const [cart, setCart] = useState([]);
     const [categoryFilter, setCategoryFilter] = useState('all');
@@ -149,7 +137,6 @@ const Ventas = () => {
     const [cashReceived, setCashReceived] = useState('');
     const [isSplitPayment, setIsSplitPayment] = useState(false);
     const [splitPayments, setSplitPayments] = useState([]);
-    const [paymentMethodsViewMode, setPaymentMethodsViewMode] = useState('all');
 
     // Scale State
     // Manual Weight Modal State
@@ -238,6 +225,7 @@ const Ventas = () => {
 
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
+    const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
 
     const refreshVentasData = React.useCallback(async () => {
@@ -1517,7 +1505,6 @@ const Ventas = () => {
         setCashReceived('');
         setIsSplitPayment(false);
         setSplitPayments([]);
-        setPaymentMethodsViewMode('all');
     };
 
     const seedDefaultSplitPayments = (methods = dbPaymentMethods, preferredMethodId = selectedPaymentMethod) => {
@@ -1540,7 +1527,7 @@ const Ventas = () => {
     };
 
     const addSplitPaymentRow = () => {
-        const fallbackMethod = dbPaymentMethods?.[0];
+        const fallbackMethod = visibleSplitMethods?.[0] || null;
         setSplitPayments(prev => ([
             ...prev,
             { methodId: fallbackMethod?.id || null, amount: '' },
@@ -1559,76 +1546,52 @@ const Ventas = () => {
             setTimeout(() => navigate('/caja'), 2500);
             return;
         }
-        const defaultMethod = preferredMethod || dbPaymentMethods?.find(m => m.type === 'cash') || dbPaymentMethods?.[0];
+        const filteredMethods = hiddenDigitalPaymentFilterMode === 'digital'
+            ? (dbPaymentMethods || []).filter(isDigitalPaymentMethodLike)
+            : (dbPaymentMethods || []);
+        const availableMethods = hiddenDigitalPaymentFilterMode === 'digital'
+            ? filteredMethods
+            : (dbPaymentMethods || []);
+        const preferredAvailable = preferredMethod ? availableMethods.find((method) => method.id === preferredMethod.id) : null;
+        const defaultMethod = preferredAvailable || availableMethods.find(m => m.type === 'cash') || availableMethods[0] || null;
         setSelectedPaymentMethod(defaultMethod?.id || null);
         setIsSplitPayment(false);
         setSplitPayments([]);
         setCashReceived('');
-        setPaymentMethodsViewMode('all');
         setShowPaymentModal(true);
     };
 
     const visiblePaymentMethods = React.useMemo(() => {
         const baseMethods = Array.isArray(dbPaymentMethods) ? dbPaymentMethods : [];
-        if (paymentMethodsViewMode !== 'digital') return baseMethods;
-        return baseMethods.filter(isDigitalPaymentMethod);
-    }, [dbPaymentMethods, paymentMethodsViewMode]);
+        if (hiddenDigitalPaymentFilterMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethodLike);
+    }, [dbPaymentMethods, hiddenDigitalPaymentFilterMode]);
 
     const visibleSplitMethods = React.useMemo(() => {
         const baseMethods = Array.isArray(availableSplitMethods) ? availableSplitMethods : [];
-        if (paymentMethodsViewMode !== 'digital') return baseMethods;
-        return baseMethods.filter(isDigitalPaymentMethod);
-    }, [availableSplitMethods, paymentMethodsViewMode]);
+        if (hiddenDigitalPaymentFilterMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethodLike);
+    }, [availableSplitMethods, hiddenDigitalPaymentFilterMode]);
 
-    const applyPaymentMethodViewMode = React.useCallback((nextMode) => {
-        if (nextMode === 'digital') {
-            const digitalMethods = (dbPaymentMethods || []).filter(isDigitalPaymentMethod);
-            if (digitalMethods.length === 0) {
-                showToast('⚠️ No hay medios digitales habilitados para mostrar.', 'warning');
-                return;
-            }
+    React.useEffect(() => {
+        if (!showPaymentModal) return;
+        if (visiblePaymentMethods.length === 0) return;
 
-            setPaymentMethodsViewMode('digital');
-
-            if (isSplitPayment) {
-                setSplitPayments((prev) => prev.map((row) => {
-                    const rowMethod = getMethodById(row.methodId);
-                    if (rowMethod && isDigitalPaymentMethod(rowMethod)) return row;
-                    return { ...row, methodId: digitalMethods[0].id };
-                }));
-            } else if (!digitalMethods.some((method) => method.id === selectedPaymentMethod)) {
-                setSelectedPaymentMethod(digitalMethods[0].id);
-            }
-
-            setCashReceived('');
-            showToast('Mostrando solo medios digitales.', 'success');
+        if (isSplitPayment) {
+            setSplitPayments((prev) => prev.map((row) => {
+                const rowMethod = getMethodById(row.methodId);
+                if (!rowMethod || visibleSplitMethods.some((method) => method.id === row.methodId)) return row;
+                return { ...row, methodId: visibleSplitMethods[0]?.id || null };
+            }));
             return;
         }
 
-        setPaymentMethodsViewMode('all');
-        showToast('Mostrando todos los medios de pago.', 'success');
-    }, [dbPaymentMethods, getMethodById, isSplitPayment, selectedPaymentMethod, showToast]);
-
-    React.useEffect(() => {
-        if (!showPaymentModal) return undefined;
-
-        const handlePaymentShortcuts = (e) => {
-            if (!(e.ctrlKey && e.altKey)) return;
-
-            const key = String(e.key || '').toLowerCase();
-            if (key === 'd') {
-                e.preventDefault();
-                applyPaymentMethodViewMode('digital');
-            }
-            if (key === 't') {
-                e.preventDefault();
-                applyPaymentMethodViewMode('all');
-            }
-        };
-
-        window.addEventListener('keydown', handlePaymentShortcuts);
-        return () => window.removeEventListener('keydown', handlePaymentShortcuts);
-    }, [applyPaymentMethodViewMode, showPaymentModal]);
+        const currentVisible = visiblePaymentMethods.some((method) => method.id === selectedPaymentMethod);
+        if (!currentVisible) {
+            setSelectedPaymentMethod(visiblePaymentMethods[0]?.id || null);
+            setCashReceived('');
+        }
+    }, [getMethodById, isSplitPayment, selectedPaymentMethod, showPaymentModal, visiblePaymentMethods, visibleSplitMethods]);
 
     const handleCheckout = async (methodObj, splitSummary = null) => {
         if (processingRef.current) return; // bloqueo sincrónico
@@ -1855,8 +1818,11 @@ const Ventas = () => {
 
     const filteredRecentSales = React.useMemo(() => {
         const term = deleteTicketSearch.trim().toLowerCase();
-        if (!term) return todayRecentSales;
         return todayRecentSales.filter((s) => {
+            if (hiddenDigitalPaymentFilterMode === 'digital' && !saleUsesOnlyDigitalPayments(s)) {
+                return false;
+            }
+            if (!term) return true;
             const fallbackReceiptCode = formatReceiptCode(1, s.receipt_number || s.id);
             return (
                 String(s.id).toLowerCase().includes(term) ||
@@ -1867,7 +1833,7 @@ const Ventas = () => {
                 (s.payment_method || '').toLowerCase().includes(term)
             );
         });
-    }, [todayRecentSales, deleteTicketSearch]);
+    }, [todayRecentSales, deleteTicketSearch, hiddenDigitalPaymentFilterMode]);
 
     return (
         <>
@@ -2519,6 +2485,11 @@ const Ventas = () => {
 
                             {!isSplitPayment ? (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                    {visiblePaymentMethods?.length === 0 ? (
+                                        <div style={{ gridColumn: '1 / -1', padding: '0.85rem', borderRadius: '12px', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                                            No hay medios disponibles para el filtro actual.
+                                        </div>
+                                    ) : null}
                                     {visiblePaymentMethods?.map(m => (
                                         <button
                                             key={m.id}
