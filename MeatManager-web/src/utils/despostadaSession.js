@@ -11,7 +11,8 @@ export const buildDespostadaLogPayload = ({
     yieldPercentage,
     cuts = [],
     selectedLot,
-    costPerKg = 0
+    costPerKg = 0,
+    pricingSummary = null
 }) => {
     const normalizedCuts = (cuts || []).map((cut) => ({
         cutId: cut.cutId,
@@ -49,6 +50,22 @@ export const buildDespostadaLogPayload = ({
     const estimatedCostPerOutputKg = processedWeight > 0
         ? roundMetric(estimatedTotalCost / processedWeight)
         : 0;
+    const normalizedPricingRows = Array.isArray(pricingSummary?.rows)
+        ? pricingSummary.rows.map((row) => ({
+            cutId: row.cutId,
+            cutName: row.cutName,
+            cutCategory: row.cutCategory,
+            bucket: row.bucket,
+            bucketLabel: row.bucketLabel,
+            isCleanMeat: row.isCleanMeat,
+            count: row.count,
+            weight: roundMetric(row.weight),
+            valueIndex: roundMetric(row.valueIndex),
+            specificCostPerKg: roundMetric(row.specificCostPerKg, 2),
+            suggestedPricePerKg: roundMetric(row.suggestedPricePerKg, 2),
+            allocatedCostTotal: roundMetric(row.allocatedCostTotal, 2),
+        }))
+        : [];
 
     return {
         type,
@@ -76,6 +93,15 @@ export const buildDespostadaLogPayload = ({
         cost_per_kg: roundMetric(costPerKg),
         estimated_total_cost: estimatedTotalCost,
         estimated_cost_per_output_kg: estimatedCostPerOutputKg,
+        clean_output_weight: roundMetric(pricingSummary?.cleanOutputWeight),
+        weighted_output_units: roundMetric(pricingSummary?.weightedOutputUnits),
+        clean_average_cost_per_kg: roundMetric(pricingSummary?.cleanAverageCostPerKg, 2),
+        normalized_base_cost_per_kg: roundMetric(pricingSummary?.normalizedBaseCostPerKg, 2),
+        pricing_margin_percentage: roundMetric(pricingSummary?.marginPercentage, 2),
+        pricing_normalization_factor: roundMetric(pricingSummary?.normalizationFactor, 6),
+        pricing_allocated_total: roundMetric(pricingSummary?.allocatedCostTotal, 2),
+        pricing_validation_difference: roundMetric(pricingSummary?.validationDifference, 2),
+        pricing_summary: normalizedPricingRows,
         synced: 0
     };
 };

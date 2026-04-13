@@ -35,6 +35,11 @@ function deriveItemMetrics({ units, grams }) {
     };
 }
 
+function normalizePriceFormat(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === '6d' ? '6d' : '4d2d';
+}
+
 class ScaleBridge {
     constructor({ config, logger, state, stateStore, mysqlPool }) {
         this.config = config;
@@ -375,14 +380,33 @@ class ScaleBridge {
         return { ok: true, updated: true };
     }
 
+    async getPriceFormatSetting() {
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT value
+             FROM settings
+             WHERE tenant_id = ?
+                             AND \`key\` = ?
+             LIMIT 1`,
+            [this.config.tenantId, 'precio_formato']
+        );
+        return normalizePriceFormat(rows[0]?.value);
+    }
+
     async syncProducts() {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
+        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
+        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
+            ? 1
+            : this.config.scale.legacyPriceMultiplier;
         this.logger.info('Firma digital de balanza detectada', {
             protocolVersion,
             protocolData: signature.data,
             useLegacyPlu4,
+            priceFormat,
+            effectiveLegacyPriceMultiplier,
         });
 
         try {
@@ -406,14 +430,32 @@ class ScaleBridge {
 
         const removedRows = await mysqlQuery(
             this.mysqlPool,
-            `SELECT m.product_id, m.plu_code
+            `SELECT m.product_id,
+                    m.plu_code,
+                    COALESCE(
+                        NULLIF(
+                            TRIM(CAST(p.plu AS CHAR)),
+                            ''
+                        ),
+                        CAST(p.id AS CHAR)
+                    ) AS expected_plu_code
              FROM scale_bridge_product_map m
              LEFT JOIN products p
                 ON p.id = m.product_id
                AND p.tenant_id = m.tenant_id
              WHERE m.device_id = ?
                AND m.tenant_id = ?
-               AND (p.id IS NULL OR COALESCE(p.current_price, 0) <= 0)`,
+                AND (
+                    p.id IS NULL
+                    OR COALESCE(p.current_price, 0) <= 0
+                    OR COALESCE(
+                        NULLIF(
+                            TRIM(CAST(p.plu AS CHAR)),
+                            ''
+                        ),
+                        CAST(p.id AS CHAR)
+                    ) <> CAST(m.plu_code AS CHAR)
+                )`,
             [this.config.deviceId, this.config.tenantId]
         );
 
@@ -439,6 +481,7 @@ class ScaleBridge {
                 this.logger.warn('No se pudo eliminar un producto de la balanza', {
                     productId: removed.product_id,
                     plu: removed.plu_code,
+                    expectedPlu: removed.expected_plu_code || null,
                     error: error.message,
                 });
             }
@@ -446,7 +489,14 @@ class ScaleBridge {
 
         const products = await mysqlQuery(
             this.mysqlPool,
-            `SELECT id, plu, name, category, unit, current_price, updated_at
+            `SELECT id,
+                    plu,
+                    name,
+                    category,
+                    unit,
+                    current_price,
+                    updated_at,
+                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
              FROM products
              WHERE tenant_id = ?
                AND COALESCE(current_price, 0) > 0
@@ -455,7 +505,7 @@ class ScaleBridge {
         );
 
         for (const product of products) {
-            const pluCode = String(product.plu || product.id);
+            const pluCode = String(product.effective_plu_code || product.plu || product.id);
             const fingerprint = hashObject({
                 pluCode,
                 name: product.name,
@@ -464,7 +514,9 @@ class ScaleBridge {
                 price: product.current_price,
                 updatedAt: product.updated_at,
                 protocolMode: useLegacyPlu4 ? 'v6-func4' : 'v7-func61',
-                legacyPriceMultiplier: useLegacyPlu4 ? this.config.scale.legacyPriceMultiplier : null,
+                priceFormat,
+                legacyPriceMultiplier: useLegacyPlu4 ? effectiveLegacyPriceMultiplier : null,
+                legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v2' : null,
             });
 
             const mapRows = await mysqlQuery(
@@ -497,11 +549,14 @@ class ScaleBridge {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
                         maintainTotals: Boolean(mapRows[0]),
-                        priceMultiplier: this.config.scale.legacyPriceMultiplier,
+                        priceMultiplier: effectiveLegacyPriceMultiplier,
+                        priceFormat,
                     })
                     : buildPlu61Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
+                        priceMultiplier: effectiveLegacyPriceMultiplier,
+                        priceFormat,
                     });
                 const response = await this.scale.send(useLegacyPlu4 ? 4 : 61, payload);
                 if (!response.crc.ok) {

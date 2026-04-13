@@ -1679,6 +1679,26 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
+            await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');
+            await ensureColumn(conn, 'despostada_logs', 'merma_percentage', '`merma_percentage` DECIMAL(5,2) NULL AFTER `merma_weight`');
+            await ensureColumn(conn, 'despostada_logs', 'purchase_id', '`purchase_id` INT NULL AFTER `lot_id`');
+            await ensureColumn(conn, 'despostada_logs', 'lot_snapshot', '`lot_snapshot` JSON NULL AFTER `purchase_id`');
+            await ensureColumn(conn, 'despostada_logs', 'cuts_count', '`cuts_count` INT NULL AFTER `lot_snapshot`');
+            await ensureColumn(conn, 'despostada_logs', 'cuts', '`cuts` JSON NULL AFTER `cuts_count`');
+            await ensureColumn(conn, 'despostada_logs', 'category_totals', '`category_totals` JSON NULL AFTER `cuts`');
+            await ensureColumn(conn, 'despostada_logs', 'cost_per_kg', '`cost_per_kg` DECIMAL(12,2) NULL AFTER `category_totals`');
+            await ensureColumn(conn, 'despostada_logs', 'estimated_total_cost', '`estimated_total_cost` DECIMAL(12,2) NULL AFTER `cost_per_kg`');
+            await ensureColumn(conn, 'despostada_logs', 'estimated_cost_per_output_kg', '`estimated_cost_per_output_kg` DECIMAL(12,2) NULL AFTER `estimated_total_cost`');
+            await ensureColumn(conn, 'despostada_logs', 'clean_output_weight', '`clean_output_weight` DECIMAL(12,3) NULL AFTER `estimated_cost_per_output_kg`');
+            await ensureColumn(conn, 'despostada_logs', 'weighted_output_units', '`weighted_output_units` DECIMAL(12,3) NULL AFTER `clean_output_weight`');
+            await ensureColumn(conn, 'despostada_logs', 'clean_average_cost_per_kg', '`clean_average_cost_per_kg` DECIMAL(12,2) NULL AFTER `weighted_output_units`');
+            await ensureColumn(conn, 'despostada_logs', 'normalized_base_cost_per_kg', '`normalized_base_cost_per_kg` DECIMAL(12,2) NULL AFTER `clean_average_cost_per_kg`');
+            await ensureColumn(conn, 'despostada_logs', 'pricing_margin_percentage', '`pricing_margin_percentage` DECIMAL(6,2) NULL AFTER `normalized_base_cost_per_kg`');
+            await ensureColumn(conn, 'despostada_logs', 'pricing_normalization_factor', '`pricing_normalization_factor` DECIMAL(12,6) NULL AFTER `pricing_margin_percentage`');
+            await ensureColumn(conn, 'despostada_logs', 'pricing_allocated_total', '`pricing_allocated_total` DECIMAL(12,2) NULL AFTER `pricing_normalization_factor`');
+            await ensureColumn(conn, 'despostada_logs', 'pricing_validation_difference', '`pricing_validation_difference` DECIMAL(12,2) NULL AFTER `pricing_allocated_total`');
+            await ensureColumn(conn, 'despostada_logs', 'pricing_summary', '`pricing_summary` JSON NULL AFTER `pricing_validation_difference`');
             await ensureColumn(conn, 'compras_items', 'iva_rate', '`iva_rate` DECIMAL(5,2) NULL DEFAULT 0 AFTER `subtotal`');
             await ensureColumn(conn, 'compras_items', 'iva_amount', '`iva_amount` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_rate`');
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
@@ -4126,7 +4146,7 @@ const ALLOWED_TABLES = new Set([
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
 const AUTO_COLS = new Set(['created_at', 'updated_at']);
-const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot', 'promo_payload']);
+const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot', 'promo_payload', 'lot_snapshot', 'cuts', 'category_totals', 'pricing_summary']);
 
 function deserializeRow(row) {
     const out = {};
