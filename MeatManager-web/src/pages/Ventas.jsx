@@ -10,6 +10,7 @@ import { desktopApi } from '../utils/desktopApi';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './Ventas.css';
 
@@ -199,6 +200,7 @@ const Ventas = () => {
     const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
+    const [promotions, setPromotions] = useState([]);
     const [clients, setClients] = useState([]);
     const [dbPaymentMethods, setDbPaymentMethods] = useState([]);
     const [shopInfo, setShopInfo] = useState({ name: 'Nuestra Carnicería', address: '', phone: '' });
@@ -231,6 +233,7 @@ const Ventas = () => {
             pricesRows,
             clientRows,
             paymentRows,
+            promotionRows,
             salesRows,
             salesItemsRows,
             movementsRows,
@@ -240,6 +243,7 @@ const Ventas = () => {
             fetchTable('prices'),
             fetchTable('clients'),
             fetchTable('payment_methods'),
+            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
             fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
             fetchTable('ventas_items'),
             fetchTable('caja_movimientos'),
@@ -265,6 +269,7 @@ const Ventas = () => {
         setStockItems(filteredStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
+        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : []));
         const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
         setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
 
@@ -652,7 +657,7 @@ const Ventas = () => {
                         </div>
                         <div class="item">
                             <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
-                            <span>$${(Math.round(toNumber(i.price) * toNumber(i.quantity) * 100) / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span>$${toNumber(i.subtotal != null ? i.subtotal : (toNumber(i.price) * toNumber(i.quantity))).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -1408,12 +1413,32 @@ const Ventas = () => {
         }
     };
 
-    // cartTotal acumula los subtotales ya redondeados a 2 decimales,
-    // igual que lo que muestra cada línea del carrito — evita discrepancias de $0.01
-    const cartTotal = cart.reduce((sum, item) => {
-        const lineSubtotal = Math.round(item.price * item.quantity * 100) / 100;
-        return Math.round((sum + lineSubtotal) * 100) / 100;
-    }, 0);
+    const stockQtyByItem = React.useMemo(() => {
+        const map = new Map();
+        (Array.isArray(stockItems) ? stockItems : []).forEach((row) => {
+            const qty = toNumber(row?.quantity);
+            const productId = row?.product_id != null ? Number(row.product_id) : null;
+            const byIdKey = Number.isFinite(productId) ? `product:${productId}` : null;
+            const byNameKey = `name:${String(row?.name || '')
+                .trim()
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')}`;
+
+            if (byIdKey) {
+                map.set(byIdKey, toNumber((map.get(byIdKey) || 0) + qty));
+            }
+            map.set(byNameKey, toNumber((map.get(byNameKey) || 0) + qty));
+        });
+        return map;
+    }, [stockItems]);
+
+    // El subtotal del carrito se calcula con promociones activas por kg.
+    const cartPricing = React.useMemo(
+        () => buildCartPricing({ cart, promotions, stockQtyByItem, now: new Date() }),
+        [cart, promotions, stockQtyByItem]
+    );
+    const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
@@ -1582,15 +1607,22 @@ const Ventas = () => {
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
                 ...(qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {}),
-                items: cart.map(i => ({
+                items: cart.map(i => {
+                    const line = cartPricing.lineMap.get(i.id);
+                    return ({
                     product_id: i.productId || null,
                     product_name: i.name,
                     quantity: i.quantity,
                     price: i.price,
-                    subtotal: i.price * i.quantity,
+                    subtotal: line?.subtotal ?? (i.price * i.quantity),
                     category: i.category || null,
                     unit: i.unit || 'kg',
-                })),
+                    promo_applied: Boolean(line?.promo),
+                    promo_id: line?.promo?.id ?? null,
+                    promo_kg_applied: line?.promo?.covered_qty ?? null,
+                    promo_payload: line?.promo || null,
+                });
+                }),
             };
             const { insertId: saleId } = await createVenta(ventaPayload).catch((err) => {
                 // Si el error es de red, encolar para sincronizar cuando vuelva la conexión
@@ -1610,9 +1642,17 @@ const Ventas = () => {
 
             // Guardar snapshot del carrito antes de resetear (para imprimir después)
             const cartSnapshot = [...cart];
+            const cartSnapshotWithTotals = cartSnapshot.map((item) => {
+                const line = cartPricing.lineMap.get(item.id);
+                return {
+                    ...item,
+                    subtotal: line?.subtotal ?? (item.price * item.quantity),
+                    promo: line?.promo || null,
+                };
+            });
             setPendingPrintData({
                 saleData: { id: saleId, receipt_number: saleReceiptNumber, receipt_code: saleReceiptCode, subtotal: cartTotal, adjustment: adjustment, total: finalTotal },
-                items: cartSnapshot
+                items: cartSnapshotWithTotals
             });
 
             // Resetear todo ANTES de mostrar el modal (sin confirm() nativo que roba el foco)
@@ -2009,7 +2049,9 @@ const Ventas = () => {
                 </div>
 
                 <div className="ticket-items">
-                    {cart.map((item, idx) => (
+                    {cart.map((item, idx) => {
+                        const line = cartPricing.lineMap.get(item.id);
+                        return (
                         <div key={idx} className="ticket-item">
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
@@ -2017,6 +2059,11 @@ const Ventas = () => {
                                     <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
                                     <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
                                 </div>
+                                {line?.promo ? (
+                                    <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
+                                        Promo: {toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por ${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                ) : null}
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
                                     <button
                                         type="button"
@@ -2060,7 +2107,7 @@ const Ventas = () => {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                <span className="item-total">${formatPrice(item.price * item.quantity, priceFormat)}</span>
+                                <span className="item-total">${formatPrice(line?.subtotal ?? (item.price * item.quantity), priceFormat)}</span>
                                 <button
                                     onClick={() => removeFromCart(item.id)}
                                     style={{ background: 'none', border: 'none', color: 'rgba(239, 68, 68, 0.4)', cursor: 'pointer', padding: '0.2rem' }}
@@ -2069,7 +2116,8 @@ const Ventas = () => {
                                 </button>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                     {cart.length === 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, opacity: 0.2, gap: '1.5rem', padding: '4rem 0' }}>
                             <ShoppingBag size={80} strokeWidth={1} />
@@ -2080,6 +2128,14 @@ const Ventas = () => {
 
                 <div className="ticket-footer">
                     <div style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
+                        {cartPricing.totalDiscount > 0 ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#22c55e' }}>PROMOS APLICADAS</span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#22c55e' }}>
+                                    -${formatPrice(cartPricing.totalDiscount, priceFormat)}
+                                </span>
+                            </div>
+                        ) : null}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                             <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>TOTAL</span>
                             <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(cartTotal, priceFormat)}</span>
