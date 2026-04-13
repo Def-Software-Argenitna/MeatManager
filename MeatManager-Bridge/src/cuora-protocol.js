@@ -129,6 +129,11 @@ function buildPlu4Payload(product, options = {}) {
     const price = padNum(safePrice, 6);
     const pluRaw = Number.parseInt(product.plu || product.id, 10) || 0;
     const plu = padNum(Math.max(1, Math.min(pluRaw, 8000)), 4);
+    
+    if (plu === '0004' || plu === '0002') {
+        console.log(`[DEBUG] PLU: ${plu}, rawPrice: ${rawPrice}, multiplier: ${multiplier}, priceFormat: ${priceFormat}, safePrice: ${safePrice}, Final encoded price string: ${price}`);
+    }
+
     const code = padNum(Math.max(1, Math.min(pluRaw, 99997)), 5);
     const name = padText(product.name || `PLU ${plu}`, 18);
     const ingredients = padText(options.ingredients || '', 100);
