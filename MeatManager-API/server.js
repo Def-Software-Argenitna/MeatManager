@@ -5069,6 +5069,8 @@ async function getScaleTicketLookupSchema(conn) {
         itemTicketItemCount,
         itemQuantity,
         itemQuantityUnit,
+        ventaTicketBarcode,
+        ventaQendraTicketId,
     ] = await Promise.all([
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'printed_ticket_barcode'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'ticket_status'),
@@ -5078,6 +5080,8 @@ async function getScaleTicketLookupSchema(conn) {
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ticket_item_count'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity_unit'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'ventas', 'ticket_barcode'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'ventas', 'qendra_ticket_id'),
     ]);
 
     return {
@@ -5089,6 +5093,8 @@ async function getScaleTicketLookupSchema(conn) {
         itemTicketItemCount,
         itemQuantity,
         itemQuantityUnit,
+        ventaTicketBarcode,
+        ventaQendraTicketId,
     };
 }
 
@@ -5237,9 +5243,16 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
         }
 
-        if (!ticketRows.length) {
+        if (!ticketRows.length && scaleSchema.ventaTicketBarcode) {
+            const ventasSelect = [
+                'id',
+                'date',
+                'total',
+                scaleSchema.ventaQendraTicketId ? 'qendra_ticket_id' : 'NULL AS qendra_ticket_id',
+                'ticket_barcode',
+            ].join(', ');
             const [ventaRows] = await pool.query(
-                `SELECT id, date, total, qendra_ticket_id, ticket_barcode
+                `SELECT ${ventasSelect}
                  FROM ventas
                  WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
                  LIMIT 1`,
