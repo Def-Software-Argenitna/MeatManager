@@ -658,7 +658,7 @@ const Ventas = () => {
                             <span>${i.name.slice(0, 20)}</span>
                         </div>
                         <div class="item">
-                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
+                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} ($${toNumber(i.price).toLocaleString()})</span>
                             <span>$${toNumber(i.subtotal != null ? i.subtotal : (toNumber(i.price) * toNumber(i.quantity))).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     `).join('')}
@@ -2063,8 +2063,8 @@ const Ventas = () => {
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
                                 <div className="item-detail">
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
-                                    <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
+                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {(item.unit || 'kg').toLowerCase()}</span>
+                                    <span> ($ {formatPrice(toNumber(item.price), priceFormat)} x {(item.unit || 'kg').toLowerCase()})</span>
                                 </div>
                                 {line?.promo ? (
                                     <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>

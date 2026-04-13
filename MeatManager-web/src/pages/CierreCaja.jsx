@@ -422,11 +422,18 @@ const CierreCaja = () => {
                 method,
                 amount: parseFloat(openingDraft[method.name]) || 0,
             }))
+            // Filter is removed here so we can also process setting to 0 (which just won't be saved but old will be deleted).
+            // Wait, if an amount in draft is 0, we don't save it. So keeping the > 0 filter is correct for inserts.
             .filter((row) => row.amount > 0);
 
-        if (rows.length === 0) {
+        if (rows.length === 0 && openingMovements.length === 0) {
             setFeedback({ type: 'warning', text: 'Ingresá al menos un monto de apertura para registrar la caja.' });
             return;
+        }
+
+        // Delete old aperturas before inserting new ones to properly "modify" instead of sum.
+        for (const mov of openingMovements) {
+            await saveTableRecord('caja_movimientos', 'delete', null, mov.id);
         }
 
         const openingDate = new Date(`${selectedDate}T08:00:00`).toISOString();
@@ -444,7 +451,7 @@ const CierreCaja = () => {
         }
 
         await loadData();
-        setFeedback({ type: 'success', text: 'Apertura de caja registrada correctamente.' });
+        setFeedback({ type: 'success', text: 'Apertura de caja actualizada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft({});
     };
@@ -674,8 +681,15 @@ const CierreCaja = () => {
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowOpeningForm((prev) => !prev)}>
-                                {showOpeningForm ? 'Cancelar' : openingMovements.length > 0 ? 'Registrar ajuste de apertura' : 'Registrar apertura'}
+                            <button className="cierre-add-btn" onClick={() => {
+                                if (!showOpeningForm) {
+                                    setOpeningDraft({...openingByMethod});
+                                } else {
+                                    setOpeningDraft({});
+                                }
+                                setShowOpeningForm((prev) => !prev);
+                            }}>
+                                {showOpeningForm ? 'Cancelar edición' : openingMovements.length > 0 ? 'Modificar apertura' : 'Registrar apertura'}
                             </button>
                         </div>
 
