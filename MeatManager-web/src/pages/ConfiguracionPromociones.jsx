@@ -1,4 +1,9 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import {
+    FiTag, FiEdit2, FiCopy, FiTrash2, FiSave, FiPlus,
+    FiX, FiCheckCircle, FiClock, FiBox, FiMapPin,
+    FiInfo, FiActivity, FiXCircle
+} from 'react-icons/fi';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
@@ -182,6 +187,8 @@ const ConfiguracionPromociones = () => {
     const resetForm = () => {
         setEditingId(null);
         setForm(emptyForm);
+        setStatus(null);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const startEdit = (row) => {
@@ -202,6 +209,8 @@ const ConfiguracionPromociones = () => {
             active: row.active === true || Number(row.active) === 1,
             notes: String(row.notes || ''),
         });
+        setStatus(null);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const duplicatePromotion = (row) => {
@@ -223,6 +232,25 @@ const ConfiguracionPromociones = () => {
             notes: String(row.notes || ''),
         });
         setStatus({ type: 'ok', text: 'Promo duplicada al formulario. Ajusta y guarda.' });
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+
+    const togglePromoStatus = async (row) => {
+        try {
+            setSaving(true);
+            const newActiveStatus = !row.active;
+            await saveTableRecord('promotions', 'update', { active: newActiveStatus ? 1 : 0 }, row.id);
+            await loadData();
+            setStatus({ type: 'ok', text: `Promoción ${newActiveStatus ? 'activada' : 'desactivada'} correctamente.` });
+            
+            if (editingId && Number(editingId) === Number(row.id)) {
+                setForm(prev => ({ ...prev, active: newActiveStatus }));
+            }
+        } catch (error) {
+            setStatus({ type: 'error', text: error.message || 'No se pudo cambiar el estado de la promoción.' });
+        } finally {
+            setSaving(false);
+        }
     };
 
     const validateForm = () => {
@@ -253,20 +281,29 @@ const ConfiguracionPromociones = () => {
     };
 
     const previewLine = useMemo(() => {
-        const product = selectedProductName || 'Articulo';
-        const branchScope = form.branch_id ? `Solo ${selectedBranchName}` : 'Disponible en todas las sucursales';
+        const product = selectedProductName || 'Artículo';
+        const branchScope = form.branch_id ? `Solo en ${selectedBranchName}` : 'Disponible en todas las sucursales';
         const minKg = form.min_qty_kg ? `${formatKg(form.min_qty_kg)} kg` : 'X kg';
         const promoPrice = form.promo_total_price ? `$${formatMoney(form.promo_total_price)}` : '$X';
         const stockRule = form.stock_mode === PROMO_STOCK_MODES.FIXED
             ? `Cupo promo: ${form.stock_cap_kg_limit ? `${formatKg(form.stock_cap_kg_limit)} kg` : 'X kg'}`
-            : 'Usa todo el stock disponible';
+            : '';
 
         let endRule = 'Sin fin';
         if (form.end_condition === PROMO_END_CONDITIONS.STOCK) endRule = 'Finaliza al agotar stock promo';
         if (form.end_condition === PROMO_END_CONDITIONS.SOLD_KG) endRule = `Finaliza en ${form.sold_kg_limit ? `${formatKg(form.sold_kg_limit)} kg vendidos` : 'X kg vendidos'}`;
         if (form.end_condition === PROMO_END_CONDITIONS.DATE) endRule = `Finaliza el ${form.end_date ? new Date(form.end_date).toLocaleString('es-AR') : 'dd/mm/aaaa hh:mm'}`;
 
-        return `${product}: ${minKg} por ${promoPrice}. ${branchScope}. ${stockRule}. ${endRule}.`;
+        return (
+            <div className="promo-preview-content">
+                <strong><FiTag className="icon-mr"/> {product}</strong>: Llevando {minKg} o más, pagás <span className="highlight-price">{promoPrice}</span> el total.
+                <div className="preview-badges">
+                    <span className="preview-badge"><FiMapPin /> {branchScope}</span>
+                    {stockRule && <span className="preview-badge"><FiBox /> {stockRule}</span>}
+                    <span className="preview-badge"><FiClock /> {endRule}</span>
+                </div>
+            </div>
+        );
     }, [form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
 
     const savePromotion = async ({ keepCreating = false } = {}) => {
@@ -307,7 +344,7 @@ const ConfiguracionPromociones = () => {
             await loadData();
             const queuedBroadcastCount = Number(saveResult?.broadcast?.queued || 0);
             if (keepCreating && !editingId) {
-                const baseText = 'Promocion creada. Lista para cargar otra.';
+                const baseText = 'Promoción creada exitosamente. Lista para cargar otra.';
                 const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
                 setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
                 setForm((prev) => ({
@@ -317,9 +354,9 @@ const ConfiguracionPromociones = () => {
                 }));
             } else {
                 if (editingId) {
-                    setStatus({ type: 'ok', text: 'Promocion actualizada.' });
+                    setStatus({ type: 'ok', text: 'Promoción actualizada con éxito.' });
                 } else {
-                    const baseText = 'Promocion creada.';
+                    const baseText = 'Promoción creada exitosamente.';
                     const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
                     setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
                 }
@@ -334,6 +371,7 @@ const ConfiguracionPromociones = () => {
 
     const deletePromotion = async (row) => {
         try {
+            if (!window.confirm(`¿Seguro que deseas eliminar la promoción de ${row.product_name}?`)) return;
             setSaving(true);
             setStatus(null);
             await saveTableRecord('promotions', 'delete', null, row.id);
@@ -341,7 +379,7 @@ const ConfiguracionPromociones = () => {
             if (editingId && Number(editingId) === Number(row.id)) {
                 resetForm();
             }
-            setStatus({ type: 'ok', text: 'Promocion eliminada.' });
+            setStatus({ type: 'ok', text: 'Promoción eliminada.' });
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudo eliminar la promocion.' });
         } finally {
@@ -349,412 +387,414 @@ const ConfiguracionPromociones = () => {
         }
     };
 
+    const renderPromoCard = (row) => (
+        <div key={row.id} className={`promo-card ${row.active ? 'is-active' : 'is-inactive'}`}>
+            <div className="promo-card-header">
+                <div className="promo-card-title">
+                    <FiTag className="promo-icon"/>
+                    <h3>{row.product_name}</h3>
+                </div>
+                <div className="promo-card-status">
+                    <span className={`status-badge ${row.active ? 'on' : 'off'}`}>
+                        {row.active ? <><FiCheckCircle/> Activa</> : <><FiXCircle/> Inactiva</>}
+                    </span>
+                </div>
+            </div>
+            <div className="promo-card-body">
+                <div className="promo-detail-main">
+                    <span className="promo-price-tag">
+                        <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong>
+                    </span>
+                </div>
+                <div className="promo-details-grid">
+                    <div className="promo-detail-item">
+                        <FiMapPin className="text-muted"/>
+                        <span>
+                            {row.branch_id != null
+                                ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
+                                : 'Todas las sucursales'}
+                        </span>
+                    </div>
+                    <div className="promo-detail-item">
+                        <FiActivity className="text-muted"/>
+                        <span>
+                            Usados: {formatKg(row.used_kg || 0)} kg
+                        </span>
+                    </div>
+                    <div className="promo-detail-item">
+                        <FiBox className="text-muted"/>
+                        <span>
+                            Stock: {row.stock_mode === PROMO_STOCK_MODES.FIXED
+                                ? `Cupo de ${formatKg(row.stock_cap_kg_limit)} kg`
+                                : 'Ilimitado'}
+                        </span>
+                    </div>
+                    <div className="promo-detail-item">
+                        <FiClock className="text-muted"/>
+                        <span>
+                            Fin: {endConditionLabel(row.end_condition)}
+                            {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
+                                ? ` (${formatKg(row.sold_kg_limit)} kg)`
+                                : ''}
+                            {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
+                                ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
+                                : ''}
+                        </span>
+                    </div>
+                </div>
+                {row.notes && (
+                    <div className="promo-notes">
+                        <FiInfo className="text-muted"/> <span>{row.notes}</span>
+                    </div>
+                )}
+            </div>
+            <div className="promo-card-footer">
+                <button type="button" className="btn-icon" title="Duplicar" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
+                    <FiCopy /> <span className="hidden-mobile">Duplicar</span>
+                </button>
+                <button type="button" className="btn-icon" title="Editar" disabled={readOnly || saving} onClick={() => startEdit(row)}>
+                    <FiEdit2 /> <span className="hidden-mobile">Editar</span>
+                </button>
+                {row.active ? (
+                    <button type="button" className="btn-icon orange-text" title="Desactivar" disabled={readOnly || saving} onClick={() => togglePromoStatus(row)}>
+                        <FiXCircle /> <span className="hidden-mobile">Desactivar</span>
+                    </button>
+                ) : (
+                    <button type="button" className="btn-icon green-text" title="Activar" disabled={readOnly || saving} onClick={() => togglePromoStatus(row)}>
+                        <FiCheckCircle /> <span className="hidden-mobile">Activar</span>
+                    </button>
+                )}
+                <button type="button" className="btn-icon danger-text" title="Eliminar" disabled={readOnly || saving} onClick={() => deletePromotion(row)}>
+                    <FiTrash2 /> <span className="hidden-mobile">Eliminar</span>
+                </button>
+            </div>
+        </div>
+    );
+
     if (loading) {
-        return <div className="config-promos-loading">Cargando promociones...</div>;
+        return (
+            <div className="config-promos-loading">
+                <div className="spinner"></div> Cargando promociones...
+            </div>
+        );
     }
 
     return (
         <div className="config-promos-page animate-fade-in">
-            <DirectionalReveal className="neo-card config-promos-card" from="left" delay={0.06}>
-                <header className="config-promos-header">
-                    <h1>Configuracion de Promociones por Kilo</h1>
-                    <p>
-                        Define combos por peso con vigencia y tope. La promo se aplica automaticamente en Ventas.
-                    </p>
-                    {!isAdmin ? (
-                        <div className="config-promos-readonly">
-                            Solo un administrador puede modificar esta configuracion.
+            <DirectionalReveal className="config-promos-wrapper" from="bottom" delay={0.05}>
+                
+                {/* Cabecera */}
+                <header className="page-header">
+                    <div className="header-title">
+                        <div className="header-icon"><FiTag /></div>
+                        <div>
+                            <h1>Configuración de Promociones</h1>
+                            <p>Gestión de combos por peso, sucursales y vigencias temporales o de stock.</p>
                         </div>
-                    ) : null}
+                    </div>
+                    {!isAdmin && (
+                        <div className="readonly-alert">
+                            <FiInfo /> Solo un administrador puede modificar esta configuración.
+                        </div>
+                    )}
                 </header>
 
-                <section className="config-promos-form">
-                    <h2>{editingId ? 'Editar promocion' : 'Nueva promocion'}</h2>
-                    <div className="config-promos-step">
-                        <div className="config-promos-step-title">Paso 1 · Producto</div>
-                        <div className="config-promos-grid">
-                            <label>
-                                Sucursal
+                <div className="layout-grid">
+                    {/* Formulario */}
+                    <section className="form-section neo-card">
+                        <div className="section-header">
+                            <h2>{editingId ? <><FiEdit2/> Editar Promoción</> : <><FiPlus/> Nueva Promoción</>}</h2>
+                        </div>
+
+                        <div className="form-steps">
+                            {/* Paso 1 */}
+                            <div className="step-card">
+                                <div className="step-badge">1</div>
+                                <div className="step-content">
+                                    <h3>Producto y Sucursal</h3>
+                                    <div className="input-group-row">
+                                        <div className="input-field">
+                                            <label>Sucursal</label>
+                                            <div className="select-wrapper">
+                                                <FiMapPin className="input-icon"/>
+                                                <select
+                                                    value={form.branch_id}
+                                                    disabled={readOnly || saving}
+                                                    onChange={(e) => setField('branch_id', e.target.value)}
+                                                >
+                                                    <option value="">Todas las sucursales</option>
+                                                    {Array.isArray(branches) ? branches.map((branch) => (
+                                                        <option key={branch.id} value={branch.id}>
+                                                            {branch.name}
+                                                        </option>
+                                                    )) : null}
+                                                </select>
+                                            </div>
+                                        </div>
+                                        <div className="input-field">
+                                            <label>Categoría</label>
+                                            <select
+                                                value={form.category_id_filter}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => {
+                                                    setForm((prev) => ({
+                                                        ...prev,
+                                                        category_id_filter: e.target.value,
+                                                        product_id: '',
+                                                        product_name: '',
+                                                    }));
+                                                }}
+                                            >
+                                                <option value="">Todas</option>
+                                                {categoryOptions.map((cat) => (
+                                                    <option key={cat.id} value={cat.id}>{cat.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div className="input-field">
+                                            <label>Artículo</label>
+                                            <select
+                                                value={form.product_id}
+                                                disabled={readOnly || saving || !form.category_id_filter}
+                                                onChange={(e) => selectProduct(e.target.value)}
+                                            >
+                                                <option value="">{form.category_id_filter ? 'Seleccionar artículo' : 'Elige categoría primero'}</option>
+                                                {filteredProducts.map((p) => (
+                                                    <option key={p.id} value={p.id}>{p.name}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Paso 2 */}
+                            <div className="step-card">
+                                <div className="step-badge">2</div>
+                                <div className="step-content">
+                                    <h3>Regla de Promoción</h3>
+                                    <div className="input-group-row two-cols">
+                                        <div className="input-field">
+                                            <label>Kg Mínimo</label>
+                                            <input
+                                                type="number"
+                                                min="0.001" step="0.001"
+                                                value={form.min_qty_kg}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('min_qty_kg', e.target.value)}
+                                                placeholder="Ej. 2.000"
+                                            />
+                                            <div className="preset-tags">
+                                                {KG_PRESETS.map((preset) => (
+                                                    <span key={preset} className="preset-tag" onClick={() => !readOnly && !saving && setField('min_qty_kg', preset)}>
+                                                        {preset} kg
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div className="input-field">
+                                            <label>Precio Promo Total ($)</label>
+                                            <input
+                                                type="number"
+                                                min="0.01" step="0.01"
+                                                value={form.promo_total_price}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('promo_total_price', e.target.value)}
+                                                placeholder="Ej. 15000"
+                                                className="price-input"
+                                            />
+                                        </div>
+                                        <div className="input-field">
+                                            <label>Uso de Stock Promo</label>
+                                            <select
+                                                value={form.stock_mode}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('stock_mode', e.target.value)}
+                                            >
+                                                <option value={PROMO_STOCK_MODES.ALL}>Stock ilimitado general</option>
+                                                <option value={PROMO_STOCK_MODES.FIXED}>Cupo fijo en Kg</option>
+                                            </select>
+                                        </div>
+                                        {form.stock_mode === PROMO_STOCK_MODES.FIXED && (
+                                            <div className="input-field fade-in">
+                                                <label>Cupo Promo (Kg)</label>
+                                                <input
+                                                    type="number"
+                                                    min="0.001" step="0.001"
+                                                    value={form.stock_cap_kg_limit}
+                                                    disabled={readOnly || saving}
+                                                    onChange={(e) => setField('stock_cap_kg_limit', e.target.value)}
+                                                    placeholder="Ej. 100.000"
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Paso 3 */}
+                            <div className="step-card">
+                                <div className="step-badge">3</div>
+                                <div className="step-content">
+                                    <h3>Finalización y Extras</h3>
+                                    <div className="input-group-row two-cols">
+                                        <div className="input-field">
+                                            <label>Condición de Cierre</label>
+                                            <select
+                                                value={form.end_condition}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('end_condition', e.target.value)}
+                                            >
+                                                <option value={PROMO_END_CONDITIONS.NONE}>Vigente siempre</option>
+                                                <option value={PROMO_END_CONDITIONS.STOCK}>Al agotar stock fijo promo</option>
+                                                <option value={PROMO_END_CONDITIONS.SOLD_KG}>Al llegar a X Kg vendidos</option>
+                                                <option value={PROMO_END_CONDITIONS.DATE}>Día y hora específica</option>
+                                            </select>
+                                        </div>
+                                        {form.end_condition === PROMO_END_CONDITIONS.SOLD_KG && (
+                                            <div className="input-field fade-in">
+                                                <label>Tope Kg Vendidos</label>
+                                                <input
+                                                    type="number"
+                                                    min="0.001" step="0.001"
+                                                    value={form.sold_kg_limit}
+                                                    disabled={readOnly || saving}
+                                                    onChange={(e) => setField('sold_kg_limit', e.target.value)}
+                                                    placeholder="Ej. 250.000"
+                                                />
+                                            </div>
+                                        )}
+                                        {form.end_condition === PROMO_END_CONDITIONS.DATE && (
+                                            <div className="input-field fade-in">
+                                                <label>Fecha de Cierre</label>
+                                                <input
+                                                    type="datetime-local"
+                                                    value={form.end_date}
+                                                    disabled={readOnly || saving}
+                                                    onChange={(e) => setField('end_date', e.target.value)}
+                                                />
+                                            </div>
+                                        )}
+                                        <div className="input-field full-width">
+                                            <label>Notas internas (opcional)</label>
+                                            <input
+                                                type="text"
+                                                value={form.notes}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('notes', e.target.value)}
+                                                placeholder="Revisar stock en freezer..."
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Vista Previa y Botones */}
+                        <div className="form-footer">
+                            <div className="preview-box">
+                                {previewLine}
+                            </div>
+                            
+                            <div className="toggle-active">
+                                <label className="modern-switch">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={Boolean(form.active)}
+                                        disabled={readOnly || saving}
+                                        onChange={(e) => setField('active', e.target.checked)}
+                                    />
+                                    <span className="slider"></span>
+                                </label>
+                                <span className="switch-label">Promoción Activa al Guardar</span>
+                            </div>
+
+                            <div className="action-buttons">
+                                <button type="button" className="btn-primary" disabled={readOnly || saving} onClick={() => savePromotion()}>
+                                    <FiSave /> {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Guardar'}
+                                </button>
+                                {!editingId && (
+                                    <button
+                                        type="button"
+                                        className="btn-success"
+                                        disabled={readOnly || saving}
+                                        onClick={() => savePromotion({ keepCreating: true })}
+                                    >
+                                        <FiPlus /> Guardar y Crear Otra
+                                    </button>
+                                )}
+                                {editingId && (
+                                    <button type="button" className="btn-secondary" disabled={readOnly || saving} onClick={resetForm}>
+                                        <FiX /> Cancelar
+                                    </button>
+                                )}
+                            </div>
+
+                            {status && (
+                                <div className={`status-message ${status.type}`}>
+                                    {status.type === 'ok' ? <FiCheckCircle /> : <FiInfo />}
+                                    {status.text}
+                                </div>
+                            )}
+                        </div>
+                    </section>
+
+                    {/* Tabla / Lista de Promociones */}
+                    <section className="list-section neo-card">
+                        <div className="list-header-bar">
+                            <h2><FiBox/> Promociones Registradas</h2>
+                            <div className="filter-box">
+                                <FiMapPin className="filter-icon" />
                                 <select
-                                    value={form.branch_id}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('branch_id', e.target.value)}
+                                    value={listBranchFilter}
+                                    disabled={loading}
+                                    onChange={(e) => setListBranchFilter(e.target.value)}
                                 >
-                                    <option value="">Todas las sucursales</option>
+                                    <option value="">Todas las suc.</option>
                                     {Array.isArray(branches) ? branches.map((branch) => (
                                         <option key={branch.id} value={branch.id}>
                                             {branch.name}
                                         </option>
                                     )) : null}
                                 </select>
-                                <small>Al dejarlo vacío, la promo aplica en todas las sucursales.</small>
-                            </label>
-
-                            <label>
-                                Categoria
-                                <select
-                                    value={form.category_id_filter}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => {
-                                        const nextCategoryId = e.target.value;
-                                        setForm((prev) => ({
-                                            ...prev,
-                                            category_id_filter: nextCategoryId,
-                                            product_id: '',
-                                            product_name: '',
-                                        }));
-                                    }}
-                                >
-                                    <option value="">Seleccionar categoria</option>
-                                    {categoryOptions.map((category) => (
-                                        <option key={category.id} value={category.id}>
-                                            {category.name}
-                                        </option>
-                                    ))}
-                                </select>
-                                {selectedCategoryName ? <small>Categoria elegida: {selectedCategoryName}</small> : null}
-                            </label>
-
-                            <label>
-                                Articulo
-                                <select
-                                    value={form.product_id}
-                                    disabled={readOnly || saving || !form.category_id_filter}
-                                    onChange={(e) => selectProduct(e.target.value)}
-                                >
-                                    <option value="">
-                                        {form.category_id_filter ? 'Seleccionar articulo' : 'Primero selecciona categoria'}
-                                    </option>
-                                    {filteredProducts.map((product) => (
-                                        <option key={product.id} value={product.id}>
-                                            {product.name}
-                                        </option>
-                                    ))}
-                                </select>
-                            </label>
+                            </div>
                         </div>
-                    </div>
 
-                    <div className="config-promos-step">
-                        <div className="config-promos-step-title">Paso 2 · Regla de promo</div>
-                        <div className="config-promos-grid">
-                            <label>
-                                Kg minimo
-                                <input
-                                    type="number"
-                                    min="0.001"
-                                    step="0.001"
-                                    value={form.min_qty_kg}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('min_qty_kg', e.target.value)}
-                                    placeholder="2.000"
-                                />
-                                <div className="config-promos-presets">
-                                    {KG_PRESETS.map((preset) => (
-                                        <button
-                                            key={preset}
-                                            type="button"
-                                            disabled={readOnly || saving}
-                                            onClick={() => setField('min_qty_kg', preset)}
-                                        >
-                                            {preset} kg
-                                        </button>
-                                    ))}
-                                </div>
-                            </label>
-
-                            <label>
-                                Precio promo total
-                                <input
-                                    type="number"
-                                    min="0.01"
-                                    step="0.01"
-                                    value={form.promo_total_price}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('promo_total_price', e.target.value)}
-                                    placeholder="15000"
-                                />
-                            </label>
-
-                            <label>
-                                Uso de stock promo
-                                <select
-                                    value={form.stock_mode}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('stock_mode', e.target.value)}
-                                >
-                                    <option value={PROMO_STOCK_MODES.ALL}>Usar todo el stock disponible</option>
-                                    <option value={PROMO_STOCK_MODES.FIXED}>Usar cupo fijo de kg</option>
-                                </select>
-                            </label>
-
-                            {form.stock_mode === PROMO_STOCK_MODES.FIXED ? (
-                                <label>
-                                    Kg maximos promo (cupo)
-                                    <input
-                                        type="number"
-                                        min="0.001"
-                                        step="0.001"
-                                        value={form.stock_cap_kg_limit}
-                                        disabled={readOnly || saving}
-                                        onChange={(e) => setField('stock_cap_kg_limit', e.target.value)}
-                                        placeholder="100.000"
-                                    />
-                                </label>
-                            ) : null}
-                        </div>
-                    </div>
-
-                    <div className="config-promos-step">
-                        <div className="config-promos-step-title">Paso 3 · Finalización</div>
-                        <div className="config-promos-grid">
-                            <label>
-                                Condicion de finalizacion
-                                <select
-                                    value={form.end_condition}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('end_condition', e.target.value)}
-                                >
-                                    <option value={PROMO_END_CONDITIONS.NONE}>Sin fin</option>
-                                    <option value={PROMO_END_CONDITIONS.STOCK}>Agotar stock promo</option>
-                                    <option value={PROMO_END_CONDITIONS.SOLD_KG}>Hasta X kg vendidos</option>
-                                    <option value={PROMO_END_CONDITIONS.DATE}>Hasta fecha</option>
-                                </select>
-                            </label>
-
-                            {form.end_condition === PROMO_END_CONDITIONS.SOLD_KG ? (
-                                <label>
-                                    Kg vendidos tope
-                                    <input
-                                        type="number"
-                                        min="0.001"
-                                        step="0.001"
-                                        value={form.sold_kg_limit}
-                                        disabled={readOnly || saving}
-                                        onChange={(e) => setField('sold_kg_limit', e.target.value)}
-                                        placeholder="300.000"
-                                    />
-                                </label>
-                            ) : null}
-
-                            {form.end_condition === PROMO_END_CONDITIONS.DATE ? (
-                                <label>
-                                    Fecha de finalizacion
-                                    <input
-                                        type="datetime-local"
-                                        value={form.end_date}
-                                        disabled={readOnly || saving}
-                                        onChange={(e) => setField('end_date', e.target.value)}
-                                    />
-                                </label>
-                            ) : null}
-
-                            <label>
-                                Notas
-                                <input
-                                    type="text"
-                                    value={form.notes}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('notes', e.target.value)}
-                                    placeholder="Opcional"
-                                />
-                            </label>
-
-                            <label className="config-promos-checkbox">
-                                <input
-                                    type="checkbox"
-                                    checked={Boolean(form.active)}
-                                    disabled={readOnly || saving}
-                                    onChange={(e) => setField('active', e.target.checked)}
-                                />
-                                <span>Promocion activa</span>
-                            </label>
-                        </div>
-                    </div>
-
-                    <div className="config-promos-preview">
-                        <div className="config-promos-preview-title">Vista previa</div>
-                        <p>{previewLine}</p>
-                    </div>
-
-                    <div className="config-promos-actions">
-                        <button type="button" className="save-btn" disabled={readOnly || saving} onClick={() => savePromotion()}>
-                            {saving ? 'Guardando...' : editingId ? 'Actualizar promocion' : 'Crear promocion'}
-                        </button>
-                        {!editingId ? (
-                            <button
-                                type="button"
-                                className="secondary-btn keep-creating-btn"
-                                disabled={readOnly || saving}
-                                onClick={() => savePromotion({ keepCreating: true })}
-                            >
-                                Guardar y crear otra
-                            </button>
-                        ) : null}
-                        {editingId ? (
-                            <button type="button" className="secondary-btn" disabled={readOnly || saving} onClick={resetForm}>
-                                Cancelar edicion
-                            </button>
-                        ) : null}
-                        {status ? (
-                            <span className={status.type === 'ok' ? 'status-ok' : 'status-error'}>{status.text}</span>
-                        ) : null}
-                    </div>
-                </section>
-
-                <section className="config-promos-table">
-                    <div className="config-promos-table-header">
-                        <h2>Promociones configuradas</h2>
-                        <label className="config-promos-table-filter">
-                            <span>Filtrar por sucursal</span>
-                            <select
-                                value={listBranchFilter}
-                                disabled={loading}
-                                onChange={(e) => setListBranchFilter(e.target.value)}
-                            >
-                                <option value="">Todas</option>
-                                {Array.isArray(branches) ? branches.map((branch) => (
-                                    <option key={branch.id} value={branch.id}>
-                                        {branch.name}
-                                    </option>
-                                )) : null}
-                            </select>
-                        </label>
-                    </div>
-                    {filteredRows.length === 0 ? (
-                        <div className="config-promos-empty">
-                            {listBranchFilter ? 'No hay promociones cargadas para esa sucursal.' : 'No hay promociones cargadas.'}
-                        </div>
-                    ) : (
-                        <div className="config-promos-groups">
-                            <section className="config-promos-group">
-                                <div className="config-promos-group-header">
-                                    <h3>Activas</h3>
-                                    <span>{activeRows.length}</span>
-                                </div>
-                                {activeRows.length === 0 ? (
-                                    <div className="config-promos-empty-inline">No hay promociones activas para este filtro.</div>
-                                ) : (
-                                    <div className="config-promos-list">
-                                        {activeRows.map((row) => (
-                                            <div key={row.id} className="config-promos-row">
-                                                <div>
-                                                    <strong>{row.product_name}</strong>
-                                                    <p>
-                                                        {formatKg(row.min_qty_kg)} kg por ${formatMoney(row.promo_total_price)}
-                                                    </p>
-                                                    <p>
-                                                        Sucursal: {row.branch_id != null
-                                                            ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
-                                                            : 'Todas las sucursales'}
-                                                    </p>
-                                                    <p>
-                                                        Usados: {formatKg(row.used_kg || 0)} kg ·
-                                                        {' '}Stock promo: {row.stock_mode === PROMO_STOCK_MODES.FIXED
-                                                            ? `${formatKg(row.stock_cap_kg_limit)} kg`
-                                                            : 'Todo el stock'}
-                                                    </p>
-                                                    <p>
-                                                        Fin: {endConditionLabel(row.end_condition)}
-                                                        {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
-                                                            ? ` (${formatKg(row.sold_kg_limit)} kg)`
-                                                            : ''}
-                                                        {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
-                                                            ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
-                                                            : ''}
-                                                    </p>
-                                                    {row.notes ? <small>{row.notes}</small> : null}
-                                                </div>
-                                                <div className="config-promos-row-actions">
-                                                    <span className={row.active ? 'badge-on' : 'badge-off'}>
-                                                        {row.active ? 'Activa' : 'Inactiva'}
-                                                    </span>
-                                                    <button type="button" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
-                                                        Duplicar
-                                                    </button>
-                                                    <button type="button" disabled={readOnly || saving} onClick={() => startEdit(row)}>
-                                                        Editar
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="danger"
-                                                        disabled={readOnly || saving}
-                                                        onClick={() => deletePromotion(row)}
-                                                    >
-                                                        Eliminar
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
+                        {filteredRows.length === 0 ? (
+                            <div className="empty-state">
+                                <FiBox className="empty-icon" />
+                                <p>{listBranchFilter ? 'No hay promociones para esta sucursal.' : 'No se han creado promociones todavía.'}</p>
+                            </div>
+                        ) : (
+                            <div className="promos-container">
+                                
+                                {activeRows.length > 0 && (
+                                    <div className="promo-group">
+                                        <div className="group-title green-glow">
+                                            <h3><FiCheckCircle/> Activas</h3>
+                                            <span className="count-badge">{activeRows.length}</span>
+                                        </div>
+                                        <div className="promo-grid">
+                                            {activeRows.map(renderPromoCard)}
+                                        </div>
                                     </div>
                                 )}
-                            </section>
 
-                            <section className="config-promos-group">
-                                <div className="config-promos-group-header">
-                                    <h3>Inactivas</h3>
-                                    <span>{inactiveRows.length}</span>
-                                </div>
-                                {inactiveRows.length === 0 ? (
-                                    <div className="config-promos-empty-inline">No hay promociones inactivas para este filtro.</div>
-                                ) : (
-                                    <div className="config-promos-list">
-                                        {inactiveRows.map((row) => (
-                                            <div key={row.id} className="config-promos-row">
-                                                <div>
-                                                    <strong>{row.product_name}</strong>
-                                                    <p>
-                                                        {formatKg(row.min_qty_kg)} kg por ${formatMoney(row.promo_total_price)}
-                                                    </p>
-                                                    <p>
-                                                        Sucursal: {row.branch_id != null
-                                                            ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
-                                                            : 'Todas las sucursales'}
-                                                    </p>
-                                                    <p>
-                                                        Usados: {formatKg(row.used_kg || 0)} kg ·
-                                                        {' '}Stock promo: {row.stock_mode === PROMO_STOCK_MODES.FIXED
-                                                            ? `${formatKg(row.stock_cap_kg_limit)} kg`
-                                                            : 'Todo el stock'}
-                                                    </p>
-                                                    <p>
-                                                        Fin: {endConditionLabel(row.end_condition)}
-                                                        {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
-                                                            ? ` (${formatKg(row.sold_kg_limit)} kg)`
-                                                            : ''}
-                                                        {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
-                                                            ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
-                                                            : ''}
-                                                    </p>
-                                                    {row.notes ? <small>{row.notes}</small> : null}
-                                                </div>
-                                                <div className="config-promos-row-actions">
-                                                    <span className={row.active ? 'badge-on' : 'badge-off'}>
-                                                        {row.active ? 'Activa' : 'Inactiva'}
-                                                    </span>
-                                                    <button type="button" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
-                                                        Duplicar
-                                                    </button>
-                                                    <button type="button" disabled={readOnly || saving} onClick={() => startEdit(row)}>
-                                                        Editar
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        className="danger"
-                                                        disabled={readOnly || saving}
-                                                        onClick={() => deletePromotion(row)}
-                                                    >
-                                                        Eliminar
-                                                    </button>
-                                                </div>
-                                            </div>
-                                        ))}
+                                {inactiveRows.length > 0 && (
+                                    <div className="promo-group">
+                                        <div className="group-title gray-glow">
+                                            <h3><FiXCircle/> Inactivas / Finalizadas</h3>
+                                            <span className="count-badge">{inactiveRows.length}</span>
+                                        </div>
+                                        <div className="promo-grid">
+                                            {inactiveRows.map(renderPromoCard)}
+                                        </div>
                                     </div>
                                 )}
-                            </section>
-                        </div>
-                    )}
-                </section>
+                            </div>
+                        )}
+                    </section>
+                </div>
             </DirectionalReveal>
         </div>
     );
