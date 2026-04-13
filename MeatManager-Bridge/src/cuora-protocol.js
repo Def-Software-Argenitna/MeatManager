@@ -165,27 +165,43 @@ function buildSales72Payload(dateFrom, dateTo) {
 }
 
 function parseSales72(data) {
+    const parseIntField = (raw, { allowEmpty = true } = {}) => {
+        const text = String(raw || '').trim();
+        if (!text) return allowEmpty ? 0 : null;
+        if (!/^\d+$/.test(text)) return null;
+        return Number.parseInt(text, 10) || 0;
+    };
+
     const text = String(data || '');
     if (!text) return [];
     const clean = text.endsWith('F') ? text.slice(0, -1) : text;
-    const tokens = clean.split('^').filter((token) => token !== '');
+    const records = clean
+        .split(';')
+        .map((part) => String(part || '').trim())
+        .filter((part) => part.length > 0);
     const rows = [];
-    for (let i = 0; i + 9 < tokens.length; i += 10) {
-        const ticketId = String(tokens[i] || '').trim();
-        const date = String(tokens[i + 1] || '').trim();
-        const time = String(tokens[i + 2] || '').trim();
-        const vendor = String(tokens[i + 3] || '').trim();
-        const plu = String(tokens[i + 4] || '').trim();
-        const sector = String(tokens[i + 5] || '').trim();
-        const unitsRaw = String(tokens[i + 6] || '').trim();
-        const gramsRaw = String(tokens[i + 7] || '').trim();
-        const drainedRaw = String(tokens[i + 8] || '').trim();
-        const amountRaw = String(tokens[i + 9] || '').trim();
+    for (const record of records) {
+        const tokens = record.split('^');
+        if (tokens.length < 10) continue;
+        const ticketId = String(tokens[0] || '').trim();
+        const date = String(tokens[1] || '').trim();
+        const time = String(tokens[2] || '').trim();
+        const vendor = String(tokens[3] || '').trim();
+        const plu = String(tokens[4] || '').trim();
+        const sector = String(tokens[5] || '').trim();
+        const unitsRaw = String(tokens[6] || '').trim();
+        const gramsRaw = String(tokens[7] || '').trim();
+        const drainedRaw = String(tokens[8] || '').trim();
+        const amountRaw = String(tokens[9] || '').trim();
 
         const validDate = /^\d{2}\/\d{2}\/\d{2}$/.test(date);
         const validTime = /^\d{2}:\d{2}:\d{2}$/.test(time);
-        const validNumeric = /^\d+$/.test(unitsRaw) && /^\d+$/.test(gramsRaw) && /^\d+$/.test(drainedRaw) && /^\d+$/.test(amountRaw);
-        const validIdentity = ticketId.length > 0 && vendor.length > 0 && plu.length > 0;
+        const units = parseIntField(unitsRaw);
+        const grams = parseIntField(gramsRaw);
+        const drainedGrams = parseIntField(drainedRaw);
+        const amountTimes100 = parseIntField(amountRaw, { allowEmpty: false });
+        const validNumeric = units !== null && grams !== null && drainedGrams !== null && amountTimes100 !== null;
+        const validIdentity = ticketId.length > 0 && plu.length > 0;
 
         if (!validDate || !validTime || !validNumeric || !validIdentity) {
             continue;
@@ -198,10 +214,10 @@ function parseSales72(data) {
             vendor,
             plu,
             sector,
-            units: Number.parseInt(unitsRaw, 10) || 0,
-            grams: Number.parseInt(gramsRaw, 10) || 0,
-            drainedGrams: Number.parseInt(drainedRaw, 10) || 0,
-            amountTimes100: Number.parseInt(amountRaw, 10) || 0,
+            units,
+            grams,
+            drainedGrams,
+            amountTimes100,
         });
     }
     return rows;

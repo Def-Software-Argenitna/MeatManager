@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt, Search } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
+import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -42,6 +43,7 @@ const HistorialVentas = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
     const [sales, setSales] = useState([]);
+    const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
 
     React.useEffect(() => {
         const loadSales = async () => {
@@ -66,12 +68,17 @@ const HistorialVentas = () => {
 
     const filteredSales = useMemo(() => {
         const term = normalize(search);
-        if (!term) return sales;
-
         return sales.filter((sale) => {
+            const paymentBreakdown = parsePaymentBreakdown(sale.payment_breakdown);
+            const matchesPaymentFilter = hiddenDigitalPaymentFilterMode !== 'digital'
+                || saleUsesOnlyDigitalPayments(sale);
+
+            if (!matchesPaymentFilter) return false;
+            if (!term) return true;
+
             const receiptCode = sale.receipt_code || formatReceiptCode(1, sale.receipt_number || sale.id);
             const itemNames = (sale.items || []).map((item) => item.product_name).join(' ');
-            const paymentBreakdownText = parsePaymentBreakdown(sale.payment_breakdown)
+            const paymentBreakdownText = paymentBreakdown
                 .map((part) => `${part.method_name || part.method_type || ''} ${part.amount_charged || part.amount || ''}`)
                 .join(' ');
             return [
@@ -83,7 +90,7 @@ const HistorialVentas = () => {
                 itemNames,
             ].some((value) => normalize(value).includes(term));
         });
-    }, [sales, search]);
+    }, [hiddenDigitalPaymentFilterMode, sales, search]);
 
     return (
         <div className="animate-fade-in">

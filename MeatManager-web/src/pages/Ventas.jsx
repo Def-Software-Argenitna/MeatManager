@@ -12,6 +12,7 @@ import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -224,6 +225,7 @@ const Ventas = () => {
 
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
+    const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
 
     const refreshVentasData = React.useCallback(async () => {
@@ -658,7 +660,7 @@ const Ventas = () => {
                             <span>${i.name.slice(0, 20)}</span>
                         </div>
                         <div class="item">
-                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
+                            <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} ($${toNumber(i.price).toLocaleString()})</span>
                             <span>$${toNumber(i.subtotal != null ? i.subtotal : (toNumber(i.price) * toNumber(i.quantity))).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     `).join('')}
@@ -940,7 +942,7 @@ const Ventas = () => {
             setTicketPreviewItems(previewItems);
             setShowTicketPreview(true);
             setQendraActiveTicketId(null);
-            setActiveScaleTicketBarcode(String(payload?.ticket?.barcode || barcodeValue).trim() || null);
+            setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
             const vendor = String(payload?.ticket?.vendorCode || '').trim();
             if (vendor) {
                 setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
@@ -1525,7 +1527,7 @@ const Ventas = () => {
     };
 
     const addSplitPaymentRow = () => {
-        const fallbackMethod = dbPaymentMethods?.[0];
+        const fallbackMethod = visibleSplitMethods?.[0] || null;
         setSplitPayments(prev => ([
             ...prev,
             { methodId: fallbackMethod?.id || null, amount: '' },
@@ -1544,13 +1546,52 @@ const Ventas = () => {
             setTimeout(() => navigate('/caja'), 2500);
             return;
         }
-        const defaultMethod = preferredMethod || dbPaymentMethods?.find(m => m.type === 'cash') || dbPaymentMethods?.[0];
+        const filteredMethods = hiddenDigitalPaymentFilterMode === 'digital'
+            ? (dbPaymentMethods || []).filter(isDigitalPaymentMethodLike)
+            : (dbPaymentMethods || []);
+        const availableMethods = hiddenDigitalPaymentFilterMode === 'digital'
+            ? filteredMethods
+            : (dbPaymentMethods || []);
+        const preferredAvailable = preferredMethod ? availableMethods.find((method) => method.id === preferredMethod.id) : null;
+        const defaultMethod = preferredAvailable || availableMethods.find(m => m.type === 'cash') || availableMethods[0] || null;
         setSelectedPaymentMethod(defaultMethod?.id || null);
         setIsSplitPayment(false);
         setSplitPayments([]);
         setCashReceived('');
         setShowPaymentModal(true);
     };
+
+    const visiblePaymentMethods = React.useMemo(() => {
+        const baseMethods = Array.isArray(dbPaymentMethods) ? dbPaymentMethods : [];
+        if (hiddenDigitalPaymentFilterMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethodLike);
+    }, [dbPaymentMethods, hiddenDigitalPaymentFilterMode]);
+
+    const visibleSplitMethods = React.useMemo(() => {
+        const baseMethods = Array.isArray(availableSplitMethods) ? availableSplitMethods : [];
+        if (hiddenDigitalPaymentFilterMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethodLike);
+    }, [availableSplitMethods, hiddenDigitalPaymentFilterMode]);
+
+    React.useEffect(() => {
+        if (!showPaymentModal) return;
+        if (visiblePaymentMethods.length === 0) return;
+
+        if (isSplitPayment) {
+            setSplitPayments((prev) => prev.map((row) => {
+                const rowMethod = getMethodById(row.methodId);
+                if (!rowMethod || visibleSplitMethods.some((method) => method.id === row.methodId)) return row;
+                return { ...row, methodId: visibleSplitMethods[0]?.id || null };
+            }));
+            return;
+        }
+
+        const currentVisible = visiblePaymentMethods.some((method) => method.id === selectedPaymentMethod);
+        if (!currentVisible) {
+            setSelectedPaymentMethod(visiblePaymentMethods[0]?.id || null);
+            setCashReceived('');
+        }
+    }, [getMethodById, isSplitPayment, selectedPaymentMethod, showPaymentModal, visiblePaymentMethods, visibleSplitMethods]);
 
     const handleCheckout = async (methodObj, splitSummary = null) => {
         if (processingRef.current) return; // bloqueo sincrónico
@@ -1777,8 +1818,11 @@ const Ventas = () => {
 
     const filteredRecentSales = React.useMemo(() => {
         const term = deleteTicketSearch.trim().toLowerCase();
-        if (!term) return todayRecentSales;
         return todayRecentSales.filter((s) => {
+            if (hiddenDigitalPaymentFilterMode === 'digital' && !saleUsesOnlyDigitalPayments(s)) {
+                return false;
+            }
+            if (!term) return true;
             const fallbackReceiptCode = formatReceiptCode(1, s.receipt_number || s.id);
             return (
                 String(s.id).toLowerCase().includes(term) ||
@@ -1789,7 +1833,7 @@ const Ventas = () => {
                 (s.payment_method || '').toLowerCase().includes(term)
             );
         });
-    }, [todayRecentSales, deleteTicketSearch]);
+    }, [todayRecentSales, deleteTicketSearch, hiddenDigitalPaymentFilterMode]);
 
     return (
         <>
@@ -2032,8 +2076,8 @@ const Ventas = () => {
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
                                 <div className="item-detail">
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
-                                    <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
+                                    <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {(item.unit || 'kg').toLowerCase()}</span>
+                                    <span> ($ {formatPrice(toNumber(item.price), priceFormat)} x {(item.unit || 'kg').toLowerCase()})</span>
                                 </div>
                                 {line?.promo ? (
                                     <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
@@ -2400,7 +2444,7 @@ const Ventas = () => {
                                             const checked = e.target.checked;
                                             setIsSplitPayment(checked);
                                             setCashReceived('');
-                                            if (checked) seedDefaultSplitPayments(dbPaymentMethods, selectedPaymentMethod);
+                                            if (checked) seedDefaultSplitPayments(visibleSplitMethods, selectedPaymentMethod);
                                             else setSplitPayments([]);
                                         }}
                                     />
@@ -2410,7 +2454,12 @@ const Ventas = () => {
 
                             {!isSplitPayment ? (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                                    {dbPaymentMethods?.map(m => (
+                                    {visiblePaymentMethods?.length === 0 ? (
+                                        <div style={{ gridColumn: '1 / -1', padding: '0.85rem', borderRadius: '12px', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)', textAlign: 'center' }}>
+                                            No hay medios disponibles para el filtro actual.
+                                        </div>
+                                    ) : null}
+                                    {visiblePaymentMethods?.map(m => (
                                         <button
                                             key={m.id}
                                             onClick={() => {
@@ -2475,7 +2524,7 @@ const Ventas = () => {
                                                             }}
                                                             style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
                                                         >
-                                                            {availableSplitMethods?.map(m => (
+                                                            {visibleSplitMethods?.map(m => (
                                                                 <option
                                                                     key={m.id}
                                                                     value={m.id}

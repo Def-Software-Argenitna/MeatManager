@@ -4,6 +4,7 @@ import { UserProvider, useUser } from './context/UserContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
+import { useHiddenDigitalPaymentShortcuts } from './hooks/useHiddenDigitalPayments';
 
 const CHUNK_RELOAD_KEY = 'mm-chunk-reload-attempted';
 
@@ -140,6 +141,8 @@ function App() {
 }
 
 function AppRoutes() {
+  useHiddenDigitalPaymentShortcuts();
+
   const { tenant } = useTenant();
   const tenantRenderKey = tenant?.clientId || tenant?.uid || 'anonymous';
   const protect = (path, element) => (

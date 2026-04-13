@@ -73,3 +73,14 @@ El bridge crea/usa:
 
 - `scale_bridge_product_map`
 - `scale_bridge_sales_item`
+
+En `scale_bridge_sales_item` cada fila representa un item de un ticket e incluye:
+
+- `ticket_id`: numero de venta
+- `line_no`: numero de item dentro de esa venta
+- `item_quantity` + `item_quantity_unit`: cantidad legible (`kg` o `un`)
+- `amount`: importe del item
+- `ticket_total_amount`: importe total del ticket repetido en cada linea
+- `ticket_item_count`: cantidad total de items del ticket
+- `ticket_barcode`: codigo general del ticket
+- `printed_ticket_barcode`: codigo EAN impreso por la balanza para tickets de total (ejemplo `2220020090753`)
