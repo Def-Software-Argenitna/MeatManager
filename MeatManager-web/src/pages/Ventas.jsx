@@ -269,7 +269,7 @@ const Ventas = () => {
         setStockItems(filteredStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
-        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : []));
+        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
         const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
         setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
 

@@ -44,6 +44,7 @@ export const normalizePromotion = (row) => {
     return {
         ...row,
         id: row?.id != null ? Number(row.id) : null,
+        branch_id: row?.branch_id != null ? Number(row.branch_id) : null,
         product_id: row?.product_id != null ? Number(row.product_id) : null,
         product_name: String(row?.product_name || '').trim(),
         min_qty_kg: minQtyKg,
@@ -62,9 +63,10 @@ export const normalizePromotion = (row) => {
     };
 };
 
-export const normalizePromotions = (rows = []) => (
+export const normalizePromotions = (rows = [], { currentBranchId = null } = {}) => (
     (Array.isArray(rows) ? rows : [])
         .map(normalizePromotion)
+    .filter((promo) => !currentBranchId || promo.branch_id == null || Number(promo.branch_id) === Number(currentBranchId))
         .filter((promo) => promo.active && promo.min_qty_kg > 0 && promo.promo_total_price > 0)
 );
 

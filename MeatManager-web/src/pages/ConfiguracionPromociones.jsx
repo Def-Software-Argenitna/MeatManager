@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
-import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
 import { normalizePromotion, PROMO_END_CONDITIONS, PROMO_STOCK_MODES } from '../utils/promotions';
 import './ConfiguracionPromociones.css';
 
@@ -25,6 +25,7 @@ const endConditionLabel = (value) => {
 const KG_PRESETS = ['0.500', '1.000', '1.500', '2.000', '3.000', '5.000'];
 
 const emptyForm = {
+    branch_id: '',
     category_id_filter: '',
     product_id: '',
     product_name: '',
@@ -46,9 +47,11 @@ const ConfiguracionPromociones = () => {
 
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
+    const [branches, setBranches] = useState([]);
     const [promotions, setPromotions] = useState([]);
     const [editingId, setEditingId] = useState(null);
     const [form, setForm] = useState(emptyForm);
+    const [listBranchFilter, setListBranchFilter] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [status, setStatus] = useState(null);
@@ -56,15 +59,17 @@ const ConfiguracionPromociones = () => {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [productRows, promotionRows, categoryRows] = await Promise.all([
+            const [productRows, promotionRows, categoryRows, branchBundle] = await Promise.all([
                 fetchTable('products', { orderBy: 'name', direction: 'ASC', limit: 10000 }).catch(() => []),
                 fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
                 fetchTable('product_categories', { orderBy: 'name', direction: 'ASC', limit: 5000 }).catch(() => []),
+                fetchClientBranches().catch(() => ({ branches: [] })),
             ]);
 
             setProducts(Array.isArray(productRows) ? productRows : []);
             setPromotions((Array.isArray(promotionRows) ? promotionRows : []).map(normalizePromotion));
             setCategories(Array.isArray(categoryRows) ? categoryRows : []);
+            setBranches(Array.isArray(branchBundle?.branches) ? branchBundle.branches : []);
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudieron cargar las promociones.' });
         } finally {
@@ -103,10 +108,41 @@ const ConfiguracionPromociones = () => {
             .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'es'));
     }, [form.category_id_filter, products]);
 
-    const rows = useMemo(() => {
+    const filteredRows = useMemo(() => {
         const list = Array.isArray(promotions) ? promotions : [];
-        return list.slice().sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
-    }, [promotions]);
+        const branchId = Number(listBranchFilter || 0);
+        return list
+            .filter((row) => {
+                if (!branchId) return true;
+                return Number(row.branch_id || 0) === branchId;
+            })
+            .slice()
+            .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
+    }, [listBranchFilter, promotions]);
+
+    const activeRows = useMemo(
+        () => filteredRows.filter((row) => row.active),
+        [filteredRows]
+    );
+
+    const inactiveRows = useMemo(
+        () => filteredRows.filter((row) => !row.active),
+        [filteredRows]
+    );
+
+    const branchesById = useMemo(() => {
+        const map = new Map();
+        (Array.isArray(branches) ? branches : []).forEach((branch) => {
+            const id = Number(branch?.id);
+            if (Number.isFinite(id) && id > 0) {
+                map.set(id, {
+                    id,
+                    name: String(branch?.name || `Sucursal ${id}`).trim(),
+                });
+            }
+        });
+        return map;
+    }, [branches]);
 
     const selectedCategoryName = useMemo(() => {
         if (!form.category_id_filter) return '';
@@ -119,6 +155,11 @@ const ConfiguracionPromociones = () => {
         const product = productsById.get(Number(form.product_id));
         return String(product?.name || form.product_name || '');
     }, [form.product_id, form.product_name, productsById]);
+
+    const selectedBranchName = useMemo(() => {
+        if (!form.branch_id) return 'Todas las sucursales';
+        return branchesById.get(Number(form.branch_id))?.name || 'Sucursal seleccionada';
+    }, [branchesById, form.branch_id]);
 
     const setField = (field, value) => {
         setForm((prev) => ({ ...prev, [field]: value }));
@@ -147,6 +188,7 @@ const ConfiguracionPromociones = () => {
         const isoEndDate = row.end_date ? String(row.end_date).slice(0, 16) : '';
         setEditingId(Number(row.id));
         setForm({
+            branch_id: row.branch_id != null ? String(row.branch_id) : '',
             category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
             product_id: row.product_id != null ? String(row.product_id) : '',
             product_name: String(row.product_name || ''),
@@ -166,6 +208,7 @@ const ConfiguracionPromociones = () => {
         const isoEndDate = row.end_date ? String(row.end_date).slice(0, 16) : '';
         setEditingId(null);
         setForm({
+            branch_id: row.branch_id != null ? String(row.branch_id) : '',
             category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
             product_id: row.product_id != null ? String(row.product_id) : '',
             product_name: String(row.product_name || ''),
@@ -211,6 +254,7 @@ const ConfiguracionPromociones = () => {
 
     const previewLine = useMemo(() => {
         const product = selectedProductName || 'Articulo';
+        const branchScope = form.branch_id ? `Solo ${selectedBranchName}` : 'Disponible en todas las sucursales';
         const minKg = form.min_qty_kg ? `${formatKg(form.min_qty_kg)} kg` : 'X kg';
         const promoPrice = form.promo_total_price ? `$${formatMoney(form.promo_total_price)}` : '$X';
         const stockRule = form.stock_mode === PROMO_STOCK_MODES.FIXED
@@ -222,8 +266,8 @@ const ConfiguracionPromociones = () => {
         if (form.end_condition === PROMO_END_CONDITIONS.SOLD_KG) endRule = `Finaliza en ${form.sold_kg_limit ? `${formatKg(form.sold_kg_limit)} kg vendidos` : 'X kg vendidos'}`;
         if (form.end_condition === PROMO_END_CONDITIONS.DATE) endRule = `Finaliza el ${form.end_date ? new Date(form.end_date).toLocaleString('es-AR') : 'dd/mm/aaaa hh:mm'}`;
 
-        return `${product}: ${minKg} por ${promoPrice}. ${stockRule}. ${endRule}.`;
-    }, [form.end_condition, form.end_date, form.min_qty_kg, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedProductName]);
+        return `${product}: ${minKg} por ${promoPrice}. ${branchScope}. ${stockRule}. ${endRule}.`;
+    }, [form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
 
     const savePromotion = async ({ keepCreating = false } = {}) => {
         try {
@@ -233,6 +277,7 @@ const ConfiguracionPromociones = () => {
             const currentCategoryId = String(form.category_id_filter || '');
 
             const payload = {
+                branch_id: form.branch_id ? Number(form.branch_id) : null,
                 product_id: form.product_id ? Number(form.product_id) : null,
                 product_name: String(form.product_name || '').trim(),
                 min_qty_kg: toNumber(form.min_qty_kg, 3),
@@ -252,22 +297,32 @@ const ConfiguracionPromociones = () => {
                 notes: String(form.notes || '').trim() || null,
             };
 
+            let saveResult = null;
             if (editingId) {
-                await saveTableRecord('promotions', 'update', payload, editingId);
+                saveResult = await saveTableRecord('promotions', 'update', payload, editingId);
             } else {
-                await saveTableRecord('promotions', 'insert', payload);
+                saveResult = await saveTableRecord('promotions', 'insert', payload);
             }
 
             await loadData();
+            const queuedBroadcastCount = Number(saveResult?.broadcast?.queued || 0);
             if (keepCreating && !editingId) {
-                setStatus({ type: 'ok', text: 'Promocion creada. Lista para cargar otra.' });
+                const baseText = 'Promocion creada. Lista para cargar otra.';
+                const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
+                setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
                 setForm((prev) => ({
                     ...emptyForm,
                     category_id_filter: currentCategoryId || prev.category_id_filter || '',
                     active: true,
                 }));
             } else {
-                setStatus({ type: 'ok', text: editingId ? 'Promocion actualizada.' : 'Promocion creada.' });
+                if (editingId) {
+                    setStatus({ type: 'ok', text: 'Promocion actualizada.' });
+                } else {
+                    const baseText = 'Promocion creada.';
+                    const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
+                    setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
+                }
                 resetForm();
             }
         } catch (error) {
@@ -318,6 +373,23 @@ const ConfiguracionPromociones = () => {
                     <div className="config-promos-step">
                         <div className="config-promos-step-title">Paso 1 · Producto</div>
                         <div className="config-promos-grid">
+                            <label>
+                                Sucursal
+                                <select
+                                    value={form.branch_id}
+                                    disabled={readOnly || saving}
+                                    onChange={(e) => setField('branch_id', e.target.value)}
+                                >
+                                    <option value="">Todas las sucursales</option>
+                                    {Array.isArray(branches) ? branches.map((branch) => (
+                                        <option key={branch.id} value={branch.id}>
+                                            {branch.name}
+                                        </option>
+                                    )) : null}
+                                </select>
+                                <small>Al dejarlo vacío, la promo aplica en todas las sucursales.</small>
+                            </label>
+
                             <label>
                                 Categoria
                                 <select
@@ -531,56 +603,155 @@ const ConfiguracionPromociones = () => {
                 </section>
 
                 <section className="config-promos-table">
-                    <h2>Promociones configuradas</h2>
-                    {rows.length === 0 ? (
-                        <div className="config-promos-empty">No hay promociones cargadas.</div>
+                    <div className="config-promos-table-header">
+                        <h2>Promociones configuradas</h2>
+                        <label className="config-promos-table-filter">
+                            <span>Filtrar por sucursal</span>
+                            <select
+                                value={listBranchFilter}
+                                disabled={loading}
+                                onChange={(e) => setListBranchFilter(e.target.value)}
+                            >
+                                <option value="">Todas</option>
+                                {Array.isArray(branches) ? branches.map((branch) => (
+                                    <option key={branch.id} value={branch.id}>
+                                        {branch.name}
+                                    </option>
+                                )) : null}
+                            </select>
+                        </label>
+                    </div>
+                    {filteredRows.length === 0 ? (
+                        <div className="config-promos-empty">
+                            {listBranchFilter ? 'No hay promociones cargadas para esa sucursal.' : 'No hay promociones cargadas.'}
+                        </div>
                     ) : (
-                        <div className="config-promos-list">
-                            {rows.map((row) => (
-                                <div key={row.id} className="config-promos-row">
-                                    <div>
-                                        <strong>{row.product_name}</strong>
-                                        <p>
-                                            {formatKg(row.min_qty_kg)} kg por ${formatMoney(row.promo_total_price)}
-                                        </p>
-                                        <p>
-                                            Usados: {formatKg(row.used_kg || 0)} kg ·
-                                            {' '}Stock promo: {row.stock_mode === PROMO_STOCK_MODES.FIXED
-                                                ? `${formatKg(row.stock_cap_kg_limit)} kg`
-                                                : 'Todo el stock'}
-                                        </p>
-                                        <p>
-                                            Fin: {endConditionLabel(row.end_condition)}
-                                            {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
-                                                ? ` (${formatKg(row.sold_kg_limit)} kg)`
-                                                : ''}
-                                            {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
-                                                ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
-                                                : ''}
-                                        </p>
-                                        {row.notes ? <small>{row.notes}</small> : null}
-                                    </div>
-                                    <div className="config-promos-row-actions">
-                                        <span className={row.active ? 'badge-on' : 'badge-off'}>
-                                            {row.active ? 'Activa' : 'Inactiva'}
-                                        </span>
-                                        <button type="button" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
-                                            Duplicar
-                                        </button>
-                                        <button type="button" disabled={readOnly || saving} onClick={() => startEdit(row)}>
-                                            Editar
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="danger"
-                                            disabled={readOnly || saving}
-                                            onClick={() => deletePromotion(row)}
-                                        >
-                                            Eliminar
-                                        </button>
-                                    </div>
+                        <div className="config-promos-groups">
+                            <section className="config-promos-group">
+                                <div className="config-promos-group-header">
+                                    <h3>Activas</h3>
+                                    <span>{activeRows.length}</span>
                                 </div>
-                            ))}
+                                {activeRows.length === 0 ? (
+                                    <div className="config-promos-empty-inline">No hay promociones activas para este filtro.</div>
+                                ) : (
+                                    <div className="config-promos-list">
+                                        {activeRows.map((row) => (
+                                            <div key={row.id} className="config-promos-row">
+                                                <div>
+                                                    <strong>{row.product_name}</strong>
+                                                    <p>
+                                                        {formatKg(row.min_qty_kg)} kg por ${formatMoney(row.promo_total_price)}
+                                                    </p>
+                                                    <p>
+                                                        Sucursal: {row.branch_id != null
+                                                            ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
+                                                            : 'Todas las sucursales'}
+                                                    </p>
+                                                    <p>
+                                                        Usados: {formatKg(row.used_kg || 0)} kg ·
+                                                        {' '}Stock promo: {row.stock_mode === PROMO_STOCK_MODES.FIXED
+                                                            ? `${formatKg(row.stock_cap_kg_limit)} kg`
+                                                            : 'Todo el stock'}
+                                                    </p>
+                                                    <p>
+                                                        Fin: {endConditionLabel(row.end_condition)}
+                                                        {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
+                                                            ? ` (${formatKg(row.sold_kg_limit)} kg)`
+                                                            : ''}
+                                                        {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
+                                                            ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
+                                                            : ''}
+                                                    </p>
+                                                    {row.notes ? <small>{row.notes}</small> : null}
+                                                </div>
+                                                <div className="config-promos-row-actions">
+                                                    <span className={row.active ? 'badge-on' : 'badge-off'}>
+                                                        {row.active ? 'Activa' : 'Inactiva'}
+                                                    </span>
+                                                    <button type="button" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
+                                                        Duplicar
+                                                    </button>
+                                                    <button type="button" disabled={readOnly || saving} onClick={() => startEdit(row)}>
+                                                        Editar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="danger"
+                                                        disabled={readOnly || saving}
+                                                        onClick={() => deletePromotion(row)}
+                                                    >
+                                                        Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
+
+                            <section className="config-promos-group">
+                                <div className="config-promos-group-header">
+                                    <h3>Inactivas</h3>
+                                    <span>{inactiveRows.length}</span>
+                                </div>
+                                {inactiveRows.length === 0 ? (
+                                    <div className="config-promos-empty-inline">No hay promociones inactivas para este filtro.</div>
+                                ) : (
+                                    <div className="config-promos-list">
+                                        {inactiveRows.map((row) => (
+                                            <div key={row.id} className="config-promos-row">
+                                                <div>
+                                                    <strong>{row.product_name}</strong>
+                                                    <p>
+                                                        {formatKg(row.min_qty_kg)} kg por ${formatMoney(row.promo_total_price)}
+                                                    </p>
+                                                    <p>
+                                                        Sucursal: {row.branch_id != null
+                                                            ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
+                                                            : 'Todas las sucursales'}
+                                                    </p>
+                                                    <p>
+                                                        Usados: {formatKg(row.used_kg || 0)} kg ·
+                                                        {' '}Stock promo: {row.stock_mode === PROMO_STOCK_MODES.FIXED
+                                                            ? `${formatKg(row.stock_cap_kg_limit)} kg`
+                                                            : 'Todo el stock'}
+                                                    </p>
+                                                    <p>
+                                                        Fin: {endConditionLabel(row.end_condition)}
+                                                        {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
+                                                            ? ` (${formatKg(row.sold_kg_limit)} kg)`
+                                                            : ''}
+                                                        {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
+                                                            ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
+                                                            : ''}
+                                                    </p>
+                                                    {row.notes ? <small>{row.notes}</small> : null}
+                                                </div>
+                                                <div className="config-promos-row-actions">
+                                                    <span className={row.active ? 'badge-on' : 'badge-off'}>
+                                                        {row.active ? 'Activa' : 'Inactiva'}
+                                                    </span>
+                                                    <button type="button" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
+                                                        Duplicar
+                                                    </button>
+                                                    <button type="button" disabled={readOnly || saving} onClick={() => startEdit(row)}>
+                                                        Editar
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        className="danger"
+                                                        disabled={readOnly || saving}
+                                                        onClick={() => deletePromotion(row)}
+                                                    >
+                                                        Eliminar
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </section>
                         </div>
                     )}
                 </section>

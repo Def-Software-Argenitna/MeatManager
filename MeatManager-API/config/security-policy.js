@@ -9,6 +9,12 @@ const ADMIN_ONLY_SETTINGS_KEYS = new Set([
     'tg_bot_token',
     'ticket_delete_authorization_code',
     'whatsapp_number',
+    'whatsapp_marketing_mode',
+    'whatsapp_group_invite_link',
+    'whatsapp_auto_broadcast_promotions',
+    'whatsapp_cloud_phone_number_id',
+    'whatsapp_cloud_api_version',
+    'whatsapp_cloud_api_token',
 ]);
 
 const isAdminOnlySettingKey = (key) => {
