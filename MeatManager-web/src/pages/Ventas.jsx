@@ -153,9 +153,6 @@ const Ventas = () => {
     const [todayOpeningMovements, setTodayOpeningMovements] = useState([]);
     const [recentSales, setRecentSales] = useState([]);
     const [recentSalesItems, setRecentSalesItems] = useState({});
-    const { queueLength, enqueue, drain } = useOfflineQueue({
-        onVentaSynced: () => refreshVentasData(),
-    });
     const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = React.useRef(null);
     const showToast = React.useCallback((text, type = 'error') => {
@@ -168,6 +165,83 @@ const Ventas = () => {
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
+
+    const refreshVentasData = React.useCallback(async () => {
+        const [
+            stockRows,
+            productRows,
+            pricesRows,
+            clientRows,
+            paymentRows,
+            promotionRows,
+            salesRows,
+            salesItemsRows,
+            movementsRows,
+        ] = await Promise.all([
+            fetchTable('stock'),
+            fetchProductsSafe(),
+            fetchTable('prices').catch(() => []),
+            fetchTable('clients'),
+            fetchTable('payment_methods'),
+            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
+            fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
+            fetchTable('ventas_items'),
+            fetchTable('caja_movimientos'),
+        ]);
+
+        await syncLegacyProductsToCatalog({
+            products: productRows,
+            stockRows,
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
+        });
+
+        const syncedProducts = await fetchProductsSafe();
+        await reconcileLegacyProductConflicts({
+            products: syncedProducts,
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
+        });
+        const refreshedProducts = await fetchProductsSafe();
+
+        const filteredStockRows = Array.isArray(stockRows)
+            ? stockRows.filter((row) => !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId)
+            : [];
+
+        setStockItems(filteredStockRows);
+        setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
+        setClients(Array.isArray(clientRows) ? clientRows : []);
+        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
+
+        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
+
+        const recentRows = Array.isArray(salesRows) ? salesRows : [];
+        setRecentSales(recentRows);
+
+        const recentIds = new Set(recentRows.map((sale) => Number(sale.id)));
+        const groupedItems = {};
+        for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
+            const ventaId = Number(item.venta_id);
+            if (!recentIds.has(ventaId)) continue;
+            if (!groupedItems[ventaId]) groupedItems[ventaId] = [];
+            groupedItems[ventaId].push(item);
+        }
+        setRecentSalesItems(groupedItems);
+
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        setTodayOpeningMovements(
+            (Array.isArray(movementsRows) ? movementsRows : []).filter((movement) => {
+                const movementDate = movement?.date ? new Date(movement.date) : null;
+                return movementDate && !Number.isNaN(movementDate.getTime()) && movementDate >= start && movementDate <= end && movement.type === 'apertura';
+            })
+        );
+    }, [currentBranchId]);
+
+    const { queueLength, enqueue, drain } = useOfflineQueue({
+        onVentaSynced: () => refreshVentasData(),
+    });
 
     // Auto-focus precio: triple intento para Electron (inmediato, 0ms, 150ms)
     const priceInputRef = React.useRef(null);
