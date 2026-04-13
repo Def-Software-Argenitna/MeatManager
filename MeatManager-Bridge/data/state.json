@@ -1,11 +1,11 @@
 {
-  "lastProductSyncAt": "2026-04-13T05:14:39.461Z",
-  "lastTicketSyncAt": "2026-04-13T03:52:00.000Z",
+  "lastProductSyncAt": null,
+  "lastTicketSyncAt": null,
   "lastSalesBackfillAt": null,
-  "lastRunAt": "2026-04-13T05:14:47.558Z",
-  "lastRunStatus": "ok",
-  "lastRunMessage": "Productos:0/0 Ventas:2",
-  "lastError": null,
+  "lastRunAt": "2026-04-13T05:40:56.881Z",
+  "lastRunStatus": "error",
+  "lastRunMessage": "Opening COM3: Access denied",
+  "lastError": "Opening COM3: Access denied",
   "barcodeConfigFingerprint": "658984495524461d4e0a",
   "ticketFingerprints": {},
   "productFingerprints": {}
