@@ -498,6 +498,17 @@ export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username 
     return res.json();
 };
 
+export const fetchScaleTicketByBarcode = async (barcode) => {
+    const code = String(barcode || '').trim();
+    if (!code) throw new Error('barcode requerido');
+    const res = await apiFetch(`/api/scale/tickets/by-barcode/${encodeURIComponent(code)}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer ticket de balanza');
+    }
+    return res.json();
+};
+
 // Compra atomica: registra compra + items + stock + animal_lots + caja
 // en una sola transaccion en el servidor.
 export const createCompra = async (payload) => {

@@ -8,6 +8,7 @@ const defaultState = () => ({
     lastRunStatus: 'idle',
     lastRunMessage: null,
     lastError: null,
+    barcodeConfigFingerprint: null,
     ticketFingerprints: {},
     productFingerprints: {},
 });

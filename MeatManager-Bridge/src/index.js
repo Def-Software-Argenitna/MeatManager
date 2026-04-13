@@ -1,48 +1,20 @@
 const http = require('http');
 const fs = require('fs');
-const path = require('path');
 const config = require('./config');
 const { Logger } = require('./logger');
 const { loadState, resetState, saveState } = require('./state');
 const { buildMySqlPool } = require('./mysql');
-const { QendraBridge } = require('./bridge');
-const { query: firebirdQuery } = require('./firebird');
-const {
-    buildClientDirectoryPool,
-    listClients,
-    getClientById,
-    listBranches,
-    getBranchById,
-} = require('./client-directory');
-const {
-    loadOverrides,
-    saveOverrides,
-    pickEditable,
-    buildEditableConfigView,
-} = require('./config-store');
+const { ScaleBridge } = require('./scale-bridge');
+const { CuoraClient } = require('./cuora-client');
 
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logsDir, { recursive: true });
-const publicDir = path.join(config.rootDir, 'public');
 
 const logger = new Logger({ logFile: config.logFile, level: config.logLevel });
-const state = config.resetStateOnStart
-    ? resetState(config.stateFile)
-    : loadState(config.stateFile);
-const stateStore = {
-    save(nextState) {
-        saveState(config.stateFile, nextState);
-    },
-};
+const state = config.resetStateOnStart ? resetState(config.stateFile) : loadState(config.stateFile);
+const stateStore = { save: (nextState) => saveState(config.stateFile, nextState) };
 const mysqlPool = buildMySqlPool(config.mysql);
-const clientsDbPool = buildClientDirectoryPool(config.clientsDb);
-const bridge = new QendraBridge({
-    config,
-    logger,
-    state,
-    stateStore,
-    mysqlPool,
-});
+const bridge = new ScaleBridge({ config, logger, state, stateStore, mysqlPool });
 
 let running = false;
 let timer = null;
@@ -63,7 +35,7 @@ function readBody(req) {
             if (!raw) return resolve({});
             try {
                 resolve(JSON.parse(raw));
-            } catch (error) {
+            } catch {
                 reject(new Error('invalid_json'));
             }
         });
@@ -71,121 +43,41 @@ function readBody(req) {
     });
 }
 
-function getRuntimeSnapshot() {
+function runtimeSnapshot() {
     return {
         ok: true,
         running,
+        mode: 'direct-usb',
         deviceId: config.deviceId,
         bridgeName: config.bridgeName,
-        siteName: config.siteName,
-        clientId: config.clientId,
         tenantId: config.tenantId,
         branchId: config.branchId,
+        scalePort: config.scale.port,
+        scaleAddress: config.scale.address,
         syncIntervalMs: config.syncIntervalMs,
+        productSyncIntervalMs: config.productSyncIntervalMs,
+        salesResyncSkewMinutes: config.salesResyncSkewMinutes,
         lastRunStatus: state.lastRunStatus,
         lastRunAt: state.lastRunAt,
         lastError: state.lastError,
         logFile: config.logFile,
-        stateFile: config.stateFile,
-        overridesFile: config.overridesFile,
-    };
-}
-
-async function getClientSelectionSnapshot() {
-    const client = await getClientById(clientsDbPool, config.clientId);
-    const branch = await getBranchById(clientsDbPool, config.branchId);
-    return {
-        selectedClientId: config.clientId || null,
-        selectedBranchId: config.branchId || null,
-        selectedClient: client || null,
-        selectedBranch: branch || null,
-        tenantId: config.tenantId || null,
-        branchId: config.branchId || null,
-        belongsToExpectedClient: Boolean(client),
-    };
-}
-
-function tailLogLines(filePath, limit = 100) {
-    if (!fs.existsSync(filePath)) return [];
-    const text = fs.readFileSync(filePath, 'utf8');
-    return text.split(/\r?\n/).filter(Boolean).slice(-limit);
-}
-
-function serveStaticFile(res, filePath) {
-    if (!fs.existsSync(filePath)) {
-        sendJson(res, 404, { ok: false, error: 'not_found' });
-        return;
-    }
-
-    const ext = path.extname(filePath).toLowerCase();
-    const contentType = ({
-        '.html': 'text/html; charset=utf-8',
-        '.css': 'text/css; charset=utf-8',
-        '.js': 'application/javascript; charset=utf-8',
-        '.json': 'application/json; charset=utf-8',
-    })[ext] || 'text/plain; charset=utf-8';
-
-    res.writeHead(200, { 'Content-Type': contentType });
-    res.end(fs.readFileSync(filePath));
-}
-
-async function testMySqlConnection() {
-    const pool = buildMySqlPool(config.mysql);
-    try {
-        const [rows] = await pool.query('SELECT NOW() AS now_ts, DATABASE() AS db_name');
-        return {
-            ok: true,
-            now: rows?.[0]?.now_ts || null,
-            database: rows?.[0]?.db_name || config.mysql.database,
-        };
-    } finally {
-        await pool.end().catch(() => {});
-    }
-}
-
-async function testClientsDbConnection() {
-    const pool = buildClientDirectoryPool(config.clientsDb);
-    try {
-        const [rows] = await pool.query('SELECT DATABASE() AS db_name, NOW() AS now_ts');
-        const client = await getClientById(pool, config.clientId);
-        const branch = await getBranchById(pool, config.branchId);
-        return {
-            ok: true,
-            now: rows?.[0]?.now_ts || null,
-            database: rows?.[0]?.db_name || config.clientsDb.database,
-            client: client || null,
-            branch: branch || null,
-        };
-    } finally {
-        await pool.end().catch(() => {});
-    }
-}
-
-async function testFirebirdConnection() {
-    const rows = await firebirdQuery(config.firebird, 'SELECT CURRENT_TIMESTAMP AS NOW_TS FROM RDB$DATABASE');
-    return {
-        ok: true,
-        mode: 'local-helper',
-        now: rows?.[0]?.NOW_TS || rows?.[0]?.now_ts || null,
-        database: config.firebird.dbFile,
     };
 }
 
 async function runCycle(reason = 'scheduled') {
-    if (running) {
-        logger.warn('Ciclo de sincronizacion omitido porque ya existe uno en ejecucion', { reason });
-        return { ok: false, skipped: true };
-    }
-
+    if (running) return { ok: false, skipped: true };
     running = true;
     logger.info('Iniciando ciclo de sincronizacion', { reason });
     try {
         const result = await bridge.runOnce();
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
-        const forcedTargets = await bridge.forceScaleSyncNow(`post-cycle:${reason}`);
-        logger.info('Forzado de sincronizacion a balanza ejecutado despues del ciclo', { reason, forcedTargets });
-        return { ok: true, result, forcedTargets };
+        return { ok: true, result };
     } catch (error) {
+        state.lastRunAt = new Date().toISOString();
+        state.lastRunStatus = 'error';
+        state.lastRunMessage = error.message;
+        state.lastError = error.message;
+        stateStore.save(state);
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
         return { ok: false, error: error.message };
     } finally {
@@ -194,183 +86,81 @@ async function runCycle(reason = 'scheduled') {
 }
 
 function startHttpServer() {
-    const server = http.createServer(async (req, res) => {
+    const srv = http.createServer(async (req, res) => {
         const url = new URL(req.url, `http://${req.headers.host || '127.0.0.1'}`);
         const pathname = url.pathname;
 
-        if (pathname === '/' || pathname === '/index.html') {
-            serveStaticFile(res, path.join(publicDir, 'index.html'));
-            return;
-        }
+        if (pathname === '/health') return sendJson(res, 200, runtimeSnapshot());
+        if (pathname === '/state') return sendJson(res, 200, state);
 
-        if (pathname.startsWith('/assets/')) {
-            const localPath = path.join(publicDir, pathname.replace(/^\//, ''));
-            serveStaticFile(res, localPath);
-            return;
-        }
-
-        if (pathname === '/health') {
-            sendJson(res, 200, getRuntimeSnapshot());
-            return;
-        }
-
-        if (pathname === '/state') {
-            sendJson(res, 200, state);
-            return;
-        }
-
-        if (pathname === '/api/config' && req.method === 'GET') {
-            const selection = await getClientSelectionSnapshot().catch(() => null);
-            sendJson(res, 200, {
-                ok: true,
-                values: buildEditableConfigView(config),
-                source: loadOverrides(config.overridesFile),
-                selection,
-                requiresRestartNote: 'Los cambios se guardan en config-overrides.json y aplican al reiniciar el bridge.',
-            });
-            return;
-        }
-
-        if (pathname === '/api/config' && req.method === 'POST') {
+        if (pathname === '/api/scale/ports' && req.method === 'GET') {
             try {
-                const body = await readBody(req);
-                const nextOverrides = pickEditable(body || {});
-                saveOverrides(config.overridesFile, nextOverrides);
-                logger.info('Configuracion guardada desde la UI', { keys: Object.keys(nextOverrides) });
-                sendJson(res, 200, {
-                    ok: true,
-                    saved: nextOverrides,
-                    restartRequired: true,
-                    message: 'Configuracion guardada. Reinicia el bridge para aplicarla.',
-                });
+                const ports = await CuoraClient.listPorts();
+                return sendJson(res, 200, { ok: true, ports });
             } catch (error) {
-                sendJson(res, 400, { ok: false, error: error.message });
+                return sendJson(res, 500, { ok: false, error: error.message });
             }
-            return;
         }
 
-        if (pathname === '/api/logs' && req.method === 'GET') {
-            sendJson(res, 200, {
-                ok: true,
-                lines: tailLogLines(config.logFile, 120),
-            });
-            return;
-        }
-
-        if (pathname === '/api/clients' && req.method === 'GET') {
+        if (pathname === '/api/scale/ping' && req.method === 'POST') {
             try {
-                const search = url.searchParams.get('search') || '';
-                const clients = await listClients(clientsDbPool, search);
-                sendJson(res, 200, { ok: true, clients });
+                const result = await bridge.ping();
+                return sendJson(res, 200, result);
             } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
+                return sendJson(res, 500, { ok: false, error: error.message });
             }
-            return;
         }
 
-        if (pathname === '/api/branches' && req.method === 'GET') {
+        if (pathname === '/api/scale/signature' && req.method === 'POST') {
             try {
-                const clientId = Number(url.searchParams.get('clientId') || 0);
-                const branches = await listBranches(clientsDbPool, clientId);
-                sendJson(res, 200, { ok: true, branches });
+                const result = await bridge.signature();
+                return sendJson(res, 200, result);
             } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
+                return sendJson(res, 500, { ok: false, error: error.message });
             }
-            return;
-        }
-
-        if (pathname === '/api/selection' && req.method === 'GET') {
-            try {
-                const snapshot = await getClientSelectionSnapshot();
-                sendJson(res, 200, { ok: true, ...snapshot });
-            } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
-            }
-            return;
-        }
-
-        if (pathname === '/api/test/mysql' && req.method === 'POST') {
-            try {
-                const result = await testMySqlConnection();
-                sendJson(res, 200, result);
-            } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
-            }
-            return;
-        }
-
-        if (pathname === '/api/test/clients-db' && req.method === 'POST') {
-            try {
-                const result = await testClientsDbConnection();
-                sendJson(res, 200, result);
-            } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
-            }
-            return;
-        }
-
-        if (pathname === '/api/test/firebird' && req.method === 'POST') {
-            try {
-                const result = await testFirebirdConnection();
-                sendJson(res, 200, result);
-            } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
-            }
-            return;
         }
 
         if ((pathname === '/run' || pathname === '/api/run') && req.method === 'POST') {
             const result = await runCycle('http');
-            sendJson(res, result.ok ? 200 : 500, result);
-            return;
+            return sendJson(res, result.ok ? 200 : 500, result);
         }
 
-        if (pathname === '/api/scales' && req.method === 'GET') {
+        if (pathname === '/api/scale/sync-products' && req.method === 'POST') {
             try {
-                const result = await bridge.getScalesStatus();
-                sendJson(res, result.ok ? 200 : 500, result);
+                const result = await bridge.syncProducts();
+                return sendJson(res, 200, { ok: true, result });
             } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
+                return sendJson(res, 500, { ok: false, error: error.message });
             }
-            return;
         }
 
-        if (pathname === '/api/scales/force' && req.method === 'POST') {
+        if (pathname === '/api/scale/pull-sales' && req.method === 'POST') {
             try {
-                const forcedTargets = await bridge.forceScaleSyncNow('http-manual');
-                sendJson(res, 200, { ok: true, forcedTargets });
+                const body = await readBody(req);
+                const now = new Date();
+                const from = body.fromDate ? new Date(body.fromDate) : new Date(Date.now() - (config.salesLookbackDays * 24 * 60 * 60 * 1000));
+                const to = body.toDate ? new Date(body.toDate) : now;
+                const closeAfter = body.closeAfter === true;
+                const result = await bridge.pullSales({ fromDate: from, toDate: to, closeAfter });
+                return sendJson(res, 200, { ok: true, result });
             } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
+                return sendJson(res, 500, { ok: false, error: error.message });
             }
-            return;
         }
 
-        if (pathname === '/api/scales/push-products' && req.method === 'POST') {
-            try {
-                const reset = await bridge.resetProductFingerprintsAndSync();
-                const cycleResult = await runCycle('push-products');
-                sendJson(res, 200, { ok: true, reset, cycle: cycleResult });
-            } catch (error) {
-                sendJson(res, 500, { ok: false, error: error.message });
-            }
-            return;
-        }
-
-        sendJson(res, 404, { ok: false, error: 'not_found' });
+        return sendJson(res, 404, { ok: false, error: 'not_found' });
     });
 
-    server.listen(config.httpPort, '127.0.0.1', () => {
-        logger.info(`Panel local escuchando en http://127.0.0.1:${config.httpPort}`);
+    srv.listen(config.httpPort, '127.0.0.1', () => {
+        logger.info(`Bridge directo escuchando en http://127.0.0.1:${config.httpPort}`);
     });
-
-    return server;
+    return srv;
 }
 
 async function main() {
     if (config.once) {
         const result = await runCycle('once');
         await mysqlPool.end().catch(() => {});
-        await clientsDbPool.end().catch(() => {});
         process.exit(result.ok ? 0 : 1);
         return;
     }
@@ -381,7 +171,7 @@ async function main() {
     schedulerActive = true;
     const scheduleNext = (delayMs = config.syncIntervalMs) => {
         if (!schedulerActive) return;
-        const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+        const nextDelay = Math.max(2000, Number(delayMs) || 2000);
         timer = setTimeout(async () => {
             timer = null;
             await runCycle('interval');
@@ -395,11 +185,9 @@ async function shutdown(signal) {
     logger.info(`Cerrando bridge por ${signal}`);
     schedulerActive = false;
     if (timer) clearTimeout(timer);
-    if (server) {
-        await new Promise((resolve) => server.close(resolve));
-    }
+    if (server) await new Promise((resolve) => server.close(resolve));
+    await bridge.scale.close().catch(() => {});
     await mysqlPool.end().catch(() => {});
-    await clientsDbPool.end().catch(() => {});
     process.exit(0);
 }
 
@@ -408,7 +196,7 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 main().catch(async (error) => {
     logger.error('No se pudo iniciar el bridge', { error: error.message });
+    await bridge.scale.close().catch(() => {});
     await mysqlPool.end().catch(() => {});
-    await clientsDbPool.end().catch(() => {});
     process.exit(1);
 });

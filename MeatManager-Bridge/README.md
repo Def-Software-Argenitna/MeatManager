@@ -1,154 +1,75 @@
-# MeatManager Bridge
+# MeatManager Cuora Direct Bridge
 
-Bridge local entre Firebird/Qendra y MySQL cloud para sincronizar artículos/PLUs y tickets de balanza.
+Bridge local para hablar directo con balanza **Systel CUORA MAX** por USB/COM, sin pasar por Qendra.
 
-## Arquitectura
+## Flujo
 
 ```text
-MeatManager Web (MySQL cloud)
-        ^
-        | HTTPS / API
-        v
-Bridge local en la PC de la balanza
-        ^
-        | Firebird local (qendra.fdb)
-        v
-Qendra / impresora / balanza
+MySQL (productos) -> Bridge -> CUORA MAX (funcion 4/61 segun firma)
+CUORA MAX (funcion 72) -> Bridge -> MySQL (tabla scale_bridge_sales_item)
 ```
 
-La web no toca Firebird directo. El bridge corre en la misma PC que Qendra y hace de intermediario.
+## Funciones de protocolo usadas
 
-## Stack
+- `23`: ping/estado
+- `2`: firma digital
+- `10`: alta/actualizacion de sector
+- `4`: envio de PLU legacy (CUORA MAX V6)
+- `5`: baja de PLU en balanza
+- `8`: configuracion de codigo de barras (peso/unidad/suma)
+- `61`: envio de PLU extendido
+- `25`: finalizar sincronizacion y liberar equipo
+- `72`: reporte de ventas por fecha
+- `32`: cierre de ventas (opcional)
+
+## Requisitos
 
 - Node.js 22+
-- `node-firebird`
-- `mysql2`
-- `dotenv`
+- Puerto COM visible de la balanza (ejemplo `COM3`)
+- Credenciales de MySQL cloud
 
-## Qué sincroniza
+## Configuracion
 
-- MySQL -> Firebird:
-  - `products` hacia `PLU`
-  - marca `EQUIPOS.NOVEDADES = 1` si existe
-  - escribe en `NOVEDADES` y `BARCODE_TICKETS` si las tablas existen
-- Firebird -> MySQL:
-  - tickets desde `VENTAS`
-  - items hacia `ventas_items`
-  - movimientos hacia `stock`
+Editar `.env`:
 
-## Idempotencia
+- `SCALE_PORT=COM3`
+- `SCALE_BAUD_RATE=115200`
+- `SCALE_ADDRESS=20`
+- `BRIDGE_CLIENT_ID=4`
+- `BRIDGE_BRANCH_ID=5`
+- `MYSQL_*`
+- `SYNC_INTERVAL_MS=5000` (ciclo general)
+- `PRODUCT_SYNC_INTERVAL_MS=30000` (precio/descripcion/bajas)
+- `SALES_RESYNC_SKEW_MINUTES=2` (relectura segura de ventas)
+- `SCALE_BARCODE_*` (formato de codigos impresos por la balanza)
 
-- Productos:
-  - huella por `product_id` + `plu` + nombre + precio
-  - tabla `qendra_bridge_product_map`
-- Tickets:
-  - huella por `ID_TICKET` + fecha + total + items
-  - tabla `qendra_bridge_ticket_map`
-
-## Ticket barcode
-
-- El bridge genera un barcode compacto de hasta 32 caracteres.
-- Guarda el valor en:
-  - `ventas.receipt_code`
-  - `ventas.ticket_barcode`
-  - `qendra_bridge_ticket_map.ticket_barcode`
-- `ventas.qendra_ticket_id` conserva el ID de origen de Firebird.
-
-## Instalación
-
-1. Instalar dependencias:
+## Ejecucion
 
 ```bash
-cd MeatManager-Bridge
 npm install
-```
-
-2. Copiar `.env.example` a `.env` y ajustar credenciales.
-3. Ejecutar el SQL base de `sql/mysql/001_qendra_bridge_schema.sql` en la nube.
-4. Iniciar el bridge:
-
-```bash
 npm start
 ```
 
-## Variables de entorno
-
-- `BRIDGE_DEVICE_ID`
-- `BRIDGE_NAME`
-- `BRIDGE_SITE_NAME`
-- `MYSQL_TENANT_ID`
-- `MYSQL_BRANCH_ID`
-- `FIREBIRD_DB_FILE`
-- `FIREBIRD_HOST`
-- `FIREBIRD_PORT`
-- `FIREBIRD_USER`
-- `FIREBIRD_PASSWORD`
-- `FIREBIRD_DEFAULT_SECTION_ID`
-- `MYSQL_HOST`
-- `MYSQL_PORT`
-- `MYSQL_USER`
-- `MYSQL_PASSWORD`
-- `MYSQL_DATABASE`
-- `MYSQL_SSL`
-- `CLIENTS_DB_HOST`
-- `CLIENTS_DB_PORT`
-- `CLIENTS_DB_USER`
-- `CLIENTS_DB_PASS`
-- `CLIENTS_DB_NAME`
-- `SYNC_INTERVAL_MS`
-- `TICKET_LOOKBACK_DAYS`
-- `PRODUCT_LOOKBACK_HOURS`
-- `HTTP_PORT`
-- `STATE_FILE`
-- `LOG_FILE`
-
-## Panel local
-
-- Abrir `http://127.0.0.1:4045`
-- Permite:
-  - seleccionar cliente y sucursal desde `GestionClientes`
-  - editar configuracion operativa
-  - guardar overrides en `data/config-overrides.json`
-  - probar Firebird y MySQL
-  - lanzar una sincronizacion manual
-  - ver logs recientes
-
-Los cambios de configuracion quedan guardados y aplican al reiniciar el bridge.
-
-## Endpoints locales
-
-- `GET /health`
-- `GET /state`
-- `POST /run`
-- `GET /api/config`
-- `POST /api/config`
-- `POST /api/test/firebird`
-- `POST /api/test/mysql`
-- `GET /api/logs`
-
-## Supuestos
-
-- `PLU.ID` existe y se usa como clave en Firebird.
-- `VENTAS.ID_TICKET`, `VENTAS.FECHA`, `VENTAS.ID_PLU`, `VENTAS.PESO`, `VENTAS.IMPORTE` existen.
-- Qendra sigue siendo el responsable de empujar los PLUs a la balanza.
-- El bridge no modifica la comunicación física con la impresora/balanza.
-
-## Pruebas rápidas
-
-- Ejecutar una vez:
+Ejecucion unica:
 
 ```bash
 npm run once
 ```
 
-- Ver health:
+## Endpoints locales
 
-```bash
-curl http://127.0.0.1:4045/health
-```
+- `GET /health`
+- `GET /state`
+- `GET /api/scale/ports`
+- `POST /api/scale/ping`
+- `POST /api/scale/signature`
+- `POST /api/scale/sync-products`
+- `POST /api/scale/pull-sales`
+- `POST /api/run`
 
-## Riesgos
+## Persistencia MySQL (auto)
 
-- Si Firebird tiene una estructura distinta, el bridge usa detección dinámica y fallback seguro.
-- Si MySQL cae, el bridge sigue reintentando en el siguiente ciclo.
-- Si la tabla `BARCODE_TICKETS` no existe, el bridge sigue funcionando y solo guarda el barcode en MySQL.
+El bridge crea/usa:
+
+- `scale_bridge_product_map`
+- `scale_bridge_sales_item`
