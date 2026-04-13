@@ -503,7 +503,7 @@ const Ventas = () => {
         });
 
         return Object.values(grouped);
-    }, [stockItems, productsCatalog, getProductPriceCandidates]);
+    }, [stockItems, productsCatalog]);
 
     const availableCategories = React.useMemo(() => {
         const detected = new Set(
