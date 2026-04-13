@@ -296,6 +296,13 @@
     margin-bottom: 0.5rem;
 }
 
+.opening-suggestion {
+    display: block;
+    margin-top: 0.45rem;
+    font-size: 0.8rem;
+    color: #86efac;
+}
+
 .form-group input,
 .form-group select {
     width: 100%;

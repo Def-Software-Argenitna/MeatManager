@@ -248,7 +248,7 @@ const CierreCaja = () => {
     useEffect(() => {
         setOpeningDraft((prev) => {
             const next = {};
-            activePaymentMethods.forEach((method) => {
+            activePaymentMethods.filter((method) => method.type === 'cash').forEach((method) => {
                 next[method.name] = prev[method.name] || '';
             });
             return next;
@@ -297,6 +297,31 @@ const CierreCaja = () => {
         });
         return totals;
     }, [openingMovements]);
+
+    const lastClosingByMethod = useMemo(() => {
+        const totals = {};
+
+        activePaymentMethods
+            .filter((method) => method.type === 'cash')
+            .forEach((method) => {
+                totals[method.name] = 0;
+            });
+
+        allMovements.forEach((movement) => {
+            const movementDate = parseDate(movement.date);
+            if (!movementDate || movementDate >= start) return;
+            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
+
+            const methodName = movement.payment_method || 'Efectivo';
+            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+            if (!(methodName in totals)) return;
+
+            const sign = getMovementSign(movement);
+            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+        });
+
+        return totals;
+    }, [activePaymentMethods, allMovements, selectedCashAccount, start]);
 
     const manualMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type !== 'apertura' && !isAutoSaleMovement(movement))
@@ -408,6 +433,19 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
 
+    const buildOpeningDraft = useCallback((source = {}) => {
+        const next = {};
+
+        activePaymentMethods
+            .filter((method) => method.type === 'cash')
+            .forEach((method) => {
+                const amount = toNumber(source[method.name]);
+                next[method.name] = amount > 0 ? String(amount) : '';
+            });
+
+        return next;
+    }, [activePaymentMethods]);
+
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
             ...prev,
@@ -424,9 +462,14 @@ const CierreCaja = () => {
             }))
             .filter((row) => row.amount > 0);
 
-        if (rows.length === 0) {
+        if (rows.length === 0 && openingMovements.length === 0) {
             setFeedback({ type: 'warning', text: 'Ingresá al menos un monto de apertura para registrar la caja.' });
             return;
+        }
+
+        // Delete old aperturas before inserting new ones to properly "modify" instead of sum.
+        for (const mov of openingMovements) {
+            await saveTableRecord('caja_movimientos', 'delete', null, mov.id);
         }
 
         const openingDate = new Date(`${selectedDate}T08:00:00`).toISOString();
@@ -444,9 +487,9 @@ const CierreCaja = () => {
         }
 
         await loadData();
-        setFeedback({ type: 'success', text: 'Apertura de caja registrada correctamente.' });
+        setFeedback({ type: 'success', text: 'Apertura de caja actualizada correctamente.' });
         setShowOpeningForm(false);
-        setOpeningDraft({});
+        setOpeningDraft(buildOpeningDraft());
     };
 
     const handleAddMovement = async (e) => {
@@ -674,8 +717,17 @@ const CierreCaja = () => {
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowOpeningForm((prev) => !prev)}>
-                                {showOpeningForm ? 'Cancelar' : openingMovements.length > 0 ? 'Registrar ajuste de apertura' : 'Registrar apertura'}
+                            <button className="cierre-add-btn" onClick={() => {
+                                if (!showOpeningForm) {
+                                    setOpeningDraft(buildOpeningDraft(
+                                        openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+                                    ));
+                                } else {
+                                    setOpeningDraft(buildOpeningDraft());
+                                }
+                                setShowOpeningForm((prev) => !prev);
+                            }}>
+                                {showOpeningForm ? 'Cancelar edición' : openingMovements.length > 0 ? 'Modificar apertura' : 'Registrar apertura'}
                             </button>
                         </div>
 
@@ -705,6 +757,11 @@ const CierreCaja = () => {
                                                 placeholder="Ej: 100000"
                                                 className="neo-input"
                                             />
+                                            {toNumber(lastClosingByMethod[method.name]) > 0 ? (
+                                                <small className="opening-suggestion">
+                                                    Sugerido según último cierre: ${toNumber(lastClosingByMethod[method.name]).toLocaleString('es-AR')}
+                                                </small>
+                                            ) : null}
                                         </div>
                                     ))}
                                 </div>
