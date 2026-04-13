@@ -248,7 +248,7 @@ const CierreCaja = () => {
     useEffect(() => {
         setOpeningDraft((prev) => {
             const next = {};
-            activePaymentMethods.forEach((method) => {
+            activePaymentMethods.filter((method) => method.type === 'cash').forEach((method) => {
                 next[method.name] = prev[method.name] || '';
             });
             return next;
@@ -297,6 +297,31 @@ const CierreCaja = () => {
         });
         return totals;
     }, [openingMovements]);
+
+    const lastClosingByMethod = useMemo(() => {
+        const totals = {};
+
+        activePaymentMethods
+            .filter((method) => method.type === 'cash')
+            .forEach((method) => {
+                totals[method.name] = 0;
+            });
+
+        allMovements.forEach((movement) => {
+            const movementDate = parseDate(movement.date);
+            if (!movementDate || movementDate >= start) return;
+            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
+
+            const methodName = movement.payment_method || 'Efectivo';
+            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+            if (!(methodName in totals)) return;
+
+            const sign = getMovementSign(movement);
+            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+        });
+
+        return totals;
+    }, [activePaymentMethods, allMovements, selectedCashAccount, start]);
 
     const manualMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type !== 'apertura' && !isAutoSaleMovement(movement))
@@ -408,6 +433,19 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
 
+    const buildOpeningDraft = useCallback((source = {}) => {
+        const next = {};
+
+        activePaymentMethods
+            .filter((method) => method.type === 'cash')
+            .forEach((method) => {
+                const amount = toNumber(source[method.name]);
+                next[method.name] = amount > 0 ? String(amount) : '';
+            });
+
+        return next;
+    }, [activePaymentMethods]);
+
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
             ...prev,
@@ -422,8 +460,6 @@ const CierreCaja = () => {
                 method,
                 amount: parseFloat(openingDraft[method.name]) || 0,
             }))
-            // Filter is removed here so we can also process setting to 0 (which just won't be saved but old will be deleted).
-            // Wait, if an amount in draft is 0, we don't save it. So keeping the > 0 filter is correct for inserts.
             .filter((row) => row.amount > 0);
 
         if (rows.length === 0 && openingMovements.length === 0) {
@@ -453,7 +489,7 @@ const CierreCaja = () => {
         await loadData();
         setFeedback({ type: 'success', text: 'Apertura de caja actualizada correctamente.' });
         setShowOpeningForm(false);
-        setOpeningDraft({});
+        setOpeningDraft(buildOpeningDraft());
     };
 
     const handleAddMovement = async (e) => {
@@ -683,9 +719,11 @@ const CierreCaja = () => {
                             <h3>Apertura de caja</h3>
                             <button className="cierre-add-btn" onClick={() => {
                                 if (!showOpeningForm) {
-                                    setOpeningDraft({...openingByMethod});
+                                    setOpeningDraft(buildOpeningDraft(
+                                        openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+                                    ));
                                 } else {
-                                    setOpeningDraft({});
+                                    setOpeningDraft(buildOpeningDraft());
                                 }
                                 setShowOpeningForm((prev) => !prev);
                             }}>
@@ -719,6 +757,11 @@ const CierreCaja = () => {
                                                 placeholder="Ej: 100000"
                                                 className="neo-input"
                                             />
+                                            {toNumber(lastClosingByMethod[method.name]) > 0 ? (
+                                                <small className="opening-suggestion">
+                                                    Sugerido según último cierre: ${toNumber(lastClosingByMethod[method.name]).toLocaleString('es-AR')}
+                                                </small>
+                                            ) : null}
                                         </div>
                                     ))}
                                 </div>
