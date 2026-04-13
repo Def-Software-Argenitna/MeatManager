@@ -5059,6 +5059,77 @@ async function ensureScaleTicketItemColumns(conn) {
     ).catch(() => {});
 }
 
+async function getScaleTicketLookupSchema(conn) {
+    const [
+        ticketPrintedBarcode,
+        ticketStatus,
+        ticketScaleAddress,
+        itemPrintedBarcode,
+        itemTicketTotalAmount,
+        itemTicketItemCount,
+        itemQuantity,
+        itemQuantityUnit,
+    ] = await Promise.all([
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'printed_ticket_barcode'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'ticket_status'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'scale_address'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'printed_ticket_barcode'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ticket_total_amount'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ticket_item_count'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity_unit'),
+    ]);
+
+    return {
+        ticketPrintedBarcode,
+        ticketStatus,
+        ticketScaleAddress,
+        itemPrintedBarcode,
+        itemTicketTotalAmount,
+        itemTicketItemCount,
+        itemQuantity,
+        itemQuantityUnit,
+    };
+}
+
+function buildScaleTicketLookupSelect(schema) {
+    return [
+        'device_id',
+        'ticket_id',
+        'ticket_barcode',
+        schema.ticketPrintedBarcode ? 'printed_ticket_barcode' : 'NULL AS printed_ticket_barcode',
+        'vendor_code',
+        'sale_at',
+        'total_amount',
+        'item_count',
+        schema.ticketScaleAddress ? 'scale_address' : 'NULL AS scale_address',
+        schema.ticketStatus ? 'ticket_status' : "'open' AS ticket_status",
+    ].join(', ');
+}
+
+function buildScaleTicketItemSelect(schema) {
+    return [
+        's.line_no',
+        's.sale_at',
+        's.vendor_code',
+        's.plu_code',
+        's.units',
+        's.grams',
+        's.amount',
+        schema.itemTicketTotalAmount ? 's.ticket_total_amount' : 'NULL AS ticket_total_amount',
+        schema.itemTicketItemCount ? 's.ticket_item_count' : 'NULL AS ticket_item_count',
+        schema.itemQuantity ? 's.item_quantity' : 'NULL AS item_quantity',
+        schema.itemQuantityUnit ? 's.item_quantity_unit' : 'NULL AS item_quantity_unit',
+        schema.itemPrintedBarcode ? 's.printed_ticket_barcode' : 'NULL AS printed_ticket_barcode',
+        'p.id AS product_id',
+        'p.name AS product_name',
+        'p.category AS product_category',
+        'p.unit AS product_unit',
+        'p.current_price AS product_price',
+        'p.plu AS product_plu',
+    ].join(', ');
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
@@ -5067,34 +5138,42 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
-        await ensureScaleTicketLifecycleColumns(pool);
-        await ensureScaleTicketItemColumns(pool);
+        const scaleSchema = await getScaleTicketLookupSchema(pool);
+        const ticketSelect = buildScaleTicketLookupSelect(scaleSchema);
+        const itemSelect = buildScaleTicketItemSelect(scaleSchema);
+        const openTicketFilter = scaleSchema.ticketStatus ? " AND ticket_status = 'open'" : '';
 
         let [ticketRows] = await pool.query(
-            `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+            `SELECT ${ticketSelect}
              FROM scale_bridge_ticket_map
-             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?) AND ticket_status = 'open'
+             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)${openTicketFilter}
              LIMIT 1`,
             [tenantId, barcode]
         );
 
-        if (!ticketRows.length) {
+        if (!ticketRows.length && scaleSchema.ticketPrintedBarcode) {
             [ticketRows] = await pool.query(
-                `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                `SELECT ${ticketSelect}
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(printed_ticket_barcode) = UPPER(?) AND ticket_status = 'open'
+                 WHERE tenant_id = ? AND UPPER(printed_ticket_barcode) = UPPER(?)${openTicketFilter}
                  LIMIT 1`,
                 [tenantId, barcode]
             );
         }
 
-        if (!ticketRows.length) {
+        if (!ticketRows.length && scaleSchema.ticketStatus) {
+            const statusConditions = ['UPPER(ticket_barcode) = UPPER(?)'];
+            const statusParams = [tenantId, barcode];
+            if (scaleSchema.ticketPrintedBarcode) {
+                statusConditions.push('UPPER(printed_ticket_barcode) = UPPER(?)');
+                statusParams.push(barcode);
+            }
             const [anyStatusRows] = await pool.query(
                 `SELECT ticket_status
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND (UPPER(ticket_barcode) = UPPER(?) OR UPPER(printed_ticket_barcode) = UPPER(?))
+                 WHERE tenant_id = ? AND (${statusConditions.join(' OR ')})
                  LIMIT 1`,
-                [tenantId, barcode, barcode]
+                statusParams
             );
             if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
                 return res.status(409).json({
@@ -5115,26 +5194,29 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             const safeDeviceHint = Number.isFinite(deviceHint) ? deviceHint : null;
             const safeItemCountHint = Number.isFinite(itemCountHint) ? itemCountHint : null;
             for (const totalAmount of totalCandidates) {
+                const amountMatchParams = [tenantId, totalAmount];
+                let scaleAddressClause = '';
+                if (scaleSchema.ticketScaleAddress) {
+                    scaleAddressClause = ' AND (? IS NULL OR scale_address = ?)';
+                    amountMatchParams.push(safeDeviceHint, safeDeviceHint);
+                }
+                amountMatchParams.push(
+                    safeItemCountHint,
+                    safeItemCountHint,
+                    safeItemCountHint,
+                );
                 const [amountMatches] = await pool.query(
-                                        `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                    `SELECT ${ticketSelect}
                      FROM scale_bridge_ticket_map
                      WHERE tenant_id = ?
-                       AND ticket_status = 'open'
+                       ${scaleSchema.ticketStatus ? "AND ticket_status = 'open'" : ''}
                        AND ABS(total_amount - ?) < 0.01
-                       AND (? IS NULL OR scale_address = ?)
+                       ${scaleAddressClause}
                        AND (? IS NULL OR ? = 0 OR item_count = ?)
                        AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
                      ORDER BY sale_at DESC
                      LIMIT 3`,
-                    [
-                        tenantId,
-                        totalAmount,
-                        safeDeviceHint,
-                        safeDeviceHint,
-                        safeItemCountHint,
-                        safeItemCountHint,
-                        safeItemCountHint,
-                    ]
+                    amountMatchParams
                 );
                 if (amountMatches.length === 1) {
                     ticketRows = [amountMatches[0]];
@@ -5215,10 +5297,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
 
         const ticket = ticketRows[0];
         const [itemRows] = await pool.query(
-                `SELECT s.line_no, s.sale_at, s.vendor_code, s.plu_code, s.units, s.grams, s.amount,
-                s.ticket_total_amount, s.ticket_item_count, s.item_quantity, s.item_quantity_unit,
-                    s.printed_ticket_barcode,
-                    p.id AS product_id, p.name AS product_name, p.category AS product_category, p.unit AS product_unit, p.current_price AS product_price, p.plu AS product_plu
+                        `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
@@ -5274,7 +5353,10 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             items,
         });
     } catch (err) {
-        if (String(err?.message || '').includes('scale_bridge_ticket_map')) {
+        if (
+            String(err?.message || '').includes('scale_bridge_ticket_map')
+            || String(err?.message || '').includes('scale_bridge_sales_item')
+        ) {
             return res.status(404).json({
                 ok: false,
                 error: 'Todavia no existe la tabla de tickets del bridge. Ejecuta una sincronizacion del bridge directo.',
