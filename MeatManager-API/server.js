@@ -5018,6 +5018,47 @@ async function ensureScaleTicketLifecycleColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
 }
 
+async function ensureScaleTicketItemColumns(conn) {
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'printed_ticket_barcode', '`printed_ticket_barcode` VARCHAR(32) NULL AFTER `ticket_barcode`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_total_amount', '`ticket_total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `amount`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_item_count', '`ticket_item_count` INT NOT NULL DEFAULT 0 AFTER `ticket_total_amount`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'item_quantity', '`item_quantity` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `ticket_item_count`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'item_quantity_unit', '`item_quantity_unit` VARCHAR(8) NOT NULL DEFAULT \'un\' AFTER `item_quantity`');
+
+        await conn.query(
+        `UPDATE scale_bridge_sales_item s
+         LEFT JOIN scale_bridge_ticket_map t
+           ON t.device_id = s.device_id
+          AND t.tenant_id = s.tenant_id
+          AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+          AND t.ticket_id = s.ticket_id
+         SET s.printed_ticket_barcode = COALESCE(t.printed_ticket_barcode, s.printed_ticket_barcode),
+             s.ticket_total_amount = CASE
+                WHEN t.total_amount IS NOT NULL THEN t.total_amount
+                ELSE s.ticket_total_amount
+             END,
+             s.ticket_item_count = CASE
+                WHEN t.item_count IS NOT NULL THEN t.item_count
+                ELSE s.ticket_item_count
+             END,
+             s.item_quantity = CASE
+                WHEN COALESCE(s.grams, 0) > 0 THEN ROUND(COALESCE(s.grams, 0) / 1000, 3)
+                ELSE COALESCE(s.units, 0)
+             END,
+             s.item_quantity_unit = CASE
+                WHEN COALESCE(s.grams, 0) > 0 THEN 'kg'
+                ELSE 'un'
+             END
+         WHERE (
+                t.printed_ticket_barcode IS NOT NULL
+                OR t.total_amount IS NOT NULL
+                OR t.item_count IS NOT NULL
+                OR COALESCE(s.item_quantity, 0) = 0
+                OR COALESCE(s.item_quantity_unit, '') = ''
+         )`
+    ).catch(() => {});
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
@@ -5027,6 +5068,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         await ensureScaleTicketLifecycleColumns(pool);
+        await ensureScaleTicketItemColumns(pool);
 
         let [ticketRows] = await pool.query(
             `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
