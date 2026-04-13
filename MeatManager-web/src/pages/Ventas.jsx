@@ -940,7 +940,7 @@ const Ventas = () => {
             setTicketPreviewItems(previewItems);
             setShowTicketPreview(true);
             setQendraActiveTicketId(null);
-            setActiveScaleTicketBarcode(String(payload?.ticket?.barcode || barcodeValue).trim() || null);
+            setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
             const vendor = String(payload?.ticket?.vendorCode || '').trim();
             if (vendor) {
                 setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);

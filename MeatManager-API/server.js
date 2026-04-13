@@ -4954,6 +4954,7 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 // Devuelve un ticket de balanza (cabecera + items) a partir del codigo de barras
 // generado por el bridge directo.
 async function ensureScaleTicketLifecycleColumns(conn) {
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'printed_ticket_barcode', '`printed_ticket_barcode` VARCHAR(32) NULL AFTER `ticket_barcode`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'ticket_status', '`ticket_status` VARCHAR(16) NOT NULL DEFAULT \'open\' AFTER `item_count`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_sale_id', '`charged_sale_id` BIGINT NULL AFTER `ticket_status`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
@@ -4972,7 +4973,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         await ensureScaleTicketLifecycleColumns(pool);
 
         let [ticketRows] = await pool.query(
-            `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+            `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
              FROM scale_bridge_ticket_map
              WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?) AND ticket_status = 'open'
              LIMIT 1`,
@@ -4980,12 +4981,22 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         );
 
         if (!ticketRows.length) {
+            [ticketRows] = await pool.query(
+                `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                 FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ? AND UPPER(printed_ticket_barcode) = UPPER(?) AND ticket_status = 'open'
+                 LIMIT 1`,
+                [tenantId, barcode]
+            );
+        }
+
+        if (!ticketRows.length) {
             const [anyStatusRows] = await pool.query(
                 `SELECT ticket_status
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 WHERE tenant_id = ? AND (UPPER(ticket_barcode) = UPPER(?) OR UPPER(printed_ticket_barcode) = UPPER(?))
                  LIMIT 1`,
-                [tenantId, barcode]
+                [tenantId, barcode, barcode]
             );
             if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
                 return res.status(409).json({
@@ -5007,7 +5018,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             const safeItemCountHint = Number.isFinite(itemCountHint) ? itemCountHint : null;
             for (const totalAmount of totalCandidates) {
                 const [amountMatches] = await pool.query(
-                    `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                                        `SELECT device_id, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
                      FROM scale_bridge_ticket_map
                      WHERE tenant_id = ?
                        AND ticket_status = 'open'
@@ -5037,6 +5048,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                         error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
                         candidates: amountMatches.map((row) => ({
                             ticketId: row.ticket_id,
+                            printedBarcode: row.printed_ticket_barcode || null,
                             saleAt: row.sale_at,
                             total: Number(row.total_amount || 0),
                         })),
@@ -5072,6 +5084,8 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                         deviceId: null,
                         ticketId: venta.qendra_ticket_id || String(venta.id),
                         barcode: venta.ticket_barcode,
+                        internalBarcode: venta.ticket_barcode,
+                        printedBarcode: venta.ticket_barcode,
                         vendorCode: null,
                         saleAt: venta.date,
                         total: Number(venta.total || 0),
@@ -5103,7 +5117,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
 
         const ticket = ticketRows[0];
         const [itemRows] = await pool.query(
-            `SELECT s.line_no, s.sale_at, s.vendor_code, s.plu_code, s.units, s.grams, s.amount,
+                `SELECT s.line_no, s.sale_at, s.vendor_code, s.plu_code, s.units, s.grams, s.amount,
+                s.ticket_total_amount, s.ticket_item_count, s.item_quantity, s.item_quantity_unit,
+                    s.printed_ticket_barcode,
                     p.id AS product_id, p.name AS product_name, p.category AS product_category, p.unit AS product_unit, p.current_price AS product_price, p.plu AS product_plu
              FROM scale_bridge_sales_item s
              LEFT JOIN products p
@@ -5122,13 +5138,16 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         const items = itemRows.map((row) => {
             const grams = Number(row.grams || 0);
             const units = Number(row.units || 0);
-            const qty = grams > 0 ? Number((grams / 1000).toFixed(3)) : units;
+            const qty = row.item_quantity != null ? Number(row.item_quantity) : (grams > 0 ? Number((grams / 1000).toFixed(3)) : units);
+            const qtyUnit = String(row.item_quantity_unit || '').trim() || (grams > 0 ? 'kg' : 'un');
             return {
                 lineNo: Number(row.line_no || 0),
                 plu: String(row.plu_code || '').trim(),
                 quantity: qty,
-                unit: grams > 0 ? 'kg' : 'un',
+                unit: qtyUnit,
                 amount: Number(row.amount || 0),
+                ticketTotal: Number(row.ticket_total_amount || ticket.total_amount || 0),
+                ticketItemCount: Number(row.ticket_item_count || ticket.item_count || 0),
                 vendorCode: String(row.vendor_code || ticket.vendor_code || '').trim() || null,
                 product: {
                     id: row.product_id ? Number(row.product_id) : null,
@@ -5147,6 +5166,8 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 deviceId: ticket.device_id,
                 ticketId: ticket.ticket_id,
                 barcode: ticket.ticket_barcode,
+                internalBarcode: ticket.ticket_barcode,
+                printedBarcode: ticket.printed_ticket_barcode || null,
                 vendorCode: ticket.vendor_code || null,
                 saleAt: ticket.sale_at,
                 total: Number(ticket.total_amount || 0),
