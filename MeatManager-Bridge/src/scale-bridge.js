@@ -406,9 +406,15 @@ class ScaleBridge {
 
         const removedRows = await mysqlQuery(
             this.mysqlPool,
-              `SELECT m.product_id,
+            `SELECT m.product_id,
                     m.plu_code,
-                    COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR)) AS expected_plu_code
+                    COALESCE(
+                        NULLIF(
+                            TRIM(CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci),
+                            ''
+                        ),
+                        CAST(p.id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                    ) AS expected_plu_code
              FROM scale_bridge_product_map m
              LEFT JOIN products p
                 ON p.id = m.product_id
@@ -418,7 +424,13 @@ class ScaleBridge {
                 AND (
                     p.id IS NULL
                     OR COALESCE(p.current_price, 0) <= 0
-                    OR COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR)) <> m.plu_code
+                    OR COALESCE(
+                        NULLIF(
+                            TRIM(CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci),
+                            ''
+                        ),
+                        CAST(p.id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                    ) <> CAST(m.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
                 )`,
             [this.config.deviceId, this.config.tenantId]
         );
