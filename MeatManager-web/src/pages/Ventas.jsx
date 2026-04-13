@@ -303,6 +303,56 @@ const Ventas = () => {
     ]);
     // ────────────────────────────────────────────────────────────────────────
 
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const loadVentasBootstrap = async () => {
+            try {
+                const [remotePriceFormat, remoteShopName, remoteShopAddress, remoteWhatsapp] = await Promise.all([
+                    getRemoteSetting('precio_formato').catch(() => null),
+                    getRemoteSetting('shop_name').catch(() => null),
+                    getRemoteSetting('shop_address').catch(() => null),
+                    getRemoteSetting('whatsapp_number').catch(() => null),
+                ]);
+
+                if (cancelled) return;
+
+                if (remotePriceFormat) {
+                    setPriceFormat(String(remotePriceFormat));
+                }
+
+                setShopInfo((prev) => ({
+                    name: String(remoteShopName || '').trim() || prev.name,
+                    address: String(remoteShopAddress || '').trim(),
+                    phone: String(remoteWhatsapp || '').trim(),
+                }));
+
+                await refreshVentasData();
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Error cargando bootstrap de ventas:', error);
+                    showToast('No se pudieron cargar los datos de ventas.');
+                }
+            }
+        };
+
+        loadVentasBootstrap();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [refreshVentasData, showToast]);
+
+    React.useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return;
+            refreshVentasData().catch((error) => console.error('Error refrescando ventas al volver a la pestaña:', error));
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [refreshVentasData]);
+
     const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
 
     React.useEffect(() => {
