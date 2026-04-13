@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
 import DirectionalReveal from '../DirectionalReveal';
@@ -65,6 +66,13 @@ const connectionLabel = (isConnected, isSimulated) => {
     return { text: 'Desconectada', tone: 'bad' };
 };
 
+const DESPOSTADA_SPECIES_TABS = [
+    { id: 'vaca', label: 'Vaca', path: '/despostada/vaca' },
+    { id: 'cerdo', label: 'Cerdo', path: '/despostada/cerdo' },
+    { id: 'pollo', label: 'Pollo', path: '/despostada/pollo' },
+    { id: 'pescado', label: 'Pescado', path: '/despostada/pescado' },
+];
+
 const DespostadaBase = ({
     species,
     title,
@@ -86,6 +94,7 @@ const DespostadaBase = ({
     accent = '#ef4444',
 }) => {
     const { hasModule } = useLicense();
+    const navigate = useNavigate();
     const hasDespostadaModule = hasModule('despostada');
 
     const [initialWeight, setInitialWeight] = useState('');
@@ -332,6 +341,25 @@ const DespostadaBase = ({
                     <div>
                         <div className="despostada-kicker">
                             <Sparkles size={14} /> Módulo premium
+                        </div>
+                        <div className="despostada-species-tabs" role="tablist" aria-label="Especies de despostada">
+                            {DESPOSTADA_SPECIES_TABS.map((tab) => {
+                                const isActive = tab.id === species;
+                                return (
+                                    <button
+                                        key={tab.id}
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={isActive}
+                                        className={`despostada-species-tab ${isActive ? 'active' : ''}`}
+                                        onClick={() => {
+                                            if (!isActive) navigate(tab.path);
+                                        }}
+                                    >
+                                        {tab.label}
+                                    </button>
+                                );
+                            })}
                         </div>
                         <h1>{title}</h1>
                         <p>{subtitle}</p>

@@ -548,47 +548,6 @@ const Ventas = () => {
         ];
     }, [products]);
 
-    const groupedFilteredProducts = React.useMemo(() => {
-        const groups = new Map();
-        filteredProducts.forEach((product) => {
-            const categoryDisplay = getCategoryDisplay(product?.category);
-            if (!groups.has(categoryDisplay.id)) {
-                groups.set(categoryDisplay.id, {
-                    ...categoryDisplay,
-                    items: [],
-                });
-            }
-            groups.get(categoryDisplay.id).items.push(product);
-        });
-
-        return [...groups.values()].sort((left, right) => {
-            const leftIdx = CATEGORY_PRIORITY.indexOf(left.id);
-            const rightIdx = CATEGORY_PRIORITY.indexOf(right.id);
-            const safeLeft = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
-            const safeRight = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
-            if (safeLeft !== safeRight) return safeLeft - safeRight;
-            return String(left.label || '').localeCompare(String(right.label || ''), 'es');
-        });
-    }, [filteredProducts]);
-
-    React.useEffect(() => {
-        const nextIds = groupedFilteredProducts.map((group) => group.id);
-        const hasSearch = barcodeInputValue.trim().length > 0;
-        setExpandedCategoryIds((prev) => {
-            if (hasSearch) return nextIds;
-            const filteredPrev = prev.filter((id) => nextIds.includes(id));
-            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
-        });
-    }, [groupedFilteredProducts, barcodeInputValue]);
-
-    const toggleCategoryAccordion = React.useCallback((categoryId) => {
-        setExpandedCategoryIds((prev) => (
-            prev.includes(categoryId)
-                ? prev.filter((id) => id !== categoryId)
-                : [...prev, categoryId]
-        ));
-    }, []);
-
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = String(pluValue || '').trim();
         if (!normalized) return null;
@@ -677,6 +636,47 @@ const Ventas = () => {
             String(p.id || '').toLowerCase().includes(term);
         return matchesSearch;
     });
+
+    const groupedFilteredProducts = React.useMemo(() => {
+        const groups = new Map();
+        filteredProducts.forEach((product) => {
+            const categoryDisplay = getCategoryDisplay(product?.category);
+            if (!groups.has(categoryDisplay.id)) {
+                groups.set(categoryDisplay.id, {
+                    ...categoryDisplay,
+                    items: [],
+                });
+            }
+            groups.get(categoryDisplay.id).items.push(product);
+        });
+
+        return [...groups.values()].sort((left, right) => {
+            const leftIdx = CATEGORY_PRIORITY.indexOf(left.id);
+            const rightIdx = CATEGORY_PRIORITY.indexOf(right.id);
+            const safeLeft = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
+            const safeRight = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
+            if (safeLeft !== safeRight) return safeLeft - safeRight;
+            return String(left.label || '').localeCompare(String(right.label || ''), 'es');
+        });
+    }, [filteredProducts]);
+
+    React.useEffect(() => {
+        const nextIds = groupedFilteredProducts.map((group) => group.id);
+        const hasSearch = barcodeInputValue.trim().length > 0;
+        setExpandedCategoryIds((prev) => {
+            if (hasSearch) return nextIds;
+            const filteredPrev = prev.filter((id) => nextIds.includes(id));
+            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+        });
+    }, [groupedFilteredProducts, barcodeInputValue]);
+
+    const toggleCategoryAccordion = React.useCallback((categoryId) => {
+        setExpandedCategoryIds((prev) => (
+            prev.includes(categoryId)
+                ? prev.filter((id) => id !== categoryId)
+                : [...prev, categoryId]
+        ));
+    }, []);
 
     const updatePrice = async (productId, priceVal, pluVal) => {
         const price = parseFloat(priceVal);

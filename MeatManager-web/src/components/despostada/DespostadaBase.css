@@ -64,6 +64,38 @@
     text-transform: uppercase;
 }
 
+.despostada-species-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.55rem;
+    margin: 0.9rem 0 0.25rem;
+}
+
+.despostada-species-tab {
+    border: 1px solid var(--despostada-border);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--despostada-muted);
+    border-radius: 999px;
+    padding: 0.5rem 0.9rem;
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+    transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease, color 0.18s ease;
+}
+
+.despostada-species-tab:hover {
+    transform: translateY(-1px);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: var(--despostada-text);
+}
+
+.despostada-species-tab.active {
+    color: #fff;
+    border-color: var(--despostada-accent);
+    background: linear-gradient(135deg, var(--despostada-accent-soft), rgba(255, 255, 255, 0.05));
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.03), 0 8px 22px var(--despostada-glow);
+}
+
 .despostada-hero h1 {
     margin: 0.75rem 0 0.5rem;
     font-size: clamp(1.9rem, 2.6vw, 3rem);
