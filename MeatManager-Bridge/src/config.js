@@ -59,6 +59,7 @@ const config = {
         frameGapMs: intEnv('SCALE_FRAME_GAP_MS', 20),
         responseTimeoutMs: intEnv('SCALE_RESPONSE_TIMEOUT_MS', 5000),
         interCommandDelayMs: intEnv('SCALE_INTER_COMMAND_DELAY_MS', 30),
+        retryAfterCloseOnNoData: boolEnv('SCALE_RETRY_AFTER_CLOSE_ON_NODATA', true),
         sectionDefaultId: intEnv('SCALE_SECTION_DEFAULT_ID', 2),
         sectionDefaultName: strEnv('SCALE_SECTION_DEFAULT_NAME', 'CARNICERIA'),
         legacyPriceMultiplier: intEnv('SCALE_LEGACY_PRICE_MULTIPLIER', 100),

@@ -383,9 +383,39 @@ class ScaleBridge {
 
     async pullSales({ fromDate, toDate, closeAfter = false }) {
         const payload = buildSales72Payload(fromDate, toDate);
-        const response = await this.scale.send(72, payload, { timeoutMs: 30000 });
+        const now = new Date();
+        const year = now.getFullYear();
+        const yearFrom = new Date(year, 0, 1, 0, 0, 0);
+        const yearTo = new Date(year, 11, 31, 23, 59, 59);
+        const annualPayload = buildSales72Payload(yearFrom, yearTo);
+
+        let response = await this.scale.send(72, payload, { timeoutMs: 30000 });
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
-        const responseData = String(response.data || '');
+        let responseData = String(response.data || '');
+        if (responseData.startsWith('E7')) {
+            // En algunos firmwares la consulta por día devuelve E7 aunque existan ventas.
+            // Fallback: rango anual y luego consulta sin parámetros.
+            this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
+                from: new Date(fromDate).toISOString(),
+                to: new Date(toDate).toISOString(),
+                payload,
+                annualPayload,
+                response: responseData,
+            });
+            response = await this.scale.send(72, annualPayload, { timeoutMs: 30000 });
+            if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback anual)');
+            responseData = String(response.data || '');
+
+            if (responseData.startsWith('E7')) {
+                this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parámetros', {
+                    annualPayload,
+                    response: responseData,
+                });
+                response = await this.scale.send(72, '', { timeoutMs: 30000 });
+                if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback vacio)');
+                responseData = String(response.data || '');
+            }
+        }
         if (responseData.startsWith('E7')) {
             this.logger.info('Funcion 72 sin datos', {
                 from: new Date(fromDate).toISOString(),
@@ -405,7 +435,25 @@ class ScaleBridge {
             throw new Error(`Error al leer ventas: ${responseData}`);
         }
 
-        const rows = parseSales72(response.data);
+        let rows = parseSales72(responseData);
+        if (rows.length === 0 && payload !== annualPayload) {
+            this.logger.info('Funcion 72 devolvio vacio en rango incremental, intentando fallback anual', {
+                payload,
+                annualPayload,
+            });
+            response = await this.scale.send(72, annualPayload, { timeoutMs: 30000 });
+            if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback anual-vacio)');
+            responseData = String(response.data || '');
+            if (responseData.startsWith('E7')) {
+                response = await this.scale.send(72, '', { timeoutMs: 30000 });
+                if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback vacio-vacio)');
+                responseData = String(response.data || '');
+            }
+            if (responseData.startsWith('E')) {
+                throw new Error(`Error al leer ventas en fallback: ${responseData}`);
+            }
+            rows = parseSales72(responseData);
+        }
         let inserted = 0;
         let latestSaleAt = null;
         let index = 0;
