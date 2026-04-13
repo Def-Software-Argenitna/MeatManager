@@ -38,10 +38,21 @@ const parsePaymentBreakdown = (value) => {
     return [];
 };
 
+const isDigitalPaymentLabel = (value) => {
+    const label = normalizePaymentMethodLabel(value).toLowerCase();
+    return (
+        label === 'mercado pago'
+        || label === 'cuenta dni'
+        || label === 'postnet'
+        || label.includes('transferencia')
+    );
+};
+
 const HistorialVentas = () => {
     const navigate = useNavigate();
     const [search, setSearch] = useState('');
     const [sales, setSales] = useState([]);
+    const [paymentFilterMode, setPaymentFilterMode] = useState('all');
 
     React.useEffect(() => {
         const loadSales = async () => {
@@ -64,14 +75,50 @@ const HistorialVentas = () => {
         loadSales().catch((error) => console.error('Error cargando historial de ventas:', error));
     }, []);
 
+    React.useEffect(() => {
+        const handleHiddenShortcuts = (e) => {
+            if (!(e.ctrlKey && e.shiftKey)) return;
+
+            const key = String(e.key || '').toLowerCase();
+            if (key === 'd') {
+                e.preventDefault();
+                setPaymentFilterMode('digital');
+            }
+            if (key === 't') {
+                e.preventDefault();
+                setPaymentFilterMode('all');
+            }
+        };
+
+        window.addEventListener('keydown', handleHiddenShortcuts);
+        return () => window.removeEventListener('keydown', handleHiddenShortcuts);
+    }, []);
+
     const filteredSales = useMemo(() => {
         const term = normalize(search);
-        if (!term) return sales;
-
         return sales.filter((sale) => {
+            const paymentBreakdown = parsePaymentBreakdown(sale.payment_breakdown);
+            const paymentRows = paymentBreakdown.length > 0
+                ? paymentBreakdown
+                    .map((part) => ({
+                        method: normalizePaymentMethodLabel(part.method_name || part.method_type),
+                        amount: Number(part.amount_charged ?? part.amount ?? 0) || 0,
+                    }))
+                    .filter((row) => row.amount > 0)
+                : [{
+                    method: normalizePaymentMethodLabel(sale.payment_method),
+                    amount: Number(sale.total) || 0,
+                }];
+
+            const matchesPaymentFilter = paymentFilterMode !== 'digital'
+                || (paymentRows.length > 0 && paymentRows.every((row) => isDigitalPaymentLabel(row.method)));
+
+            if (!matchesPaymentFilter) return false;
+            if (!term) return true;
+
             const receiptCode = sale.receipt_code || formatReceiptCode(1, sale.receipt_number || sale.id);
             const itemNames = (sale.items || []).map((item) => item.product_name).join(' ');
-            const paymentBreakdownText = parsePaymentBreakdown(sale.payment_breakdown)
+            const paymentBreakdownText = paymentBreakdown
                 .map((part) => `${part.method_name || part.method_type || ''} ${part.amount_charged || part.amount || ''}`)
                 .join(' ');
             return [
@@ -83,7 +130,7 @@ const HistorialVentas = () => {
                 itemNames,
             ].some((value) => normalize(value).includes(term));
         });
-    }, [sales, search]);
+    }, [paymentFilterMode, sales, search]);
 
     return (
         <div className="animate-fade-in">

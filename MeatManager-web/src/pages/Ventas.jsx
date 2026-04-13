@@ -107,6 +107,19 @@ const normalizePaymentMethods = (rows = []) => {
     });
 };
 
+const isDigitalPaymentMethod = (method) => {
+    const normalizedType = String(method?.type || '').trim().toLowerCase();
+    const normalizedName = String(method?.name || '').trim().toLowerCase();
+    if (normalizedType === 'card' || normalizedType === 'wallet' || normalizedType === 'transfer') return true;
+    return (
+        normalizedName.includes('mercado pago')
+        || normalizedName.includes('cuenta dni')
+        || normalizedName.includes('postnet')
+        || normalizedName.includes('posnet')
+        || normalizedName.includes('transferencia')
+    );
+};
+
 const Ventas = () => {
     const [cart, setCart] = useState([]);
     const [categoryFilter, setCategoryFilter] = useState('all');
@@ -136,6 +149,7 @@ const Ventas = () => {
     const [cashReceived, setCashReceived] = useState('');
     const [isSplitPayment, setIsSplitPayment] = useState(false);
     const [splitPayments, setSplitPayments] = useState([]);
+    const [paymentMethodsViewMode, setPaymentMethodsViewMode] = useState('all');
 
     // Scale State
     // Manual Weight Modal State
@@ -1503,6 +1517,7 @@ const Ventas = () => {
         setCashReceived('');
         setIsSplitPayment(false);
         setSplitPayments([]);
+        setPaymentMethodsViewMode('all');
     };
 
     const seedDefaultSplitPayments = (methods = dbPaymentMethods, preferredMethodId = selectedPaymentMethod) => {
@@ -1549,8 +1564,71 @@ const Ventas = () => {
         setIsSplitPayment(false);
         setSplitPayments([]);
         setCashReceived('');
+        setPaymentMethodsViewMode('all');
         setShowPaymentModal(true);
     };
+
+    const visiblePaymentMethods = React.useMemo(() => {
+        const baseMethods = Array.isArray(dbPaymentMethods) ? dbPaymentMethods : [];
+        if (paymentMethodsViewMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethod);
+    }, [dbPaymentMethods, paymentMethodsViewMode]);
+
+    const visibleSplitMethods = React.useMemo(() => {
+        const baseMethods = Array.isArray(availableSplitMethods) ? availableSplitMethods : [];
+        if (paymentMethodsViewMode !== 'digital') return baseMethods;
+        return baseMethods.filter(isDigitalPaymentMethod);
+    }, [availableSplitMethods, paymentMethodsViewMode]);
+
+    const applyPaymentMethodViewMode = React.useCallback((nextMode) => {
+        if (nextMode === 'digital') {
+            const digitalMethods = (dbPaymentMethods || []).filter(isDigitalPaymentMethod);
+            if (digitalMethods.length === 0) {
+                showToast('⚠️ No hay medios digitales habilitados para mostrar.', 'warning');
+                return;
+            }
+
+            setPaymentMethodsViewMode('digital');
+
+            if (isSplitPayment) {
+                setSplitPayments((prev) => prev.map((row) => {
+                    const rowMethod = getMethodById(row.methodId);
+                    if (rowMethod && isDigitalPaymentMethod(rowMethod)) return row;
+                    return { ...row, methodId: digitalMethods[0].id };
+                }));
+            } else if (!digitalMethods.some((method) => method.id === selectedPaymentMethod)) {
+                setSelectedPaymentMethod(digitalMethods[0].id);
+            }
+
+            setCashReceived('');
+            showToast('Mostrando solo medios digitales.', 'success');
+            return;
+        }
+
+        setPaymentMethodsViewMode('all');
+        showToast('Mostrando todos los medios de pago.', 'success');
+    }, [dbPaymentMethods, getMethodById, isSplitPayment, selectedPaymentMethod, showToast]);
+
+    React.useEffect(() => {
+        if (!showPaymentModal) return undefined;
+
+        const handlePaymentShortcuts = (e) => {
+            if (!(e.ctrlKey && e.shiftKey)) return;
+
+            const key = String(e.key || '').toLowerCase();
+            if (key === 'd') {
+                e.preventDefault();
+                applyPaymentMethodViewMode('digital');
+            }
+            if (key === 't') {
+                e.preventDefault();
+                applyPaymentMethodViewMode('all');
+            }
+        };
+
+        window.addEventListener('keydown', handlePaymentShortcuts);
+        return () => window.removeEventListener('keydown', handlePaymentShortcuts);
+    }, [applyPaymentMethodViewMode, showPaymentModal]);
 
     const handleCheckout = async (methodObj, splitSummary = null) => {
         if (processingRef.current) return; // bloqueo sincrónico
@@ -2431,7 +2509,7 @@ const Ventas = () => {
                                             const checked = e.target.checked;
                                             setIsSplitPayment(checked);
                                             setCashReceived('');
-                                            if (checked) seedDefaultSplitPayments(dbPaymentMethods, selectedPaymentMethod);
+                                            if (checked) seedDefaultSplitPayments(visibleSplitMethods, selectedPaymentMethod);
                                             else setSplitPayments([]);
                                         }}
                                     />
@@ -2441,7 +2519,7 @@ const Ventas = () => {
 
                             {!isSplitPayment ? (
                                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
-                                    {dbPaymentMethods?.map(m => (
+                                    {visiblePaymentMethods?.map(m => (
                                         <button
                                             key={m.id}
                                             onClick={() => {
@@ -2506,7 +2584,7 @@ const Ventas = () => {
                                                             }}
                                                             style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
                                                         >
-                                                            {availableSplitMethods?.map(m => (
+                                                            {visibleSplitMethods?.map(m => (
                                                                 <option
                                                                     key={m.id}
                                                                     value={m.id}
