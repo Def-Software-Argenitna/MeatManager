@@ -85,24 +85,15 @@ const ConfiguracionPromociones = () => {
     }, [products]);
 
     const categoryOptions = useMemo(() => {
-        if (Array.isArray(categories) && categories.length > 0) {
-            return categories.map((category) => ({
+        if (!Array.isArray(categories) || categories.length === 0) return [];
+        return categories
+            .map((category) => ({
                 id: Number(category.id),
                 name: String(category.name || category.code || `Categoria ${category.id}`),
-            }));
-        }
-
-        const derived = new Map();
-        (products || []).forEach((product) => {
-            if (product?.category_id == null) return;
-            const id = Number(product.category_id);
-            const name = String(product?.category || `Categoria ${id}`);
-            if (!derived.has(id)) {
-                derived.set(id, { id, name });
-            }
-        });
-        return [...derived.values()].sort((a, b) => a.name.localeCompare(b.name, 'es'));
-    }, [categories, products]);
+            }))
+            .filter((category) => Number.isFinite(category.id) && category.id > 0 && category.name.trim().length > 0)
+            .sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }, [categories]);
 
     const filteredProducts = useMemo(() => {
         const selectedCategoryId = form.category_id_filter ? Number(form.category_id_filter) : null;
