@@ -4658,6 +4658,14 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 // ── RUTA: GET /api/scale/tickets/by-barcode/:barcode ───────────────────────
 // Devuelve un ticket de balanza (cabecera + items) a partir del codigo de barras
 // generado por el bridge directo.
+async function ensureScaleTicketLifecycleColumns(conn) {
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'ticket_status', '`ticket_status` VARCHAR(16) NOT NULL DEFAULT \'open\' AFTER `item_count`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_sale_id', '`charged_sale_id` BIGINT NULL AFTER `ticket_status`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_sale_id', '`voided_sale_id` BIGINT NULL AFTER `charged_at`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
@@ -4666,39 +4674,79 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        await ensureScaleTicketLifecycleColumns(pool);
 
         let [ticketRows] = await pool.query(
-            `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count
+            `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
              FROM scale_bridge_ticket_map
-             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?) AND ticket_status = 'open'
              LIMIT 1`,
             [tenantId, barcode]
         );
 
-        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
-            const totalAmount = Number.parseInt(barcodeDigits.substring(6, 12), 10) / 100;
-            const [amountMatches] = await pool.query(
-                `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count
+        if (!ticketRows.length) {
+            const [anyStatusRows] = await pool.query(
+                `SELECT ticket_status
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ?
-                   AND ABS(total_amount - ?) < 0.01
-                   AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
-                 ORDER BY sale_at DESC
-                 LIMIT 3`,
-                [tenantId, totalAmount]
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, barcode]
             );
-            if (amountMatches.length === 1) {
-                ticketRows = [amountMatches[0]];
-            } else if (amountMatches.length > 1) {
+            if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
                 return res.status(409).json({
                     ok: false,
-                    error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
-                    candidates: amountMatches.map((row) => ({
-                        ticketId: row.ticket_id,
-                        saleAt: row.sale_at,
-                        total: Number(row.total_amount || 0),
-                    })),
+                    error: `Ese ticket ya fue ${String(anyStatusRows[0].ticket_status || '').toLowerCase()} y no debe reutilizarse`,
                 });
+            }
+        }
+
+        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+            const totalRaw = Number.parseInt(barcodeDigits.substring(6, 12), 10);
+            const totalCandidates = Array.from(new Set([
+                Number.isFinite(totalRaw) ? totalRaw : 0,
+                Number.isFinite(totalRaw) ? Number((totalRaw / 100).toFixed(2)) : 0,
+            ])).filter((value) => Number.isFinite(value) && value >= 0);
+            const deviceHint = Number.parseInt(barcodeDigits.substring(2, 4), 10);
+            const itemCountHint = Number.parseInt(barcodeDigits.substring(4, 6), 10);
+            const safeDeviceHint = Number.isFinite(deviceHint) ? deviceHint : null;
+            const safeItemCountHint = Number.isFinite(itemCountHint) ? itemCountHint : null;
+            for (const totalAmount of totalCandidates) {
+                const [amountMatches] = await pool.query(
+                    `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND ticket_status = 'open'
+                       AND ABS(total_amount - ?) < 0.01
+                       AND (? IS NULL OR scale_address = ?)
+                       AND (? IS NULL OR ? = 0 OR item_count = ?)
+                       AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
+                     ORDER BY sale_at DESC
+                     LIMIT 3`,
+                    [
+                        tenantId,
+                        totalAmount,
+                        safeDeviceHint,
+                        safeDeviceHint,
+                        safeItemCountHint,
+                        safeItemCountHint,
+                        safeItemCountHint,
+                    ]
+                );
+                if (amountMatches.length === 1) {
+                    ticketRows = [amountMatches[0]];
+                    break;
+                }
+                if (amountMatches.length > 1) {
+                    return res.status(409).json({
+                        ok: false,
+                        error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
+                        candidates: amountMatches.map((row) => ({
+                            ticketId: row.ticket_id,
+                            saleAt: row.sale_at,
+                            total: Number(row.total_amount || 0),
+                        })),
+                    });
+                }
             }
         }
 
@@ -5091,7 +5139,7 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
 //   payment_method, payment_method_id,
 //   payment_breakdown?,    // array para pago mixto
 //   clientId?,
-//   qendra_ticket_id?, source?,
+//   qendra_ticket_id?, ticket_barcode?, source?,
 //   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
 // }
 app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
@@ -5116,7 +5164,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             payment_method, payment_method_id,
             payment_breakdown,
             clientId,
-            qendra_ticket_id, source,
+            qendra_ticket_id, ticket_barcode, source,
             items,
         } = req.body;
 
@@ -5130,6 +5178,28 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const safeSubtotal = parseFloat(subtotal) || 0;
         const safeAdj = parseFloat(adjustment) || 0;
         const now = date ? new Date(date) : new Date();
+        const ticketBarcode = String(ticket_barcode || '').trim() || null;
+
+        await ensureScaleTicketLifecycleColumns(conn);
+        if (ticketBarcode) {
+            const [ticketRows] = await conn.query(
+                `SELECT ticket_status
+                 FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, ticketBarcode]
+            );
+            if (!ticketRows.length) {
+                await conn.rollback();
+                conn.release();
+                return res.status(404).json({ error: 'El ticket escaneado no existe o aun no se sincronizo' });
+            }
+            if (String(ticketRows[0].ticket_status || '').toLowerCase() !== 'open') {
+                await conn.rollback();
+                conn.release();
+                return res.status(409).json({ error: 'Ese ticket ya fue cobrado o anulado y no puede reutilizarse' });
+            }
+        }
 
         const resolvedBranchId = accessContext
             ? await resolveOperationalBranchId({
@@ -5144,20 +5214,31 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const [ventaResult] = await conn.query(
             `INSERT INTO ventas
              (tenant_id, branch_id, date, subtotal, adjustment, total,
-              receipt_number, receipt_code,
-              payment_method, payment_method_id, payment_breakdown,
-              clientId, qendra_ticket_id, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               receipt_number, receipt_code,
+               payment_method, payment_method_id, payment_breakdown,
+               clientId, qendra_ticket_id, ticket_barcode, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
                 clientId || null,
-                qendra_ticket_id || null, source || 'manual',
+                qendra_ticket_id || null, ticketBarcode, source || 'manual',
             ]
         );
         const saleId = ventaResult.insertId;
+
+        if (ticketBarcode) {
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'charged',
+                     charged_sale_id = ?,
+                     charged_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
+                [saleId, tenantId, ticketBarcode]
+            );
+        }
 
         // 2. INSERT ventas_items
         const promoUsageById = new Map();
@@ -5315,6 +5396,8 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(404).json({ error: 'Venta no encontrada' });
         }
 
+        await ensureScaleTicketLifecycleColumns(conn);
+
         // Cargar items
         const [items] = await conn.query(
             `SELECT * FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`,
@@ -5453,6 +5536,16 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
 
         // 5. Eliminar items y venta
         await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
+        if (venta.ticket_barcode) {
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'voided',
+                     voided_sale_id = ?,
+                     voided_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
+                [saleId, tenantId, String(venta.ticket_barcode)]
+            );
+        }
         await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
 
         await conn.commit();

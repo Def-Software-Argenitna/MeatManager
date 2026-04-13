@@ -439,6 +439,7 @@ const Ventas = () => {
     const [qendraVisorLoading, setQendraVisorLoading] = useState(false);
     const [qendraVisorCobrados, setQendraVisorCobrados] = useState([]);
     const [qendraActiveTicketId, setQendraActiveTicketId] = useState(null);
+    const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
 
     const handleOpenQendraVisor = async () => {
         setShowQendraVisor(true);
@@ -502,6 +503,7 @@ const Ventas = () => {
             });
         setCart(newCart);
         setQendraActiveTicketId(String(ticket.ID_TICKET));
+        setActiveScaleTicketBarcode(null);
         setShowQendraVisor(false);
         if (window.innerWidth < 1024) setShowCartMobile(true);
     };
@@ -937,6 +939,8 @@ const Ventas = () => {
 
             setTicketPreviewItems(previewItems);
             setShowTicketPreview(true);
+            setQendraActiveTicketId(null);
+            setActiveScaleTicketBarcode(String(payload?.ticket?.barcode || barcodeValue).trim() || null);
             const vendor = String(payload?.ticket?.vendorCode || '').trim();
             if (vendor) {
                 setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
@@ -1606,7 +1610,9 @@ const Ventas = () => {
                 payment_method_id: methodObj.id || null,
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
-                ...(qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {}),
+                ...(activeScaleTicketBarcode
+                    ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
+                    : (qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {})),
                 items: cart.map(i => {
                     const line = cartPricing.lineMap.get(i.id);
                     return ({
@@ -1639,6 +1645,7 @@ const Ventas = () => {
             console.log("Proceso de guardado completado.");
             playCashRegister();
             setQendraActiveTicketId(null); // limpiar ticket QENDRA activo
+            setActiveScaleTicketBarcode(null);
 
             // Guardar snapshot del carrito antes de resetear (para imprimir después)
             const cartSnapshot = [...cart];
@@ -2180,7 +2187,13 @@ const Ventas = () => {
                         >
                             ELIMINAR TICKET
                         </button>
-                        <button className="btn-danger" onClick={() => { if(window.confirm('¿Anular ticket?')) setCart([]); }}>ANULAR</button>
+                        <button className="btn-danger" onClick={() => {
+                            if (window.confirm('¿Anular ticket?')) {
+                                setCart([]);
+                                setQendraActiveTicketId(null);
+                                setActiveScaleTicketBarcode(null);
+                            }
+                        }}>ANULAR</button>
                     </div>
 
                     <button
@@ -3319,7 +3332,7 @@ const Ventas = () => {
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }} onClick={() => setShowTicketPreview(false)}>
+            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}>
                 <div style={{
                     background: 'var(--color-bg-card)',
                     borderRadius: 16, padding: '1.5rem',
@@ -3336,7 +3349,7 @@ const Ventas = () => {
                                 {ticketPreviewItems.length} item(s) detectados · Revisá el estado antes de agregar al carrito
                             </p>
                         </div>
-                        <button onClick={() => setShowTicketPreview(false)}
+                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
                             style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1 }}>✕</button>
                     </div>
 
@@ -3407,7 +3420,7 @@ const Ventas = () => {
                                 Parece que alguien olvidó importar el artículo desde la app de la balanza.
                             </span>
                             <button
-                                onClick={() => { setShowTicketPreview(false); navigate('/stock'); }}
+                                onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); navigate('/stock'); }}
                                 style={{
                                     flexShrink: 0,
                                     padding: '0.4rem 0.9rem',
@@ -3422,7 +3435,7 @@ const Ventas = () => {
                     {/* Botones de acción */}
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
                         <button
-                            onClick={() => setShowTicketPreview(false)}
+                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
                             style={{
                                 flex: 1, padding: '0.75rem',
                                 border: '1px solid var(--color-border)',
