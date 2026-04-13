@@ -23,6 +23,7 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const nodemailer = require('nodemailer');
 const { createClient } = require('redis');
+const { isAdminOnlySettingKey } = require('./config/security-policy');
 
 // ── Firebase Admin init ────────────────────────────────────────────────────
 const serviceAccountPath = path.join(__dirname, process.env.FIREBASE_SERVICE_ACCOUNT || 'firebase-service-account.json');
@@ -456,7 +457,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ]);
 
 const TENANT_ID_TABLES = [
@@ -464,7 +465,7 @@ const TENANT_ID_TABLES = [
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ];
 
 const DELIVERY_STATUS_MAP = {
@@ -588,6 +589,31 @@ function hasAdminPanelAccess(accessContext) {
     ));
 }
 
+function canWriteProtectedSettings(accessContext) {
+    if (!accessContext?.user) return false;
+    if (accessContext.user.isGlobalSuperAdmin) return true;
+    if (accessContext.user.role === 'admin') return true;
+    if (accessContext.user.isOwnerFallback) return true;
+    return false;
+}
+
+async function resolveTargetSettingKey({ pool, tenantId, operation, record, id }) {
+    const normalizedOperation = String(operation || '').trim().toLowerCase();
+    const directKey = String(record?.key || '').trim().toLowerCase();
+    if (directKey) return directKey;
+
+    if (!['update', 'delete'].includes(normalizedOperation)) return '';
+
+    const numId = Number(id);
+    if (!Number.isFinite(numId) || numId <= 0) return '';
+
+    const [rows] = await pool.query(
+        'SELECT `key` FROM settings WHERE tenant_id = ? AND id = ? LIMIT 1',
+        [tenantId, numId]
+    );
+    return String(rows?.[0]?.key || '').trim().toLowerCase();
+}
+
 function hasLogisticsAccess(accessContext) {
     if (!accessContext?.user) return false;
     if (accessContext.user.isGlobalSuperAdmin) return true;
@@ -699,9 +725,9 @@ const TABLES_WITH_NUMERIC_ID = [
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ];
-const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock']);
+const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock', 'promotions']);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -1622,6 +1648,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_id', '`payment_method_id` INT NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'cash_account', '`cash_account` VARCHAR(30) NOT NULL DEFAULT \'principal\' AFTER `payment_method_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'transfer_group_id', '`transfer_group_id` VARCHAR(64) NULL AFTER `cash_account`');
             await ensureColumn(conn, 'caja_movimientos', 'client_id', '`client_id` INT NULL AFTER `date`');
             await ensureColumn(conn, 'caja_movimientos', 'supplier', '`supplier` VARCHAR(150) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
@@ -1652,6 +1680,16 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'ventas', 'subtotal', '`subtotal` DECIMAL(12,2) NULL AFTER `total`');
             await ensureColumn(conn, 'ventas', 'adjustment', '`adjustment` DECIMAL(12,2) NULL DEFAULT 0 AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
+            await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
+            await ensureColumn(conn, 'promotions', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
+            await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
+            await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
+            await ensureColumn(conn, 'promotions', 'sold_kg_limit', '`sold_kg_limit` DECIMAL(12,3) NULL AFTER `end_condition`');
+            await ensureColumn(conn, 'promotions', 'end_date', '`end_date` DATETIME NULL AFTER `sold_kg_limit`');
+            await ensureColumn(conn, 'promotions', 'used_kg', '`used_kg` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `end_date`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
@@ -3046,10 +3084,14 @@ function getSchemaTables() {
             quantity        DECIMAL(12,3),
             price           DECIMAL(12,2),
             subtotal        DECIMAL(12,2),
+            promo_id        INT NULL,
+            promo_kg_applied DECIMAL(12,3) NULL,
+            promo_payload   JSON NULL,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_ventas_items_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_ventas_items_tenant (\`${TENANT_COLUMN}\`),
             INDEX idx_ventas_items_tenant_venta (\`${TENANT_COLUMN}\`, venta_id),
+            INDEX idx_ventas_items_tenant_promo (\`${TENANT_COLUMN}\`, promo_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, venta_id) REFERENCES ventas(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS compras (
@@ -3178,6 +3220,30 @@ function getSchemaTables() {
             UNIQUE KEY uniq_menu_digital_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS promotions (
+            id                  INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id           INT NULL,
+            product_id          INT NULL,
+            product_name        VARCHAR(150) NOT NULL,
+            min_qty_kg          DECIMAL(12,3) NOT NULL,
+            promo_total_price   DECIMAL(12,2) NOT NULL,
+            stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
+            stock_cap_kg_limit  DECIMAL(12,3) NULL,
+            end_condition       VARCHAR(20) NOT NULL DEFAULT 'none',
+            sold_kg_limit       DECIMAL(12,3) NULL,
+            end_date            DATETIME NULL,
+            used_kg             DECIMAL(12,3) NOT NULL DEFAULT 0,
+            active              TINYINT(1) NOT NULL DEFAULT 1,
+            notes               VARCHAR(255),
+            created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_promotions_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_promotions_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_promotions_branch (\`${TENANT_COLUMN}\`, branch_id),
+            INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
+            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name)
+        )`,
         `CREATE TABLE IF NOT EXISTS branch_transfers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -3231,6 +3297,8 @@ function getSchemaTables() {
             branch_id       INT,
             payment_method  VARCHAR(100),
             payment_method_id INT,
+            cash_account    VARCHAR(30) NOT NULL DEFAULT 'principal',
+            transfer_group_id VARCHAR(64) NULL,
             authorization_id BIGINT,
             authorization_verified TINYINT(1) DEFAULT 0,
             authorized_recipient_email VARCHAR(150),
@@ -3238,7 +3306,9 @@ function getSchemaTables() {
             receipt_code    VARCHAR(32),
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_caja_movimientos_cash_account (\`${TENANT_COLUMN}\`, cash_account),
+            INDEX idx_caja_movimientos_transfer (\`${TENANT_COLUMN}\`, transfer_group_id)
         )`,
         `CREATE TABLE IF NOT EXISTS delivery_tracking_events (
             id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -3995,12 +4065,12 @@ const ALLOWED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'promotions',
 ]);
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
 const AUTO_COLS = new Set(['created_at', 'updated_at']);
-const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot']);
+const JSONISH_FIELDS = new Set(['items', 'payment_breakdown', 'sale_snapshot', 'items_snapshot', 'snapshot', 'promo_payload']);
 
 function deserializeRow(row) {
     const out = {};
@@ -4171,6 +4241,172 @@ function extractBranchCodeFromReceipt(receiptCode) {
     return match ? normalizeBranchCodeValue(match[1]) : null;
 }
 
+function normalizeWhatsAppPhone(rawValue) {
+    const digits = String(rawValue || '').replace(/\D/g, '');
+    if (!digits) return null;
+    const normalized = digits.startsWith('00') ? digits.slice(2) : digits;
+    if (normalized.length < 10 || normalized.length > 15) return null;
+    return normalized;
+}
+
+function formatPromoBroadcastMessage({ businessName, promo }) {
+    const safeBusiness = String(businessName || '').trim();
+    const safeProduct = String(promo?.product_name || 'Producto').trim();
+    const minKg = Number(promo?.min_qty_kg || 0).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    const total = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const header = safeBusiness ? `🥩 *${safeBusiness}*` : '🥩 *Nueva promo*';
+    return [
+        header,
+        '',
+        '🔥 *PROMOCIÓN NUEVA*',
+        `${safeProduct}: llevando *${minKg} kg* pagás *$${total}*`,
+        '',
+        'Te esperamos en el local.',
+    ].join('\n');
+}
+
+async function getTenantSettingValue(pool, tenantId, key) {
+    const [rows] = await pool.query(
+        'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+        [tenantId, key]
+    );
+    return rows?.[0]?.value ?? null;
+}
+
+async function getActivePromotions(pool, tenantId, limit = 25) {
+    const [rows] = await pool.query(
+        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, active
+         FROM promotions
+         WHERE \`${TENANT_COLUMN}\` = ? AND active = 1
+         ORDER BY id DESC
+         LIMIT ?`,
+        [tenantId, Number(limit) || 25]
+    );
+    return Array.isArray(rows) ? rows : [];
+}
+
+async function resolveWhatsAppCloudConfig(pool, tenantId) {
+    const [tokenSetting, phoneIdSetting, versionSetting] = await Promise.all([
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_api_token').catch(() => null),
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_phone_number_id').catch(() => null),
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_api_version').catch(() => null),
+    ]);
+
+    return {
+        token: String(tokenSetting || process.env.WHATSAPP_CLOUD_API_TOKEN || '').trim(),
+        phoneNumberId: String(phoneIdSetting || process.env.WHATSAPP_CLOUD_PHONE_NUMBER_ID || '').trim(),
+        apiVersion: String(versionSetting || process.env.WHATSAPP_CLOUD_API_VERSION || 'v21.0').trim(),
+    };
+}
+
+async function sendWhatsAppCloudTextMessage({ to, body, cloudConfig }) {
+    const token = String(cloudConfig?.token || '').trim();
+    const phoneNumberId = String(cloudConfig?.phoneNumberId || '').trim();
+    const apiVersion = String(cloudConfig?.apiVersion || 'v21.0').trim();
+
+    if (!token || !phoneNumberId) {
+        throw new Error('WhatsApp Cloud API no configurada (faltan WHATSAPP_CLOUD_API_TOKEN / WHATSAPP_CLOUD_PHONE_NUMBER_ID)');
+    }
+
+    const response = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to,
+            type: 'text',
+            text: { body },
+        }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const providerError = payload?.error?.message || payload?.error?.error_user_msg || response.statusText || 'Unknown provider error';
+        throw new Error(providerError);
+    }
+    return payload;
+}
+
+async function enqueuePromotionBroadcast({ pool, tenantId, promo }) {
+    try {
+        const autoBroadcastSetting = await getTenantSettingValue(pool, tenantId, 'whatsapp_auto_broadcast_promotions');
+        const autoBroadcastEnabled = autoBroadcastSetting == null
+            ? true
+            : ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(String(autoBroadcastSetting).trim().toLowerCase());
+
+        if (!autoBroadcastEnabled) {
+            return { queued: 0, enabled: false, reason: 'disabled_by_setting' };
+        }
+
+        const cloudConfig = await resolveWhatsAppCloudConfig(pool, tenantId);
+        const token = String(cloudConfig.token || '').trim();
+        const phoneNumberId = String(cloudConfig.phoneNumberId || '').trim();
+        if (!token || !phoneNumberId) {
+            return { queued: 0, enabled: false, reason: 'provider_not_configured' };
+        }
+
+        const [clientRows] = await pool.query(
+            `SELECT id, name, phone, phone1, phone2, phones
+             FROM clients
+             WHERE \`${TENANT_COLUMN}\` = ?`,
+            [tenantId]
+        );
+
+        const uniquePhones = new Set();
+        for (const row of clientRows || []) {
+            const candidates = [];
+            candidates.push(row?.phone);
+            candidates.push(row?.phone1);
+            candidates.push(row?.phone2);
+            const phonesBlob = String(row?.phones || '');
+            if (phonesBlob) {
+                phonesBlob.split(/[\n,;]+/).forEach((value) => candidates.push(value));
+            }
+            candidates
+                .map(normalizeWhatsAppPhone)
+                .filter(Boolean)
+                .forEach((phone) => uniquePhones.add(phone));
+        }
+
+        const recipients = [...uniquePhones];
+        if (recipients.length === 0) {
+            return { queued: 0, enabled: true, reason: 'no_recipients' };
+        }
+
+        const businessName =
+            await getTenantSettingValue(pool, tenantId, 'business_name')
+            || await getTenantSettingValue(pool, tenantId, 'store_name')
+            || await getTenantSettingValue(pool, tenantId, 'store_display_name')
+            || await getTenantSettingValue(pool, tenantId, 'local_name')
+            || '';
+
+        const message = formatPromoBroadcastMessage({ businessName, promo });
+
+        setImmediate(async () => {
+            let sent = 0;
+            let failed = 0;
+            for (const phone of recipients) {
+                try {
+                    await sendWhatsAppCloudTextMessage({ to: phone, body: message, cloudConfig });
+                    sent += 1;
+                } catch (error) {
+                    failed += 1;
+                    console.warn(`[PROMO WHATSAPP] Error enviando a ${phone}: ${error?.message || error}`);
+                }
+            }
+            console.log(`[PROMO WHATSAPP] tenant=${tenantId} promo=${promo?.id || '-'} sent=${sent} failed=${failed}`);
+        });
+
+        return { queued: recipients.length, enabled: true };
+    } catch (error) {
+        console.warn(`[PROMO WHATSAPP] No se pudo encolar difusión: ${error?.message || error}`);
+        return { queued: 0, enabled: false, reason: 'internal_error' };
+    }
+}
+
 // ── RUTA: POST /api/data ───────────────────────────────────────────────────
 // Recibe { table, operation, record, id } y replica la operación en MySQL
 // operations: insert | update | delete | upsert
@@ -4201,6 +4437,25 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         const normalizedRecord = table === 'products'
             ? await resolveProductRecordCategory(pool, tenantId, record)
             : record;
+        const normalizedOperation = String(operation || '').trim().toLowerCase();
+        if (table === 'settings' && ['insert', 'upsert', 'update', 'delete'].includes(normalizedOperation)) {
+            const targetSettingKey = await resolveTargetSettingKey({
+                pool,
+                tenantId,
+                operation: normalizedOperation,
+                record: normalizedRecord || record || {},
+                id,
+            });
+
+            if (targetSettingKey && isAdminOnlySettingKey(targetSettingKey) && !canWriteProtectedSettings(accessContext)) {
+                return res.status(403).json({ error: 'Solo un administrador puede modificar esta configuración' });
+            }
+        }
+        if (table === 'promotions' && ['insert', 'upsert', 'update', 'delete'].includes(normalizedOperation)) {
+            if (!canWriteProtectedSettings(accessContext)) {
+                return res.status(403).json({ error: 'Solo un administrador puede modificar promociones' });
+            }
+        }
 
         // Helper: filtra el objeto para que solo tenga columnas válidas en MySQL
         const filterRecord = async (rec, excludeId = false) => {
@@ -4238,6 +4493,19 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
+                if (table === 'promotions') {
+                    const promoToBroadcast = {
+                        id: result.insertId,
+                        product_name: filtered.product_name || null,
+                        min_qty_kg: filtered.min_qty_kg || 0,
+                        promo_total_price: filtered.promo_total_price || 0,
+                        active: Number(filtered.active ?? 1) === 1,
+                    };
+                    if (promoToBroadcast.active) {
+                        const broadcast = await enqueuePromotionBroadcast({ pool, tenantId, promo: promoToBroadcast });
+                        return res.json({ ok: true, insertId: result.insertId, broadcast });
+                    }
+                }
                 return res.json({ ok: true, insertId: result.insertId });
             } catch (insertError) {
                 if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
@@ -4352,6 +4620,119 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.get('/api/whatsapp/status', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede ver esta configuración' });
+        }
+
+        const [mode, inviteLink, autoBroadcast, activePromotions, businessName] = await Promise.all([
+            getTenantSettingValue(pool, tenantId, 'whatsapp_marketing_mode'),
+            getTenantSettingValue(pool, tenantId, 'whatsapp_group_invite_link'),
+            getTenantSettingValue(pool, tenantId, 'whatsapp_auto_broadcast_promotions'),
+            getActivePromotions(pool, tenantId, 25).catch(() => []),
+            (async () => (
+                await getTenantSettingValue(pool, tenantId, 'business_name')
+                || await getTenantSettingValue(pool, tenantId, 'store_name')
+                || await getTenantSettingValue(pool, tenantId, 'store_display_name')
+                || await getTenantSettingValue(pool, tenantId, 'local_name')
+                || ''
+            ))(),
+        ]);
+        const cloudConfig = await resolveWhatsAppCloudConfig(pool, tenantId);
+        const normalizedActivePromotions = (Array.isArray(activePromotions) ? activePromotions : []).map((promotion) => ({
+            id: Number(promotion?.id || 0),
+            productName: String(promotion?.product_name || '').trim(),
+            message: formatPromoBroadcastMessage({ businessName, promo: promotion }),
+        })).filter((promotion) => promotion.id > 0 && promotion.message);
+        const latestPromotion = normalizedActivePromotions[0] || null;
+
+        const autoBroadcastEnabled = autoBroadcast == null
+            ? true
+            : ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(String(autoBroadcast).trim().toLowerCase());
+
+        return res.json({
+            ok: true,
+            mode: String(mode || 'free').trim().toLowerCase() === 'paid' ? 'paid' : 'free',
+            inviteLink: String(inviteLink || '').trim(),
+            autoBroadcastPromotions: autoBroadcastEnabled,
+            promoPreview: latestPromotion?.message || '',
+            promoPreviewMeta: latestPromotion
+                ? {
+                    id: Number(latestPromotion.id || 0),
+                    productName: String(latestPromotion.productName || '').trim(),
+                }
+                : null,
+            activePromotions: normalizedActivePromotions,
+            cloud: {
+                configured: Boolean(cloudConfig.token && cloudConfig.phoneNumberId),
+                hasToken: Boolean(cloudConfig.token),
+                phoneNumberId: cloudConfig.phoneNumberId || '',
+                apiVersion: cloudConfig.apiVersion || 'v21.0',
+            },
+        });
+    } catch (err) {
+        console.error('[WHATSAPP STATUS ERROR]', err.message);
+        res.status(500).json({ error: 'No se pudo leer el estado de WhatsApp: ' + err.message });
+    }
+});
+
+app.post('/api/whatsapp/config', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede modificar esta configuración' });
+        }
+
+        const modeRaw = String(req.body?.mode || 'free').trim().toLowerCase();
+        const mode = modeRaw === 'paid' ? 'paid' : 'free';
+        const inviteLink = String(req.body?.inviteLink || '').trim();
+        const autoBroadcastPromotions = Boolean(req.body?.autoBroadcastPromotions);
+        const phoneNumberId = String(req.body?.phoneNumberId || '').trim();
+        const apiVersion = String(req.body?.apiVersion || 'v21.0').trim();
+        const token = String(req.body?.token || '').trim();
+        const updateToken = Boolean(req.body?.updateToken);
+
+        const settingPairs = [
+            ['whatsapp_marketing_mode', mode],
+            ['whatsapp_group_invite_link', inviteLink],
+            ['whatsapp_auto_broadcast_promotions', autoBroadcastPromotions ? '1' : '0'],
+            ['whatsapp_cloud_phone_number_id', phoneNumberId],
+            ['whatsapp_cloud_api_version', apiVersion],
+        ];
+        if (updateToken) {
+            settingPairs.push(['whatsapp_cloud_api_token', token]);
+        }
+
+        for (const [key, value] of settingPairs) {
+            await pool.query(
+                'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+                [tenantId, key, String(value ?? '')]
+            );
+        }
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('[WHATSAPP CONFIG ERROR]', err.message);
+        res.status(500).json({ error: 'No se pudo guardar la configuración de WhatsApp: ' + err.message });
+    }
+});
+
 // ── RUTA: GET /api/bootstrap ───────────────────────────────────────────────
 // Devuelve un set inicial de tablas para hidratar el frontend local.
 app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
@@ -4363,7 +4744,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'promotions', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -4569,6 +4950,222 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: GET /api/scale/tickets/by-barcode/:barcode ───────────────────────
+// Devuelve un ticket de balanza (cabecera + items) a partir del codigo de barras
+// generado por el bridge directo.
+async function ensureScaleTicketLifecycleColumns(conn) {
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'ticket_status', '`ticket_status` VARCHAR(16) NOT NULL DEFAULT \'open\' AFTER `item_count`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_sale_id', '`charged_sale_id` BIGINT NULL AFTER `ticket_status`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_sale_id', '`voided_sale_id` BIGINT NULL AFTER `charged_at`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
+}
+
+app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
+    try {
+        const barcode = String(req.params.barcode || '').trim();
+        if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
+        const barcodeDigits = barcode.replace(/\D/g, '');
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        await ensureScaleTicketLifecycleColumns(pool);
+
+        let [ticketRows] = await pool.query(
+            `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+             FROM scale_bridge_ticket_map
+             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?) AND ticket_status = 'open'
+             LIMIT 1`,
+            [tenantId, barcode]
+        );
+
+        if (!ticketRows.length) {
+            const [anyStatusRows] = await pool.query(
+                `SELECT ticket_status
+                 FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, barcode]
+            );
+            if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
+                return res.status(409).json({
+                    ok: false,
+                    error: `Ese ticket ya fue ${String(anyStatusRows[0].ticket_status || '').toLowerCase()} y no debe reutilizarse`,
+                });
+            }
+        }
+
+        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+            const totalRaw = Number.parseInt(barcodeDigits.substring(6, 12), 10);
+            const totalCandidates = Array.from(new Set([
+                Number.isFinite(totalRaw) ? totalRaw : 0,
+                Number.isFinite(totalRaw) ? Number((totalRaw / 100).toFixed(2)) : 0,
+            ])).filter((value) => Number.isFinite(value) && value >= 0);
+            const deviceHint = Number.parseInt(barcodeDigits.substring(2, 4), 10);
+            const itemCountHint = Number.parseInt(barcodeDigits.substring(4, 6), 10);
+            const safeDeviceHint = Number.isFinite(deviceHint) ? deviceHint : null;
+            const safeItemCountHint = Number.isFinite(itemCountHint) ? itemCountHint : null;
+            for (const totalAmount of totalCandidates) {
+                const [amountMatches] = await pool.query(
+                    `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, scale_address, ticket_status
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND ticket_status = 'open'
+                       AND ABS(total_amount - ?) < 0.01
+                       AND (? IS NULL OR scale_address = ?)
+                       AND (? IS NULL OR ? = 0 OR item_count = ?)
+                       AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
+                     ORDER BY sale_at DESC
+                     LIMIT 3`,
+                    [
+                        tenantId,
+                        totalAmount,
+                        safeDeviceHint,
+                        safeDeviceHint,
+                        safeItemCountHint,
+                        safeItemCountHint,
+                        safeItemCountHint,
+                    ]
+                );
+                if (amountMatches.length === 1) {
+                    ticketRows = [amountMatches[0]];
+                    break;
+                }
+                if (amountMatches.length > 1) {
+                    return res.status(409).json({
+                        ok: false,
+                        error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
+                        candidates: amountMatches.map((row) => ({
+                            ticketId: row.ticket_id,
+                            saleAt: row.sale_at,
+                            total: Number(row.total_amount || 0),
+                        })),
+                    });
+                }
+            }
+        }
+
+        if (!ticketRows.length) {
+            const [ventaRows] = await pool.query(
+                `SELECT id, date, total, qendra_ticket_id, ticket_barcode
+                 FROM ventas
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, barcode]
+            );
+            if (ventaRows.length) {
+                const venta = ventaRows[0];
+                const [itemsVenta] = await pool.query(
+                    `SELECT vi.product_id, vi.product_name, vi.quantity, vi.price, vi.subtotal,
+                            p.plu AS product_plu, p.category AS product_category, p.unit AS product_unit
+                     FROM ventas_items vi
+                     LEFT JOIN products p
+                       ON p.tenant_id = vi.tenant_id
+                      AND p.id = vi.product_id
+                     WHERE vi.tenant_id = ? AND vi.venta_id = ?
+                     ORDER BY vi.id ASC`,
+                    [tenantId, venta.id]
+                );
+                return res.json({
+                    ok: true,
+                    ticket: {
+                        deviceId: null,
+                        ticketId: venta.qendra_ticket_id || String(venta.id),
+                        barcode: venta.ticket_barcode,
+                        vendorCode: null,
+                        saleAt: venta.date,
+                        total: Number(venta.total || 0),
+                        itemCount: itemsVenta.length,
+                    },
+                    items: itemsVenta.map((row, idx) => ({
+                        lineNo: idx + 1,
+                        plu: row.product_plu ? String(row.product_plu) : '',
+                        quantity: Number(row.quantity || 0),
+                        unit: String(row.product_unit || '').trim() || 'un',
+                        amount: Number(row.subtotal || 0),
+                        vendorCode: null,
+                        product: {
+                            id: row.product_id ? Number(row.product_id) : null,
+                            name: row.product_name || null,
+                            category: row.product_category || null,
+                            unit: row.product_unit || null,
+                            price: row.price != null ? Number(row.price) : null,
+                            plu: row.product_plu ? String(row.product_plu) : null,
+                        },
+                    })),
+                });
+            }
+        }
+
+        if (!ticketRows.length) {
+            return res.status(404).json({ ok: false, error: 'Ticket no encontrado para ese barcode' });
+        }
+
+        const ticket = ticketRows[0];
+        const [itemRows] = await pool.query(
+            `SELECT s.line_no, s.sale_at, s.vendor_code, s.plu_code, s.units, s.grams, s.amount,
+                    p.id AS product_id, p.name AS product_name, p.category AS product_category, p.unit AS product_unit, p.current_price AS product_price, p.plu AS product_plu
+             FROM scale_bridge_sales_item s
+             LEFT JOIN products p
+               ON p.tenant_id = s.tenant_id
+              AND (
+                   CAST(p.plu AS CHAR) = s.plu_code
+                   OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM s.plu_code)
+              )
+             WHERE s.tenant_id = ?
+               AND s.device_id = ?
+               AND s.ticket_id = ?
+             ORDER BY s.line_no ASC`,
+            [tenantId, ticket.device_id, ticket.ticket_id]
+        );
+
+        const items = itemRows.map((row) => {
+            const grams = Number(row.grams || 0);
+            const units = Number(row.units || 0);
+            const qty = grams > 0 ? Number((grams / 1000).toFixed(3)) : units;
+            return {
+                lineNo: Number(row.line_no || 0),
+                plu: String(row.plu_code || '').trim(),
+                quantity: qty,
+                unit: grams > 0 ? 'kg' : 'un',
+                amount: Number(row.amount || 0),
+                vendorCode: String(row.vendor_code || ticket.vendor_code || '').trim() || null,
+                product: {
+                    id: row.product_id ? Number(row.product_id) : null,
+                    name: row.product_name || null,
+                    category: row.product_category || null,
+                    unit: row.product_unit || null,
+                    price: row.product_price != null ? Number(row.product_price) : null,
+                    plu: row.product_plu != null ? String(row.product_plu) : null,
+                },
+            };
+        });
+
+        return res.json({
+            ok: true,
+            ticket: {
+                deviceId: ticket.device_id,
+                ticketId: ticket.ticket_id,
+                barcode: ticket.ticket_barcode,
+                vendorCode: ticket.vendor_code || null,
+                saleAt: ticket.sale_at,
+                total: Number(ticket.total_amount || 0),
+                itemCount: Number(ticket.item_count || items.length),
+            },
+            items,
+        });
+    } catch (err) {
+        if (String(err?.message || '').includes('scale_bridge_ticket_map')) {
+            return res.status(404).json({
+                ok: false,
+                error: 'Todavia no existe la tabla de tickets del bridge. Ejecuta una sincronizacion del bridge directo.',
+            });
+        }
+        console.error('[GET /api/scale/tickets/by-barcode ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: POST /api/compras ────────────────────────────────────────────────
 // Registra una compra de forma ATÓMICA: compras + compras_items + stock
 // + animal_lots (despostada) + caja_movimientos — en una sola transacción MySQL.
@@ -4721,8 +5318,8 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             const desc = `${String(supplier || '').trim()}${invoice_num ? ` · Comprobante ${invoice_num}` : ''}`;
             await conn.query(
                 `INSERT INTO caja_movimientos
-                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, purchase_id)
-                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, ?, ?)`,
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id)
+                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?)`,
                 [
                     tenantId, parseFloat(cash_amount) || 0, desc,
                     payment_method || 'Efectivo',
@@ -4837,7 +5434,7 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
 //   payment_method, payment_method_id,
 //   payment_breakdown?,    // array para pago mixto
 //   clientId?,
-//   qendra_ticket_id?, source?,
+//   qendra_ticket_id?, ticket_barcode?, source?,
 //   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
 // }
 app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
@@ -4862,7 +5459,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             payment_method, payment_method_id,
             payment_breakdown,
             clientId,
-            qendra_ticket_id, source,
+            qendra_ticket_id, ticket_barcode, source,
             items,
         } = req.body;
 
@@ -4876,6 +5473,28 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const safeSubtotal = parseFloat(subtotal) || 0;
         const safeAdj = parseFloat(adjustment) || 0;
         const now = date ? new Date(date) : new Date();
+        const ticketBarcode = String(ticket_barcode || '').trim() || null;
+
+        await ensureScaleTicketLifecycleColumns(conn);
+        if (ticketBarcode) {
+            const [ticketRows] = await conn.query(
+                `SELECT ticket_status
+                 FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, ticketBarcode]
+            );
+            if (!ticketRows.length) {
+                await conn.rollback();
+                conn.release();
+                return res.status(404).json({ error: 'El ticket escaneado no existe o aun no se sincronizo' });
+            }
+            if (String(ticketRows[0].ticket_status || '').toLowerCase() !== 'open') {
+                await conn.rollback();
+                conn.release();
+                return res.status(409).json({ error: 'Ese ticket ya fue cobrado o anulado y no puede reutilizarse' });
+            }
+        }
 
         const resolvedBranchId = accessContext
             ? await resolveOperationalBranchId({
@@ -4890,28 +5509,47 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const [ventaResult] = await conn.query(
             `INSERT INTO ventas
              (tenant_id, branch_id, date, subtotal, adjustment, total,
-              receipt_number, receipt_code,
-              payment_method, payment_method_id, payment_breakdown,
-              clientId, qendra_ticket_id, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               receipt_number, receipt_code,
+               payment_method, payment_method_id, payment_breakdown,
+               clientId, qendra_ticket_id, ticket_barcode, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
                 clientId || null,
-                qendra_ticket_id || null, source || 'manual',
+                qendra_ticket_id || null, ticketBarcode, source || 'manual',
             ]
         );
         const saleId = ventaResult.insertId;
 
+        if (ticketBarcode) {
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'charged',
+                     charged_sale_id = ?,
+                     charged_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
+                [saleId, tenantId, ticketBarcode]
+            );
+        }
+
         // 2. INSERT ventas_items
+        const promoUsageById = new Map();
         for (const item of items) {
             const itemSubtotal = parseFloat(item.subtotal) || (parseFloat(item.price) * parseFloat(item.quantity));
+            const promoId = item?.promo_payload?.id != null
+                ? Number(item.promo_payload.id)
+                : (item?.promo_id != null ? Number(item.promo_id) : null);
+            const promoKgApplied = item?.promo_payload?.covered_qty != null
+                ? parseFloat(item.promo_payload.covered_qty)
+                : parseFloat(item?.promo_kg_applied);
+
             await conn.query(
                 `INSERT INTO ventas_items
-                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal, promo_id, promo_kg_applied, promo_payload)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId, saleId,
                     item.product_id || null,
@@ -4919,7 +5557,24 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                     parseFloat(item.quantity) || 0,
                     parseFloat(item.price) || 0,
                     itemSubtotal,
+                    Number.isFinite(promoId) && promoId > 0 ? promoId : null,
+                    Number.isFinite(promoKgApplied) && promoKgApplied > 0 ? promoKgApplied : null,
+                    item?.promo_payload ? JSON.stringify(item.promo_payload) : null,
                 ]
+            );
+
+            if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKgApplied) && promoKgApplied > 0) {
+                promoUsageById.set(promoId, (promoUsageById.get(promoId) || 0) + promoKgApplied);
+            }
+        }
+
+        // 2.1 Acumular uso de promociones (kg vendidos con promo)
+        for (const [promoId, usedKg] of promoUsageById.entries()) {
+            await conn.query(
+                `UPDATE promotions
+                 SET used_kg = used_kg + ?
+                 WHERE tenant_id = ? AND id = ?`,
+                [usedKg, tenantId, promoId]
             );
         }
 
@@ -4979,8 +5634,8 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             for (const part of salePaymentParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
@@ -5036,11 +5691,31 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(404).json({ error: 'Venta no encontrada' });
         }
 
+        await ensureScaleTicketLifecycleColumns(conn);
+
         // Cargar items
         const [items] = await conn.query(
             `SELECT * FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`,
             [tenantId, saleId]
         );
+
+        // 0. Revertir el consumo de promociones aplicado por esta venta
+        const promoUsageToRevert = new Map();
+        for (const item of items) {
+            const promoId = item?.promo_id != null ? Number(item.promo_id) : null;
+            const promoKg = item?.promo_kg_applied != null ? parseFloat(item.promo_kg_applied) : 0;
+            if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKg) && promoKg > 0) {
+                promoUsageToRevert.set(promoId, (promoUsageToRevert.get(promoId) || 0) + promoKg);
+            }
+        }
+        for (const [promoId, usedKg] of promoUsageToRevert.entries()) {
+            await conn.query(
+                `UPDATE promotions
+                 SET used_kg = GREATEST(used_kg - ?, 0)
+                 WHERE tenant_id = ? AND id = ?`,
+                [usedKg, tenantId, promoId]
+            );
+        }
 
         // 1. Restaurar stock (movimiento positivo por cada item)
         for (const item of items) {
@@ -5111,8 +5786,8 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             for (const part of reversalParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
@@ -5156,6 +5831,16 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
 
         // 5. Eliminar items y venta
         await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
+        if (venta.ticket_barcode) {
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'voided',
+                     voided_sale_id = ?,
+                     voided_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
+                [saleId, tenantId, String(venta.ticket_barcode)]
+            );
+        }
         await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
 
         await conn.commit();

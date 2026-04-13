@@ -7,9 +7,10 @@ import { useUser } from '../context/UserContext';
 import { scaleService } from '../utils/SerialScaleService';
 import { formatPrice } from '../utils/priceFormat';
 import { desktopApi } from '../utils/desktopApi';
-import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import './Ventas.css';
 
@@ -199,6 +200,7 @@ const Ventas = () => {
     const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
+    const [promotions, setPromotions] = useState([]);
     const [clients, setClients] = useState([]);
     const [dbPaymentMethods, setDbPaymentMethods] = useState([]);
     const [shopInfo, setShopInfo] = useState({ name: 'Nuestra Carnicería', address: '', phone: '' });
@@ -231,6 +233,7 @@ const Ventas = () => {
             pricesRows,
             clientRows,
             paymentRows,
+            promotionRows,
             salesRows,
             salesItemsRows,
             movementsRows,
@@ -240,6 +243,7 @@ const Ventas = () => {
             fetchTable('prices'),
             fetchTable('clients'),
             fetchTable('payment_methods'),
+            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
             fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
             fetchTable('ventas_items'),
             fetchTable('caja_movimientos'),
@@ -265,6 +269,7 @@ const Ventas = () => {
         setStockItems(filteredStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setClients(Array.isArray(clientRows) ? clientRows : []);
+        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
         const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
         setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
 
@@ -434,6 +439,7 @@ const Ventas = () => {
     const [qendraVisorLoading, setQendraVisorLoading] = useState(false);
     const [qendraVisorCobrados, setQendraVisorCobrados] = useState([]);
     const [qendraActiveTicketId, setQendraActiveTicketId] = useState(null);
+    const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
 
     const handleOpenQendraVisor = async () => {
         setShowQendraVisor(true);
@@ -497,6 +503,7 @@ const Ventas = () => {
             });
         setCart(newCart);
         setQendraActiveTicketId(String(ticket.ID_TICKET));
+        setActiveScaleTicketBarcode(null);
         setShowQendraVisor(false);
         if (window.innerWidth < 1024) setShowCartMobile(true);
     };
@@ -652,7 +659,7 @@ const Ventas = () => {
                         </div>
                         <div class="item">
                             <span style="padding-left: 2mm;">${toNumber(i.quantity).toFixed(3)} ${i.unit || 'kg'} x $${toNumber(i.price).toLocaleString()}</span>
-                            <span>$${(Math.round(toNumber(i.price) * toNumber(i.quantity) * 100) / 100).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span>$${toNumber(i.subtotal != null ? i.subtotal : (toNumber(i.price) * toNumber(i.quantity))).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                         </div>
                     `).join('')}
                 </div>
@@ -860,6 +867,104 @@ const Ventas = () => {
         const cleanData = barcodeData.trim();
         console.log("📦 Escaneando código RAW:", cleanData, `(${cleanData.length} chars)`);
 
+        const loadBridgeTicketFromBarcode = async (barcodeValue) => {
+            const payload = await fetchScaleTicketByBarcode(barcodeValue);
+            const rows = Array.isArray(payload?.items) ? payload.items : [];
+            if (!rows.length) {
+                setScannerError('⚠️ El ticket existe pero no tiene items para cargar.');
+                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                return true;
+            }
+
+            const previewItems = rows.map((row) => {
+                const pluRawFromItem = String(row?.plu || '').trim();
+                const pluRawFromProduct = String(row?.product?.plu || '').trim();
+                const pluRaw = pluRawFromItem || pluRawFromProduct;
+                const pluNormalized = String(parseInt(pluRaw || '0', 10));
+                let priceRecord = findPriceRecordByPlu(pluNormalized) || findPriceRecordByPlu(pluRaw);
+
+                let product = null;
+                if (row?.product?.id != null) {
+                    product = products.find((p) => Number(p.productId) === Number(row.product.id)) || null;
+                }
+                if (!product) {
+                    product = products.find((p) => {
+                        const pPlu = String(p?.plu || '').trim();
+                        return pPlu === pluRaw || pPlu === pluNormalized;
+                    }) || null;
+                }
+                if (!product && row?.product?.name) {
+                    const targetName = String(row.product.name || '').trim().toUpperCase();
+                    product = products.find((p) => String(p?.name || '').trim().toUpperCase() === targetName) || null;
+                }
+                if (!product && priceRecord) {
+                    product = findProductByPriceRecord(priceRecord);
+                }
+
+                if (!priceRecord && row?.product?.price != null) {
+                    priceRecord = {
+                        id: row?.product?.id || null,
+                        product_id: normalizeProductKey(row?.product?.name || `PLU ${pluNormalized}`),
+                        product_ref_id: row?.product?.id || null,
+                        price: Number(row.product.price) || 0,
+                        plu: pluRaw || pluNormalized,
+                        updated_at: row?.saleAt || new Date().toISOString(),
+                    };
+                }
+                if (!priceRecord && product && Number(product.price || 0) > 0) {
+                    priceRecord = {
+                        id: product.productId || null,
+                        product_id: normalizeProductKey(product.name),
+                        product_ref_id: product.productId || null,
+                        price: Number(product.price) || 0,
+                        plu: String(product.plu || pluRaw || pluNormalized),
+                        updated_at: new Date().toISOString(),
+                    };
+                }
+
+                const quantity = Number(row?.quantity || 0);
+                return {
+                    plu: pluRaw || pluNormalized,
+                    weight: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+                    priceRecord,
+                    product,
+                };
+            });
+
+            if (!previewItems.length) {
+                setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
+                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                return true;
+            }
+
+            setTicketPreviewItems(previewItems);
+            setShowTicketPreview(true);
+            setQendraActiveTicketId(null);
+            setActiveScaleTicketBarcode(String(payload?.ticket?.barcode || barcodeValue).trim() || null);
+            const vendor = String(payload?.ticket?.vendorCode || '').trim();
+            if (vendor) {
+                setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
+                setTimeout(() => setScannerError(''), 3000);
+            } else {
+                setScannerError('');
+            }
+            playBeep();
+            return true;
+        };
+
+        // ============ FORMATO TICKET BRIDGE (MM...) ============
+        // Codigo unico de ticket generado por el bridge para recuperar la venta completa.
+        if (/^MM[A-Z0-9]{10,}$/i.test(cleanData)) {
+            try {
+                await loadBridgeTicketFromBarcode(cleanData);
+                return;
+            } catch (error) {
+                setScannerError(`⚠️ No se encontró ticket para el código ${cleanData}.`);
+                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                return;
+            }
+        }
+
         // ============ FORMATO 0: CÓDIGO DE PRODUCTO NORMAL (EAN/UPC/CODE128/etc.) ============
         // Prioridad: si el barcode existe en stock, se agrega directo y no se parsea como balanza.
         const barcodeProduct = findProductByBarcode(cleanData);
@@ -883,39 +988,40 @@ const Ventas = () => {
         let successCount = 0;
         let failedItems = [];
 
-        // ============ FORMATO 1: EAN-13 INDIVIDUAL (Balanzas Systel / 3nstar / estándar) ============
-        // Estructura: 2X + PLU(5) + PESO(5) + CHECK(1) = 13 dígitos
-        // El primer dígito es 2, el segundo varía: 0=precio incrustado, 1=peso incrustado
-        // Balanza Systel típica: 20PPPPPKKKKKC (precio) o 21PPPPPKKKKKC (peso por kg)
-        // También algunos equipos usan solo 2PPPPPKKKKKC (12 + check)
+        // ============ FORMATO 1: EAN-13 INDIVIDUAL – Qendra/Systel ============
+        // Formato configurado en config.ini: BCHeader(2) + PPPP(4 PLU) + IIIIII(6 importe centavos) + check = 13
+        // BCHeader: 20=Por Peso, 21=Por Unidad, 22=Suma total (BARCODESP)
         // NOTA: algunos escáneres emiten caracteres no numéricos (ej. 'D') → se limpian con /\D/g
         const eanDigits = cleanData.replace(/\D/g, ''); // quitar cualquier carácter no numérico
-        if ((eanDigits.length === 13 || eanDigits.length === 12 || eanDigits.length === 11) && eanDigits.startsWith('2')) {
+        if ((eanDigits.length === 13 || eanDigits.length === 12) && eanDigits.startsWith('2')) {
             playBeep();
-            // Formato Systel: 2 + PLU(5) + SEP(1) + PESO(5) + CHECK(1) = 13 dígitos
-            // PLU siempre en [1:6]. Para 13 dígitos hay un byte separador en [6], PESO en [7:12].
-            // Para 12/11 dígitos: PESO en [6:11].
-            const pluRaw    = eanDigits.substring(1, 6);
-            const weightRaw = eanDigits.length === 13 ? eanDigits.substring(7, 12) : eanDigits.substring(6, 11);
-            const pluNumber = parseInt(pluRaw, 10).toString();
-            const weight = parseFloat(weightRaw) / 1000;
+            const header      = eanDigits.substring(0, 2);   // "20", "21" o "22"
+            const pluRaw      = eanDigits.substring(2, 6);   // 4-dígitos PLU
+            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos importe en centavos
+            const pluNumber   = parseInt(pluRaw, 10).toString();
+            const importePesos = parseFloat(importeRaw) / 100;
 
-            // Si el PLU es >= 10000 es el código RESUMEN DEL TICKET (total del comprobante),
-            // no un código de producto individual. Informar al usuario.
-            if (parseInt(pluRaw, 10) >= 10000) {
-                setScannerError(
-                    `⚠️ Ese código es el resumen total del ticket, no un producto individual.\n\n` +
-                    `Escaneá los códigos de cada artículo por separado — son los que aparecen al lado de cada ítem en el comprobante (los más chicos, encima del nombre del producto).`
-                );
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return;
+            // BCHeader 22 = BARCODESP: código resumen total del ticket, no artículo individual
+            if (header === '22') {
+                try {
+                    const loaded = await loadBridgeTicketFromBarcode(cleanData);
+                    if (loaded) return;
+                } catch {
+                    setScannerError(
+                        `⚠️ No pude vincular ese código de ticket con una venta en MySQL.\n\n` +
+                        `Si querés, reimprimimos el ticket con código único MM y queda 1 a 1.`
+                    );
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return;
+                }
             }
 
-            console.log(`✅ EAN-13 individual: PLU ${pluNumber}, Peso ${weight}kg`);
+            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Importe $${importePesos}`);
 
             let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
             if (priceRecord) {
+                const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
                 let product = findProductByPriceRecord(priceRecord);
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
@@ -945,7 +1051,7 @@ const Ventas = () => {
                 }
                 return;
             } else {
-                setPendingBarcode({ plu: pluNumber, pluRaw: pluRaw, weight: weight });
+                setPendingBarcode({ plu: pluNumber, pluRaw: pluRaw, importe: importePesos });
                 setQuickProductName('');
                 setQuickProductPrice('');
                 setQuickProductCategory('vaca');
@@ -972,16 +1078,17 @@ const Ventas = () => {
                 const previewItems = [];
                 for (const code of codes) {
                     if (code.length === 13 && code.startsWith('2')) {
-                        // PLU en [1:6], separador en [6], PESO en [7:12]
-                        const pluRaw    = code.substring(1, 6);
-                        const weightRaw = code.substring(7, 12);
-                        const pluNumber = parseInt(pluRaw, 10).toString();
-                        const weight = parseFloat(weightRaw) / 1000;
+                        // Formato Qendra: header(2) + PLU(4) + importe centavos(6) + check(1)
+                        const pluRaw      = code.substring(2, 6);
+                        const importeRaw  = code.substring(6, 12);
+                        const pluNumber   = parseInt(pluRaw, 10).toString();
+                        const importePesos = parseFloat(importeRaw) / 100;
 
                         let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
                         const product = priceRecord ? findProductByPriceRecord(priceRecord) : null;
+                        const weight = (priceRecord && priceRecord.price > 0) ? importePesos / priceRecord.price : importePesos;
 
-                        previewItems.push({ plu: pluNumber, pluRaw, weight, priceRecord, product });
+                        previewItems.push({ plu: pluNumber, pluRaw, weight, importe: importePesos, priceRecord, product });
                     }
                 }
 
@@ -1062,17 +1169,18 @@ const Ventas = () => {
 
             for (const code of matches) {
                 const codeDigits = code.replace(/\D/g, '');
-                // PLU en [1:6], para 13 dígitos PESO en [7:12], para 12/11 en [6:11]
-                const pluRaw    = codeDigits.substring(1, 6);
-                const weightRaw = codeDigits.length === 13 ? codeDigits.substring(7, 12) : codeDigits.substring(6, 11);
-                const pluNumber = parseInt(pluRaw, 10).toString();
-                const weight = parseFloat(weightRaw) / 1000;
+                // Formato Qendra: header(2) + PLU(4) + importe centavos(6) + check(1)
+                const pluRaw      = codeDigits.substring(2, 6);
+                const importeRaw  = codeDigits.substring(6, 12);
+                const pluNumber   = parseInt(pluRaw, 10).toString();
+                const importePesos = parseFloat(importeRaw) / 100;
 
                 let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
                 if (priceRecord) {
                     const product = findProductByPriceRecord(priceRecord);
                     if (product) {
+                        const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
                         addToCart({ ...product, price: priceRecord.price }, weight);
                         successCount++;
                     } else {
@@ -1091,7 +1199,7 @@ const Ventas = () => {
         }
 
         // ============ SIN COINCIDENCIAS ============
-        setScannerError(`❌ CÓDIGO NO RECONOCIDO: "${cleanData}" (${cleanData.length} chars)\n\nFormatos soportados:\n1. EAN-13 balanza: 2PPPPPKKKKKC (13 dígitos, empieza en 2)\n2. Múltiples concatenados: 200111019950200012010850...\n3. Separados: 111,1.5;120,2.1\n\nVerificá en consola (F12) el código RAW recibido.`);
+        setScannerError(`❌ CÓDIGO NO RECONOCIDO: "${cleanData}" (${cleanData.length} chars)\n\nFormatos soportados:\n1. EAN-13 balanza Qendra: 20PPPPIIIIII o 21PPPPIIIIII (13 dígitos)\n2. Múltiples concatenados: 200023012500200045008750...\n3. Separados: PLU,kg;PLU,kg (ej: 23,1.5;45,0.8)\n\nVerificá en consola (F12) el código RAW recibido.`);
         console.log("❌ Formato no reconocido:", JSON.stringify(cleanData), `len=${cleanData.length}`);
         setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
     };
@@ -1147,7 +1255,10 @@ const Ventas = () => {
                 plu: finalPlu
             };
 
-            addToCart(newProduct, pendingBarcode.weight);
+            const computedWeight = (pendingBarcode.importe > 0 && price > 0)
+                ? parseFloat((pendingBarcode.importe / price).toFixed(3))
+                : 1;
+            addToCart(newProduct, computedWeight);
 
             // Limpiar y cerrar
             setShowQuickCreateModal(false);
@@ -1157,7 +1268,7 @@ const Ventas = () => {
             setQuickProductPlu('');
             setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
 
-            showToast(`✅ Producto "${quickProductName}" creado y agregado al carrito con ${pendingBarcode.weight}kg`, 'success');
+            showToast(`✅ Producto "${quickProductName}" creado y agregado al carrito con ${computedWeight}kg`, 'success');
         } catch (error) {
             console.error("Error creando producto:", error);
             showToast('❌ Error al crear el producto: ' + error.message, 'error');
@@ -1306,12 +1417,32 @@ const Ventas = () => {
         }
     };
 
-    // cartTotal acumula los subtotales ya redondeados a 2 decimales,
-    // igual que lo que muestra cada línea del carrito — evita discrepancias de $0.01
-    const cartTotal = cart.reduce((sum, item) => {
-        const lineSubtotal = Math.round(item.price * item.quantity * 100) / 100;
-        return Math.round((sum + lineSubtotal) * 100) / 100;
-    }, 0);
+    const stockQtyByItem = React.useMemo(() => {
+        const map = new Map();
+        (Array.isArray(stockItems) ? stockItems : []).forEach((row) => {
+            const qty = toNumber(row?.quantity);
+            const productId = row?.product_id != null ? Number(row.product_id) : null;
+            const byIdKey = Number.isFinite(productId) ? `product:${productId}` : null;
+            const byNameKey = `name:${String(row?.name || '')
+                .trim()
+                .toLowerCase()
+                .normalize('NFD')
+                .replace(/[\u0300-\u036f]/g, '')}`;
+
+            if (byIdKey) {
+                map.set(byIdKey, toNumber((map.get(byIdKey) || 0) + qty));
+            }
+            map.set(byNameKey, toNumber((map.get(byNameKey) || 0) + qty));
+        });
+        return map;
+    }, [stockItems]);
+
+    // El subtotal del carrito se calcula con promociones activas por kg.
+    const cartPricing = React.useMemo(
+        () => buildCartPricing({ cart, promotions, stockQtyByItem, now: new Date() }),
+        [cart, promotions, stockQtyByItem]
+    );
+    const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
@@ -1479,16 +1610,25 @@ const Ventas = () => {
                 payment_method_id: methodObj.id || null,
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
-                ...(qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {}),
-                items: cart.map(i => ({
+                ...(activeScaleTicketBarcode
+                    ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
+                    : (qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {})),
+                items: cart.map(i => {
+                    const line = cartPricing.lineMap.get(i.id);
+                    return ({
                     product_id: i.productId || null,
                     product_name: i.name,
                     quantity: i.quantity,
                     price: i.price,
-                    subtotal: i.price * i.quantity,
+                    subtotal: line?.subtotal ?? (i.price * i.quantity),
                     category: i.category || null,
                     unit: i.unit || 'kg',
-                })),
+                    promo_applied: Boolean(line?.promo),
+                    promo_id: line?.promo?.id ?? null,
+                    promo_kg_applied: line?.promo?.covered_qty ?? null,
+                    promo_payload: line?.promo || null,
+                });
+                }),
             };
             const { insertId: saleId } = await createVenta(ventaPayload).catch((err) => {
                 // Si el error es de red, encolar para sincronizar cuando vuelva la conexión
@@ -1505,12 +1645,21 @@ const Ventas = () => {
             console.log("Proceso de guardado completado.");
             playCashRegister();
             setQendraActiveTicketId(null); // limpiar ticket QENDRA activo
+            setActiveScaleTicketBarcode(null);
 
             // Guardar snapshot del carrito antes de resetear (para imprimir después)
             const cartSnapshot = [...cart];
+            const cartSnapshotWithTotals = cartSnapshot.map((item) => {
+                const line = cartPricing.lineMap.get(item.id);
+                return {
+                    ...item,
+                    subtotal: line?.subtotal ?? (item.price * item.quantity),
+                    promo: line?.promo || null,
+                };
+            });
             setPendingPrintData({
                 saleData: { id: saleId, receipt_number: saleReceiptNumber, receipt_code: saleReceiptCode, subtotal: cartTotal, adjustment: adjustment, total: finalTotal },
-                items: cartSnapshot
+                items: cartSnapshotWithTotals
             });
 
             // Resetear todo ANTES de mostrar el modal (sin confirm() nativo que roba el foco)
@@ -1876,7 +2025,9 @@ const Ventas = () => {
                 </div>
 
                 <div className="ticket-items">
-                    {cart.map((item, idx) => (
+                    {cart.map((item, idx) => {
+                        const line = cartPricing.lineMap.get(item.id);
+                        return (
                         <div key={idx} className="ticket-item">
                             <div className="item-info">
                                 <span className="item-name">{item.name}</span>
@@ -1884,6 +2035,11 @@ const Ventas = () => {
                                     <span style={{ color: 'var(--color-text-main)', fontWeight: '600' }}>{toNumber(item.quantity).toFixed(3)} {item.unit || 'Kg'}</span>
                                     <span>× ${formatPrice(toNumber(item.price), priceFormat)}</span>
                                 </div>
+                                {line?.promo ? (
+                                    <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
+                                        Promo: {toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por ${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                    </div>
+                                ) : null}
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
                                     <button
                                         type="button"
@@ -1927,7 +2083,7 @@ const Ventas = () => {
                                 </div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                                <span className="item-total">${formatPrice(item.price * item.quantity, priceFormat)}</span>
+                                <span className="item-total">${formatPrice(line?.subtotal ?? (item.price * item.quantity), priceFormat)}</span>
                                 <button
                                     onClick={() => removeFromCart(item.id)}
                                     style={{ background: 'none', border: 'none', color: 'rgba(239, 68, 68, 0.4)', cursor: 'pointer', padding: '0.2rem' }}
@@ -1936,7 +2092,8 @@ const Ventas = () => {
                                 </button>
                             </div>
                         </div>
-                    ))}
+                        );
+                    })}
                     {cart.length === 0 && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, opacity: 0.2, gap: '1.5rem', padding: '4rem 0' }}>
                             <ShoppingBag size={80} strokeWidth={1} />
@@ -1947,6 +2104,14 @@ const Ventas = () => {
 
                 <div className="ticket-footer">
                     <div style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '0.75rem', marginBottom: '0.75rem' }}>
+                        {cartPricing.totalDiscount > 0 ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#22c55e' }}>PROMOS APLICADAS</span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#22c55e' }}>
+                                    -${formatPrice(cartPricing.totalDiscount, priceFormat)}
+                                </span>
+                            </div>
+                        ) : null}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
                             <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>TOTAL</span>
                             <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(cartTotal, priceFormat)}</span>
@@ -1991,7 +2156,13 @@ const Ventas = () => {
                         >
                             ELIMINAR TICKET
                         </button>
-                        <button className="btn-danger" onClick={() => { if(window.confirm('¿Anular ticket?')) setCart([]); }}>ANULAR</button>
+                        <button className="btn-danger" onClick={() => {
+                            if (window.confirm('¿Anular ticket?')) {
+                                setCart([]);
+                                setQendraActiveTicketId(null);
+                                setActiveScaleTicketBarcode(null);
+                            }
+                        }}>ANULAR</button>
                     </div>
 
                     <button
@@ -3130,7 +3301,7 @@ const Ventas = () => {
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }} onClick={() => setShowTicketPreview(false)}>
+            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}>
                 <div style={{
                     background: 'var(--color-bg-card)',
                     borderRadius: 16, padding: '1.5rem',
@@ -3147,7 +3318,7 @@ const Ventas = () => {
                                 {ticketPreviewItems.length} item(s) detectados · Revisá el estado antes de agregar al carrito
                             </p>
                         </div>
-                        <button onClick={() => setShowTicketPreview(false)}
+                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
                             style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1 }}>✕</button>
                     </div>
 
@@ -3218,7 +3389,7 @@ const Ventas = () => {
                                 Parece que alguien olvidó importar el artículo desde la app de la balanza.
                             </span>
                             <button
-                                onClick={() => { setShowTicketPreview(false); navigate('/stock'); }}
+                                onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); navigate('/stock'); }}
                                 style={{
                                     flexShrink: 0,
                                     padding: '0.4rem 0.9rem',
@@ -3233,7 +3404,7 @@ const Ventas = () => {
                     {/* Botones de acción */}
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
                         <button
-                            onClick={() => setShowTicketPreview(false)}
+                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
                             style={{
                                 flex: 1, padding: '0.75rem',
                                 border: '1px solid var(--color-border)',

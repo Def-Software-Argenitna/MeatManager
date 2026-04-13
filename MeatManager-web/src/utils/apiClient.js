@@ -204,6 +204,27 @@ export const fetchUsersBundle = async () => {
     return res.json();
 };
 
+export const fetchWhatsAppMarketingStatus = async () => {
+    const res = await apiFetch('/api/whatsapp/status');
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer la configuración de WhatsApp');
+    }
+    return res.json();
+};
+
+export const saveWhatsAppMarketingConfig = async (payload) => {
+    const res = await apiFetch('/api/whatsapp/config', {
+        method: 'POST',
+        body: JSON.stringify(payload || {}),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo guardar la configuración de WhatsApp');
+    }
+    return res.json();
+};
+
 export const replaceUserPermissions = async (userId, paths) => {
     const res = await apiFetch(`/api/users/${userId}/permissions`, {
         method: 'POST',
@@ -473,6 +494,17 @@ export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || 'Error al anular la venta');
+    }
+    return res.json();
+};
+
+export const fetchScaleTicketByBarcode = async (barcode) => {
+    const code = String(barcode || '').trim();
+    if (!code) throw new Error('barcode requerido');
+    const res = await apiFetch(`/api/scale/tickets/by-barcode/${encodeURIComponent(code)}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer ticket de balanza');
     }
     return res.json();
 };

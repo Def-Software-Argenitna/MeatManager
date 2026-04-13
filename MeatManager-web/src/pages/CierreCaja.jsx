@@ -9,6 +9,7 @@ import {
     Landmark,
     AlertCircle,
     Wallet,
+    ArrowRightLeft,
 } from 'lucide-react';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -41,6 +42,17 @@ const METHOD_ICON_MAP = {
     card: CreditCard,
     wallet: Smartphone,
     transfer: Landmark,
+};
+
+const CASH_ACCOUNTS = [
+    { value: 'principal', label: 'Caja Principal' },
+    { value: 'secondary', label: 'Caja Secundaria' },
+];
+
+const normalizeCashAccount = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (['secundaria', 'secondary', 'caja_secundaria'].includes(token)) return 'secondary';
+    return 'principal';
 };
 
 const isCurrentAccount = (name, type) => {
@@ -121,6 +133,13 @@ const CierreCaja = () => {
     const [movementPaymentMethod, setMovementPaymentMethod] = useState('Efectivo');
     const [openingDraft, setOpeningDraft] = useState({});
     const [feedback, setFeedback] = useState(null);
+    const [selectedCashAccount, setSelectedCashAccount] = useState('principal');
+    const [showTransferForm, setShowTransferForm] = useState(false);
+    const [transferFromAccount, setTransferFromAccount] = useState('principal');
+    const [transferToAccount, setTransferToAccount] = useState('secondary');
+    const [transferAmount, setTransferAmount] = useState('');
+    const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
+    const [transferDesc, setTransferDesc] = useState('');
 
     const [allSales, setAllSales] = useState([]);
     const [allMovements, setAllMovements] = useState([]);
@@ -167,13 +186,30 @@ const CierreCaja = () => {
 
     const movements = useMemo(() => allMovements.filter((m) => {
         const d = parseDate(m.date);
-        return d && d >= start && d <= end;
-    }), [allMovements, start, end]);
+        return d && d >= start && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
+    }), [allMovements, start, end, selectedCashAccount]);
 
     const allMovementsUntilDate = useMemo(() => allMovements.filter((m) => {
         const d = parseDate(m.date);
-        return d && d <= end;
-    }), [allMovements, end]);
+        return d && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
+    }), [allMovements, end, selectedCashAccount]);
+
+    const salesMovements = useMemo(() => (
+        (movements || []).filter((movement) => movement.type === 'venta' || movement.type === 'anulacion_venta')
+    ), [movements]);
+
+    const cashBalanceByAccount = useMemo(() => {
+        const balances = { principal: 0, secondary: 0 };
+        allMovements.forEach((movement) => {
+            const d = parseDate(movement.date);
+            if (!d || d > end) return;
+            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
+            const account = normalizeCashAccount(movement.cash_account);
+            const sign = getMovementSign(movement);
+            balances[account] = (balances[account] || 0) + (toNumber(movement.amount) * sign);
+        });
+        return balances;
+    }, [allMovements, end]);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -197,7 +233,17 @@ const CierreCaja = () => {
                 ? prev
                 : activePaymentMethods[0]?.name || 'Efectivo'
         ));
+        setTransferPaymentMethod((prev) => (
+            activePaymentMethods.some((method) => method.name === prev)
+                ? prev
+                : activePaymentMethods[0]?.name || 'Efectivo'
+        ));
     }, [activePaymentMethods]);
+
+    useEffect(() => {
+        setTransferFromAccount(selectedCashAccount);
+        setTransferToAccount(selectedCashAccount === 'principal' ? 'secondary' : 'principal');
+    }, [selectedCashAccount]);
 
     useEffect(() => {
         setOpeningDraft((prev) => {
@@ -210,13 +256,12 @@ const CierreCaja = () => {
     }, [activePaymentMethods]);
 
     const salesByMethod = useMemo(() => {
-        if (!sales) return [];
-
         const totals = {};
-        sales.forEach((sale) => {
-            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
-                totals[part.name] = (totals[part.name] || 0) + part.amount;
-            });
+        salesMovements.forEach((movement) => {
+            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
+            const sign = movement.type === 'anulacion_venta' ? -1 : 1;
+            const methodName = movement.payment_method || 'Efectivo';
+            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
         });
 
         return Object.entries(totals).map(([name, total]) => {
@@ -228,17 +273,17 @@ const CierreCaja = () => {
                 type: method?.type || 'cash',
             };
         });
-    }, [sales, activePaymentMethods]);
+    }, [salesMovements, activePaymentMethods]);
 
     const salesCountByMethod = useMemo(() => {
         const totals = {};
-        (sales || []).forEach((sale) => {
-            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
-                totals[part.name] = (totals[part.name] || 0) + 1;
-            });
+        salesMovements.forEach((movement) => {
+            const methodName = movement.payment_method || 'Efectivo';
+            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+            totals[methodName] = (totals[methodName] || 0) + 1;
         });
         return totals;
-    }, [sales]);
+    }, [salesMovements]);
 
     const openingMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type === 'apertura')
@@ -257,23 +302,16 @@ const CierreCaja = () => {
         (movements || []).filter((movement) => movement.type !== 'apertura' && !isAutoSaleMovement(movement))
     ), [movements]);
 
-    const totalSales = (sales || []).reduce((sum, sale) => sum + toNumber(sale.total), 0);
+    const totalSales = salesMovements
+        .filter((movement) => movement.type === 'venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalExpenses = manualMovements
         .filter((movement) => movement.type === 'egreso' || movement.type === 'retiro')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalIncomes = manualMovements
         .filter((movement) => movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const currentAccountSales = (sales || []).reduce((sum, sale) => {
-        const breakdown = getSalePaymentBreakdown(sale);
-        if (breakdown.length > 0) {
-            const ccPart = breakdown
-                .filter((part) => isCurrentAccount(part.method_name, part.method_type))
-                .reduce((acc, part) => acc + toNumber(part.amount_charged), 0);
-            return sum + ccPart;
-        }
-        return isCurrentAccount(sale.payment_method) ? sum + toNumber(sale.total) : sum;
-    }, 0);
+    const currentAccountSales = 0;
 
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
@@ -282,14 +320,7 @@ const CierreCaja = () => {
             totals[method.name] = 0;
         });
 
-        (sales || []).forEach((sale) => {
-            buildSaleParts(sale, { includeCurrentAccount: false }).forEach((part) => {
-                totals[part.name] = (totals[part.name] || 0) + part.amount;
-            });
-        });
-
-        (movements || []).forEach((movement) => {
-            if (isAutoSaleMovement(movement)) return;
+        (allMovementsUntilDate || []).forEach((movement) => {
             const methodName = movement.payment_method || 'Efectivo';
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             const sign = getMovementSign(movement);
@@ -297,7 +328,7 @@ const CierreCaja = () => {
         });
 
         return totals;
-    }, [activePaymentMethods, sales, movements]);
+    }, [activePaymentMethods, allMovementsUntilDate]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
@@ -320,28 +351,55 @@ const CierreCaja = () => {
         }))
     ), [activePaymentMethods, openingByMethod, salesByMethod, salesCountByMethod, dailyManualNetByMethod, accumulatedByMethod]);
 
-    const salesDetails = useMemo(() => (
-        (sales || []).map((sale) => {
-            const fullParts = buildSaleParts(sale, { includeCurrentAccount: true });
-            const cajaParts = fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
-            const cuentaCorrienteParts = fullParts.filter((part) => isCurrentAccount(part.name, part.type));
-            const isMixed = fullParts.length > 1;
-            const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
-            const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
-            return {
-                id: sale.id,
-                receiptCode: sale.receipt_code || (sale.receipt_number ? `0001-${String(sale.receipt_number).padStart(6, '0')}` : `Venta #${sale.id}`),
-                date: sale.date ? new Date(sale.date) : null,
-                total: toNumber(sale.total),
-                isMixed,
-                fullParts,
-                cajaParts,
-                cuentaCorrienteParts,
-                cajaAmount,
-                ccAmount,
+    const salesDetails = useMemo(() => {
+        const groups = new Map();
+
+        salesMovements.forEach((movement) => {
+            const key = movement.sale_id
+                ? `sale-${movement.sale_id}`
+                : `receipt-${movement.receipt_code || movement.receipt_number || movement.id}`;
+            const sign = movement.type === 'anulacion_venta' ? -1 : 1;
+            const partAmount = toNumber(movement.amount) * sign;
+            const part = {
+                name: movement.payment_method || 'Efectivo',
+                type: movement.payment_method_type || 'cash',
+                amount: partAmount,
             };
-        })
-    ), [sales]);
+
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    id: movement.sale_id || movement.id,
+                    receiptCode: movement.receipt_code || (movement.receipt_number ? `0001-${String(movement.receipt_number).padStart(6, '0')}` : `Venta #${movement.sale_id || movement.id}`),
+                    date: movement.date ? new Date(movement.date) : null,
+                    fullParts: [],
+                    total: 0,
+                    hasReversal: false,
+                });
+            }
+
+            const group = groups.get(key);
+            group.fullParts.push(part);
+            group.total += partAmount;
+            if (movement.type === 'anulacion_venta') group.hasReversal = true;
+        });
+
+        return Array.from(groups.values())
+            .map((sale) => {
+                const cajaParts = sale.fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
+                const cuentaCorrienteParts = sale.fullParts.filter((part) => isCurrentAccount(part.name, part.type));
+                const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+                const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+                return {
+                    ...sale,
+                    isMixed: sale.fullParts.length > 1,
+                    cajaParts,
+                    cuentaCorrienteParts,
+                    cajaAmount,
+                    ccAmount,
+                };
+            })
+            .sort((a, b) => (b.date?.getTime?.() || 0) - (a.date?.getTime?.() || 0));
+    }, [salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
     const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);
@@ -380,6 +438,7 @@ const CierreCaja = () => {
                 description: `Apertura inicial ${method.name}`,
                 payment_method: method.name,
                 payment_method_type: method.type,
+                cash_account: selectedCashAccount,
                 date: openingDate,
             });
         }
@@ -404,6 +463,7 @@ const CierreCaja = () => {
             description: movementDesc,
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
+            cash_account: selectedCashAccount,
             date: new Date().toISOString(),
         });
 
@@ -415,9 +475,70 @@ const CierreCaja = () => {
     };
 
     const handleDeleteMovement = async (movementId) => {
-        await saveTableRecord('caja_movimientos', 'delete', null, movementId);
+        const movement = allMovements.find((item) => Number(item.id) === Number(movementId));
+        if (movement?.transfer_group_id) {
+            const related = allMovements.filter((item) => item.transfer_group_id === movement.transfer_group_id);
+            for (const row of related) {
+                await saveTableRecord('caja_movimientos', 'delete', null, row.id);
+            }
+        } else {
+            await saveTableRecord('caja_movimientos', 'delete', null, movementId);
+        }
         await loadData();
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
+    };
+
+    const handleTransferBetweenCashboxes = async (e) => {
+        e.preventDefault();
+        const amount = parseFloat(transferAmount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            setFeedback({ type: 'warning', text: 'Ingresá un monto válido para transferir.' });
+            return;
+        }
+        if (transferFromAccount === transferToAccount) {
+            setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
+            return;
+        }
+        const available = toNumber(cashBalanceByAccount[transferFromAccount]);
+        if (amount > available) {
+            setFeedback({ type: 'warning', text: `Saldo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
+            return;
+        }
+
+        const transferGroupId = `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const fromLabel = CASH_ACCOUNTS.find((item) => item.value === transferFromAccount)?.label || 'Caja origen';
+        const toLabel = CASH_ACCOUNTS.find((item) => item.value === transferToAccount)?.label || 'Caja destino';
+        const selectedMethod = activePaymentMethods.find((method) => method.name === transferPaymentMethod);
+
+        await saveTableRecord('caja_movimientos', 'insert', {
+            type: 'retiro',
+            amount,
+            category: 'Transferencia entre cajas',
+            description: transferDesc || `Transferencia a ${toLabel}`,
+            payment_method: transferPaymentMethod,
+            payment_method_type: selectedMethod?.type || 'cash',
+            cash_account: transferFromAccount,
+            transfer_group_id: transferGroupId,
+            date: new Date().toISOString(),
+        });
+
+        await saveTableRecord('caja_movimientos', 'insert', {
+            type: 'ingreso',
+            amount,
+            category: 'Transferencia entre cajas',
+            description: transferDesc || `Transferencia desde ${fromLabel}`,
+            payment_method: transferPaymentMethod,
+            payment_method_type: selectedMethod?.type || 'cash',
+            cash_account: transferToAccount,
+            transfer_group_id: transferGroupId,
+            date: new Date().toISOString(),
+        });
+
+        await loadData();
+        setTransferAmount('');
+        setTransferDesc('');
+        setShowTransferForm(false);
+        setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
     };
 
     return (
@@ -429,6 +550,16 @@ const CierreCaja = () => {
                     <p>Apertura, movimientos, retiros y saldo acumulado por medio de pago.</p>
                 </div>
                 <div className="date-picker-wrapper">
+                    <select
+                        className="neo-input"
+                        value={selectedCashAccount}
+                        onChange={(e) => setSelectedCashAccount(e.target.value)}
+                        style={{ marginBottom: 0, minWidth: '180px' }}
+                    >
+                        {CASH_ACCOUNTS.map((cashbox) => (
+                            <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                        ))}
+                    </select>
                     <CalendarIcon size={18} />
                     <input
                         type="date"
@@ -449,7 +580,7 @@ const CierreCaja = () => {
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className="stat-box result">
-                    <span className="label">Efectivo acumulado en caja</span>
+                    <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
@@ -465,7 +596,7 @@ const CierreCaja = () => {
                     <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
-                    <span className="label">Cobros en caja por ventas</span>
+                    <span className="label">Cobros por ventas en esta caja</span>
                     <span className="val">+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
@@ -584,6 +715,85 @@ const CierreCaja = () => {
                         )}
 
                         <div className="section-header section-header-secondary">
+                            <h3>Transferencia entre cajas</h3>
+                            <button className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
+                                {showTransferForm ? 'Cancelar' : 'Transferir fondos'}
+                            </button>
+                        </div>
+
+                        {showTransferForm && (
+                            <form className="expense-form animate-slide-down" onSubmit={handleTransferBetweenCashboxes}>
+                                <div className="form-grid">
+                                    <div className="form-group">
+                                        <label>Desde caja</label>
+                                        <select
+                                            className="neo-input"
+                                            value={transferFromAccount}
+                                            onChange={(e) => setTransferFromAccount(e.target.value)}
+                                        >
+                                            {CASH_ACCOUNTS.map((cashbox) => (
+                                                <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                            ))}
+                                        </select>
+                                        <small style={{ color: 'var(--color-text-muted)' }}>
+                                            Disponible: ${toNumber(cashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
+                                        </small>
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Hacia caja</label>
+                                        <select
+                                            className="neo-input"
+                                            value={transferToAccount}
+                                            onChange={(e) => setTransferToAccount(e.target.value)}
+                                        >
+                                            {CASH_ACCOUNTS.map((cashbox) => (
+                                                <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Medio de pago</label>
+                                        <select
+                                            className="neo-input"
+                                            value={transferPaymentMethod}
+                                            onChange={(e) => setTransferPaymentMethod(e.target.value)}
+                                        >
+                                            {activePaymentMethods.map((method) => (
+                                                <option key={method.name} value={method.name}>{method.name}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Monto</label>
+                                        <input
+                                            type="number"
+                                            min="0"
+                                            step="0.01"
+                                            value={transferAmount}
+                                            onChange={(e) => setTransferAmount(e.target.value)}
+                                            placeholder="0.00"
+                                            className="neo-input"
+                                            required
+                                        />
+                                    </div>
+                                    <div className="form-group full">
+                                        <label>Detalle</label>
+                                        <input
+                                            type="text"
+                                            className="neo-input"
+                                            value={transferDesc}
+                                            onChange={(e) => setTransferDesc(e.target.value)}
+                                            placeholder="Opcional: motivo de la transferencia"
+                                        />
+                                    </div>
+                                </div>
+                                <button type="submit" className="save-btn">
+                                    <ArrowRightLeft size={16} /> Confirmar transferencia
+                                </button>
+                            </form>
+                        )}
+
+                        <div className="section-header section-header-secondary">
                             <h3>Retiros e ingresos manuales</h3>
                             <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
@@ -679,6 +889,7 @@ const CierreCaja = () => {
                                         <span className="m-cat">{movement.category}</span>
                                         <span className="m-desc">
                                             {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
+                                            {movement.transfer_group_id ? ' · transferencia interna' : ''}
                                         </span>
                                     </div>
                                     <span className="m-amount">

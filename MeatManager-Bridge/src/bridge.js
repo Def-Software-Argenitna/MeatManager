@@ -459,6 +459,9 @@ class QendraBridge {
         try {
             const currentState = await this.loadSyncState();
             result.products = await this.runWithTimeout('syncProducts', () => this.syncProducts(currentState));
+            // NOTA: launchQendraSync('-i') solo envía PLUs a la balanza, NO descarga ventas.
+            // Las ventas las descarga Qendra automáticamente cuando está corriendo en modo normal
+            // con [COMM] AutoSync=1 / Interval=1. El bridge simplemente lee VENTAS de Firebird.
             result.tickets = await this.runWithTimeout('syncTickets', () => this.syncTickets(currentState));
             result.ok = true;
 
@@ -826,6 +829,11 @@ class QendraBridge {
         if (summary.written > 0 || summary.deleted > 0) {
             const forcedTargets = await this.forceScaleSyncAfterProducts(targetFirebird);
             summary.forcedTargets = forcedTargets;
+
+            // Lanzar Qendra para que empuje los productos modificados hacia la balanza
+            // y de paso descargue las ventas que la balanza tenga pendientes
+            const qendraResult = await this.launchQendraSync('cambios-de-productos');
+            summary.qendraLaunched = qendraResult.ok && !qendraResult.skipped;
         }
 
         // Dual-write: when in live mode, also push changed PLU records to bridge_import.fdb
@@ -966,6 +974,57 @@ class QendraBridge {
         }
     }
 
+    /**
+     * Lanza Qendra.exe -i para sincronizar la balanza:
+     *  - Empuja articulos con NOVEDADES=1 hacia la balanza
+     *  - Descarga ventas desde la balanza hacia la tabla VENTAS en Firebird
+     * Se usa child_process.spawn con detached=false para esperar que termine.
+     * Timeout configurable via config.qendraLaunchTimeoutMs (default 60s).
+     */
+    async launchQendraSync(reason = '') {
+        if (!this.config.qendraAutoLaunch) return { ok: false, skipped: true, reason: 'deshabilitado' };
+        const qendraExe = this.config.qendraExePath || 'C:\\Qendra\\Qendra.exe';
+        if (!fs.existsSync(qendraExe)) {
+            this.logger.warn('Qendra.exe no encontrado, sincronizacion automatica omitida', { qendraExe });
+            return { ok: false, skipped: true, reason: 'exe_no_encontrado' };
+        }
+
+        const timeoutMs = Math.max(5000, Number(this.config.qendraLaunchTimeoutMs) || 60000);
+        this.logger.info('Lanzando Qendra para sincronizacion automatica', { qendraExe, reason, timeoutMs });
+
+        return new Promise((resolve) => {
+            let settled = false;
+            const { spawn } = require('child_process');
+            const proc = spawn(qendraExe, ['-i'], {
+                detached: false,
+                stdio: 'ignore',
+                windowsHide: true,
+            });
+
+            const settle = (result) => {
+                if (settled) return;
+                settled = true;
+                if (timer) clearTimeout(timer);
+                resolve(result);
+            };
+
+            const timer = setTimeout(() => {
+                this.logger.warn('Qendra no termino en el tiempo esperado, continuando de todas formas', { timeoutMs });
+                try { proc.kill(); } catch { /* noop */ }
+                settle({ ok: true, timedOut: true });
+            }, timeoutMs);
+
+            proc.on('close', (code) => {
+                this.logger.info('Qendra termino', { code, reason });
+                settle({ ok: true, code });
+            });
+            proc.on('error', (err) => {
+                this.logger.warn('Error al lanzar Qendra', { error: err.message });
+                settle({ ok: false, error: err.message });
+            });
+        });
+    }
+
     async forceScaleSyncAfterProducts(firebirdConfig) {
         try {
             if (!(await tableExists(firebirdConfig, 'EQUIPOS'))) {
@@ -1062,22 +1121,25 @@ class QendraBridge {
 
     async syncTickets(syncState) {
         const since = syncState?.last_ticket_sync_at || null;
-        this.logger.info('Sincronizando tickets desde Firebird hacia MySQL', { since });
+        // Aplicar lookback de seguridad de 5 minutos para no perder ventas recien descargadas de la balanza
+        const ticketLookbackSec = Math.max(60, Number(this.config.ticketSinceLookbackSeconds || 300));
+        const safeSince = computeSafeSince(since, ticketLookbackSec);
+        this.logger.info('Sincronizando tickets desde Firebird hacia MySQL', { since, safeSince });
 
         const lookbackDays = Math.max(1, Number(this.config.ticketLookbackDays || 30));
-        const whereClause = since
+        const whereClause = safeSince
             ? 'WHERE v.FECHA >= ?'
             : `WHERE v.FECHA >= DATEADD(-${lookbackDays} DAY TO CURRENT_TIMESTAMP)`;
 
         const rows = await firebirdQuery(
             this.config.firebird,
-            `SELECT v.ID_TICKET, v.FECHA, v.ID_PLU,
+            `SELECT v.IP, v.ID_TICKET, v.FECHA, v.ID_PLU,
                     CAST(v.PESO AS DOUBLE PRECISION) AS PESO_G,
                     CAST(v.IMPORTE AS DOUBLE PRECISION) AS IMPORTE
              FROM VENTAS v
              ${whereClause}
-             ORDER BY v.ID_TICKET, v.FECHA`,
-            since ? [since] : []
+             ORDER BY v.IP, v.ID_TICKET, v.FECHA`,
+            safeSince ? [safeSince] : []
         );
 
         if (!rows.length) {
@@ -1088,8 +1150,11 @@ class QendraBridge {
         const tickets = new Map();
         const pluIds = new Set();
         for (const row of rows) {
-            const ticketId = String(row.ID_TICKET ?? row.id_ticket ?? '').trim();
-            if (!ticketId) continue;
+            const scaleIp = String(row.IP ?? row.ip ?? '').trim();
+            const rawTicketId = String(row.ID_TICKET ?? row.id_ticket ?? '').trim();
+            if (!rawTicketId) continue;
+            // Key includes IP so ticket #3 from scale 20 ≠ ticket #3 from scale 21
+            const ticketId = scaleIp ? `${scaleIp}-${rawTicketId}` : rawTicketId;
             if (!tickets.has(ticketId)) {
                 tickets.set(ticketId, {
                     ticketId,
@@ -1629,22 +1694,9 @@ class QendraBridge {
             });
         }
 
-        // 4. Insert NOVEDADES notifications per target
-        if (hasNovedades && novedadesColumns.length > 0) {
-            for (const ip of targets) {
-                const novRow = {};
-                if (novedadesColumns.includes('IP')) novRow.IP = ip;
-                if (novedadesColumns.includes('TABLA')) novRow.TABLA = 3;
-                if (novedadesColumns.includes('VALOR')) novRow.VALOR = Number(numero || pluId);
-                const allowedNov = novedadesColumns.filter((c) => Object.prototype.hasOwnProperty.call(novRow, c));
-                if (allowedNov.length > 0) {
-                    ops.push({
-                        sql: `INSERT INTO NOVEDADES (${allowedNov.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedNov.map(() => '?').join(', ')})`,
-                        params: allowedNov.map((c) => novRow[c]),
-                    });
-                }
-            }
-        }
+        // Note: NOVEDADES table entries are created automatically by Qendra's
+        // SiModificoNumero trigger when PLU is updated. Writing them explicitly
+        // here causes deadlocks with Qendra's COMM NO WAIT transactions.
 
         return ops;
     }
