@@ -434,10 +434,10 @@ class ScaleBridge {
                     m.plu_code,
                     COALESCE(
                         NULLIF(
-                            TRIM(CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci),
+                            TRIM(CAST(p.plu AS CHAR)),
                             ''
                         ),
-                        CAST(p.id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                        CAST(p.id AS CHAR)
                     ) AS expected_plu_code
              FROM scale_bridge_product_map m
              LEFT JOIN products p
@@ -450,11 +450,11 @@ class ScaleBridge {
                     OR COALESCE(p.current_price, 0) <= 0
                     OR COALESCE(
                         NULLIF(
-                            TRIM(CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci),
+                            TRIM(CAST(p.plu AS CHAR)),
                             ''
                         ),
-                        CAST(p.id AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                    ) <> CAST(m.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                        CAST(p.id AS CHAR)
+                    ) <> CAST(m.plu_code AS CHAR)
                 )`,
             [this.config.deviceId, this.config.tenantId]
         );
@@ -555,6 +555,8 @@ class ScaleBridge {
                     : buildPlu61Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
+                        priceMultiplier: effectiveLegacyPriceMultiplier,
+                        priceFormat,
                     });
                 const response = await this.scale.send(useLegacyPlu4 ? 4 : 61, payload);
                 if (!response.crc.ok) {

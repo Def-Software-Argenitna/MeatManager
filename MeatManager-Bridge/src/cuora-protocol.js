@@ -75,8 +75,21 @@ function buildSectorPayload(sectionId, sectionName) {
 function buildPlu61Payload(product, options = {}) {
     const sectionId = options.sectionId || 2;
     const saleType = options.saleType || inferSaleType(product.unit);
-    const price = padNum(product.current_price, 6);
-    const plu = padNum(product.plu || product.id, 6);
+    const multiplier = Number.parseInt(options.priceMultiplier ?? 100, 10) || 100;
+    const rawPrice = Number.parseFloat(product.current_price) || 0;
+    const priceFormat = String(options.priceFormat || '').trim().toLowerCase();
+    const scaledPrice = Math.round(rawPrice * multiplier);
+    const integerPrice = round6d(rawPrice);
+    const safePrice = (() => {
+        if (priceFormat === '6d') {
+            return Math.max(0, Math.min(999999, integerPrice));
+        }
+        if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
+        return Math.max(0, Math.min(999999, scaledPrice));
+    })();
+    const price = padNum(safePrice, 6);
+    const pluRaw = Number.parseInt(product.plu || product.id, 10) || 0;
+    const plu = padNum(Math.max(1, Math.min(pluRaw, 999999)), 6);
     const name = padText(product.name || `PLU ${plu}`, 18);
     const eanCfg = padText('20PPPPIIIIII', 12);
 

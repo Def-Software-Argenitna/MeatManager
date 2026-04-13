@@ -1,13 +1,22 @@
-const config = require('c:/Users/Rodri/OneDrive/Documentos/GitHub/MeatManager/MeatManager-Bridge/src/config.js');
-const mysql = require('c:/Users/Rodri/OneDrive/Documentos/GitHub/MeatManager/MeatManager-Bridge/src/mysql.js');
+const mysql = require('../src/mysql.js');
+const mysql2 = require('mysql2/promise');
+const config = require('../src/config.js');
 
 async function test() {
+    let connection;
     try {
-        const rows = await mysql.query('SELECT * FROM tenant_settings WHERE setting_key = "precio_formato"');
-        console.log("precio_formato settings:", rows);
+        console.log("Connecting using config...");
+        const pool = mysql2.createPool({
+            host: config.mysql.host,
+            port: config.mysql.port,
+            user: config.mysql.user,
+            password: config.mysql.password,
+            database: config.mysql.database,
+        });
         
-        const priceRows = await mysql.query('SELECT id, name, current_price, plu FROM products WHERE plu = 4 OR id = 4');
-        console.log("Product PLU 4:", priceRows);
+        await pool.query('TRUNCATE TABLE scale_bridge_product_map');
+        console.log("Truncated scale_bridge_product_map. Force resync activated.");
+        
     } catch(e) {
         console.error("DB error:", e.message);
     } finally {
