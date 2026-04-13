@@ -4575,6 +4575,174 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: GET /api/scale/tickets/by-barcode/:barcode ───────────────────────
+// Devuelve un ticket de balanza (cabecera + items) a partir del codigo de barras
+// generado por el bridge directo.
+app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
+    try {
+        const barcode = String(req.params.barcode || '').trim();
+        if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
+        const barcodeDigits = barcode.replace(/\D/g, '');
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+
+        let [ticketRows] = await pool.query(
+            `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count
+             FROM scale_bridge_ticket_map
+             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+             LIMIT 1`,
+            [tenantId, barcode]
+        );
+
+        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+            const totalAmount = Number.parseInt(barcodeDigits.substring(6, 12), 10) / 100;
+            const [amountMatches] = await pool.query(
+                `SELECT device_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count
+                 FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ?
+                   AND ABS(total_amount - ?) < 0.01
+                   AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
+                 ORDER BY sale_at DESC
+                 LIMIT 3`,
+                [tenantId, totalAmount]
+            );
+            if (amountMatches.length === 1) {
+                ticketRows = [amountMatches[0]];
+            } else if (amountMatches.length > 1) {
+                return res.status(409).json({
+                    ok: false,
+                    error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
+                    candidates: amountMatches.map((row) => ({
+                        ticketId: row.ticket_id,
+                        saleAt: row.sale_at,
+                        total: Number(row.total_amount || 0),
+                    })),
+                });
+            }
+        }
+
+        if (!ticketRows.length) {
+            const [ventaRows] = await pool.query(
+                `SELECT id, date, total, qendra_ticket_id, ticket_barcode
+                 FROM ventas
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 LIMIT 1`,
+                [tenantId, barcode]
+            );
+            if (ventaRows.length) {
+                const venta = ventaRows[0];
+                const [itemsVenta] = await pool.query(
+                    `SELECT vi.product_id, vi.product_name, vi.quantity, vi.price, vi.subtotal,
+                            p.plu AS product_plu, p.category AS product_category, p.unit AS product_unit
+                     FROM ventas_items vi
+                     LEFT JOIN products p
+                       ON p.tenant_id = vi.tenant_id
+                      AND p.id = vi.product_id
+                     WHERE vi.tenant_id = ? AND vi.venta_id = ?
+                     ORDER BY vi.id ASC`,
+                    [tenantId, venta.id]
+                );
+                return res.json({
+                    ok: true,
+                    ticket: {
+                        deviceId: null,
+                        ticketId: venta.qendra_ticket_id || String(venta.id),
+                        barcode: venta.ticket_barcode,
+                        vendorCode: null,
+                        saleAt: venta.date,
+                        total: Number(venta.total || 0),
+                        itemCount: itemsVenta.length,
+                    },
+                    items: itemsVenta.map((row, idx) => ({
+                        lineNo: idx + 1,
+                        plu: row.product_plu ? String(row.product_plu) : '',
+                        quantity: Number(row.quantity || 0),
+                        unit: String(row.product_unit || '').trim() || 'un',
+                        amount: Number(row.subtotal || 0),
+                        vendorCode: null,
+                        product: {
+                            id: row.product_id ? Number(row.product_id) : null,
+                            name: row.product_name || null,
+                            category: row.product_category || null,
+                            unit: row.product_unit || null,
+                            price: row.price != null ? Number(row.price) : null,
+                            plu: row.product_plu ? String(row.product_plu) : null,
+                        },
+                    })),
+                });
+            }
+        }
+
+        if (!ticketRows.length) {
+            return res.status(404).json({ ok: false, error: 'Ticket no encontrado para ese barcode' });
+        }
+
+        const ticket = ticketRows[0];
+        const [itemRows] = await pool.query(
+            `SELECT s.line_no, s.sale_at, s.vendor_code, s.plu_code, s.units, s.grams, s.amount,
+                    p.id AS product_id, p.name AS product_name, p.category AS product_category, p.unit AS product_unit, p.current_price AS product_price, p.plu AS product_plu
+             FROM scale_bridge_sales_item s
+             LEFT JOIN products p
+               ON p.tenant_id = s.tenant_id
+              AND (
+                   CAST(p.plu AS CHAR) = s.plu_code
+                   OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM s.plu_code)
+              )
+             WHERE s.tenant_id = ?
+               AND s.device_id = ?
+               AND s.ticket_id = ?
+             ORDER BY s.line_no ASC`,
+            [tenantId, ticket.device_id, ticket.ticket_id]
+        );
+
+        const items = itemRows.map((row) => {
+            const grams = Number(row.grams || 0);
+            const units = Number(row.units || 0);
+            const qty = grams > 0 ? Number((grams / 1000).toFixed(3)) : units;
+            return {
+                lineNo: Number(row.line_no || 0),
+                plu: String(row.plu_code || '').trim(),
+                quantity: qty,
+                unit: grams > 0 ? 'kg' : 'un',
+                amount: Number(row.amount || 0),
+                vendorCode: String(row.vendor_code || ticket.vendor_code || '').trim() || null,
+                product: {
+                    id: row.product_id ? Number(row.product_id) : null,
+                    name: row.product_name || null,
+                    category: row.product_category || null,
+                    unit: row.product_unit || null,
+                    price: row.product_price != null ? Number(row.product_price) : null,
+                    plu: row.product_plu != null ? String(row.product_plu) : null,
+                },
+            };
+        });
+
+        return res.json({
+            ok: true,
+            ticket: {
+                deviceId: ticket.device_id,
+                ticketId: ticket.ticket_id,
+                barcode: ticket.ticket_barcode,
+                vendorCode: ticket.vendor_code || null,
+                saleAt: ticket.sale_at,
+                total: Number(ticket.total_amount || 0),
+                itemCount: Number(ticket.item_count || items.length),
+            },
+            items,
+        });
+    } catch (err) {
+        if (String(err?.message || '').includes('scale_bridge_ticket_map')) {
+            return res.status(404).json({
+                ok: false,
+                error: 'Todavia no existe la tabla de tickets del bridge. Ejecuta una sincronizacion del bridge directo.',
+            });
+        }
+        console.error('[GET /api/scale/tickets/by-barcode ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: POST /api/compras ────────────────────────────────────────────────
 // Registra una compra de forma ATÓMICA: compras + compras_items + stock
 // + animal_lots (despostada) + caja_movimientos — en una sola transacción MySQL.
