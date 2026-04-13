@@ -5315,8 +5315,8 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
               AND (
-                   CAST(p.plu AS CHAR) = s.plu_code
-                   OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM s.plu_code)
+                                     CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                                     OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
               )
              WHERE s.tenant_id = ?
                AND s.device_id = ?
