@@ -169,6 +169,7 @@ const Ventas = () => {
     const refreshVentasData = React.useCallback(async () => {
         const [
             stockRows,
+<<<<<<< HEAD
             productsRows,
             promotionsRows,
             clientRows,
@@ -237,6 +238,75 @@ const Ventas = () => {
                 acc[saleId].push(item);
                 return acc;
             }, {})
+=======
+            productRows,
+            pricesRows,
+            clientRows,
+            paymentRows,
+            promotionRows,
+            salesRows,
+            salesItemsRows,
+            movementsRows,
+        ] = await Promise.all([
+            fetchTable('stock'),
+            fetchProductsSafe(),
+            fetchTable('prices').catch(() => []),
+            fetchTable('clients'),
+            fetchTable('payment_methods'),
+            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
+            fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
+            fetchTable('ventas_items'),
+            fetchTable('caja_movimientos'),
+        ]);
+
+        await syncLegacyProductsToCatalog({
+            products: productRows,
+            stockRows,
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
+        });
+
+        const syncedProducts = await fetchProductsSafe();
+        await reconcileLegacyProductConflicts({
+            products: syncedProducts,
+            prices: Array.isArray(pricesRows) ? pricesRows : [],
+        });
+        const refreshedProducts = await fetchProductsSafe();
+
+        const filteredStockRows = Array.isArray(stockRows)
+            ? stockRows.filter((row) => !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId)
+            : [];
+
+        setStockItems(filteredStockRows);
+        setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
+        setClients(Array.isArray(clientRows) ? clientRows : []);
+        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
+
+        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
+        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
+
+        const recentRows = Array.isArray(salesRows) ? salesRows : [];
+        setRecentSales(recentRows);
+
+        const recentIds = new Set(recentRows.map((sale) => Number(sale.id)));
+        const groupedItems = {};
+        for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
+            const ventaId = Number(item.venta_id);
+            if (!recentIds.has(ventaId)) continue;
+            if (!groupedItems[ventaId]) groupedItems[ventaId] = [];
+            groupedItems[ventaId].push(item);
+        }
+        setRecentSalesItems(groupedItems);
+
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        setTodayOpeningMovements(
+            (Array.isArray(movementsRows) ? movementsRows : []).filter((movement) => {
+                const movementDate = movement?.date ? new Date(movement.date) : null;
+                return movementDate && !Number.isNaN(movementDate.getTime()) && movementDate >= start && movementDate <= end && movement.type === 'apertura';
+            })
+>>>>>>> 6b8e6e48fbbffaa35f4cf432e35f2216545394f0
         );
     }, [currentBranchId]);
 
@@ -303,6 +373,56 @@ const Ventas = () => {
         showPrintConfirmModal
     ]);
     // ────────────────────────────────────────────────────────────────────────
+
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const loadVentasBootstrap = async () => {
+            try {
+                const [remotePriceFormat, remoteShopName, remoteShopAddress, remoteWhatsapp] = await Promise.all([
+                    getRemoteSetting('precio_formato').catch(() => null),
+                    getRemoteSetting('shop_name').catch(() => null),
+                    getRemoteSetting('shop_address').catch(() => null),
+                    getRemoteSetting('whatsapp_number').catch(() => null),
+                ]);
+
+                if (cancelled) return;
+
+                if (remotePriceFormat) {
+                    setPriceFormat(String(remotePriceFormat));
+                }
+
+                setShopInfo((prev) => ({
+                    name: String(remoteShopName || '').trim() || prev.name,
+                    address: String(remoteShopAddress || '').trim(),
+                    phone: String(remoteWhatsapp || '').trim(),
+                }));
+
+                await refreshVentasData();
+            } catch (error) {
+                if (!cancelled) {
+                    console.error('Error cargando bootstrap de ventas:', error);
+                    showToast('No se pudieron cargar los datos de ventas.');
+                }
+            }
+        };
+
+        loadVentasBootstrap();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [refreshVentasData, showToast]);
+
+    React.useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState !== 'visible') return;
+            refreshVentasData().catch((error) => console.error('Error refrescando ventas al volver a la pestaña:', error));
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, [refreshVentasData]);
 
     const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
 
