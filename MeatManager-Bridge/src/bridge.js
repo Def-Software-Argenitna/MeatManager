@@ -1629,22 +1629,9 @@ class QendraBridge {
             });
         }
 
-        // 4. Insert NOVEDADES notifications per target
-        if (hasNovedades && novedadesColumns.length > 0) {
-            for (const ip of targets) {
-                const novRow = {};
-                if (novedadesColumns.includes('IP')) novRow.IP = ip;
-                if (novedadesColumns.includes('TABLA')) novRow.TABLA = 3;
-                if (novedadesColumns.includes('VALOR')) novRow.VALOR = Number(numero || pluId);
-                const allowedNov = novedadesColumns.filter((c) => Object.prototype.hasOwnProperty.call(novRow, c));
-                if (allowedNov.length > 0) {
-                    ops.push({
-                        sql: `INSERT INTO NOVEDADES (${allowedNov.map((c) => `"${c}"`).join(', ')}) VALUES (${allowedNov.map(() => '?').join(', ')})`,
-                        params: allowedNov.map((c) => novRow[c]),
-                    });
-                }
-            }
-        }
+        // Note: NOVEDADES table entries are created automatically by Qendra's
+        // SiModificoNumero trigger when PLU is updated. Writing them explicitly
+        // here causes deadlocks with Qendra's COMM NO WAIT transactions.
 
         return ops;
     }
