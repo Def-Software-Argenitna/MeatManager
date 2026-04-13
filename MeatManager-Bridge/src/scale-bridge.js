@@ -79,20 +79,52 @@ class ScaleBridge {
                 device_id VARCHAR(64) NOT NULL,
                 tenant_id BIGINT NOT NULL,
                 branch_id BIGINT NULL,
+                scale_address INT NULL,
                 ticket_id VARCHAR(32) NOT NULL,
                 ticket_barcode VARCHAR(64) NOT NULL,
                 vendor_code VARCHAR(16) NULL,
                 sale_at DATETIME NOT NULL,
                 total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
                 item_count INT NOT NULL DEFAULT 0,
+                ticket_status VARCHAR(16) NOT NULL DEFAULT 'open',
+                charged_sale_id BIGINT NULL,
+                charged_at DATETIME NULL,
+                voided_sale_id BIGINT NULL,
+                voided_at DATETIME NULL,
                 fingerprint VARCHAR(128) NOT NULL,
                 synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                 UNIQUE KEY ux_scale_ticket_device (device_id, ticket_id),
                 UNIQUE KEY ux_scale_ticket_barcode (ticket_barcode),
+                KEY ix_scale_ticket_addr (tenant_id, scale_address, sale_at),
                 KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_ticket_map
+                ADD COLUMN scale_address INT NULL AFTER branch_id;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
+        for (const stmt of [
+            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN ticket_status VARCHAR(16) NOT NULL DEFAULT 'open' AFTER item_count",
+            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN charged_sale_id BIGINT NULL AFTER ticket_status",
+            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN charged_at DATETIME NULL AFTER charged_sale_id",
+            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN voided_sale_id BIGINT NULL AFTER charged_at",
+            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN voided_at DATETIME NULL AFTER voided_sale_id",
+        ]) {
+            try {
+                await mysqlExecute(this.mysqlPool, stmt);
+            } catch (error) {
+                const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                    || String(error?.message || '').toLowerCase().includes('duplicate column');
+                if (!duplicate) throw error;
+            }
+        }
     }
 
     async ping() {
@@ -353,15 +385,35 @@ class ScaleBridge {
         const payload = buildSales72Payload(fromDate, toDate);
         const response = await this.scale.send(72, payload, { timeoutMs: 30000 });
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
-        if (String(response.data || '').startsWith('E')) throw new Error(`Error al leer ventas: ${response.data}`);
+        const responseData = String(response.data || '');
+        if (responseData.startsWith('E7')) {
+            this.logger.info('Funcion 72 sin datos', {
+                from: new Date(fromDate).toISOString(),
+                to: new Date(toDate).toISOString(),
+                payload,
+                response: responseData,
+            });
+            return { ok: true, fetched: 0, stored: 0, tickets: 0, noData: true };
+        }
+        if (responseData.startsWith('E')) {
+            this.logger.warn('Funcion 72 devolvio error', {
+                from: new Date(fromDate).toISOString(),
+                to: new Date(toDate).toISOString(),
+                payload,
+                response: responseData,
+            });
+            throw new Error(`Error al leer ventas: ${responseData}`);
+        }
 
         const rows = parseSales72(response.data);
         let inserted = 0;
+        let latestSaleAt = null;
         let index = 0;
         const tickets = new Map();
         for (const row of rows) {
             index += 1;
             const saleAt = asDateParts(row.date, row.time);
+            if (!latestSaleAt || saleAt > latestSaleAt) latestSaleAt = saleAt;
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_sales_item
@@ -385,9 +437,9 @@ class ScaleBridge {
                     row.ticketId,
                     index,
                     saleAt,
-                    row.vendor,
-                    row.plu,
-                    row.sector,
+                    String(row.vendor || '').slice(0, 8),
+                    String(row.plu || '').slice(0, 16),
+                    String(row.sector || '').slice(0, 8),
                     row.units,
                     row.grams,
                     row.drainedGrams,
@@ -442,9 +494,10 @@ class ScaleBridge {
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_ticket_map
-                 (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, fingerprint, synced_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, vendor_code, sale_at, total_amount, item_count, fingerprint, synced_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
+                    scale_address = VALUES(scale_address),
                     ticket_barcode = VALUES(ticket_barcode),
                     vendor_code = VALUES(vendor_code),
                     sale_at = VALUES(sale_at),
@@ -456,6 +509,7 @@ class ScaleBridge {
                     this.config.deviceId,
                     this.config.tenantId,
                     this.config.branchId || null,
+                    this.config.scale.address || null,
                     ticket.ticketId,
                     ticketBarcode,
                     ticket.vendorCode || null,
@@ -479,6 +533,7 @@ class ScaleBridge {
             fetched: rows.length,
             stored: inserted,
             tickets: tickets.size,
+            latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
     }
 
@@ -514,7 +569,39 @@ class ScaleBridge {
                 toDate: now,
                 closeAfter: this.config.closeSalesAfterPull,
             });
-            this.state.lastTicketSyncAt = new Date().toISOString();
+
+            // Si no hubo datos en la ventana incremental, intentamos un backfill
+            // para recuperar ventas demoradas sin depender de intervención manual.
+            if (sales.ok && Number(sales.fetched || 0) === 0) {
+                const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
+                const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
+                if (shouldBackfill) {
+                    const backfillFrom = new Date(now);
+                    backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
+                    this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
+                        from: backfillFrom.toISOString(),
+                        to: now.toISOString(),
+                    });
+                    const backfill = await this.pullSales({
+                        fromDate: backfillFrom,
+                        toDate: now,
+                        closeAfter: this.config.closeSalesAfterPull,
+                    });
+                    this.state.lastSalesBackfillAt = new Date().toISOString();
+                    if (Number(backfill.fetched || 0) > 0) {
+                        this.logger.info('Backfill de ventas recupero registros', {
+                            fetched: backfill.fetched,
+                            tickets: backfill.tickets,
+                        });
+                        sales = { ...backfill, backfill: true };
+                    }
+                }
+            }
+
+            // El cursor avanza solo cuando realmente ingresan ventas.
+            if (sales.ok && Number(sales.fetched || 0) > 0) {
+                this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+            }
         } catch (error) {
             sales = { ok: false, fetched: 0, stored: 0, error: error.message };
             this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });

@@ -171,17 +171,37 @@ function parseSales72(data) {
     const tokens = clean.split('^').filter((token) => token !== '');
     const rows = [];
     for (let i = 0; i + 9 < tokens.length; i += 10) {
+        const ticketId = String(tokens[i] || '').trim();
+        const date = String(tokens[i + 1] || '').trim();
+        const time = String(tokens[i + 2] || '').trim();
+        const vendor = String(tokens[i + 3] || '').trim();
+        const plu = String(tokens[i + 4] || '').trim();
+        const sector = String(tokens[i + 5] || '').trim();
+        const unitsRaw = String(tokens[i + 6] || '').trim();
+        const gramsRaw = String(tokens[i + 7] || '').trim();
+        const drainedRaw = String(tokens[i + 8] || '').trim();
+        const amountRaw = String(tokens[i + 9] || '').trim();
+
+        const validDate = /^\d{2}\/\d{2}\/\d{2}$/.test(date);
+        const validTime = /^\d{2}:\d{2}:\d{2}$/.test(time);
+        const validNumeric = /^\d+$/.test(unitsRaw) && /^\d+$/.test(gramsRaw) && /^\d+$/.test(drainedRaw) && /^\d+$/.test(amountRaw);
+        const validIdentity = ticketId.length > 0 && vendor.length > 0 && plu.length > 0;
+
+        if (!validDate || !validTime || !validNumeric || !validIdentity) {
+            continue;
+        }
+
         rows.push({
-            ticketId: tokens[i],
-            date: tokens[i + 1],
-            time: tokens[i + 2],
-            vendor: tokens[i + 3],
-            plu: tokens[i + 4],
-            sector: tokens[i + 5],
-            units: Number.parseInt(tokens[i + 6] || '0', 10) || 0,
-            grams: Number.parseInt(tokens[i + 7] || '0', 10) || 0,
-            drainedGrams: Number.parseInt(tokens[i + 8] || '0', 10) || 0,
-            amountTimes100: Number.parseInt(tokens[i + 9] || '0', 10) || 0,
+            ticketId,
+            date,
+            time,
+            vendor,
+            plu,
+            sector,
+            units: Number.parseInt(unitsRaw, 10) || 0,
+            grams: Number.parseInt(gramsRaw, 10) || 0,
+            drainedGrams: Number.parseInt(drainedRaw, 10) || 0,
+            amountTimes100: Number.parseInt(amountRaw, 10) || 0,
         });
     }
     return rows;
