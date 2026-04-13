@@ -1613,7 +1613,7 @@ const Ventas = () => {
         if (!showPaymentModal) return undefined;
 
         const handlePaymentShortcuts = (e) => {
-            if (!(e.ctrlKey && e.shiftKey)) return;
+            if (!(e.ctrlKey && e.altKey)) return;
 
             const key = String(e.key || '').toLowerCase();
             if (key === 'd') {
