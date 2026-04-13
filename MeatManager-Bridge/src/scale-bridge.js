@@ -393,11 +393,13 @@ class ScaleBridge {
 
         const rows = parseSales72(response.data);
         let inserted = 0;
+        let latestSaleAt = null;
         let index = 0;
         const tickets = new Map();
         for (const row of rows) {
             index += 1;
             const saleAt = asDateParts(row.date, row.time);
+            if (!latestSaleAt || saleAt > latestSaleAt) latestSaleAt = saleAt;
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_sales_item
@@ -517,6 +519,7 @@ class ScaleBridge {
             fetched: rows.length,
             stored: inserted,
             tickets: tickets.size,
+            latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
     }
 
@@ -552,7 +555,39 @@ class ScaleBridge {
                 toDate: now,
                 closeAfter: this.config.closeSalesAfterPull,
             });
-            this.state.lastTicketSyncAt = new Date().toISOString();
+
+            // Si no hubo datos en la ventana incremental, intentamos un backfill
+            // para recuperar ventas demoradas sin depender de intervención manual.
+            if (sales.ok && Number(sales.fetched || 0) === 0) {
+                const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
+                const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
+                if (shouldBackfill) {
+                    const backfillFrom = new Date(now);
+                    backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
+                    this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
+                        from: backfillFrom.toISOString(),
+                        to: now.toISOString(),
+                    });
+                    const backfill = await this.pullSales({
+                        fromDate: backfillFrom,
+                        toDate: now,
+                        closeAfter: this.config.closeSalesAfterPull,
+                    });
+                    this.state.lastSalesBackfillAt = new Date().toISOString();
+                    if (Number(backfill.fetched || 0) > 0) {
+                        this.logger.info('Backfill de ventas recupero registros', {
+                            fetched: backfill.fetched,
+                            tickets: backfill.tickets,
+                        });
+                        sales = { ...backfill, backfill: true };
+                    }
+                }
+            }
+
+            // El cursor avanza solo cuando realmente ingresan ventas.
+            if (sales.ok && Number(sales.fetched || 0) > 0) {
+                this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+            }
         } catch (error) {
             sales = { ok: false, fetched: 0, stored: 0, error: error.message };
             this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });

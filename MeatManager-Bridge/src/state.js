@@ -4,6 +4,7 @@ const path = require('path');
 const defaultState = () => ({
     lastProductSyncAt: null,
     lastTicketSyncAt: null,
+    lastSalesBackfillAt: null,
     lastRunAt: null,
     lastRunStatus: 'idle',
     lastRunMessage: null,
