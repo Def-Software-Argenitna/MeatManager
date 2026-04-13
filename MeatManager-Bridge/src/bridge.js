@@ -1071,12 +1071,12 @@ class QendraBridge {
 
         const rows = await firebirdQuery(
             this.config.firebird,
-            `SELECT v.ID_TICKET, v.FECHA, v.ID_PLU,
+            `SELECT v.IP, v.ID_TICKET, v.FECHA, v.ID_PLU,
                     CAST(v.PESO AS DOUBLE PRECISION) AS PESO_G,
                     CAST(v.IMPORTE AS DOUBLE PRECISION) AS IMPORTE
              FROM VENTAS v
              ${whereClause}
-             ORDER BY v.ID_TICKET, v.FECHA`,
+             ORDER BY v.IP, v.ID_TICKET, v.FECHA`,
             since ? [since] : []
         );
 
@@ -1088,8 +1088,11 @@ class QendraBridge {
         const tickets = new Map();
         const pluIds = new Set();
         for (const row of rows) {
-            const ticketId = String(row.ID_TICKET ?? row.id_ticket ?? '').trim();
-            if (!ticketId) continue;
+            const scaleIp = String(row.IP ?? row.ip ?? '').trim();
+            const rawTicketId = String(row.ID_TICKET ?? row.id_ticket ?? '').trim();
+            if (!rawTicketId) continue;
+            // Key includes IP so ticket #3 from scale 20 ≠ ticket #3 from scale 21
+            const ticketId = scaleIp ? `${scaleIp}-${rawTicketId}` : rawTicketId;
             if (!tickets.has(ticketId)) {
                 tickets.set(ticketId, {
                     ticketId,
