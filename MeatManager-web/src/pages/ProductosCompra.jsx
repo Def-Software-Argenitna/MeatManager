@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck } from 'lucide-react';
+import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { desktopApi } from '../utils/desktopApi';
@@ -37,6 +37,7 @@ const ProductosCompra = () => {
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [saleCategories, setSaleCategories] = useState([]);
+    const [collapsedGroups, setCollapsedGroups] = useState({});
 
     useEffect(() => {
         desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
@@ -260,9 +261,63 @@ const ProductosCompra = () => {
         setTimeout(() => setQendraSendStatus(null), 5000);
     };
 
-    const filteredItems = items?.filter(i =>
-        i.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredItems = React.useMemo(() => {
+        const term = String(searchTerm || '').trim().toLowerCase();
+        const source = Array.isArray(items) ? items : [];
+        if (!term) return source;
+        return source.filter((item) => String(item?.name || '').toLowerCase().includes(term));
+    }, [items, searchTerm]);
+
+    const groupedItems = React.useMemo(() => {
+        const groups = new Map();
+
+        filteredItems.forEach((item) => {
+            const hasCategory = Number(item?.category_id || 0) > 0;
+            const key = hasCategory ? `cat-${item.category_id}` : 'uncategorized';
+            const label = hasCategory && categoryMap[item.category_id]
+                ? categoryMap[item.category_id]
+                : 'Sin categoría';
+
+            if (!groups.has(key)) {
+                groups.set(key, { key, label, items: [] });
+            }
+            groups.get(key).items.push(item);
+        });
+
+        const sortedGroups = Array.from(groups.values()).map((group) => ({
+            ...group,
+            items: group.items.sort((a, b) =>
+                String(a?.name || '').localeCompare(String(b?.name || ''), 'es', { sensitivity: 'base' })
+            ),
+        }));
+
+        sortedGroups.sort((a, b) => {
+            if (a.key === 'uncategorized') return 1;
+            if (b.key === 'uncategorized') return -1;
+            return String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' });
+        });
+
+        return sortedGroups;
+    }, [filteredItems, categoryMap]);
+
+    const toggleGroup = (groupKey) => {
+        setCollapsedGroups((prev) => ({
+            ...prev,
+            [groupKey]: !prev[groupKey],
+        }));
+    };
+
+    const expandAllGroups = () => {
+        setCollapsedGroups({});
+    };
+
+    const collapseAllGroups = () => {
+        const nextState = {};
+        groupedItems.forEach((group) => {
+            nextState[group.key] = true;
+        });
+        setCollapsedGroups(nextState);
+    };
 
     const renderSaleCategoryOptions = () => {
         const animal = saleCategoryOptions.filter((option) => option.group === 'animal');
@@ -309,60 +364,122 @@ const ProductosCompra = () => {
             </header>
 
             <div className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }}>
-                <div style={{ position: 'relative' }}>
-                    <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
-                    <input
-                        type="text"
-                        placeholder="Buscar producto..."
-                        className="neo-input"
-                        style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                <div style={{ display: 'flex', gap: '0.8rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <div style={{ position: 'relative', flex: '1 1 340px' }}>
+                        <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+                        <input
+                            type="text"
+                            placeholder="Buscar producto..."
+                            className="neo-input"
+                            style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button
+                            type="button"
+                            className="neo-button"
+                            style={{ padding: '0.5rem 0.8rem', fontSize: '0.8rem' }}
+                            onClick={expandAllGroups}
+                        >
+                            Expandir todo
+                        </button>
+                        <button
+                            type="button"
+                            className="neo-button"
+                            style={{ padding: '0.5rem 0.8rem', fontSize: '0.8rem' }}
+                            onClick={collapseAllGroups}
+                        >
+                            Contraer todo
+                        </button>
+                    </div>
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
-                {filteredItems?.map(item => (
-                    <div key={item.id} className="neo-card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <div>
-                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.name}</div>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                <span style={{ color: 'var(--color-text-muted)' }}>
-                                    {item.category_id ? categoryMap[item.category_id] : 'Sin Categoría'}
+            {groupedItems.length === 0 ? (
+                <div className="neo-card" style={{ padding: '1.25rem', color: 'var(--color-text-muted)' }}>
+                    No hay artículos para mostrar con el filtro actual.
+                </div>
+            ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {groupedItems.map((group) => (
+                        <section key={group.key} className="neo-card" style={{ padding: '1rem' }}>
+                            <button
+                                type="button"
+                                onClick={() => toggleGroup(group.key)}
+                                style={{
+                                    width: '100%',
+                                    background: 'transparent',
+                                    border: 'none',
+                                    cursor: 'pointer',
+                                    padding: 0,
+                                }}
+                            >
+                            <div style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                marginBottom: '0.8rem',
+                                borderBottom: '1px solid var(--color-border)',
+                                paddingBottom: '0.6rem',
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                    {collapsedGroups[group.key] ? <ChevronRight size={16} /> : <ChevronDown size={16} />}
+                                    <h3 style={{ margin: 0, fontSize: '1rem', fontWeight: 700 }}>
+                                        {group.label}
+                                    </h3>
+                                </div>
+                                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                                    {group.items.length} artículo{group.items.length === 1 ? '' : 's'}
                                 </span>
-                                <span style={{ background: 'var(--color-bg-main)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                    {item.unit}
-                                </span>
-                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                    IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
-                                </span>
-                                {item.type === 'despostada' && (
-                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
-                                        PARA DESPOSTAR
-                                    </span>
-                                )}
-                                {Number(item.is_preelaborable || 0) === 1 && (
-                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
-                                        INSUMO PRE-ELABORADO
-                                    </span>
-                                )}
                             </div>
-                        </div>
-                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                            {qendraAvailable && (
-                                <button
-                                    onClick={() => handleSendToQendra(item)}
-                                    style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-                                    title="Enviar precio a QENDRA (balanza)"
-                                >⬆️</button>
+                            </button>
+
+                            {!collapsedGroups[group.key] && (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                                {group.items.map(item => (
+                                    <div key={item.id} className="neo-card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                        <div>
+                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.name}</div>
+                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                <span style={{ background: 'var(--color-bg-main)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    {item.unit}
+                                                </span>
+                                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
+                                                </span>
+                                                {item.type === 'despostada' && (
+                                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
+                                                        PARA DESPOSTAR
+                                                    </span>
+                                                )}
+                                                {Number(item.is_preelaborable || 0) === 1 && (
+                                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
+                                                        INSUMO PRE-ELABORADO
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                            {qendraAvailable && (
+                                                <button
+                                                    onClick={() => handleSendToQendra(item)}
+                                                    style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
+                                                    title="Enviar precio a QENDRA (balanza)"
+                                                >⬆️</button>
+                                            )}
+                                            <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
+                                            <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
                             )}
-                            <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
-                            <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
-                        </div>
-                    </div>
-                ))}
-            </div>
+                        </section>
+                    ))}
+                </div>
+            )}
 
             {isModalOpen && createPortal(
                 <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
