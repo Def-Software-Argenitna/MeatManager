@@ -727,7 +727,7 @@ const TABLES_WITH_NUMERIC_ID = [
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
 ];
-const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock']);
+const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock', 'promotions']);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -1683,6 +1683,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
+            await ensureColumn(conn, 'promotions', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
             await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
@@ -3222,6 +3223,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS promotions (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id           INT NULL,
             product_id          INT NULL,
             product_name        VARCHAR(150) NOT NULL,
             min_qty_kg          DECIMAL(12,3) NOT NULL,
@@ -3238,6 +3240,7 @@ function getSchemaTables() {
             updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_promotions_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_promotions_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_promotions_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
             INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name)
         )`,
@@ -4238,6 +4241,172 @@ function extractBranchCodeFromReceipt(receiptCode) {
     return match ? normalizeBranchCodeValue(match[1]) : null;
 }
 
+function normalizeWhatsAppPhone(rawValue) {
+    const digits = String(rawValue || '').replace(/\D/g, '');
+    if (!digits) return null;
+    const normalized = digits.startsWith('00') ? digits.slice(2) : digits;
+    if (normalized.length < 10 || normalized.length > 15) return null;
+    return normalized;
+}
+
+function formatPromoBroadcastMessage({ businessName, promo }) {
+    const safeBusiness = String(businessName || '').trim();
+    const safeProduct = String(promo?.product_name || 'Producto').trim();
+    const minKg = Number(promo?.min_qty_kg || 0).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+    const total = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const header = safeBusiness ? `🥩 *${safeBusiness}*` : '🥩 *Nueva promo*';
+    return [
+        header,
+        '',
+        '🔥 *PROMOCIÓN NUEVA*',
+        `${safeProduct}: llevando *${minKg} kg* pagás *$${total}*`,
+        '',
+        'Te esperamos en el local.',
+    ].join('\n');
+}
+
+async function getTenantSettingValue(pool, tenantId, key) {
+    const [rows] = await pool.query(
+        'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+        [tenantId, key]
+    );
+    return rows?.[0]?.value ?? null;
+}
+
+async function getActivePromotions(pool, tenantId, limit = 25) {
+    const [rows] = await pool.query(
+        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, active
+         FROM promotions
+         WHERE \`${TENANT_COLUMN}\` = ? AND active = 1
+         ORDER BY id DESC
+         LIMIT ?`,
+        [tenantId, Number(limit) || 25]
+    );
+    return Array.isArray(rows) ? rows : [];
+}
+
+async function resolveWhatsAppCloudConfig(pool, tenantId) {
+    const [tokenSetting, phoneIdSetting, versionSetting] = await Promise.all([
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_api_token').catch(() => null),
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_phone_number_id').catch(() => null),
+        getTenantSettingValue(pool, tenantId, 'whatsapp_cloud_api_version').catch(() => null),
+    ]);
+
+    return {
+        token: String(tokenSetting || process.env.WHATSAPP_CLOUD_API_TOKEN || '').trim(),
+        phoneNumberId: String(phoneIdSetting || process.env.WHATSAPP_CLOUD_PHONE_NUMBER_ID || '').trim(),
+        apiVersion: String(versionSetting || process.env.WHATSAPP_CLOUD_API_VERSION || 'v21.0').trim(),
+    };
+}
+
+async function sendWhatsAppCloudTextMessage({ to, body, cloudConfig }) {
+    const token = String(cloudConfig?.token || '').trim();
+    const phoneNumberId = String(cloudConfig?.phoneNumberId || '').trim();
+    const apiVersion = String(cloudConfig?.apiVersion || 'v21.0').trim();
+
+    if (!token || !phoneNumberId) {
+        throw new Error('WhatsApp Cloud API no configurada (faltan WHATSAPP_CLOUD_API_TOKEN / WHATSAPP_CLOUD_PHONE_NUMBER_ID)');
+    }
+
+    const response = await fetch(`https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`, {
+        method: 'POST',
+        headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+            messaging_product: 'whatsapp',
+            to,
+            type: 'text',
+            text: { body },
+        }),
+    });
+
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        const providerError = payload?.error?.message || payload?.error?.error_user_msg || response.statusText || 'Unknown provider error';
+        throw new Error(providerError);
+    }
+    return payload;
+}
+
+async function enqueuePromotionBroadcast({ pool, tenantId, promo }) {
+    try {
+        const autoBroadcastSetting = await getTenantSettingValue(pool, tenantId, 'whatsapp_auto_broadcast_promotions');
+        const autoBroadcastEnabled = autoBroadcastSetting == null
+            ? true
+            : ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(String(autoBroadcastSetting).trim().toLowerCase());
+
+        if (!autoBroadcastEnabled) {
+            return { queued: 0, enabled: false, reason: 'disabled_by_setting' };
+        }
+
+        const cloudConfig = await resolveWhatsAppCloudConfig(pool, tenantId);
+        const token = String(cloudConfig.token || '').trim();
+        const phoneNumberId = String(cloudConfig.phoneNumberId || '').trim();
+        if (!token || !phoneNumberId) {
+            return { queued: 0, enabled: false, reason: 'provider_not_configured' };
+        }
+
+        const [clientRows] = await pool.query(
+            `SELECT id, name, phone, phone1, phone2, phones
+             FROM clients
+             WHERE \`${TENANT_COLUMN}\` = ?`,
+            [tenantId]
+        );
+
+        const uniquePhones = new Set();
+        for (const row of clientRows || []) {
+            const candidates = [];
+            candidates.push(row?.phone);
+            candidates.push(row?.phone1);
+            candidates.push(row?.phone2);
+            const phonesBlob = String(row?.phones || '');
+            if (phonesBlob) {
+                phonesBlob.split(/[\n,;]+/).forEach((value) => candidates.push(value));
+            }
+            candidates
+                .map(normalizeWhatsAppPhone)
+                .filter(Boolean)
+                .forEach((phone) => uniquePhones.add(phone));
+        }
+
+        const recipients = [...uniquePhones];
+        if (recipients.length === 0) {
+            return { queued: 0, enabled: true, reason: 'no_recipients' };
+        }
+
+        const businessName =
+            await getTenantSettingValue(pool, tenantId, 'business_name')
+            || await getTenantSettingValue(pool, tenantId, 'store_name')
+            || await getTenantSettingValue(pool, tenantId, 'store_display_name')
+            || await getTenantSettingValue(pool, tenantId, 'local_name')
+            || '';
+
+        const message = formatPromoBroadcastMessage({ businessName, promo });
+
+        setImmediate(async () => {
+            let sent = 0;
+            let failed = 0;
+            for (const phone of recipients) {
+                try {
+                    await sendWhatsAppCloudTextMessage({ to: phone, body: message, cloudConfig });
+                    sent += 1;
+                } catch (error) {
+                    failed += 1;
+                    console.warn(`[PROMO WHATSAPP] Error enviando a ${phone}: ${error?.message || error}`);
+                }
+            }
+            console.log(`[PROMO WHATSAPP] tenant=${tenantId} promo=${promo?.id || '-'} sent=${sent} failed=${failed}`);
+        });
+
+        return { queued: recipients.length, enabled: true };
+    } catch (error) {
+        console.warn(`[PROMO WHATSAPP] No se pudo encolar difusión: ${error?.message || error}`);
+        return { queued: 0, enabled: false, reason: 'internal_error' };
+    }
+}
+
 // ── RUTA: POST /api/data ───────────────────────────────────────────────────
 // Recibe { table, operation, record, id } y replica la operación en MySQL
 // operations: insert | update | delete | upsert
@@ -4324,6 +4493,19 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
+                if (table === 'promotions') {
+                    const promoToBroadcast = {
+                        id: result.insertId,
+                        product_name: filtered.product_name || null,
+                        min_qty_kg: filtered.min_qty_kg || 0,
+                        promo_total_price: filtered.promo_total_price || 0,
+                        active: Number(filtered.active ?? 1) === 1,
+                    };
+                    if (promoToBroadcast.active) {
+                        const broadcast = await enqueuePromotionBroadcast({ pool, tenantId, promo: promoToBroadcast });
+                        return res.json({ ok: true, insertId: result.insertId, broadcast });
+                    }
+                }
                 return res.json({ ok: true, insertId: result.insertId });
             } catch (insertError) {
                 if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
@@ -4435,6 +4617,119 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
     } catch (err) {
         console.error('[SETTINGS ERROR]', err.message);
         res.status(500).json({ error: 'Error leyendo settings: ' + err.message });
+    }
+});
+
+app.get('/api/whatsapp/status', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede ver esta configuración' });
+        }
+
+        const [mode, inviteLink, autoBroadcast, activePromotions, businessName] = await Promise.all([
+            getTenantSettingValue(pool, tenantId, 'whatsapp_marketing_mode'),
+            getTenantSettingValue(pool, tenantId, 'whatsapp_group_invite_link'),
+            getTenantSettingValue(pool, tenantId, 'whatsapp_auto_broadcast_promotions'),
+            getActivePromotions(pool, tenantId, 25).catch(() => []),
+            (async () => (
+                await getTenantSettingValue(pool, tenantId, 'business_name')
+                || await getTenantSettingValue(pool, tenantId, 'store_name')
+                || await getTenantSettingValue(pool, tenantId, 'store_display_name')
+                || await getTenantSettingValue(pool, tenantId, 'local_name')
+                || ''
+            ))(),
+        ]);
+        const cloudConfig = await resolveWhatsAppCloudConfig(pool, tenantId);
+        const normalizedActivePromotions = (Array.isArray(activePromotions) ? activePromotions : []).map((promotion) => ({
+            id: Number(promotion?.id || 0),
+            productName: String(promotion?.product_name || '').trim(),
+            message: formatPromoBroadcastMessage({ businessName, promo: promotion }),
+        })).filter((promotion) => promotion.id > 0 && promotion.message);
+        const latestPromotion = normalizedActivePromotions[0] || null;
+
+        const autoBroadcastEnabled = autoBroadcast == null
+            ? true
+            : ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(String(autoBroadcast).trim().toLowerCase());
+
+        return res.json({
+            ok: true,
+            mode: String(mode || 'free').trim().toLowerCase() === 'paid' ? 'paid' : 'free',
+            inviteLink: String(inviteLink || '').trim(),
+            autoBroadcastPromotions: autoBroadcastEnabled,
+            promoPreview: latestPromotion?.message || '',
+            promoPreviewMeta: latestPromotion
+                ? {
+                    id: Number(latestPromotion.id || 0),
+                    productName: String(latestPromotion.productName || '').trim(),
+                }
+                : null,
+            activePromotions: normalizedActivePromotions,
+            cloud: {
+                configured: Boolean(cloudConfig.token && cloudConfig.phoneNumberId),
+                hasToken: Boolean(cloudConfig.token),
+                phoneNumberId: cloudConfig.phoneNumberId || '',
+                apiVersion: cloudConfig.apiVersion || 'v21.0',
+            },
+        });
+    } catch (err) {
+        console.error('[WHATSAPP STATUS ERROR]', err.message);
+        res.status(500).json({ error: 'No se pudo leer el estado de WhatsApp: ' + err.message });
+    }
+});
+
+app.post('/api/whatsapp/config', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede modificar esta configuración' });
+        }
+
+        const modeRaw = String(req.body?.mode || 'free').trim().toLowerCase();
+        const mode = modeRaw === 'paid' ? 'paid' : 'free';
+        const inviteLink = String(req.body?.inviteLink || '').trim();
+        const autoBroadcastPromotions = Boolean(req.body?.autoBroadcastPromotions);
+        const phoneNumberId = String(req.body?.phoneNumberId || '').trim();
+        const apiVersion = String(req.body?.apiVersion || 'v21.0').trim();
+        const token = String(req.body?.token || '').trim();
+        const updateToken = Boolean(req.body?.updateToken);
+
+        const settingPairs = [
+            ['whatsapp_marketing_mode', mode],
+            ['whatsapp_group_invite_link', inviteLink],
+            ['whatsapp_auto_broadcast_promotions', autoBroadcastPromotions ? '1' : '0'],
+            ['whatsapp_cloud_phone_number_id', phoneNumberId],
+            ['whatsapp_cloud_api_version', apiVersion],
+        ];
+        if (updateToken) {
+            settingPairs.push(['whatsapp_cloud_api_token', token]);
+        }
+
+        for (const [key, value] of settingPairs) {
+            await pool.query(
+                'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+                [tenantId, key, String(value ?? '')]
+            );
+        }
+
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('[WHATSAPP CONFIG ERROR]', err.message);
+        res.status(500).json({ error: 'No se pudo guardar la configuración de WhatsApp: ' + err.message });
     }
 });
 

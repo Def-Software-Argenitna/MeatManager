@@ -34,6 +34,31 @@
     font-size: 1.05rem;
 }
 
+.config-promos-table-header {
+    display: flex;
+    align-items: end;
+    justify-content: space-between;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+}
+
+.config-promos-table-filter {
+    display: grid;
+    gap: 0.3rem;
+    min-width: 220px;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.config-promos-table-filter select {
+    width: 100%;
+    padding: 0.6rem 0.7rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border, rgba(255, 255, 255, 0.12));
+    background: var(--color-bg-main, rgba(10, 10, 14, 0.8));
+    color: var(--color-text-main, #fff);
+}
+
 .config-promos-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -170,6 +195,47 @@
     gap: 0.65rem;
 }
 
+.config-promos-groups {
+    display: grid;
+    gap: 1rem;
+}
+
+.config-promos-group {
+    display: grid;
+    gap: 0.65rem;
+}
+
+.config-promos-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.6rem;
+}
+
+.config-promos-group-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+}
+
+.config-promos-group-header span {
+    min-width: 2rem;
+    text-align: center;
+    padding: 0.2rem 0.45rem;
+    border-radius: 999px;
+    background: rgba(148, 163, 184, 0.14);
+    color: #cbd5e1;
+    font-size: 0.76rem;
+    font-weight: 700;
+}
+
+.config-promos-empty-inline {
+    padding: 0.8rem;
+    border-radius: 10px;
+    border: 1px dashed rgba(148, 163, 184, 0.28);
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
 .config-promos-row {
     padding: 0.75rem 0.8rem;
     border-radius: 12px;
@@ -184,6 +250,11 @@
     margin: 0.2rem 0;
     color: var(--color-text-muted);
     font-size: 0.9rem;
+}
+
+.config-promos-row strong {
+    display: inline-block;
+    margin-bottom: 0.15rem;
 }
 
 .config-promos-row small {
