@@ -56,6 +56,7 @@ class ScaleBridge {
                 tenant_id BIGINT NOT NULL,
                 branch_id BIGINT NULL,
                 ticket_id VARCHAR(32) NOT NULL,
+                ticket_barcode VARCHAR(64) NULL,
                 line_no INT NOT NULL,
                 sale_at DATETIME NOT NULL,
                 vendor_code VARCHAR(8) NOT NULL,
@@ -72,6 +73,16 @@ class ScaleBridge {
                 KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_sales_item
+                ADD COLUMN ticket_barcode VARCHAR(64) NULL AFTER ticket_id;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
 
         await mysqlExecute(this.mysqlPool, `
             CREATE TABLE IF NOT EXISTS scale_bridge_ticket_map (
@@ -382,6 +393,12 @@ class ScaleBridge {
     }
 
     async pullSales({ fromDate, toDate, closeAfter = false }) {
+        const countRawRecords = (payload) => String(payload || '')
+            .replace(/F$/, '')
+            .split(';')
+            .map((part) => String(part || '').trim())
+            .filter((part) => part.length > 0).length;
+
         const payload = buildSales72Payload(fromDate, toDate);
         const now = new Date();
         const year = now.getFullYear();
@@ -454,48 +471,26 @@ class ScaleBridge {
             }
             rows = parseSales72(responseData);
         }
+
+        const rawRecordCount = countRawRecords(responseData);
+        if (rawRecordCount > rows.length) {
+            this.logger.warn('Funcion 72 devolvio registros con formato no reconocido', {
+                rawRecords: rawRecordCount,
+                parsedRows: rows.length,
+                preview: String(responseData || '').slice(0, 220),
+            });
+        }
+
         let inserted = 0;
         let latestSaleAt = null;
         let index = 0;
         const tickets = new Map();
+        const indexedRows = [];
         for (const row of rows) {
             index += 1;
             const saleAt = asDateParts(row.date, row.time);
             if (!latestSaleAt || saleAt > latestSaleAt) latestSaleAt = saleAt;
-            await mysqlExecute(
-                this.mysqlPool,
-                `INSERT INTO scale_bridge_sales_item
-                 (device_id, tenant_id, branch_id, ticket_id, line_no, sale_at, vendor_code, plu_code, sector_code, units, grams, drained_grams, amount, raw_payload, synced_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE
-                    sale_at = VALUES(sale_at),
-                    vendor_code = VALUES(vendor_code),
-                    plu_code = VALUES(plu_code),
-                    sector_code = VALUES(sector_code),
-                    units = VALUES(units),
-                    grams = VALUES(grams),
-                    drained_grams = VALUES(drained_grams),
-                    amount = VALUES(amount),
-                    raw_payload = VALUES(raw_payload),
-                    synced_at = VALUES(synced_at)`,
-                [
-                    this.config.deviceId,
-                    this.config.tenantId,
-                    this.config.branchId || null,
-                    row.ticketId,
-                    index,
-                    saleAt,
-                    String(row.vendor || '').slice(0, 8),
-                    String(row.plu || '').slice(0, 16),
-                    String(row.sector || '').slice(0, 8),
-                    row.units,
-                    row.grams,
-                    row.drainedGrams,
-                    Number((row.amountTimes100 || 0) / 100),
-                    JSON.stringify(row),
-                ]
-            );
-            inserted += 1;
+            indexedRows.push({ row, lineNo: index, saleAt });
 
             const ticketId = String(row.ticketId || '').trim();
             if (!ticketId) continue;
@@ -567,6 +562,105 @@ class ScaleBridge {
                     fingerprint,
                 ]
             );
+
+            await mysqlExecute(
+                this.mysqlPool,
+                `UPDATE scale_bridge_sales_item
+                 SET ticket_barcode = ?,
+                     synced_at = NOW()
+                 WHERE device_id = ?
+                   AND tenant_id = ?
+                   AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
+                   AND ticket_id = ?`,
+                [
+                    ticketBarcode,
+                    this.config.deviceId,
+                    this.config.tenantId,
+                    this.config.branchId || null,
+                    this.config.branchId || null,
+                    ticket.ticketId,
+                ]
+            );
+        }
+
+        await mysqlExecute(
+            this.mysqlPool,
+            `UPDATE scale_bridge_sales_item s
+             INNER JOIN scale_bridge_ticket_map t
+                ON t.device_id = s.device_id
+               AND t.tenant_id = s.tenant_id
+               AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+               AND t.ticket_id = s.ticket_id
+             SET s.ticket_barcode = t.ticket_barcode,
+                 s.synced_at = NOW()
+             WHERE s.device_id = ?
+               AND s.tenant_id = ?
+               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+               AND (s.ticket_barcode IS NULL OR s.ticket_barcode <> t.ticket_barcode)`,
+            [
+                this.config.deviceId,
+                this.config.tenantId,
+                this.config.branchId || null,
+            ]
+        );
+
+        const barcodeByTicketId = new Map(
+            [...tickets.values()].map((ticket) => {
+                const fingerprint = hashObject({
+                    ticketId: ticket.ticketId,
+                    vendorCode: ticket.vendorCode,
+                    saleAt: ticket.saleAt ? ticket.saleAt.toISOString() : null,
+                    totalAmount: Number(ticket.totalAmount.toFixed(2)),
+                    itemCount: ticket.itemCount,
+                    lines: ticket.lines,
+                });
+                const ticketBarcode = formatTicketBarcode({
+                    deviceId: this.config.deviceId,
+                    ticketId: ticket.ticketId,
+                    sourceDate: ticket.saleAt || new Date(),
+                    fingerprint,
+                });
+                return [ticket.ticketId, ticketBarcode];
+            })
+        );
+
+        for (const entry of indexedRows) {
+            await mysqlExecute(
+                this.mysqlPool,
+                `INSERT INTO scale_bridge_sales_item
+                 (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, line_no, sale_at, vendor_code, plu_code, sector_code, units, grams, drained_grams, amount, raw_payload, synced_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                    ticket_barcode = VALUES(ticket_barcode),
+                    sale_at = VALUES(sale_at),
+                    vendor_code = VALUES(vendor_code),
+                    plu_code = VALUES(plu_code),
+                    sector_code = VALUES(sector_code),
+                    units = VALUES(units),
+                    grams = VALUES(grams),
+                    drained_grams = VALUES(drained_grams),
+                    amount = VALUES(amount),
+                    raw_payload = VALUES(raw_payload),
+                    synced_at = VALUES(synced_at)`,
+                [
+                    this.config.deviceId,
+                    this.config.tenantId,
+                    this.config.branchId || null,
+                    entry.row.ticketId,
+                    barcodeByTicketId.get(String(entry.row.ticketId || '').trim()) || null,
+                    entry.lineNo,
+                    entry.saleAt,
+                    String(entry.row.vendor || '').slice(0, 8),
+                    String(entry.row.plu || '').slice(0, 16),
+                    String(entry.row.sector || '').slice(0, 8),
+                    entry.row.units,
+                    entry.row.grams,
+                    entry.row.drainedGrams,
+                    Number((entry.row.amountTimes100 || 0) / 100),
+                    JSON.stringify(entry.row),
+                ]
+            );
+            inserted += 1;
         }
 
         if (closeAfter && rows.length > 0) {

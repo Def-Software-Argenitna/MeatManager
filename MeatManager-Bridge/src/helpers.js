@@ -49,13 +49,6 @@ function toDate(value) {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function decodeFirebirdText(value) {
-    if (value === null || value === undefined) return '';
-    if (Buffer.isBuffer(value)) return value.toString('latin1');
-    if (typeof value === 'function') return '';
-    return String(value);
-}
-
 module.exports = {
     normalizeText,
     hashText,
@@ -65,5 +58,4 @@ module.exports = {
     formatTicketBarcode,
     toNumber,
     toDate,
-    decodeFirebirdText,
 };
