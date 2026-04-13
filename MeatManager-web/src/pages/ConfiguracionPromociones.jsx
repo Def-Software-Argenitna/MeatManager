@@ -483,21 +483,11 @@ const ConfiguracionPromociones = () => {
         <div className="config-promos-page animate-fade-in">
             <DirectionalReveal className="config-promos-wrapper" from="bottom" delay={0.05}>
                 
-                {/* Cabecera */}
-                <header className="page-header">
-                    <div className="header-title">
-                        <div className="header-icon"><FiTag /></div>
-                        <div>
-                            <h1>Configuración de Promociones</h1>
-                            <p>Gestión de combos por peso, sucursales y vigencias temporales o de stock.</p>
-                        </div>
+                {!isAdmin && (
+                    <div className="readonly-alert" style={{ marginBottom: '1rem' }}>
+                        <FiInfo /> Solo un administrador puede modificar esta configuración.
                     </div>
-                    {!isAdmin && (
-                        <div className="readonly-alert">
-                            <FiInfo /> Solo un administrador puede modificar esta configuración.
-                        </div>
-                    )}
-                </header>
+                )}
 
                 <div className="layout-grid">
                     {/* Formulario */}
