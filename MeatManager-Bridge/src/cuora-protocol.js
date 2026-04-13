@@ -107,8 +107,14 @@ function buildPlu4Payload(product, options = {}) {
     const sectionId = options.sectionId || 2;
     const saleType = options.saleType || inferSaleType(product.unit);
     const multiplier = Number.parseInt(options.priceMultiplier ?? 100, 10) || 100;
-    const scaledPrice = Math.round((Number.parseFloat(product.current_price) || 0) * multiplier);
-    const safePrice = Math.max(0, Math.min(999999, scaledPrice));
+    const rawPrice = Number.parseFloat(product.current_price) || 0;
+    const scaledPrice = Math.round(rawPrice * multiplier);
+    const fallbackWholePrice = Math.round(rawPrice);
+    const safePrice = (() => {
+        if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
+        if (fallbackWholePrice >= 0 && fallbackWholePrice <= 999999) return fallbackWholePrice;
+        return Math.max(0, Math.min(999999, scaledPrice));
+    })();
     const price = padNum(safePrice, 6);
     const pluRaw = Number.parseInt(product.plu || product.id, 10) || 0;
     const plu = padNum(Math.max(1, Math.min(pluRaw, 8000)), 4);

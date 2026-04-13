@@ -491,6 +491,7 @@ class ScaleBridge {
                 updatedAt: product.updated_at,
                 protocolMode: useLegacyPlu4 ? 'v6-func4' : 'v7-func61',
                 legacyPriceMultiplier: useLegacyPlu4 ? this.config.scale.legacyPriceMultiplier : null,
+                legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v1' : null,
             });
 
             const mapRows = await mysqlQuery(
