@@ -60,6 +60,14 @@ function inferSaleType(unit) {
     return 'U';
 }
 
+function round6d(value) {
+    const numeric = Number.parseFloat(value) || 0;
+    const intPart = Math.floor(numeric);
+    const decimal = numeric - intPart;
+    if (decimal >= 0.5) return Math.ceil(numeric);
+    return Math.floor(numeric);
+}
+
 function buildSectorPayload(sectionId, sectionName) {
     return `${padNum(sectionId, 2)}${padText(sectionName, 18)}`;
 }
@@ -108,9 +116,14 @@ function buildPlu4Payload(product, options = {}) {
     const saleType = options.saleType || inferSaleType(product.unit);
     const multiplier = Number.parseInt(options.priceMultiplier ?? 100, 10) || 100;
     const rawPrice = Number.parseFloat(product.current_price) || 0;
+    const priceFormat = String(options.priceFormat || '').trim().toLowerCase();
     const scaledPrice = Math.round(rawPrice * multiplier);
-    const fallbackWholePrice = Math.round(rawPrice);
+    const integerPrice = round6d(rawPrice);
     const safePrice = (() => {
+        if (priceFormat === '6d') {
+            return Math.max(0, Math.min(999999, integerPrice));
+        }
+        const fallbackWholePrice = Math.round(rawPrice);
         if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
         if (fallbackWholePrice >= 0 && fallbackWholePrice <= 999999) return fallbackWholePrice;
         return Math.max(0, Math.min(999999, scaledPrice));
@@ -236,6 +249,7 @@ module.exports = {
     encodeFrame,
     decodeFrame,
     inferSaleType,
+    round6d,
     buildSectorPayload,
     buildPlu61Payload,
     buildPlu4Payload,
