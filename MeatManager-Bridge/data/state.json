@@ -1,12 +1,12 @@
 {
-  "lastProductSyncAt": "2026-04-13T00:40:13.051Z",
-  "lastTicketSyncAt": "2026-04-13T00:40:13.051Z",
-  "lastRunAt": "2026-04-13T00:40:13.051Z",
+  "lastProductSyncAt": "2026-04-13T01:14:46.609Z",
+  "lastTicketSyncAt": "2026-04-13T01:14:46.609Z",
+  "lastRunAt": "2026-04-13T01:14:46.609Z",
   "lastRunStatus": "ok",
   "lastRunMessage": "Sincronizacion completada",
   "lastError": null,
   "ticketFingerprints": {},
   "productFingerprints": {},
-  "productCursor": "2026-04-13T00:40:09.692Z",
-  "lastRecoveryRepublishAt": "2026-04-13T00:36:40.990Z"
+  "productCursor": "2026-04-13T01:14:43.241Z",
+  "lastRecoveryRepublishAt": "2026-04-13T00:50:04.799Z"
 }
