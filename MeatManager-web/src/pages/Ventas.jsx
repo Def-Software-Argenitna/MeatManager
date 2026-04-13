@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -165,6 +165,7 @@ const Ventas = () => {
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['all']);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -546,6 +547,47 @@ const Ventas = () => {
             ...sorted.map((id) => getCategoryDisplay(id)),
         ];
     }, [products]);
+
+    const groupedFilteredProducts = React.useMemo(() => {
+        const groups = new Map();
+        filteredProducts.forEach((product) => {
+            const categoryDisplay = getCategoryDisplay(product?.category);
+            if (!groups.has(categoryDisplay.id)) {
+                groups.set(categoryDisplay.id, {
+                    ...categoryDisplay,
+                    items: [],
+                });
+            }
+            groups.get(categoryDisplay.id).items.push(product);
+        });
+
+        return [...groups.values()].sort((left, right) => {
+            const leftIdx = CATEGORY_PRIORITY.indexOf(left.id);
+            const rightIdx = CATEGORY_PRIORITY.indexOf(right.id);
+            const safeLeft = leftIdx === -1 ? Number.MAX_SAFE_INTEGER : leftIdx;
+            const safeRight = rightIdx === -1 ? Number.MAX_SAFE_INTEGER : rightIdx;
+            if (safeLeft !== safeRight) return safeLeft - safeRight;
+            return String(left.label || '').localeCompare(String(right.label || ''), 'es');
+        });
+    }, [filteredProducts]);
+
+    React.useEffect(() => {
+        const nextIds = groupedFilteredProducts.map((group) => group.id);
+        const hasSearch = barcodeInputValue.trim().length > 0;
+        setExpandedCategoryIds((prev) => {
+            if (hasSearch) return nextIds;
+            const filteredPrev = prev.filter((id) => nextIds.includes(id));
+            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+        });
+    }, [groupedFilteredProducts, barcodeInputValue]);
+
+    const toggleCategoryAccordion = React.useCallback((categoryId) => {
+        setExpandedCategoryIds((prev) => (
+            prev.includes(categoryId)
+                ? prev.filter((id) => id !== categoryId)
+                : [...prev, categoryId]
+        ));
+    }, []);
 
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = String(pluValue || '').trim();
@@ -1716,45 +1758,72 @@ const Ventas = () => {
                         </div>
                     )}
                 </div>
-                <div className="products-grid">
+                <div className="products-accordion-list">
                     {filteredProducts.length === 0 ? (
                         <div style={{ gridColumn: '1/-1', textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
                             <ShoppingBag style={{ opacity: 0.3, width: 48, height: 48, marginBottom: '1rem' }} />
                             <p>No hay productos disponibles.</p>
                         </div>
                     ) : (
-                        filteredProducts.map(product => (
-                            <div
-                                key={product.id}
-                                className="product-card"
-                                onClick={() => addToCart(product)}
-                                style={{ position: 'relative', overflow: 'visible' }}
-                            >
-                                <div className="product-name">{product.name}</div>
-                                {toNumber(product.price) > 0 ? (
-                                    <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
-                                ) : (
-                                    <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
-                                )}
+                        groupedFilteredProducts.map((group) => {
+                            const isExpanded = expandedCategoryIds.includes(group.id);
+                            return (
+                                <div key={group.id} className={`products-accordion-group ${isExpanded ? 'expanded' : ''}`}>
+                                    <button
+                                        type="button"
+                                        className={`products-accordion-trigger ${isExpanded ? 'expanded' : ''}`}
+                                        onClick={() => toggleCategoryAccordion(group.id)}
+                                    >
+                                        <div className="products-accordion-trigger-main">
+                                            <span className="products-accordion-icon">{group.icon}</span>
+                                            <div className="products-accordion-copy">
+                                                <strong>{group.label}</strong>
+                                                <span>{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
+                                            </div>
+                                        </div>
+                                        <span className="products-accordion-chevron">
+                                            {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+                                        </span>
+                                    </button>
 
-                                <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
-                                    Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                    <div className={`products-accordion-panel ${isExpanded ? 'expanded' : ''}`}>
+                                        <div className="products-grid">
+                                            {group.items.map((product) => (
+                                                <div
+                                                    key={product.id}
+                                                    className="product-card"
+                                                    onClick={() => addToCart(product)}
+                                                    style={{ position: 'relative', overflow: 'visible' }}
+                                                >
+                                                    <div className="product-name">{product.name}</div>
+                                                    {toNumber(product.price) > 0 ? (
+                                                        <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
+                                                    ) : (
+                                                        <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
+                                                    )}
+
+                                                    <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
+                                                        Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                                    </div>
+                                                    <button
+                                                        className="price-tag-btn"
+                                                        onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
+                                                        style={{
+                                                            position: 'absolute', top: '8px', right: '8px',
+                                                            background: 'transparent', border: 'none',
+                                                            width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                            cursor: 'pointer', color: 'rgba(255,255,255,0.2)'
+                                                        }}
+                                                    >
+                                                        <Tag size={14} />
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
                                 </div>
-                                <button
-                                    className="price-tag-btn"
-                                    onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
-                                    style={{
-                                        position: 'absolute', top: '8px', right: '8px',
-                                        background: 'transparent', border: 'none', 
-                                        width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center', 
-                                        cursor: 'pointer', color: 'rgba(255,255,255,0.2)'
-                                    }}
-                                >
-                                    <Tag size={14} />
-                                </button>
-
-                            </div>
-                        ))
+                            );
+                        })
                     )}
                 </div>
             </DirectionalReveal>
