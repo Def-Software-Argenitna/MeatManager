@@ -14,6 +14,7 @@ import {
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import './CierreCaja.css';
 
 const OUTFLOW_CATEGORIES = [
@@ -145,6 +146,7 @@ const CierreCaja = () => {
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [loading, setLoading] = useState(false);
+    const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -195,8 +197,15 @@ const CierreCaja = () => {
     }), [allMovements, end, selectedCashAccount]);
 
     const salesMovements = useMemo(() => (
-        (movements || []).filter((movement) => movement.type === 'venta' || movement.type === 'anulacion_venta')
-    ), [movements]);
+        (movements || []).filter((movement) => {
+            if (!(movement.type === 'venta' || movement.type === 'anulacion_venta')) return false;
+            if (!hiddenDigitalPaymentsOnly) return true;
+            return isDigitalPaymentMethodLike({
+                name: movement.payment_method,
+                type: movement.payment_method_type,
+            });
+        })
+    ), [hiddenDigitalPaymentsOnly, movements]);
 
     const cashBalanceByAccount = useMemo(() => {
         const balances = { principal: 0, secondary: 0 };
@@ -324,8 +333,15 @@ const CierreCaja = () => {
     }, [activePaymentMethods, allMovements, selectedCashAccount, start]);
 
     const manualMovements = useMemo(() => (
-        (movements || []).filter((movement) => movement.type !== 'apertura' && !isAutoSaleMovement(movement))
-    ), [movements]);
+        (movements || []).filter((movement) => {
+            if (movement.type === 'apertura' || isAutoSaleMovement(movement)) return false;
+            if (!hiddenDigitalPaymentsOnly) return true;
+            return isDigitalPaymentMethodLike({
+                name: movement.payment_method,
+                type: movement.payment_method_type,
+            });
+        })
+    ), [hiddenDigitalPaymentsOnly, movements]);
 
     const totalSales = salesMovements
         .filter((movement) => movement.type === 'venta')
@@ -366,7 +382,9 @@ const CierreCaja = () => {
     }, [manualMovements]);
 
     const methodCards = useMemo(() => (
-        activePaymentMethods.map((method) => ({
+        activePaymentMethods
+            .filter((method) => !hiddenDigitalPaymentsOnly || isDigitalPaymentMethodLike(method))
+            .map((method) => ({
             ...method,
             opening: openingByMethod[method.name] || 0,
             sales: salesByMethod.find((item) => item.name === method.name)?.total || 0,
@@ -374,7 +392,7 @@ const CierreCaja = () => {
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, openingByMethod, salesByMethod, salesCountByMethod, dailyManualNetByMethod, accumulatedByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesByMethod, salesCountByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -408,7 +426,7 @@ const CierreCaja = () => {
             if (movement.type === 'anulacion_venta') group.hasReversal = true;
         });
 
-        return Array.from(groups.values())
+        const mappedSales = Array.from(groups.values())
             .map((sale) => {
                 const cajaParts = sale.fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
                 const cuentaCorrienteParts = sale.fullParts.filter((part) => isCurrentAccount(part.name, part.type));
@@ -423,8 +441,11 @@ const CierreCaja = () => {
                     ccAmount,
                 };
             })
+            .filter((sale) => !hiddenDigitalPaymentsOnly || (sale.cajaParts.length > 0 && sale.cajaParts.every((part) => isDigitalPaymentMethodLike(part))))
             .sort((a, b) => (b.date?.getTime?.() || 0) - (a.date?.getTime?.() || 0));
-    }, [salesMovements]);
+
+        return mappedSales;
+    }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
     const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);

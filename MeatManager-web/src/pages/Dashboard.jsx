@@ -4,6 +4,7 @@ import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable } from '../utils/apiClient';
+import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
 import './Dashboard.css';
 
@@ -55,6 +56,7 @@ const Dashboard = () => {
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hasModule } = useLicense();
+    const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
     const [ventasDia, setVentasDia] = useState([]);
@@ -194,6 +196,10 @@ const Dashboard = () => {
     const formatCurrency = (amount) =>
         new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(toNumber(amount));
 
+    const visibleVentas = hiddenDigitalPaymentsOnly
+        ? allVentas.filter((venta) => saleUsesOnlyDigitalPayments(venta))
+        : allVentas;
+
     return (
         <div className="dashboard-page animate-fade-in">
             <header className="page-header">
@@ -265,7 +271,7 @@ const Dashboard = () => {
                         <button onClick={() => navigate('/ventas/historial')} className="dashboard-link-btn">Ver todas</button>
                     </div>
 
-                    {allVentas.length === 0 ? (
+                    {visibleVentas.length === 0 ? (
                         <p className="dashboard-empty">No hay ventas registradas aún.</p>
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-muted)' }}>
@@ -278,7 +284,7 @@ const Dashboard = () => {
                                 </tr>
                             </thead>
                             <tbody>
-                                {allVentas.map((venta) => (
+                                {visibleVentas.map((venta) => (
                                     <tr key={venta.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
                                         <td style={{ padding: '0.75rem 0' }}>
                                             {(() => {
