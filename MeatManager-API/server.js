@@ -1622,6 +1622,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'compras_items', 'net_subtotal', '`net_subtotal` DECIMAL(12,2) NULL DEFAULT 0 AFTER `iva_amount`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method', '`payment_method` VARCHAR(100) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_id', '`payment_method_id` INT NULL AFTER `payment_method`');
+            await ensureColumn(conn, 'caja_movimientos', 'cash_account', '`cash_account` VARCHAR(30) NOT NULL DEFAULT \'principal\' AFTER `payment_method_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'transfer_group_id', '`transfer_group_id` VARCHAR(64) NULL AFTER `cash_account`');
             await ensureColumn(conn, 'caja_movimientos', 'client_id', '`client_id` INT NULL AFTER `date`');
             await ensureColumn(conn, 'caja_movimientos', 'supplier', '`supplier` VARCHAR(150) NULL AFTER `description`');
             await ensureColumn(conn, 'caja_movimientos', 'payment_method_type', '`payment_method_type` VARCHAR(50) NULL AFTER `payment_method`');
@@ -3231,6 +3233,8 @@ function getSchemaTables() {
             branch_id       INT,
             payment_method  VARCHAR(100),
             payment_method_id INT,
+            cash_account    VARCHAR(30) NOT NULL DEFAULT 'principal',
+            transfer_group_id VARCHAR(64) NULL,
             authorization_id BIGINT,
             authorization_verified TINYINT(1) DEFAULT 0,
             authorized_recipient_email VARCHAR(150),
@@ -3238,7 +3242,9 @@ function getSchemaTables() {
             receipt_code    VARCHAR(32),
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_caja_movimientos_cash_account (\`${TENANT_COLUMN}\`, cash_account),
+            INDEX idx_caja_movimientos_transfer (\`${TENANT_COLUMN}\`, transfer_group_id)
         )`,
         `CREATE TABLE IF NOT EXISTS delivery_tracking_events (
             id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -4721,8 +4727,8 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             const desc = `${String(supplier || '').trim()}${invoice_num ? ` · Comprobante ${invoice_num}` : ''}`;
             await conn.query(
                 `INSERT INTO caja_movimientos
-                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, purchase_id)
-                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, ?, ?)`,
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id)
+                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?)`,
                 [
                     tenantId, parseFloat(cash_amount) || 0, desc,
                     payment_method || 'Efectivo',
@@ -4979,8 +4985,8 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             for (const part of salePaymentParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
@@ -5111,8 +5117,8 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             for (const part of reversalParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
+                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?)`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
