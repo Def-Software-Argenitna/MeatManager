@@ -5,6 +5,11 @@ const Firebird = require('node-firebird');
 
 const rootDir = path.resolve(__dirname, '..');
 const helperScript = path.join(rootDir, 'tools', 'firebird_helper.py');
+const TABLE_CACHE_TTL_MS = 60 * 1000;
+const COLUMN_CACHE_TTL_MS = 60 * 1000;
+
+const tableCache = new Map();
+const columnCache = new Map();
 
 const QENDRA_DLL_PATHS = [
     'C:\\Qendra',
@@ -137,12 +142,64 @@ async function query(config, sql, params = []) {
     });
 }
 
+/**
+ * Execute multiple SQL operations in a single Python subprocess / Firebird connection.
+ * Each operation is { sql, params }. Returns array of result sets (one per operation).
+ */
+async function batchQuery(config, operations) {
+    if (!operations || operations.length === 0) return [];
+
+    if (hasPythonHelper(config)) {
+        const response = await runPythonHelper(config, {
+            action: 'batch',
+            operations,
+        });
+        return response.results || [];
+    }
+
+    // Legacy fallback: run in a single attached connection sequentially
+    return new Promise(async (resolve, reject) => {
+        let connection;
+        try {
+            connection = await attachLegacy(config);
+        } catch (error) {
+            return reject(error);
+        }
+
+        const results = [];
+        let firstError = null;
+        const runNext = (index) => {
+            if (index >= operations.length) {
+                try { connection.db.detach(); } catch { /* noop */ }
+                if (firstError) reject(firstError);
+                else resolve(results);
+                return;
+            }
+            const op = operations[index];
+            connection.db.query(op.sql, op.params || [], (error, rows) => {
+                if (error && !firstError) firstError = error;
+                results.push(rows || []);
+                runNext(index + 1);
+            });
+        };
+        runNext(0);
+    });
+}
+
 async function getTables(config) {
+    const cacheKey = String(config?.dbFile || '').toLowerCase();
+    const cached = tableCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < TABLE_CACHE_TTL_MS) {
+        return cached.value;
+    }
+
     const rows = await query(
         config,
         "SELECT TRIM(RDB$RELATION_NAME) AS TABLE_NAME FROM RDB$RELATIONS WHERE RDB$SYSTEM_FLAG = 0 ORDER BY RDB$RELATION_NAME"
     );
-    return rows.map((row) => String(row.TABLE_NAME || row.table_name || '').trim()).filter(Boolean);
+    const value = rows.map((row) => String(row.TABLE_NAME || row.table_name || '').trim()).filter(Boolean);
+    tableCache.set(cacheKey, { ts: Date.now(), value });
+    return value;
 }
 
 async function tableExists(config, tableName) {
@@ -151,15 +208,24 @@ async function tableExists(config, tableName) {
 }
 
 async function getColumns(config, tableName) {
+    const normalizedTable = String(tableName || '').trim().toUpperCase();
+    const cacheKey = `${String(config?.dbFile || '').toLowerCase()}::${normalizedTable}`;
+    const cached = columnCache.get(cacheKey);
+    if (cached && (Date.now() - cached.ts) < COLUMN_CACHE_TTL_MS) {
+        return cached.value;
+    }
+
     const rows = await query(
         config,
         `SELECT TRIM(RDB$FIELD_NAME) AS COLUMN_NAME
          FROM RDB$RELATION_FIELDS
          WHERE TRIM(RDB$RELATION_NAME) = ?
          ORDER BY RDB$FIELD_POSITION`,
-        [String(tableName || '').trim().toUpperCase()]
+        [normalizedTable]
     );
-    return rows.map((row) => String(row.COLUMN_NAME || '').trim()).filter(Boolean);
+    const value = rows.map((row) => String(row.COLUMN_NAME || '').trim()).filter(Boolean);
+    columnCache.set(cacheKey, { ts: Date.now(), value });
+    return value;
 }
 
 function firstMatchingColumn(columns, candidates) {
@@ -189,6 +255,7 @@ function buildInsertSql(tableName, columns, row) {
 module.exports = {
     attach,
     query,
+    batchQuery,
     getTables,
     tableExists,
     getColumns,

@@ -47,7 +47,7 @@ def connect(config):
     )
 
 
-def run_query(connection, sql, params):
+def run_query(connection, sql, params, auto_commit=True):
     cursor = connection.cursor()
     try:
         cursor.execute(sql, [normalize_param(param) for param in (params or [])])
@@ -58,7 +58,8 @@ def run_query(connection, sql, params):
                 rows.append({columns[index]: serialize(value) for index, value in enumerate(raw_row)})
             return {"rows": rows}
 
-        connection.commit()
+        if auto_commit:
+            connection.commit()
         return {"rows": [], "affectedRows": cursor.rowcount}
     finally:
         try:
@@ -71,19 +72,28 @@ def main():
     try:
         payload = json.load(sys.stdin)
         config = payload["config"]
-        sql = payload.get("sql")
-        params = payload.get("params", [])
+        action = payload.get("action", "query")
 
         connection = connect(config)
         try:
-            if payload.get("action") == "ping":
-                result = run_query(connection, "SELECT CURRENT_TIMESTAMP AS NOW_TS FROM RDB$DATABASE", [])
+            if action == "ping":
+                result = run_query(connection, "SELECT CURRENT_TIMESTAMP AS NOW_TS FROM RDB$DATABASE", [], auto_commit=False)
+                sys.stdout.write(json.dumps({"ok": True, **result}, ensure_ascii=False))
+            elif action == "batch":
+                operations = payload.get("operations", [])
+                results = []
+                for op in operations:
+                    r = run_query(connection, op["sql"], op.get("params", []), auto_commit=False)
+                    results.append({"ok": True, **r})
+                connection.commit()
+                sys.stdout.write(json.dumps({"ok": True, "results": results}, ensure_ascii=False))
             else:
-                result = run_query(connection, sql, params)
+                sql = payload.get("sql")
+                params = payload.get("params", [])
+                result = run_query(connection, sql, params, auto_commit=True)
+                sys.stdout.write(json.dumps({"ok": True, **result}, ensure_ascii=False))
         finally:
             connection.close()
-
-        sys.stdout.write(json.dumps({"ok": True, **result}, ensure_ascii=False))
     except Exception as error:
         sys.stdout.write(
             json.dumps(

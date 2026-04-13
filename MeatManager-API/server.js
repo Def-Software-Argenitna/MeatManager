@@ -1177,7 +1177,7 @@ async function ensureProductCatalogIntegrity(conn) {
     );
 
     await conn.query(
-        `UPDATE \`${OPERATIONAL_DB_NAME}\`.prices pr
+        `UPDATE IGNORE \`${OPERATIONAL_DB_NAME}\`.prices pr
          JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = pr.\`${TENANT_COLUMN}\`
           AND (
@@ -1195,7 +1195,7 @@ async function ensureProductCatalogIntegrity(conn) {
     );
 
     await conn.query(
-        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.prices
+        `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.prices
             (\`${TENANT_COLUMN}\`, product_ref_id, product_id, price, plu, updated_at)
          SELECT
             p.\`${TENANT_COLUMN}\`,

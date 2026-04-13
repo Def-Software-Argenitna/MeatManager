@@ -47,6 +47,7 @@ const bridge = new QendraBridge({
 let running = false;
 let timer = null;
 let server = null;
+let schedulerActive = false;
 
 function sendJson(res, status, payload) {
     res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -181,7 +182,9 @@ async function runCycle(reason = 'scheduled') {
     try {
         const result = await bridge.runOnce();
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
-        return { ok: true, result };
+        const forcedTargets = await bridge.forceScaleSyncNow(`post-cycle:${reason}`);
+        logger.info('Forzado de sincronizacion a balanza ejecutado despues del ciclo', { reason, forcedTargets });
+        return { ok: true, result, forcedTargets };
     } catch (error) {
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
         return { ok: false, error: error.message };
@@ -322,6 +325,37 @@ function startHttpServer() {
             return;
         }
 
+        if (pathname === '/api/scales' && req.method === 'GET') {
+            try {
+                const result = await bridge.getScalesStatus();
+                sendJson(res, result.ok ? 200 : 500, result);
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/scales/force' && req.method === 'POST') {
+            try {
+                const forcedTargets = await bridge.forceScaleSyncNow('http-manual');
+                sendJson(res, 200, { ok: true, forcedTargets });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
+        if (pathname === '/api/scales/push-products' && req.method === 'POST') {
+            try {
+                const reset = await bridge.resetProductFingerprintsAndSync();
+                const cycleResult = await runCycle('push-products');
+                sendJson(res, 200, { ok: true, reset, cycle: cycleResult });
+            } catch (error) {
+                sendJson(res, 500, { ok: false, error: error.message });
+            }
+            return;
+        }
+
         sendJson(res, 404, { ok: false, error: 'not_found' });
     });
 
@@ -343,14 +377,24 @@ async function main() {
 
     server = startHttpServer();
     await runCycle('startup');
-    timer = setInterval(() => {
-        runCycle('interval');
-    }, config.syncIntervalMs);
+
+    schedulerActive = true;
+    const scheduleNext = (delayMs = config.syncIntervalMs) => {
+        if (!schedulerActive) return;
+        const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+        timer = setTimeout(async () => {
+            timer = null;
+            await runCycle('interval');
+            scheduleNext(config.syncIntervalMs);
+        }, nextDelay);
+    };
+    scheduleNext(config.syncIntervalMs);
 }
 
 async function shutdown(signal) {
     logger.info(`Cerrando bridge por ${signal}`);
-    if (timer) clearInterval(timer);
+    schedulerActive = false;
+    if (timer) clearTimeout(timer);
     if (server) {
         await new Promise((resolve) => server.close(resolve));
     }
