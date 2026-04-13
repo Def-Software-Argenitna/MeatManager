@@ -795,6 +795,21 @@ const Ventas = () => {
         )) || null;
     }, [products]);
 
+    const buildCatalogProductForVenta = React.useCallback((catalogProduct) => {
+        if (!catalogProduct) return null;
+        return {
+            id: `product:${catalogProduct.id}`,
+            productId: catalogProduct.id || null,
+            name: catalogProduct.name,
+            category: catalogProduct.category,
+            totalQuantity: 0,
+            unit: catalogProduct.unit || 'kg',
+            price: getProductCurrentPrice(catalogProduct),
+            plu: catalogProduct.plu || '',
+            barcode: null,
+        };
+    }, []);
+
     const findProductByBarcode = React.useCallback((rawCode) => {
         const rawNormalized = normalizeBarcode(rawCode);
         const rawDigits = normalizeBarcodeDigits(rawCode);
@@ -895,9 +910,24 @@ const Ventas = () => {
                         return pPlu === pluRaw || pPlu === pluNormalized;
                     }) || null;
                 }
+                if (!product && row?.product?.id != null) {
+                    const catalogProduct = productsCatalog.find((p) => Number(p?.id) === Number(row.product.id)) || null;
+                    product = buildCatalogProductForVenta(catalogProduct);
+                }
+                if (!product && pluRaw) {
+                    const catalogProduct = productsCatalog.find((p) => {
+                        const pPlu = String(p?.plu || '').trim();
+                        return pPlu === pluRaw || pPlu === pluNormalized;
+                    }) || null;
+                    product = buildCatalogProductForVenta(catalogProduct);
+                }
                 if (!product && row?.product?.name) {
                     const targetName = String(row.product.name || '').trim().toUpperCase();
                     product = products.find((p) => String(p?.name || '').trim().toUpperCase() === targetName) || null;
+                    if (!product) {
+                        const catalogProduct = productsCatalog.find((p) => String(p?.name || '').trim().toUpperCase() === targetName) || null;
+                        product = buildCatalogProductForVenta(catalogProduct);
+                    }
                 }
                 if (!product && priceRecord) {
                     product = findProductByPriceRecord(priceRecord);
@@ -3383,7 +3413,9 @@ const Ventas = () => {
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
             }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}>
                 <div style={{
-                    background: 'var(--color-bg-card)',
+                    background: 'rgba(13, 18, 24, 0.98)',
+                    border: '1px solid rgba(255,255,255,0.08)',
+                    backdropFilter: 'blur(12px)',
                     borderRadius: 16, padding: '1.5rem',
                     width: 'min(540px, 96vw)', maxHeight: '82vh',
                     display: 'flex', flexDirection: 'column', gap: '1rem',
