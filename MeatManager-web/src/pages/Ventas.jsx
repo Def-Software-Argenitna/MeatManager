@@ -4,9 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useUser } from '../context/UserContext';
-import { scaleService } from '../utils/SerialScaleService';
 import { formatPrice } from '../utils/priceFormat';
-import { desktopApi } from '../utils/desktopApi';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
@@ -110,93 +108,40 @@ const normalizePaymentMethods = (rows = []) => {
 
 const Ventas = () => {
     const [cart, setCart] = useState([]);
-    const [categoryFilter, setCategoryFilter] = useState('all');
-    // Estado para el formato de precio
     const [priceFormat, setPriceFormat] = useState('4d2d');
-
-    // Solo redondear si es manual y formato 6d
-    // (Ajusta el uso de priceFormat en el resto del componente)
-    // Ejemplo de uso:
-    // if (priceFormat === '6d') price = Math.round(price);
     const [isProcessing, setIsProcessing] = useState(false);
-    const processingRef = useRef(false); // guard sincrónico contra doble-submit
+    const processingRef = useRef(false);
     const [showCartMobile, setShowCartMobile] = useState(false);
-
-    // Price Management State
     const [editingPriceId, setEditingPriceId] = useState(null);
     const [newPrice, setNewPrice] = useState('');
     const [newPlu, setNewPlu] = useState('');
-
     const [selectedClientId, setSelectedClientId] = useState(null);
     const [clientSearch, setClientSearch] = useState('');
     const [showClientList, setShowClientList] = useState(false);
-
-    // Payment Selection State
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [selectedPaymentMethod, setSelectedPaymentMethod] = useState(null);
     const [cashReceived, setCashReceived] = useState('');
     const [isSplitPayment, setIsSplitPayment] = useState(false);
     const [splitPayments, setSplitPayments] = useState([]);
-
-    // Scale State
-    // Manual Weight Modal State
     const [showWeightModal, setShowWeightModal] = useState(false);
-    const [weightInput, setWeightInput] = useState("1.000");
+    const [weightInput, setWeightInput] = useState('1.000');
     const [weightProduct, setWeightProduct] = useState(null);
-    const [isScaleConnected, setIsScaleConnected] = useState(false);
-    const [isSimulated, setIsSimulated] = useState(false);
-
-    // Scale Diagnostic Modal
-    const [showScaleDiag, setShowScaleDiag] = useState(false);
-    const [scaleDiagLog, setScaleDiagLog] = useState([]);
-
-    // Quick Product Creation from Barcode
     const [showQuickCreateModal, setShowQuickCreateModal] = useState(false);
-    const [pendingBarcode, setPendingBarcode] = useState(null); // {plu, weight}
+    const [pendingBarcode, setPendingBarcode] = useState(null);
     const [quickProductName, setQuickProductName] = useState('');
     const [quickProductPrice, setQuickProductPrice] = useState('');
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
-    const [quickProductPlu, setQuickProductPlu] = useState(''); // PLU editable; prioridad al de la balanza
-
-    // Barcode Scanner State
+    const [quickProductPlu, setQuickProductPlu] = useState('');
     const [scannerError, setScannerError] = useState('');
     const [barcodeInputValue, setBarcodeInputValue] = useState('');
     const barcodeInputRef = React.useRef(null);
-
-    // ── QENDRA Sync ─────────────────────────────────────────────────────────
-    const [qendraSyncing, setQendraSyncing] = useState(false);
-    const [qendraSyncResult, setQendraSyncResult] = useState(null); // {created, skipped, error, diag}
-    const [qendraSyncDias, setQendraSyncDias] = useState(30); // 0 = todos
-
-    // Delete Ticket Modal
-    // Delete Ticket Modal
     const [showDeleteTicketModal, setShowDeleteTicketModal] = useState(false);
     const [deleteTicketSearch, setDeleteTicketSearch] = useState('');
     const [confirmDeleteTicketId, setConfirmDeleteTicketId] = useState(null);
     const [deleteAuthorizationCode, setDeleteAuthorizationCode] = useState('');
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
-
-    // ROBUST SCANNER LOGIC: Force focus to scanner if no other modal/input is active
-    React.useEffect(() => {
-        const handleKeys = () => {
-            if (showClientList || showPaymentModal || showDeleteTicketModal || showScaleDiag || showQuickCreateModal) return;
-            if (document.activeElement.tagName === 'INPUT' && document.activeElement !== barcodeInputRef.current) return;
-            if (document.activeElement.tagName === 'TEXTAREA') return;
-            
-            // Re-focus scanner if focus was lost
-            if (document.activeElement !== barcodeInputRef.current) {
-                barcodeInputRef.current?.focus();
-            }
-        };
-        window.addEventListener('keydown', handleKeys);
-        return () => window.removeEventListener('keydown', handleKeys);
-    }, [showClientList, showPaymentModal, showDeleteTicketModal, showScaleDiag, showQuickCreateModal]);
-
-    // Ticket Preview Modal (multi-item barcode)
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
-
-    // Print Confirm Modal (reemplaza al confirm() nativo que roba el foco en Electron)
     const [showPrintConfirmModal, setShowPrintConfirmModal] = useState(false);
     const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
@@ -208,308 +153,21 @@ const Ventas = () => {
     const [todayOpeningMovements, setTodayOpeningMovements] = useState([]);
     const [recentSales, setRecentSales] = useState([]);
     const [recentSalesItems, setRecentSalesItems] = useState({});
-
-    // Cola offline — ventas encoladas cuando no hay conexión
     const { queueLength, enqueue, drain } = useOfflineQueue({
         onVentaSynced: () => refreshVentasData(),
     });
-
-    // Toast (reemplaza todos los alert() nativos que roban el foco en Electron)
-    const [toastMsg, setToastMsg] = useState(null); // { text, type: 'error'|'success'|'warning' }
+    const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = React.useRef(null);
     const showToast = React.useCallback((text, type = 'error') => {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         setToastMsg({ text, type });
         toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
     }, []);
-
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
-
-    const refreshVentasData = React.useCallback(async () => {
-        const [
-            stockRows,
-            productRows,
-            pricesRows,
-            clientRows,
-            paymentRows,
-            promotionRows,
-            salesRows,
-            salesItemsRows,
-            movementsRows,
-        ] = await Promise.all([
-            fetchTable('stock'),
-            fetchProductsSafe(),
-            fetchTable('prices'),
-            fetchTable('clients'),
-            fetchTable('payment_methods'),
-            fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
-            fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 150 }),
-            fetchTable('ventas_items'),
-            fetchTable('caja_movimientos'),
-        ]);
-
-        await syncLegacyProductsToCatalog({
-            products: productRows,
-            stockRows,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
-        const syncedProducts = await fetchProductsSafe();
-        await reconcileLegacyProductConflicts({
-            products: syncedProducts,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
-        const refreshedProducts = await fetchProductsSafe();
-
-        const filteredStockRows = Array.isArray(stockRows)
-            ? stockRows.filter((row) => (
-                !currentBranchId || row.branch_id == null || Number(row.branch_id) === currentBranchId
-            ))
-            : [];
-        setStockItems(filteredStockRows);
-        setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
-        setClients(Array.isArray(clientRows) ? clientRows : []);
-        setPromotions(normalizePromotions(Array.isArray(promotionRows) ? promotionRows : [], { currentBranchId }));
-        const normalizedPaymentRows = normalizePaymentMethods(Array.isArray(paymentRows) ? paymentRows : []);
-        setDbPaymentMethods(normalizedPaymentRows.filter((method) => method.type !== 'mixed'));
-
-        const recentRows = Array.isArray(salesRows) ? salesRows : [];
-        setRecentSales(recentRows);
-
-        const recentIds = new Set(recentRows.map((sale) => Number(sale.id)));
-        const groupedItems = {};
-        for (const item of Array.isArray(salesItemsRows) ? salesItemsRows : []) {
-            const ventaId = Number(item.venta_id);
-            if (!recentIds.has(ventaId)) continue;
-            if (!groupedItems[ventaId]) groupedItems[ventaId] = [];
-            groupedItems[ventaId].push(item);
-        }
-        setRecentSalesItems(groupedItems);
-
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const end = new Date();
-        end.setHours(23, 59, 59, 999);
-        setTodayOpeningMovements(
-            (Array.isArray(movementsRows) ? movementsRows : []).filter((movement) => {
-                const movementDate = movement?.date ? new Date(movement.date) : null;
-                return (
-                    movementDate &&
-                    !Number.isNaN(movementDate.getTime()) &&
-                    movementDate >= start &&
-                    movementDate <= end &&
-                    movement.type === 'apertura'
-                );
-            })
-        );
-    }, []);
-
-    const getProductPriceCandidates = React.useCallback((itemName, _itemType) => {
-        // Ya no usamos prices legacy — devuelve el producto del catálogo como candidato único
-        const product = productsCatalog.find((p) =>
-            String(p?.canonical_key || '').toLowerCase() === normalizeProductKey(itemName)
-        );
-        if (!product) return [];
-        return [{
-            id: product.id,
-            product_id: normalizeProductKey(itemName),
-            product_ref_id: product.id,
-            price: product.current_price || 0,
-            plu: product.plu || '',
-            updated_at: product.updated_at,
-        }];
-    }, [productsCatalog]);
-
-    React.useEffect(() => {
-        const loadVentasBootstrap = async () => {
-            const [formato, name, address, phone] = await Promise.all([
-                getRemoteSetting('precio_formato'),
-                getRemoteSetting('shop_name'),
-                getRemoteSetting('shop_address'),
-                getRemoteSetting('whatsapp_number'),
-            ]);
-
-            setPriceFormat(formato || '4d2d');
-            setShopInfo({
-                name: name || 'Nuestra Carnicería',
-                address: address || '',
-                phone: phone || '',
-            });
-
-            await refreshVentasData();
-        };
-
-        loadVentasBootstrap().catch((error) => {
-            console.error('Error cargando ventas:', error);
-            showToast('❌ No se pudieron cargar los datos de ventas.', 'error');
-        });
-    }, [refreshVentasData, showToast]);
-
-    // Recargar movimientos de caja cuando el usuario vuelve a esta pestaña/página
-    // (por ejemplo, luego de hacer la apertura en /caja y volver a /ventas)
-    React.useEffect(() => {
-        const handleVisibilityChange = () => {
-            if (document.visibilityState === 'visible') {
-                refreshVentasData().catch(() => {});
-            }
-        };
-        document.addEventListener('visibilitychange', handleVisibilityChange);
-        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-    }, [refreshVentasData]);
-
-    const handleQendraSyncVentas = async () => {
-        setQendraSyncing(true);
-        setQendraSyncResult(null);
-        try {
-            const res = await desktopApi.qendraSyncVentas(qendraSyncDias);
-            if (!res.ok) {
-                setQendraSyncResult({ error: res.error });
-                return;
-            }
-
-            // Mostrar diagnóstico si no hay tickets en el rango
-            if (res.tickets.length === 0) {
-                const d = res.diag || {};
-                const totalRows = d.totalRows || 0;
-                let msg = totalRows === 0
-                    ? 'La tabla VENTAS de QENDRA está vacía (sin ventas registradas).'
-                    : `VENTAS tiene ${totalRows} registros, pero ninguno en los últimos ${qendraSyncDias === 0 ? 'todos' : qendraSyncDias + ' días'}. ` +
-                      `Última venta en QENDRA: ${d.fechaMax ? new Date(d.fechaMax).toLocaleDateString('es-AR') : 'desconocida'}.`;
-                setQendraSyncResult({ created: 0, skipped: 0, total: 0, diagMsg: msg });
-                return;
-            }
-
-            // Agrupar items por ticket
-            const itemsByTicket = {};
-            for (const item of res.items) {
-                const tid = item.ID_TICKET;
-                if (!itemsByTicket[tid]) itemsByTicket[tid] = [];
-                itemsByTicket[tid].push(item);
-            }
-            let created = 0, skipped = 0;
-            for (const ticket of res.tickets) {
-                const ticketId = String(ticket.ID_TICKET);
-                // Verificar si ya fue importado
-                const existing = recentSales.find((venta) => String(venta.qendra_ticket_id || '') === ticketId);
-                if (existing) { skipped++; continue; }
-                const fechaStr = ticket.FECHA ? new Date(ticket.FECHA).toISOString() : new Date().toISOString();
-                const total = parseFloat(ticket.TOTAL) || 0;
-                const { insertId: ventaId } = await saveTableRecord('ventas', 'insert', {
-                    date: fechaStr,
-                    total,
-                    payment_method: 'Balanza QENDRA',
-                    payment_method_id: null,
-                    clientId: null,
-                    synced: 0,
-                    qendra_ticket_id: ticketId,
-                    source: 'qendra',
-                    vendedor: '',
-                });
-                // Agregar items del ticket
-                const ticketItems = itemsByTicket[ticket.ID_TICKET] || [];
-                for (const it of ticketItems) {
-                    const pesoKg = parseFloat(it.PESO_KG) || 0;
-                    const importe = parseFloat(it.IMPORTE) || 0;
-                    const producto = `PLU ${it.ID_PLU}`;
-                    await saveTableRecord('ventas_items', 'insert', {
-                        venta_id: ventaId,
-                        product_name: producto,
-                        quantity: pesoKg,
-                        price: pesoKg > 0 ? importe / pesoKg : importe,
-                        subtotal: importe,
-                        synced: 0,
-                    });
-                }
-                created++;
-            }
-            await refreshVentasData();
-            setQendraSyncResult({ created, skipped, total: res.tickets.length });
-        } catch (e) {
-            setQendraSyncResult({ error: String(e) });
-        } finally {
-            setQendraSyncing(false);
-        }
-    };
-    // ────────────────────────────────────────────────────────────────────────
-
-    // ── QENDRA Visor de Tickets ───────────────────────────────────────────────
-    const [showQendraVisor, setShowQendraVisor] = useState(false);
-    const [qendraVisorTab, setQendraVisorTab] = useState('pendientes');
-    const [qendraVisorTickets, setQendraVisorTickets] = useState([]);
-    const [qendraVisorLoading, setQendraVisorLoading] = useState(false);
-    const [qendraVisorCobrados, setQendraVisorCobrados] = useState([]);
-    const [qendraActiveTicketId, setQendraActiveTicketId] = useState(null);
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-
-    const handleOpenQendraVisor = async () => {
-        setShowQendraVisor(true);
-        setQendraVisorLoading(true);
-        setQendraVisorTickets([]);
-        setQendraVisorCobrados([]);
-        setQendraVisorTab('pendientes');
-        try {
-            const res = await desktopApi.qendraGetTodayTickets(8);
-            if (res.ok) {
-                const itemsByTicket = {};
-                for (const it of res.items) {
-                    const tid = it.ID_TICKET;
-                    if (!itemsByTicket[tid]) itemsByTicket[tid] = [];
-                    itemsByTicket[tid].push(it);
-                }
-                const ticketsConItems = res.tickets.map(t => ({
-                    ...t,
-                    items: itemsByTicket[t.ID_TICKET] || [],
-                }));
-                setQendraVisorTickets(ticketsConItems);
-            }
-            // Cobrados de hoy en MeatManager
-            const hoy = new Date();
-            hoy.setHours(0, 0, 0, 0);
-            const ventasRows = await fetchTable('ventas', { orderBy: 'date', direction: 'desc', limit: 300 });
-            const cobrados = (Array.isArray(ventasRows) ? ventasRows : []).filter((v) => {
-                const saleDate = v?.date ? new Date(v.date) : null;
-                return saleDate && saleDate >= hoy && v.source === 'qendra';
-            });
-            setQendraVisorCobrados(cobrados);
-        } catch (e) {
-            console.error('Error al cargar visor QENDRA:', e);
-        } finally {
-            setQendraVisorLoading(false);
-        }
-    };
-
-    const handleLoadQendraTicket = (ticket) => {
-        if (!ticket.items || ticket.items.length === 0) {
-            showToast('Este ticket no tiene items con peso registrado.', 'warning');
-            return;
-        }
-        const newCart = ticket.items
-            .filter(it => parseFloat(it.PESO_KG) > 0 || parseFloat(it.IMPORTE) > 0)
-            .map((it, idx) => {
-                const pesoKg = parseFloat(it.PESO_KG) || 0;
-                const importe = parseFloat(it.IMPORTE) || 0;
-                const precioPorKg = pesoKg > 0 ? importe / pesoKg : importe;
-                return {
-                    id: `qendra_${it.ID_PLU}_${idx}`,
-                    name: `PLU ${it.ID_PLU}`,
-                    price: precioPorKg,
-                    quantity: pesoKg > 0 ? pesoKg : 1,
-                    weight: pesoKg > 0 ? pesoKg : 1,
-                    unit: pesoKg > 0 ? 'kg' : 'unidad',
-                    category: 'otros',
-                    fromQendra: true,
-                    plu: it.ID_PLU,
-                };
-            });
-        setCart(newCart);
-        setQendraActiveTicketId(String(ticket.ID_TICKET));
-        setActiveScaleTicketBarcode(null);
-        setShowQendraVisor(false);
-        if (window.innerWidth < 1024) setShowCartMobile(true);
-    };
-    // ────────────────────────────────────────────────────────────────────────
 
     // Auto-focus precio: triple intento para Electron (inmediato, 0ms, 150ms)
     const priceInputRef = React.useRef(null);
@@ -531,7 +189,7 @@ const Ventas = () => {
     React.useEffect(() => {
         // Enfoque inicial rápido
         setTimeout(() => {
-            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showQendraVisor && !showPrintConfirmModal) {
+            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
                 barcodeInputRef.current?.focus();
             }
         }, 100);
@@ -543,9 +201,7 @@ const Ventas = () => {
                 showPaymentModal || 
                 showQuickCreateModal || 
                 showDeleteTicketModal || 
-                showQendraVisor || 
                 showTicketPreview || 
-                showScaleDiag ||
                 showPrintConfirmModal
             ) {
                 return;
@@ -567,9 +223,7 @@ const Ventas = () => {
         showPaymentModal, 
         showQuickCreateModal, 
         showDeleteTicketModal, 
-        showQendraVisor, 
         showTicketPreview, 
-        showScaleDiag, 
         editingPriceId,
         showPrintConfirmModal
     ]);
@@ -751,12 +405,6 @@ const Ventas = () => {
         ];
     }, [products]);
 
-    React.useEffect(() => {
-        if (categoryFilter === 'all') return;
-        const valid = availableCategories.some((category) => category.id === categoryFilter);
-        if (!valid) setCategoryFilter('all');
-    }, [availableCategories, categoryFilter]);
-
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = String(pluValue || '').trim();
         if (!normalized) return null;
@@ -836,7 +484,6 @@ const Ventas = () => {
 
     // Filter products
     const filteredProducts = products.filter(p => {
-        const matchesCategory = categoryFilter === 'all' || p.category === categoryFilter;
         const term = barcodeInputValue.trim().toLowerCase();
         const matchesSearch =
             term.length === 0 ||
@@ -844,7 +491,7 @@ const Ventas = () => {
             String(p.plu || '').toLowerCase().includes(term) ||
             String(p.barcode || '').toLowerCase().includes(term) ||
             String(p.id || '').toLowerCase().includes(term);
-        return matchesCategory && matchesSearch;
+        return matchesSearch;
     });
 
     const updatePrice = async (productId, priceVal, pluVal) => {
@@ -971,7 +618,6 @@ const Ventas = () => {
 
             setTicketPreviewItems(previewItems);
             setShowTicketPreview(true);
-            setQendraActiveTicketId(null);
             setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
             const vendor = String(payload?.ticket?.vendorCode || '').trim();
             if (vendor) {
@@ -1333,11 +979,7 @@ const Ventas = () => {
         // weight management: prompt or automatic
         let weight = externalWeight;
         if (!weight) {
-            if (isSimulated) {
-                weight = parseFloat((Math.random() * 2 + 0.3).toFixed(3));
-            } else if (isScaleConnected) {
-                weight = await scaleService.readWeight();
-            } else if (product.unit === 'kg') {
+            if (product.unit === 'kg') {
                 setWeightProduct(product);
                 setWeightInput("1.000");
                 setShowWeightModal(true);
@@ -1386,67 +1028,12 @@ const Ventas = () => {
         setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: qty || 0 } : item));
     }
 
-    const addDiagLog = (type, msg) =>
-        setScaleDiagLog(prev => [...prev, { type, msg, time: new Date().toLocaleTimeString() }]);
-
-    const handleConnectScale = async () => {
-        // Abrir modal y limpiar log anterior
-        setScaleDiagLog([]);
-        setShowScaleDiag(true);
-        addDiagLog('info', 'Iniciando detección de balanza...');
-
-        // Escuchar mensajes detallados del proceso principal (solo en Electron)
-        if (window.electronAPI?.onScaleDiagnostic) {
-            window.electronAPI.offScaleDiagnostic();
-            window.electronAPI.onScaleDiagnostic(({ type, msg }) => {
-                setScaleDiagLog(prev => [...prev, { type, msg, time: new Date().toLocaleTimeString() }]);
-            });
-        }
-
-        const success = await scaleService.requestPort();
-
-        if (!success) {
-            // Si no hay mensajes del main (ej: web), mostrar mensaje genérico
-            addDiagLog('error', 'No se seleccionó ningún puerto. El diálogo fue cancelado o no hay dispositivos disponibles.');
-            window.electronAPI?.offScaleDiagnostic();
-            return;
-        }
-
-        addDiagLog('info', 'Puerto obtenido. Intentando abrir conexión serie...');
-        const connected = await scaleService.connect();
-        setIsScaleConnected(connected);
-
-        if (connected) {
-            setIsSimulated(false);
-            addDiagLog('success', '¡Balanza conectada correctamente! Ya podés pesar.');
-        } else {
-            addDiagLog('error', 'No se pudo abrir el puerto serie. Probá desconectar y volver a conectar el cable USB.');
-        }
-
-        window.electronAPI?.offScaleDiagnostic();
-    };
-
-    const toggleTestMode = () => {
-        setIsSimulated(prev => {
-            const next = !prev;
-            if (next) {
-                setIsScaleConnected(false);
-            }
-            return next;
-        });
-    };
-
     const readScaleForItem = async (itemId) => {
-        let weight = null;
-        if (isSimulated) {
-            weight = parseFloat((Math.random() * 2 + 0.5).toFixed(3));
-        } else if (isScaleConnected) {
-            weight = await scaleService.readWeight();
-        }
-
-        if (weight !== null) {
-            setCart(prev => prev.map(item => item.id === itemId ? { ...item, quantity: weight } : item));
-        }
+        const item = cart.find((entry) => entry.id === itemId);
+        if (!item || item.unit !== 'kg') return;
+        setWeightProduct(item);
+        setWeightInput(toNumber(item.quantity).toFixed(3));
+        setShowWeightModal(true);
     };
 
     const stockQtyByItem = React.useMemo(() => {
@@ -1683,7 +1270,7 @@ const Ventas = () => {
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
                 ...(activeScaleTicketBarcode
                     ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
-                    : (qendraActiveTicketId ? { qendra_ticket_id: qendraActiveTicketId, source: 'qendra' } : {})),
+                    : {}),
                 items: cart.map(i => {
                     const line = cartPricing.lineMap.get(i.id);
                     return ({
@@ -1715,7 +1302,6 @@ const Ventas = () => {
 
             console.log("Proceso de guardado completado.");
             playCashRegister();
-            setQendraActiveTicketId(null); // limpiar ticket QENDRA activo
             setActiveScaleTicketBarcode(null);
 
             // Guardar snapshot del carrito antes de resetear (para imprimir después)
@@ -1971,26 +1557,6 @@ const Ventas = () => {
                                 autoFocus
                             />
                         </div>
-                        <button 
-                            className={`category-pill ${isSimulated ? 'active' : ''}`} 
-                            onClick={toggleTestMode}
-                            style={{ 
-                                whiteSpace: 'nowrap', minWidth: '140px', padding: '1rem',
-                                boxShadow: isSimulated ? '0 0 15px rgba(34, 197, 94, 0.3)' : 'none'
-                             }}
-                        >
-                            {isSimulated ? '🔵 SIMULADOR OK' : '⚫ SIMULADOR OFF'}
-                        </button>
-                        <button
-                            className={`category-pill ${isScaleConnected ? 'active' : ''}`}
-                            onClick={handleConnectScale}
-                            style={{
-                                whiteSpace: 'nowrap', minWidth: '150px', padding: '1rem',
-                                boxShadow: isScaleConnected ? '0 0 15px rgba(34, 197, 94, 0.3)' : 'none'
-                            }}
-                        >
-                            {isScaleConnected ? '⚖️ BALANZA OK' : '⚖️ CONECTAR'}
-                        </button>
                     </div>
                     {scannerError && (
                         <div style={{
@@ -2007,74 +1573,6 @@ const Ventas = () => {
                             {scannerError}
                         </div>
                     )}
-                    <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.6rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                        <button
-                            type="button"
-                            className="category-pill"
-                            onClick={handleOpenQendraVisor}
-                            style={{ fontSize: '0.78rem', fontWeight: '800' }}
-                        >
-                            🎫 QENDRA HOY
-                        </button>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: 'var(--color-text-muted)', fontSize: '0.78rem' }}>
-                            Importar
-                            <select
-                                value={qendraSyncDias}
-                                onChange={(e) => setQendraSyncDias(Number(e.target.value))}
-                                style={{
-                                    padding: '0.45rem 0.6rem',
-                                    borderRadius: '10px',
-                                    border: '1px solid var(--glass-border)',
-                                    background: 'rgba(255,255,255,0.03)',
-                                    color: 'var(--color-text-main)'
-                                }}
-                            >
-                                <option value={1}>1 día</option>
-                                <option value={7}>7 días</option>
-                                <option value={30}>30 días</option>
-                                <option value={0}>todo</option>
-                            </select>
-                        </label>
-                        <button
-                            type="button"
-                            className="category-pill"
-                            onClick={handleQendraSyncVentas}
-                            disabled={qendraSyncing}
-                            style={{ fontSize: '0.78rem', fontWeight: '800', opacity: qendraSyncing ? 0.7 : 1 }}
-                        >
-                            {qendraSyncing ? '⏳ IMPORTANDO...' : '⬇️ IMPORTAR VENTAS'}
-                        </button>
-                        {qendraSyncResult && (
-                            <div style={{
-                                padding: '0.5rem 0.8rem',
-                                borderRadius: '10px',
-                                background: qendraSyncResult.error ? 'rgba(239,68,68,0.12)' : 'rgba(34,197,94,0.12)',
-                                border: `1px solid ${qendraSyncResult.error ? 'rgba(239,68,68,0.35)' : 'rgba(34,197,94,0.35)'}`,
-                                color: qendraSyncResult.error ? '#fecaca' : '#bbf7d0',
-                                fontSize: '0.76rem'
-                            }}>
-                                {qendraSyncResult.error
-                                    ? `QENDRA: ${qendraSyncResult.error}`
-                                    : qendraSyncResult.diagMsg || `QENDRA: ${qendraSyncResult.created || 0} importadas, ${qendraSyncResult.skipped || 0} omitidas.`}
-                            </div>
-                        )}
-                    </div>
-                </div>
-
-                <div className="pos-categories" style={{ marginBottom: '1.5rem', borderBottom: '1px solid rgba(255,255,255,0.05)', paddingBottom: '1rem' }}>
-                    {availableCategories.map(cat => (
-                        <button
-                            key={cat.id}
-                            className={`category-pill ${categoryFilter === cat.id ? 'active' : ''}`}
-                            onClick={() => setCategoryFilter(cat.id)}
-                            style={{ fontSize: '0.8rem', letterSpacing: '0.05em', fontWeight: '800' }}
-                        >
-                            {`${cat.icon} ${String(cat.label || '').toUpperCase()}`}
-                        </button>
-                    ))}
-                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.5rem' }}>
-                         <button onClick={() => navigate('/ventas/lista')} className="category-pill" style={{ opacity: 0.6 }}>🎟️ TICKETS</button>
-                    </div>
                 </div>
                 <div className="products-grid">
                     {filteredProducts.length === 0 ? (
@@ -2264,7 +1762,6 @@ const Ventas = () => {
                         <button className="btn-danger" onClick={() => {
                             if (window.confirm('¿Anular ticket?')) {
                                 setCart([]);
-                                setQendraActiveTicketId(null);
                                 setActiveScaleTicketBarcode(null);
                             }
                         }}>ANULAR</button>
@@ -3059,215 +2556,6 @@ const Ventas = () => {
                     </div>
                 </div>
             )}
-
-        {/* ── Modal de diagnóstico de balanza ────────────────────────────── */}
-        {showScaleDiag && (
-            <div style={{
-                position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999
-            }}>
-                <div style={{
-                    background: '#1e1e2e', borderRadius: '12px', padding: '1.5rem',
-                    width: '480px', maxWidth: '95vw', boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-                    fontFamily: 'monospace', border: '1px solid #3b3b52'
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                        <span style={{ fontSize: '1rem', fontWeight: 700, color: '#e2e8f0', fontFamily: 'sans-serif' }}>⚖️ Diagnóstico de Balanza</span>
-                        <button onClick={() => setShowScaleDiag(false)} style={{
-                            background: 'transparent', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem'
-                        }}>✕</button>
-                    </div>
-
-                    <div style={{
-                        background: '#0f0f1a', borderRadius: '8px', padding: '1rem',
-                        minHeight: '160px', maxHeight: '320px', overflowY: 'auto',
-                        display: 'flex', flexDirection: 'column', gap: '0.5rem'
-                    }}>
-                        {scaleDiagLog.length === 0 && (
-                            <span style={{ color: '#4a4a6a', fontSize: '0.8rem' }}>Esperando...</span>
-                        )}
-                        {scaleDiagLog.map((entry, i) => {
-                            const colors = { info: '#60a5fa', success: '#4ade80', error: '#f87171', warn: '#fbbf24' };
-                            const icons  = { info: 'ℹ', success: '✔', error: '✘', warn: '⚠' };
-                            return (
-                                <div key={i} style={{ display: 'flex', gap: '0.5rem', fontSize: '0.8rem', lineHeight: 1.4 }}>
-                                    <span style={{ color: '#4a4a6a', minWidth: '58px' }}>{entry.time}</span>
-                                    <span style={{ color: colors[entry.type] || '#e2e8f0', minWidth: '14px' }}>{icons[entry.type]}</span>
-                                    <span style={{ color: '#cbd5e1' }}>{entry.msg}</span>
-                                </div>
-                            );
-                        })}
-                    </div>
-
-                    <div style={{ marginTop: '1rem', display: 'flex', justifyContent: 'flex-end' }}>
-                        <button onClick={() => setShowScaleDiag(false)} style={{
-                            background: '#3b82f6', color: '#fff', border: 'none',
-                            borderRadius: '8px', padding: '0.5rem 1.2rem',
-                            cursor: 'pointer', fontFamily: 'sans-serif', fontWeight: 600
-                        }}>Cerrar</button>
-                    </div>
-                </div>
-            </div>
-        )}
-        {/* ─── Modal Visor Tickets QENDRA ──────────────────────────────────── */}
-        {showQendraVisor && (
-            <div style={{
-                position: 'fixed', inset: 0, zIndex: 9999,
-                backgroundColor: 'rgba(0,0,0,0.75)',
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }}>
-                <div style={{
-                    background: 'var(--color-bg-card)',
-                    borderRadius: 16, padding: '1.5rem',
-                    width: 'min(900px, 96vw)', maxHeight: '85vh',
-                    display: 'flex', flexDirection: 'column', gap: '0.75rem',
-                    boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-                }}>
-                    {/* Header */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <h2 style={{ margin: 0, fontSize: '1.15rem' }}>🎫 Visor de Tickets QENDRA</h2>
-                        <button onClick={() => setShowQendraVisor(false)}
-                            style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
-                    </div>
-
-                    {/* Tabs */}
-                    {(() => {
-                        const cobradosIds = new Set(qendraVisorCobrados.map(v => String(v.qendra_ticket_id)));
-                        const pendientesList = qendraVisorTickets.filter(t => !cobradosIds.has(String(t.ID_TICKET)));
-                        const tabBtn = (tab, label, count) => (
-                            <button onClick={() => setQendraVisorTab(tab)} style={{
-                                padding: '0.5rem 1.2rem', fontWeight: 700, cursor: 'pointer',
-                                borderRadius: '8px 8px 0 0', border: 'none',
-                                backgroundColor: qendraVisorTab === tab ? 'var(--color-primary)' : 'transparent',
-                                color: qendraVisorTab === tab ? '#fff' : 'var(--color-text-muted)',
-                                borderBottom: qendraVisorTab === tab ? 'none' : '2px solid var(--color-border)',
-                            }}>{label} ({count})</button>
-                        );
-                        return (
-                            <>
-                                <div style={{ display: 'flex', gap: 4, borderBottom: '2px solid var(--color-border)' }}>
-                                    {tabBtn('pendientes', '⏳ Pendientes', pendientesList.length)}
-                                    {tabBtn('cobrados', '✅ Cobrados hoy', qendraVisorCobrados.length)}
-                                    <button onClick={handleOpenQendraVisor}
-                                        style={{ marginLeft: 'auto', padding: '0.4rem 0.8rem', border: '1px solid var(--color-border)', borderRadius: 8, cursor: 'pointer', background: 'transparent', color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
-                                        🔄 Actualizar
-                                    </button>
-                                </div>
-
-                                {/* Content */}
-                                <div style={{ overflowY: 'auto', flex: 1 }}>
-                                    {qendraVisorLoading ? (
-                                        <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-                                            ⏳ Conectando con QENDRA…
-                                        </div>
-                                    ) : qendraVisorTab === 'pendientes' ? (
-                                        pendientesList.length === 0 ? (
-                                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-                                                No hay tickets pendientes en las últimas 8 horas.
-                                            </div>
-                                        ) : pendientesList.map(ticket => {
-                                            const fecha = ticket.FECHA ? new Date(ticket.FECHA) : null;
-                                            const hora = fecha ? fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '—';
-                                            const esActivo = String(ticket.ID_TICKET) === String(qendraActiveTicketId);
-                                            return (
-                                                <div key={ticket.ID_TICKET} style={{
-                                                    border: esActivo ? '2px solid #34d399' : '1px solid var(--color-border)',
-                                                    borderRadius: 10, padding: '0.8rem',
-                                                    marginBottom: '0.6rem',
-                                                    background: esActivo ? 'rgba(52,211,153,0.07)' : 'var(--color-bg-main)',
-                                                }}>
-                                                    {/* Ticket Header */}
-                                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                                                        <div>
-                                                            <span style={{ fontWeight: 700, fontSize: '1rem' }}>
-                                                                #{ticket.ID_TICKET}
-                                                            </span>
-                                                            <span style={{ marginLeft: 10, color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                                                                {hora}
-                                                            </span>
-                                                        </div>
-                                                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                                            <span style={{ fontWeight: 700, fontSize: '1.1rem', color: 'var(--color-primary)' }}>
-                                                                ${parseFloat(ticket.TOTAL || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                                                            </span>
-                                                            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
-                                                                {parseFloat(ticket.KG_TOTAL || 0).toFixed(3)} kg
-                                                            </span>
-                                                            <button
-                                                                onClick={() => handleLoadQendraTicket(ticket)}
-                                                                disabled={esActivo}
-                                                                style={{
-                                                                    padding: '0.35rem 0.9rem', fontWeight: 700, cursor: esActivo ? 'default' : 'pointer',
-                                                                    backgroundColor: esActivo ? '#34d399' : 'var(--color-primary)',
-                                                                    color: '#fff', border: 'none', borderRadius: 8,
-                                                                    opacity: esActivo ? 0.8 : 1,
-                                                                }}>
-                                                                {esActivo ? '✓ En carrito' : '📤 Cargar'}
-                                                            </button>
-                                                        </div>
-                                                    </div>
-                                                    {/* Items del ticket */}
-                                                    {ticket.items.length > 0 && (
-                                                        <div style={{ marginTop: '0.5rem', display: 'flex', flexWrap: 'wrap', gap: '0.3rem' }}>
-                                                            {ticket.items.map((it, i) => (
-                                                                <span key={i} style={{
-                                                                    background: 'var(--color-bg-card)', border: '1px solid var(--color-border)',
-                                                                    borderRadius: 6, padding: '0.2rem 0.5rem', fontSize: '0.8rem',
-                                                                }}>
-                                                                    {`PLU ${it.ID_PLU}`}
-                                                                    {' — '}
-                                                                    {parseFloat(it.PESO_KG || 0).toFixed(3)} kg
-                                                                    {' — '}
-                                                                    ${parseFloat(it.IMPORTE || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                                                                </span>
-                                                            ))}
-                                                        </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })
-                                    ) : (
-                                        /* TAB COBRADOS */
-                                        qendraVisorCobrados.length === 0 ? (
-                                            <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
-                                                No se cobraron tickets QENDRA hoy todavía.
-                                            </div>
-                                        ) : qendraVisorCobrados.map(v => {
-                                            const fecha = v.date ? new Date(v.date) : null;
-                                            const hora = fecha ? fecha.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '—';
-                                            return (
-                                                <div key={v.id} style={{
-                                                    border: '1px solid var(--color-border)', borderRadius: 10,
-                                                    padding: '0.7rem 1rem', marginBottom: '0.5rem',
-                                                    background: 'rgba(34,197,94,0.05)',
-                                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                                }}>
-                                                    <div>
-                                                        <span style={{ fontWeight: 700 }}>#{v.qendra_ticket_id}</span>
-                                                        <span style={{ marginLeft: 10, color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                                                            {hora} · {v.payment_method}
-                                                        </span>
-                                                    </div>
-                                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                                        <span style={{ fontWeight: 700, color: '#22c55e', fontSize: '1.05rem' }}>
-                                                            ${parseFloat(v.total || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}
-                                                        </span>
-                                                        <span style={{
-                                                            background: 'rgba(34,197,94,0.1)', color: '#22c55e',
-                                                            borderRadius: 6, padding: '0.15rem 0.5rem', fontSize: '0.77rem', fontWeight: 700,
-                                                        }}>✅ COBRADO</span>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })
-                                    )}
-                                </div>
-                            </>
-                        );
-                    })()}
-                </div>
-            </div>
-        )}
         {/* ─────────────────────────────────────────────────────────────────── */}
 
         {/* ─── MODAL ELIMINAR TICKET ────────────────────────────────────────────── */}
