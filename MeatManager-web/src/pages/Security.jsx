@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useLicense } from '../context/LicenseContext';
-import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
+import { fetchTable, getRemoteSetting, upsertRemoteSetting, saveTableRecord } from '../utils/apiClient';
 import './Security.css';
 
 /* ── Helpers ────────────────────────────── */
@@ -612,12 +612,14 @@ const Security = () => {
                     active: Number(row.active ?? 1) === 0 ? 0 : 1,
                 };
                 // Upsert por (tenant_id, slot_no) para evitar problemas de id/duplicados.
-                await saveRecord('scale_users', 'upsert', payload);
+                await saveTableRecord('scale_users', 'upsert', payload);
             }
             await loadScaleUsers();
             toast('success', 'Se actualizaron los vendedores de la balanza.');
+            window.alert('Se actualizaron los vendedores de la balanza.');
         } catch (error) {
             toast('error', `No se pudieron guardar usuarios de balanza: ${error.message}`);
+            window.alert(`No se pudieron guardar usuarios de balanza: ${error.message}`);
         } finally {
             setSavingScaleUsers(false);
         }
