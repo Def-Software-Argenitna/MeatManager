@@ -261,12 +261,26 @@ const ProductosCompra = () => {
         setTimeout(() => setQendraSendStatus(null), 5000);
     };
 
+    const itemsWithSaleData = React.useMemo(() => {
+        const source = Array.isArray(items) ? items : [];
+        return source.map((item) => {
+            const productRecord = findProductByIdentity(products, { id: item?.product_id, name: item?.name });
+            return {
+                ...item,
+                current_price: productRecord?.current_price ?? null,
+                plu: productRecord?.plu ?? '',
+                product_category: productRecord?.category ?? null,
+                product_category_code: productRecord?.category_code ?? null,
+            };
+        });
+    }, [items, products]);
+
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
-        const source = Array.isArray(items) ? items : [];
+        const source = Array.isArray(itemsWithSaleData) ? itemsWithSaleData : [];
         if (!term) return source;
         return source.filter((item) => String(item?.name || '').toLowerCase().includes(term));
-    }, [items, searchTerm]);
+    }, [itemsWithSaleData, searchTerm]);
 
     const groupedItems = React.useMemo(() => {
         const groups = new Map();
