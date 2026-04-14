@@ -91,6 +91,13 @@ const Sidebar = ({ isCollapsed }) => {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath || location.pathname === normalizedPath) return;
 
+    const leavingVentas = location.pathname === '/ventas' && normalizedPath !== '/ventas';
+    if (leavingVentas) {
+      window.location.hash = normalizedPath;
+      window.location.reload();
+      return;
+    }
+
     navigate(normalizedPath);
 
     const targetHash = `#${normalizedPath}`;
