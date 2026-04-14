@@ -35,9 +35,11 @@ export const findProductByIdentity = (products, { id, name, plu }) => {
         .sort(sortByRecency)
         .find((item) => {
             const itemKey = String(item?.canonical_key || '').trim().toLowerCase();
+            const itemName = normalizeProductName(item?.name);
             const itemPlu = String(item?.plu || '').trim();
             return (
                 (normalizedKey && itemKey === normalizedKey) ||
+                (normalizedKey && itemName && normalizeProductName(name) === itemName) ||
                 (normalizedPlu && itemPlu && itemPlu === normalizedPlu)
             );
         }) || null;

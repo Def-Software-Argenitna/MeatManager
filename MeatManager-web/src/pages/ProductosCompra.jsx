@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
+import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight, ArrowUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
@@ -238,10 +238,10 @@ const ProductosCompra = () => {
 
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
-        const source = Array.isArray(items) ? items : [];
+        const source = Array.isArray(itemsWithSaleData) ? itemsWithSaleData : [];
         if (!term) return source;
         return source.filter((item) => String(item?.name || '').toLowerCase().includes(term));
-    }, [items, searchTerm]);
+    }, [itemsWithSaleData, searchTerm]);
 
     const groupedItems = React.useMemo(() => {
         const groups = new Map();
