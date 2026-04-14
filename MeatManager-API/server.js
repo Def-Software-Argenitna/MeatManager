@@ -1678,6 +1678,21 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_users (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+                    slot_no         TINYINT UNSIGNED NOT NULL,
+                    display_name    VARCHAR(100) NOT NULL,
+                    active          TINYINT(1) DEFAULT 1,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+                    UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
+                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+                )
+            `);
+
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
             await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');

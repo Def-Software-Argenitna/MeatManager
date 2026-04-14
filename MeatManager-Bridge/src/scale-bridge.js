@@ -592,12 +592,6 @@ class ScaleBridge {
             this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
         }
 
-        try {
-            await this.syncVendors();
-        } catch (error) {
-            this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
-        }
-
         let written = 0;
         let skipped = 0;
         let deleted = 0;
@@ -1122,6 +1116,12 @@ class ScaleBridge {
     async runOnce() {
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
+        try {
+            // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
+            await this.syncVendors();
+        } catch (error) {
+            this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
+        }
         const now = new Date();
         const from = new Date(now);
         const skewMs = Math.max(0, Number(this.config.salesResyncSkewMinutes || 0)) * 60 * 1000;
