@@ -460,6 +460,16 @@ const ProductosCompra = () => {
                                                     </span>
                                                 )}
                                             </div>
+                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', fontSize: '0.82rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                <span style={{ background: 'rgba(249, 115, 22, 0.12)', color: '#fdba74', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '800', border: '1px solid rgba(249, 115, 22, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    {Number(item.current_price) > 0
+                                                        ? `$${Number(item.current_price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                                                        : 'Sin precio'}
+                                                </span>
+                                                <span style={{ background: 'rgba(148, 163, 184, 0.12)', color: '#cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '700', border: '1px solid rgba(148, 163, 184, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    PLU {String(item.plu || '').trim() || 'sin definir'}
+                                                </span>
+                                            </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                                             {qendraAvailable && (
