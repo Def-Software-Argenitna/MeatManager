@@ -611,14 +611,11 @@ const Security = () => {
                     display_name: String(row.display_name || '').trim() || `VENDEDOR ${row.slot_no}`,
                     active: Number(row.active ?? 1) === 0 ? 0 : 1,
                 };
-                if (row.id) {
-                    await saveRecord('scale_users', 'update', payload, row.id);
-                } else {
-                    await saveRecord('scale_users', 'insert', payload);
-                }
+                // Upsert por (tenant_id, slot_no) para evitar problemas de id/duplicados.
+                await saveRecord('scale_users', 'upsert', payload);
             }
             await loadScaleUsers();
-            toast('success', 'Usuarios de balanza guardados. El bridge los enviara automaticamente.');
+            toast('success', 'Se actualizaron los vendedores de la balanza.');
         } catch (error) {
             toast('error', `No se pudieron guardar usuarios de balanza: ${error.message}`);
         } finally {
