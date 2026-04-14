@@ -41,6 +41,7 @@ Editar `.env`:
 - `SYNC_INTERVAL_MS=5000` (ciclo general)
 - `PRODUCT_SYNC_INTERVAL_MS=30000` (precio/descripcion/bajas)
 - `SALES_RESYNC_SKEW_MINUTES=2` (relectura segura de ventas)
+- `SCALE_PRICE_FORMAT_6D_MULTIPLIER=1` (si `precio_formato=6d` y no usas decimales, envia precio entero a CUORA V6)
 - `SCALE_BARCODE_*` (formato de codigos impresos por la balanza)
 
 ## Ejecucion

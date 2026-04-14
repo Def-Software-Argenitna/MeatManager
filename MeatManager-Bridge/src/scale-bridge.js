@@ -4,6 +4,7 @@ const { CuoraClient } = require('./cuora-client');
 const {
     buildPlu4Payload,
     buildPlu61Payload,
+    buildPriceChange33Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,
@@ -380,6 +381,27 @@ class ScaleBridge {
         return { ok: true, updated: true };
     }
 
+    async applyPriceFormatConfig(priceFormat) {
+        const normalized = normalizePriceFormat(priceFormat);
+        // En CUORA MAX V6 (fw S0060), CPr=0 trabaja en entero (6d) y CPr=2 en 4d2d.
+        const payload = normalized === '6d' ? '0' : '2';
+        const fingerprint = `${normalized}:${payload}`;
+        if (this.state.priceFormatFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const response = await this.scale.send(42, payload);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar formato de precio (funcion 42)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar formato de precio (funcion 42): ${response.data}`);
+        }
+
+        this.state.priceFormatFingerprint = fingerprint;
+        return { ok: true, updated: true, normalized, payload };
+    }
+
     async getPriceFormatSetting() {
         const rows = await mysqlQuery(
             this.mysqlPool,
@@ -399,8 +421,9 @@ class ScaleBridge {
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
         const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
         const effectiveLegacyPriceMultiplier = priceFormat === '6d'
-            ? 1
+            ? Math.max(1, Number(this.config.scale.priceFormat6dMultiplier || 10))
             : this.config.scale.legacyPriceMultiplier;
+        let forceProductRewrite = false;
         this.logger.info('Firma digital de balanza detectada', {
             protocolVersion,
             protocolData: signature.data,
@@ -420,6 +443,19 @@ class ScaleBridge {
             }
         } catch (error) {
             this.logger.warn('No se pudo aplicar configuracion de barcode en balanza', { error: error.message });
+        }
+
+        try {
+            const priceFormatResult = await this.applyPriceFormatConfig(priceFormat);
+            if (priceFormatResult?.updated) {
+                forceProductRewrite = true;
+                this.logger.info('Formato de precio aplicado en balanza', {
+                    priceFormat: priceFormatResult.normalized,
+                    payload: priceFormatResult.payload,
+                });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
         }
 
         let written = 0;
@@ -516,6 +552,7 @@ class ScaleBridge {
                 protocolMode: useLegacyPlu4 ? 'v6-func4' : 'v7-func61',
                 priceFormat,
                 legacyPriceMultiplier: useLegacyPlu4 ? effectiveLegacyPriceMultiplier : null,
+                priceFormat6dMultiplier: priceFormat === '6d' ? effectiveLegacyPriceMultiplier : null,
                 legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v2' : null,
             });
 
@@ -527,7 +564,7 @@ class ScaleBridge {
                  LIMIT 1`,
                 [this.config.deviceId, this.config.tenantId, product.id]
             );
-            if (mapRows[0] && mapRows[0].fingerprint === fingerprint) {
+            if (!forceProductRewrite && mapRows[0] && mapRows[0].fingerprint === fingerprint) {
                 skipped += 1;
                 continue;
             }
@@ -550,12 +587,14 @@ class ScaleBridge {
                         saleType: inferSaleType(product.unit),
                         maintainTotals: Boolean(mapRows[0]),
                         priceMultiplier: effectiveLegacyPriceMultiplier,
+                        price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,
                     })
                     : buildPlu61Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
                         priceMultiplier: effectiveLegacyPriceMultiplier,
+                        price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,
                     });
                 const response = await this.scale.send(useLegacyPlu4 ? 4 : 61, payload);
@@ -564,6 +603,19 @@ class ScaleBridge {
                 }
                 if (String(response.data || '').startsWith('E')) {
                     throw new Error(`Error balanza al enviar PLU ${pluCode} (fn ${useLegacyPlu4 ? 4 : 61}): ${response.data}`);
+                }
+
+                if (useLegacyPlu4 && priceFormat === '6d') {
+                    // En CUORA MAX V6, reforzamos precio con fn33 para evitar desfasajes de visualizacion.
+                    const priceValue = Math.max(0, Math.min(999999, Math.round(Number(product.current_price) || 0)));
+                    const pricePayload = buildPriceChange33Payload(pluCode, priceValue, { version: '1' });
+                    const priceResponse = await this.scale.send(33, pricePayload);
+                    if (!priceResponse.crc.ok) {
+                        throw new Error(`CRC invalido al ajustar precio PLU ${pluCode} (fn 33)`);
+                    }
+                    if (String(priceResponse.data || '').startsWith('E')) {
+                        throw new Error(`Error balanza al ajustar precio PLU ${pluCode} (fn 33): ${priceResponse.data}`);
+                    }
                 }
 
                 await mysqlExecute(

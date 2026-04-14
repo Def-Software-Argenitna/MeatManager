@@ -63,6 +63,7 @@ const config = {
         sectionDefaultId: intEnv('SCALE_SECTION_DEFAULT_ID', 2),
         sectionDefaultName: strEnv('SCALE_SECTION_DEFAULT_NAME', 'CARNICERIA'),
         legacyPriceMultiplier: intEnv('SCALE_LEGACY_PRICE_MULTIPLIER', 100),
+        priceFormat6dMultiplier: intEnv('SCALE_PRICE_FORMAT_6D_MULTIPLIER', 1),
         barcodeConfig: {
             enabled: boolEnv('SCALE_BARCODE_CONFIG_ENABLED', true),
             saleByWeightFormat: strEnv('SCALE_BARCODE_WEIGHT_FORMAT', '20PPPPIIIIII'),
