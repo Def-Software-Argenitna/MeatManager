@@ -5,6 +5,7 @@ const {
     buildPlu4Payload,
     buildPlu61Payload,
     buildPriceChange33Payload,
+    buildVendor38Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,
@@ -71,6 +72,20 @@ class ScaleBridge {
         `);
 
         await mysqlExecute(this.mysqlPool, `
+            CREATE TABLE IF NOT EXISTS scale_users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tenant_id BIGINT NOT NULL,
+                slot_no TINYINT UNSIGNED NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY ux_scale_users_tenant_slot (tenant_id, slot_no),
+                KEY ix_scale_users_tenant (tenant_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        await mysqlExecute(this.mysqlPool, `
             CREATE TABLE IF NOT EXISTS scale_bridge_sales_item (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT,
                 device_id VARCHAR(64) NOT NULL,
@@ -82,6 +97,7 @@ class ScaleBridge {
                 line_no INT NOT NULL,
                 sale_at DATETIME NOT NULL,
                 vendor_code VARCHAR(8) NOT NULL,
+                vendor_name VARCHAR(100) NULL,
                 plu_code VARCHAR(16) NOT NULL,
                 sector_code VARCHAR(8) NOT NULL,
                 units INT NOT NULL DEFAULT 0,
@@ -99,6 +115,16 @@ class ScaleBridge {
                 KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_sales_item
+                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
         try {
             await mysqlExecute(this.mysqlPool, `
                 ALTER TABLE scale_bridge_sales_item
@@ -145,6 +171,7 @@ class ScaleBridge {
                 ticket_barcode VARCHAR(64) NOT NULL,
                 printed_ticket_barcode VARCHAR(32) NULL,
                 vendor_code VARCHAR(16) NULL,
+                vendor_name VARCHAR(100) NULL,
                 sale_at DATETIME NOT NULL,
                 total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
                 item_count INT NOT NULL DEFAULT 0,
@@ -162,6 +189,16 @@ class ScaleBridge {
                 KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_ticket_map
+                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
         try {
             await mysqlExecute(this.mysqlPool, `
                 ALTER TABLE scale_bridge_ticket_map
@@ -221,6 +258,7 @@ class ScaleBridge {
                AND t.ticket_id = s.ticket_id
              SET s.ticket_barcode = t.ticket_barcode,
                  s.printed_ticket_barcode = t.printed_ticket_barcode,
+                 s.vendor_name = t.vendor_name,
                  s.ticket_total_amount = t.total_amount,
                  s.ticket_item_count = t.item_count,
                  s.synced_at = NOW()
@@ -231,6 +269,7 @@ class ScaleBridge {
                     s.ticket_barcode IS NULL
                     OR s.ticket_barcode <> t.ticket_barcode
                     OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
+                    OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
                     OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
                     OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
                )`,
@@ -305,6 +344,51 @@ class ScaleBridge {
                         WHEN COALESCE(grams, 0) > 0 THEN 'kg'
                         ELSE 'un'
                     END
+               )`,
+            [
+                this.config.deviceId,
+                this.config.tenantId,
+                this.config.branchId || null,
+            ]
+        );
+
+        await mysqlExecute(
+            this.mysqlPool,
+            `UPDATE scale_bridge_ticket_map t
+             LEFT JOIN scale_users u
+               ON u.tenant_id = t.tenant_id
+              AND COALESCE(u.active, 1) = 1
+              AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
+             SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
+             WHERE t.device_id = ?
+               AND t.tenant_id = ?
+               AND COALESCE(t.branch_id, 0) = COALESCE(?, 0)
+               AND (
+                    t.vendor_name IS NULL
+                    OR t.vendor_name = ''
+               )`,
+            [
+                this.config.deviceId,
+                this.config.tenantId,
+                this.config.branchId || null,
+            ]
+        );
+
+        await mysqlExecute(
+            this.mysqlPool,
+            `UPDATE scale_bridge_sales_item s
+             LEFT JOIN scale_users u
+               ON u.tenant_id = s.tenant_id
+              AND COALESCE(u.active, 1) = 1
+              AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
+             SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
+                 s.synced_at = NOW()
+             WHERE s.device_id = ?
+               AND s.tenant_id = ?
+               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+               AND (
+                    s.vendor_name IS NULL
+                    OR s.vendor_name = ''
                )`,
             [
                 this.config.deviceId,
@@ -415,6 +499,56 @@ class ScaleBridge {
         return normalizePriceFormat(rows[0]?.value);
     }
 
+    async syncVendors() {
+        const maxSlots = 4;
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT id, slot_no, display_name
+             FROM scale_users
+             WHERE tenant_id = ?
+               AND COALESCE(active, 1) = 1
+             ORDER BY slot_no ASC, id ASC
+             LIMIT ?`,
+            [this.config.tenantId, maxSlots]
+        );
+
+        const bySlot = [];
+        for (let slot = 1; slot <= maxSlots; slot += 1) {
+            const row = rows.find((entry) => Number(entry.slot_no) === slot) || null;
+            const name = String(row?.display_name || `VENDEDOR ${slot}`).trim();
+            bySlot.push({ slot, name });
+        }
+
+        const fingerprint = hashObject({
+            tenantId: this.config.tenantId,
+            vendors: bySlot,
+        }, 20);
+
+        if (this.state.vendorConfigFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged', synced: 0 };
+        }
+
+        let synced = 0;
+        for (const vendor of bySlot) {
+            const payload = buildVendor38Payload(vendor.slot, vendor.name);
+            const response = await this.scale.send(38, payload);
+            if (!response.crc.ok) {
+                throw new Error(`CRC invalido al sincronizar vendedor ${vendor.slot}`);
+            }
+            if (String(response.data || '').startsWith('E')) {
+                throw new Error(`Error balanza al sincronizar vendedor ${vendor.slot}: ${response.data}`);
+            }
+            synced += 1;
+        }
+
+        this.state.vendorConfigFingerprint = fingerprint;
+        this.logger.info('Vendedores sincronizados en balanza', {
+            synced,
+            vendors: bySlot,
+        });
+        return { ok: true, synced };
+    }
+
     async syncProducts() {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
@@ -456,6 +590,12 @@ class ScaleBridge {
             }
         } catch (error) {
             this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
+        }
+
+        try {
+            await this.syncVendors();
+        } catch (error) {
+            this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
         }
 
         let written = 0;
@@ -659,6 +799,29 @@ class ScaleBridge {
     }
 
     async pullSales({ fromDate, toDate, closeAfter = false }) {
+        const vendorRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT slot_no, display_name
+             FROM scale_users
+             WHERE tenant_id = ?
+               AND COALESCE(active, 1) = 1
+             ORDER BY slot_no ASC`,
+            [this.config.tenantId]
+        ).catch(() => []);
+        const vendorByCode = new Map(
+            vendorRows.map((row) => [
+                String(Number.parseInt(row.slot_no, 10) || 0).padStart(2, '0'),
+                String(row.display_name || '').trim(),
+            ])
+        );
+        const resolveVendorName = (vendorCodeRaw) => {
+            const parsed = Number.parseInt(String(vendorCodeRaw || '').trim(), 10);
+            const code2 = String(Number.isFinite(parsed) ? parsed : 0).padStart(2, '0');
+            if (vendorByCode.has(code2)) return vendorByCode.get(code2) || null;
+            if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 4) return `VENDEDOR ${parsed}`;
+            return null;
+        };
+
         const countRawRecords = (payload) => String(payload || '')
             .replace(/F$/, '')
             .split(';')
@@ -758,9 +921,11 @@ class ScaleBridge {
             const ticketId = String(row.ticketId || '').trim();
             if (!ticketId) continue;
             if (!tickets.has(ticketId)) {
+                const vendorCode = String(row.vendor || '').trim();
                 tickets.set(ticketId, {
                     ticketId,
-                    vendorCode: String(row.vendor || '').trim(),
+                    vendorCode,
+                    vendorName: resolveVendorName(vendorCode),
                     saleAt,
                     totalAmount: 0,
                     itemCount: 0,
@@ -779,6 +944,9 @@ class ScaleBridge {
                 amountTimes100: row.amountTimes100,
             });
             if (!ticket.vendorCode && row.vendor) ticket.vendorCode = String(row.vendor).trim();
+            if (!ticket.vendorName) {
+                ticket.vendorName = resolveVendorName(ticket.vendorCode);
+            }
             if (saleAt < ticket.saleAt) ticket.saleAt = saleAt;
             indexedRows.push({ row, lineNo, saleAt });
         }
@@ -809,13 +977,14 @@ class ScaleBridge {
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_ticket_map
-                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, fingerprint, synced_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, vendor_name, sale_at, total_amount, item_count, fingerprint, synced_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                     scale_address = VALUES(scale_address),
                     ticket_barcode = VALUES(ticket_barcode),
                     printed_ticket_barcode = VALUES(printed_ticket_barcode),
                     vendor_code = VALUES(vendor_code),
+                    vendor_name = VALUES(vendor_name),
                     sale_at = VALUES(sale_at),
                     total_amount = VALUES(total_amount),
                     item_count = VALUES(item_count),
@@ -830,6 +999,7 @@ class ScaleBridge {
                     ticketBarcode,
                     printedTicketBarcode,
                     ticket.vendorCode || null,
+                    ticket.vendorName || null,
                     ticket.saleAt || new Date(),
                     Number(ticket.totalAmount.toFixed(2)),
                     ticket.itemCount,
@@ -842,6 +1012,7 @@ class ScaleBridge {
                 `UPDATE scale_bridge_sales_item
                  SET ticket_barcode = ?,
                      printed_ticket_barcode = ?,
+                     vendor_name = ?,
                      synced_at = NOW()
                  WHERE device_id = ?
                    AND tenant_id = ?
@@ -850,6 +1021,7 @@ class ScaleBridge {
                 [
                     ticketBarcode,
                     printedTicketBarcode,
+                    ticket.vendorName || null,
                     this.config.deviceId,
                     this.config.tenantId,
                     this.config.branchId || null,
@@ -884,13 +1056,14 @@ class ScaleBridge {
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_sales_item
-                      (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode, line_no, sale_at, vendor_code, plu_code, sector_code, units, grams, drained_grams, amount, ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit, raw_payload, synced_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                      (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode, line_no, sale_at, vendor_code, vendor_name, plu_code, sector_code, units, grams, drained_grams, amount, ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit, raw_payload, synced_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                     ticket_barcode = VALUES(ticket_barcode),
                           printed_ticket_barcode = VALUES(printed_ticket_barcode),
                     sale_at = VALUES(sale_at),
                     vendor_code = VALUES(vendor_code),
+                    vendor_name = VALUES(vendor_name),
                     plu_code = VALUES(plu_code),
                     sector_code = VALUES(sector_code),
                     units = VALUES(units),
@@ -913,6 +1086,7 @@ class ScaleBridge {
                     entry.lineNo,
                     entry.saleAt,
                     String(entry.row.vendor || '').slice(0, 8),
+                    resolveVendorName(entry.row.vendor),
                     String(entry.row.plu || '').slice(0, 16),
                     String(entry.row.sector || '').slice(0, 8),
                     entry.row.units,
