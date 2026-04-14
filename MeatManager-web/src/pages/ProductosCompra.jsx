@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom';
 import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
-import { desktopApi } from '../utils/desktopApi';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
@@ -31,17 +30,11 @@ const ProductosCompra = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingItem, setEditingItem] = useState(null);
-    const [qendraAvailable, setQendraAvailable] = useState(false);
-    const [qendraSendStatus, setQendraSendStatus] = useState(null);
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [saleCategories, setSaleCategories] = useState([]);
     const [collapsedGroups, setCollapsedGroups] = useState({});
-
-    useEffect(() => {
-        desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
-    }, []);
 
     const loadData = React.useCallback(async () => {
         const [itemsRows, productRows, categoriesRows, saleCategoriesRows] = await Promise.all([
@@ -243,24 +236,6 @@ const ProductosCompra = () => {
         setIsModalOpen(true);
     };
 
-    const handleSendToQendra = async (item) => {
-        const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
-        if (!productRecord?.plu || !productRecord?.current_price) {
-            setQendraSendStatus({ ok: false, msg: `Sin PLU/precio definido para "${item.name}"` });
-            setTimeout(() => setQendraSendStatus(null), 4000);
-            return;
-        }
-        setQendraSendStatus({ ok: null, msg: 'Actualizando en QENDRA...' });
-        const res = await desktopApi.qendraUpdatePrecio(productRecord.plu, productRecord.current_price);
-        setQendraSendStatus({
-            ok: res.ok,
-            msg: res.ok
-                ? `PLU ${productRecord.plu} → $${productRecord.current_price} actualizado en QENDRA ✓`
-                : `Error QENDRA: ${res.error}`
-        });
-        setTimeout(() => setQendraSendStatus(null), 5000);
-    };
-
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
         const source = Array.isArray(items) ? items : [];
@@ -341,19 +316,6 @@ const ProductosCompra = () => {
 
     return (
         <div className="animate-fade-in">
-            {qendraSendStatus && (
-                <div style={{
-                    position: 'fixed', top: '1.2rem', right: '1.2rem', zIndex: 9999,
-                    maxWidth: '420px', padding: '0.8rem 1.2rem',
-                    borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '0.8rem',
-                    backgroundColor: qendraSendStatus.ok === null ? '#1e3a5f' : qendraSendStatus.ok ? '#14532d' : '#7f1d1d',
-                    border: `1px solid ${qendraSendStatus.ok === null ? '#3b82f6' : qendraSendStatus.ok ? '#22c55e' : '#ef4444'}`,
-                    color: '#f1f5f9', fontSize: '0.9rem', boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
-                }}>
-                    <span>{qendraSendStatus.ok === null ? '⏳' : qendraSendStatus.ok ? '✅' : '❌'}</span>
-                    <span>{qendraSendStatus.msg}</span>
-                </div>
-            )}
             <header className="page-header">
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
@@ -472,13 +434,6 @@ const ProductosCompra = () => {
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                            {qendraAvailable && (
-                                                <button
-                                                    onClick={() => handleSendToQendra(item)}
-                                                    style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-                                                    title="Enviar precio a QENDRA (balanza)"
-                                                >⬆️</button>
-                                            )}
                                             <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
                                             <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
                                         </div>

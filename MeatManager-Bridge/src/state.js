@@ -12,6 +12,9 @@ const defaultState = () => ({
     barcodeConfigFingerprint: null,
     priceFormatFingerprint: null,
     vendorConfigFingerprint: null,
+    marqueeConfigFingerprint: null,
+    ticketHeaderFingerprint: null,
+    sectionMapFingerprint: null,
     ticketFingerprints: {},
     productFingerprints: {},
 });

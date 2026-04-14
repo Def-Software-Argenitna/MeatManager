@@ -189,6 +189,12 @@ function buildVendor38Payload(vendorSlot, vendorName) {
     return `${slot}${name}`;
 }
 
+function buildCommerceHeader17Payload(line1, line2) {
+    const headerLine1 = padText(line1 || '', 18);
+    const headerLine2 = padText(line2 || '', 34);
+    return `${headerLine1}${headerLine2}`;
+}
+
 function buildBarcodeConfigPayload(type, format) {
     const barcodeType = String(type || '').toUpperCase().trim().slice(0, 1);
     const allowedType = ['S', 'P', 'U'].includes(barcodeType) ? barcodeType : 'S';
@@ -284,6 +290,7 @@ module.exports = {
     buildPlu4Payload,
     buildPriceChange33Payload,
     buildVendor38Payload,
+    buildCommerceHeader17Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,
