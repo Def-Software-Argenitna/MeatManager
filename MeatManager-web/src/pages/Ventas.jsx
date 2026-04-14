@@ -1178,7 +1178,7 @@ const Ventas = () => {
             if (existing) {
                 return prev.map(item =>
                     item.id === product.id
-                        ? { ...item, quantity: item.unit === 'kg' ? item.quantity + weight : item.quantity + 1 }
+                        ? { ...item, quantity: (item.unit === 'kg' ? item.quantity + weight : item.quantity + (externalWeight || 1)) }
                         : item
                 );
             }

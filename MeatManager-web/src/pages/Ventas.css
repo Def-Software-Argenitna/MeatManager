@@ -139,14 +139,18 @@
 .products-accordion-panel {
     display: grid;
     grid-template-rows: 0fr;
-    transition: grid-template-rows 0.28s ease;
+    transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1), visibility 0s 0.28s;
+    visibility: hidden;
 }
 
 .products-accordion-panel.expanded {
     grid-template-rows: 1fr;
+    visibility: visible;
+    transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1), visibility 0s 0s;
 }
 
 .products-accordion-panel > .products-grid {
+    min-height: 0;
     overflow: hidden;
     padding: 0 1rem 1rem;
 }
