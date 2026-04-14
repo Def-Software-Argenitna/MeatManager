@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
+import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight, ArrowUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { desktopApi } from '../utils/desktopApi';
@@ -485,16 +485,71 @@ const ProductosCompra = () => {
                                                 </span>
                                             </div>
                                         </div>
-                                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
                                             {qendraAvailable && (
                                                 <button
                                                     onClick={() => handleSendToQendra(item)}
-                                                    style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
+                                                    style={{ 
+                                                        background: 'rgba(167, 139, 250, 0.15)', 
+                                                        border: '1px solid rgba(167, 139, 250, 0.2)', 
+                                                        color: '#a78bfa', 
+                                                        cursor: 'pointer', 
+                                                        fontSize: '1rem', 
+                                                        lineHeight: 1,
+                                                        padding: '0.4rem',
+                                                        borderRadius: '8px',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        transition: 'all 0.2s ease-in-out'
+                                                    }}
                                                     title="Enviar precio a QENDRA (balanza)"
-                                                >⬆️</button>
+                                                    onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(167, 139, 250, 0.25)' }}
+                                                    onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(167, 139, 250, 0.15)' }}
+                                                >
+                                                    <ArrowUp size={16} strokeWidth={2.5} />
+                                                </button>
                                             )}
-                                            <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
-                                            <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
+                                            <button 
+                                                onClick={() => openEdit(item)} 
+                                                style={{ 
+                                                    background: 'rgba(59, 130, 246, 0.15)', 
+                                                    border: '1px solid rgba(59, 130, 246, 0.2)', 
+                                                    color: '#3b82f6', 
+                                                    cursor: 'pointer',
+                                                    padding: '0.4rem',
+                                                    borderRadius: '8px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    transition: 'all 0.2s ease-in-out'
+                                                }}
+                                                title="Editar artículo"
+                                                onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.25)' }}
+                                                onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(59, 130, 246, 0.15)' }}
+                                            >
+                                                <Edit2 size={16} strokeWidth={2.5} />
+                                            </button>
+                                            <button 
+                                                onClick={() => handleDelete(item.id)} 
+                                                style={{ 
+                                                    background: 'rgba(239, 68, 68, 0.15)', 
+                                                    border: '1px solid rgba(239, 68, 68, 0.2)', 
+                                                    color: '#ef4444', 
+                                                    cursor: 'pointer',
+                                                    padding: '0.4rem',
+                                                    borderRadius: '8px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    justifyContent: 'center',
+                                                    transition: 'all 0.2s ease-in-out'
+                                                }}
+                                                title="Eliminar artículo"
+                                                onMouseOver={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.25)' }}
+                                                onMouseOut={(e) => { e.currentTarget.style.background = 'rgba(239, 68, 68, 0.15)' }}
+                                            >
+                                                <Trash2 size={16} strokeWidth={2.5} />
+                                            </button>
                                         </div>
                                     </div>
                                 ))}
