@@ -493,7 +493,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ]);
 
 const TENANT_ID_TABLES = [
@@ -501,7 +501,7 @@ const TENANT_ID_TABLES = [
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ];
 
 const DELIVERY_STATUS_MAP = {
@@ -761,7 +761,7 @@ const TABLES_WITH_NUMERIC_ID = [
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ];
 const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock', 'promotions']);
 
@@ -1678,6 +1678,21 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas_items', 'product_id', '`product_id` INT NULL AFTER `venta_id`');
             await ensureColumn(conn, 'compras_items', 'product_id', '`product_id` INT NULL AFTER `purchase_id`');
             await ensureColumn(conn, 'menu_digital', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_users (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+                    slot_no         TINYINT UNSIGNED NOT NULL,
+                    display_name    VARCHAR(100) NOT NULL,
+                    active          TINYINT(1) DEFAULT 1,
+                    created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+                    UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
+                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+                )
+            `);
+
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
             await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');
@@ -3538,6 +3553,18 @@ function getSchemaTables() {
             UNIQUE KEY uniq_users_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_users_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS scale_users (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            slot_no         TINYINT UNSIGNED NOT NULL,
+            display_name    VARCHAR(100) NOT NULL,
+            active          TINYINT(1) DEFAULT 1,
+            created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+            UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS user_permissions (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -4141,7 +4168,7 @@ const ALLOWED_TABLES = new Set([
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
     'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
-    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'promotions',
+    'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'promotions', 'scale_users',
 ]);
 
 // Columnas que MySQL gestiona solas y no se deben incluir en INSERT/UPDATE
@@ -4820,7 +4847,7 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'promotions', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'scale_users', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'promotions', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -5031,6 +5058,7 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 // generado por el bridge directo.
 async function ensureScaleTicketLifecycleColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'printed_ticket_barcode', '`printed_ticket_barcode` VARCHAR(32) NULL AFTER `ticket_barcode`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'vendor_name', '`vendor_name` VARCHAR(100) NULL AFTER `vendor_code`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'ticket_status', '`ticket_status` VARCHAR(16) NOT NULL DEFAULT \'open\' AFTER `item_count`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_sale_id', '`charged_sale_id` BIGINT NULL AFTER `ticket_status`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
@@ -5040,6 +5068,7 @@ async function ensureScaleTicketLifecycleColumns(conn) {
 
 async function ensureScaleTicketItemColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_sales_item', 'printed_ticket_barcode', '`printed_ticket_barcode` VARCHAR(32) NULL AFTER `ticket_barcode`');
+    await ensureColumn(conn, 'scale_bridge_sales_item', 'vendor_name', '`vendor_name` VARCHAR(100) NULL AFTER `vendor_code`');
     await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_total_amount', '`ticket_total_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `amount`');
     await ensureColumn(conn, 'scale_bridge_sales_item', 'ticket_item_count', '`ticket_item_count` INT NOT NULL DEFAULT 0 AFTER `ticket_total_amount`');
     await ensureColumn(conn, 'scale_bridge_sales_item', 'item_quantity', '`item_quantity` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `ticket_item_count`');
@@ -5053,6 +5082,7 @@ async function ensureScaleTicketItemColumns(conn) {
           AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
           AND t.ticket_id = s.ticket_id
          SET s.printed_ticket_barcode = COALESCE(t.printed_ticket_barcode, s.printed_ticket_barcode),
+             s.vendor_name = COALESCE(t.vendor_name, s.vendor_name),
              s.ticket_total_amount = CASE
                 WHEN t.total_amount IS NOT NULL THEN t.total_amount
                 ELSE s.ticket_total_amount
@@ -5073,6 +5103,7 @@ async function ensureScaleTicketItemColumns(conn) {
                 t.printed_ticket_barcode IS NOT NULL
                 OR t.total_amount IS NOT NULL
                 OR t.item_count IS NOT NULL
+                OR t.vendor_name IS NOT NULL
                 OR COALESCE(s.item_quantity, 0) = 0
                 OR COALESCE(s.item_quantity_unit, '') = ''
          )`
@@ -5084,22 +5115,26 @@ async function getScaleTicketLookupSchema(conn) {
         ticketPrintedBarcode,
         ticketStatus,
         ticketScaleAddress,
+        ticketVendorName,
         itemPrintedBarcode,
         itemTicketTotalAmount,
         itemTicketItemCount,
         itemQuantity,
         itemQuantityUnit,
+        itemVendorName,
         ventaTicketBarcode,
         ventaQendraTicketId,
     ] = await Promise.all([
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'printed_ticket_barcode'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'ticket_status'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'scale_address'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'vendor_name'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'printed_ticket_barcode'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ticket_total_amount'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ticket_item_count'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'item_quantity_unit'),
+        hasColumn(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'vendor_name'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'ventas', 'ticket_barcode'),
         hasColumn(conn, OPERATIONAL_DB_NAME, 'ventas', 'qendra_ticket_id'),
     ]);
@@ -5108,11 +5143,13 @@ async function getScaleTicketLookupSchema(conn) {
         ticketPrintedBarcode,
         ticketStatus,
         ticketScaleAddress,
+        ticketVendorName,
         itemPrintedBarcode,
         itemTicketTotalAmount,
         itemTicketItemCount,
         itemQuantity,
         itemQuantityUnit,
+        itemVendorName,
         ventaTicketBarcode,
         ventaQendraTicketId,
     };
@@ -5125,6 +5162,7 @@ function buildScaleTicketLookupSelect(schema) {
         'ticket_barcode',
         schema.ticketPrintedBarcode ? 'printed_ticket_barcode' : 'NULL AS printed_ticket_barcode',
         'vendor_code',
+        schema.ticketVendorName ? 'vendor_name' : 'NULL AS vendor_name',
         'sale_at',
         'total_amount',
         'item_count',
@@ -5138,6 +5176,7 @@ function buildScaleTicketItemSelect(schema) {
         's.line_no',
         's.sale_at',
         's.vendor_code',
+        schema.itemVendorName ? 's.vendor_name' : 'NULL AS vendor_name',
         's.plu_code',
         's.units',
         's.grams',
@@ -5359,6 +5398,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 ticketTotal: Number(row.ticket_total_amount || ticket.total_amount || 0),
                 ticketItemCount: Number(row.ticket_item_count || ticket.item_count || 0),
                 vendorCode: String(row.vendor_code || ticket.vendor_code || '').trim() || null,
+                vendorName: String(row.vendor_name || ticket.vendor_name || '').trim() || null,
                 product: {
                     id: row.product_id ? Number(row.product_id) : null,
                     name: row.product_name || null,
@@ -5379,6 +5419,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 internalBarcode: ticket.ticket_barcode,
                 printedBarcode: ticket.printed_ticket_barcode || null,
                 vendorCode: ticket.vendor_code || null,
+                vendorName: ticket.vendor_name || null,
                 saleAt: ticket.sale_at,
                 total: Number(ticket.total_amount || 0),
                 itemCount: Number(ticket.item_count || items.length),

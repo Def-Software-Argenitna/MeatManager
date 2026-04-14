@@ -182,6 +182,13 @@ function buildPriceChange33Payload(pluValue, priceValue, options = {}) {
     return `${plu}${version}${price}${price}`;
 }
 
+function buildVendor38Payload(vendorSlot, vendorName) {
+    const slotRaw = Number.parseInt(vendorSlot, 10) || 1;
+    const slot = String(Math.max(1, Math.min(slotRaw, 4)));
+    const name = padText(vendorName || `VENDEDOR ${slot}`, 18);
+    return `${slot}${name}`;
+}
+
 function buildBarcodeConfigPayload(type, format) {
     const barcodeType = String(type || '').toUpperCase().trim().slice(0, 1);
     const allowedType = ['S', 'P', 'U'].includes(barcodeType) ? barcodeType : 'S';
@@ -276,6 +283,7 @@ module.exports = {
     buildPlu61Payload,
     buildPlu4Payload,
     buildPriceChange33Payload,
+    buildVendor38Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,

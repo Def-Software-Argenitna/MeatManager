@@ -6,6 +6,7 @@ Bridge local para hablar directo con balanza **Systel CUORA MAX** por USB/COM, s
 
 ```text
 MySQL (productos) -> Bridge -> CUORA MAX (funcion 4/61 segun firma)
+MySQL (scale_users) -> Bridge -> CUORA MAX (funcion 38, vendedores 1..4)
 CUORA MAX (funcion 72) -> Bridge -> MySQL (tabla scale_bridge_sales_item)
 ```
 
@@ -14,6 +15,7 @@ CUORA MAX (funcion 72) -> Bridge -> MySQL (tabla scale_bridge_sales_item)
 - `23`: ping/estado
 - `2`: firma digital
 - `10`: alta/actualizacion de sector
+- `38`: alta/actualizacion de vendedor (slots 1..4)
 - `4`: envio de PLU legacy (CUORA MAX V6)
 - `5`: baja de PLU en balanza
 - `8`: configuracion de codigo de barras (peso/unidad/suma)

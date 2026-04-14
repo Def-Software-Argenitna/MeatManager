@@ -11,6 +11,7 @@ const defaultState = () => ({
     lastError: null,
     barcodeConfigFingerprint: null,
     priceFormatFingerprint: null,
+    vendorConfigFingerprint: null,
     ticketFingerprints: {},
     productFingerprints: {},
 });
