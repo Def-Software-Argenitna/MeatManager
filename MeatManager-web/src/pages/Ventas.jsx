@@ -160,6 +160,17 @@ const Ventas = () => {
         setToastMsg({ text, type });
         toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
     }, []);
+
+    React.useEffect(() => {
+        return () => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+            processingRef.current = false;
+            window.electronAPI?.offScaleDiagnostic?.();
+            scaleService.disconnect().catch(() => {});
+        };
+    }, []);
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();

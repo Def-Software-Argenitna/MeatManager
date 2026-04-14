@@ -115,7 +115,7 @@ const DashboardLayout = () => {
                 <Sidebar isCollapsed={isSidebarCollapsed} />
                 <main className="main-content">
                     <div className="route-stage">
-                        <AnimatePresence mode="wait" initial={false}>
+                        <AnimatePresence initial={false}>
                             <motion.div
                                 key={location.pathname}
                                 className="route-shell"
