@@ -65,6 +65,7 @@ const ConfiguracionPrecio = lazyWithRecovery(() => import('./pages/Configuracion
 const ConfiguracionSucursales = lazyWithRecovery(() => import('./pages/ConfiguracionSucursales'));
 const ConfiguracionPromociones = lazyWithRecovery(() => import('./pages/ConfiguracionPromociones'));
 const ConfiguracionWhatsAppMarketing = lazyWithRecovery(() => import('./pages/ConfiguracionWhatsAppMarketing'));
+const ConfiguracionBalanza = lazyWithRecovery(() => import('./pages/ConfiguracionBalanza'));
 
 const PUBLIC_PATHS = ['/catalogo'];
 
@@ -192,6 +193,7 @@ function AppRoutes() {
                 <Route path="config/sucursales-transfer" element={protect('/config/sucursales-transfer', lazyElement(ConfiguracionSucursales))} />
                 <Route path="config/promociones" element={protect('/config/promociones', lazyElement(ConfiguracionPromociones))} />
                 <Route path="config/whatsapp-marketing" element={protect('/config/whatsapp-marketing', lazyElement(ConfiguracionWhatsAppMarketing))} />
+                <Route path="config/balanza" element={protect('/config/balanza', lazyElement(ConfiguracionBalanza))} />
               </Route>
             </Route>
           </Routes>

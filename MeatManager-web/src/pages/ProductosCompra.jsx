@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
-import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
+import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight, ArrowUp } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
-import { desktopApi } from '../utils/desktopApi';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
@@ -31,17 +30,11 @@ const ProductosCompra = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingItem, setEditingItem] = useState(null);
-    const [qendraAvailable, setQendraAvailable] = useState(false);
-    const [qendraSendStatus, setQendraSendStatus] = useState(null);
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
     const [saleCategories, setSaleCategories] = useState([]);
     const [collapsedGroups, setCollapsedGroups] = useState({});
-
-    useEffect(() => {
-        desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
-    }, []);
 
     const loadData = React.useCallback(async () => {
         const [itemsRows, productRows, categoriesRows, saleCategoriesRows] = await Promise.all([
@@ -243,30 +236,31 @@ const ProductosCompra = () => {
         setIsModalOpen(true);
     };
 
-    const handleSendToQendra = async (item) => {
-        const productRecord = findProductByIdentity(products, { id: item.product_id, name: item.name });
-        if (!productRecord?.plu || !productRecord?.current_price) {
-            setQendraSendStatus({ ok: false, msg: `Sin PLU/precio definido para "${item.name}"` });
-            setTimeout(() => setQendraSendStatus(null), 4000);
-            return;
-        }
-        setQendraSendStatus({ ok: null, msg: 'Actualizando en QENDRA...' });
-        const res = await desktopApi.qendraUpdatePrecio(productRecord.plu, productRecord.current_price);
-        setQendraSendStatus({
-            ok: res.ok,
-            msg: res.ok
-                ? `PLU ${productRecord.plu} → $${productRecord.current_price} actualizado en QENDRA ✓`
-                : `Error QENDRA: ${res.error}`
+    const itemsWithSaleData = React.useMemo(() => {
+        const source = Array.isArray(items) ? items : [];
+        return source.map((item) => {
+            const productRecord = findProductByIdentity(products, {
+                id: item?.product_id,
+                name: item?.name,
+                plu: item?.plu,
+            });
+
+            return {
+                ...item,
+                current_price: productRecord?.current_price ?? null,
+                plu: productRecord?.plu ?? '',
+                product_category: productRecord?.category ?? null,
+                product_category_code: productRecord?.category_code ?? null,
+            };
         });
-        setTimeout(() => setQendraSendStatus(null), 5000);
-    };
+    }, [items, products]);
 
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
-        const source = Array.isArray(items) ? items : [];
+        const source = Array.isArray(itemsWithSaleData) ? itemsWithSaleData : [];
         if (!term) return source;
         return source.filter((item) => String(item?.name || '').toLowerCase().includes(term));
-    }, [items, searchTerm]);
+    }, [itemsWithSaleData, searchTerm]);
 
     const groupedItems = React.useMemo(() => {
         const groups = new Map();
@@ -319,6 +313,16 @@ const ProductosCompra = () => {
         setCollapsedGroups(nextState);
     };
 
+    React.useEffect(() => {
+        setCollapsedGroups((prev) => {
+            const next = {};
+            groupedItems.forEach((group) => {
+                next[group.key] = prev[group.key] ?? false;
+            });
+            return next;
+        });
+    }, [groupedItems]);
+
     const renderSaleCategoryOptions = () => {
         const animal = saleCategoryOptions.filter((option) => option.group === 'animal');
         const nonAnimal = saleCategoryOptions.filter((option) => option.group === 'no_animal');
@@ -341,19 +345,6 @@ const ProductosCompra = () => {
 
     return (
         <div className="animate-fade-in">
-            {qendraSendStatus && (
-                <div style={{
-                    position: 'fixed', top: '1.2rem', right: '1.2rem', zIndex: 9999,
-                    maxWidth: '420px', padding: '0.8rem 1.2rem',
-                    borderRadius: '10px', display: 'flex', alignItems: 'center', gap: '0.8rem',
-                    backgroundColor: qendraSendStatus.ok === null ? '#1e3a5f' : qendraSendStatus.ok ? '#14532d' : '#7f1d1d',
-                    border: `1px solid ${qendraSendStatus.ok === null ? '#3b82f6' : qendraSendStatus.ok ? '#22c55e' : '#ef4444'}`,
-                    color: '#f1f5f9', fontSize: '0.9rem', boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
-                }}>
-                    <span>{qendraSendStatus.ok === null ? '⏳' : qendraSendStatus.ok ? '✅' : '❌'}</span>
-                    <span>{qendraSendStatus.msg}</span>
-                </div>
-            )}
             <header className="page-header">
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>
@@ -460,15 +451,18 @@ const ProductosCompra = () => {
                                                     </span>
                                                 )}
                                             </div>
+                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', fontSize: '0.82rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                                <span style={{ background: 'rgba(249, 115, 22, 0.12)', color: '#fdba74', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '800', border: '1px solid rgba(249, 115, 22, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    {Number(item.current_price) > 0
+                                                        ? `$${Number(item.current_price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                                                        : 'Sin precio'}
+                                                </span>
+                                                <span style={{ background: 'rgba(148, 163, 184, 0.12)', color: '#cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '700', border: '1px solid rgba(148, 163, 184, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
+                                                    PLU {String(item.plu || '').trim() || 'sin definir'}
+                                                </span>
+                                            </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                            {qendraAvailable && (
-                                                <button
-                                                    onClick={() => handleSendToQendra(item)}
-                                                    style={{ background: 'none', border: 'none', color: '#a78bfa', cursor: 'pointer', fontSize: '1rem', lineHeight: 1 }}
-                                                    title="Enviar precio a QENDRA (balanza)"
-                                                >⬆️</button>
-                                            )}
                                             <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
                                             <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
                                         </div>

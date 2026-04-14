@@ -80,9 +80,10 @@ function buildPlu61Payload(product, options = {}) {
     const priceFormat = String(options.priceFormat || '').trim().toLowerCase();
     const scaledPrice = Math.round(rawPrice * multiplier);
     const integerPrice = round6d(rawPrice);
+    const price6dMultiplier = Number.parseInt(options.price6dMultiplier ?? 10, 10) || 10;
     const safePrice = (() => {
         if (priceFormat === '6d') {
-            return Math.max(0, Math.min(999999, integerPrice));
+            return Math.max(0, Math.min(999999, integerPrice * price6dMultiplier));
         }
         if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
         return Math.max(0, Math.min(999999, scaledPrice));
@@ -132,9 +133,10 @@ function buildPlu4Payload(product, options = {}) {
     const priceFormat = String(options.priceFormat || '').trim().toLowerCase();
     const scaledPrice = Math.round(rawPrice * multiplier);
     const integerPrice = round6d(rawPrice);
+    const price6dMultiplier = Number.parseInt(options.price6dMultiplier ?? 10, 10) || 10;
     const safePrice = (() => {
         if (priceFormat === '6d') {
-            return Math.max(0, Math.min(999999, integerPrice));
+            return Math.max(0, Math.min(999999, integerPrice * price6dMultiplier));
         }
         if (scaledPrice >= 0 && scaledPrice <= 999999) return scaledPrice;
         return Math.max(0, Math.min(999999, scaledPrice));
@@ -142,10 +144,6 @@ function buildPlu4Payload(product, options = {}) {
     const price = padNum(safePrice, 6);
     const pluRaw = Number.parseInt(product.plu || product.id, 10) || 0;
     const plu = padNum(Math.max(1, Math.min(pluRaw, 8000)), 4);
-    
-    if (plu === '0004' || plu === '0002') {
-        console.log(`[DEBUG] PLU: ${plu}, rawPrice: ${rawPrice}, multiplier: ${multiplier}, priceFormat: ${priceFormat}, safePrice: ${safePrice}, Final encoded price string: ${price}`);
-    }
 
     const code = padNum(Math.max(1, Math.min(pluRaw, 99997)), 5);
     const name = padText(product.name || `PLU ${plu}`, 18);
@@ -174,6 +172,27 @@ function buildDeletePluPayload(pluValue) {
     const pluRaw = Number.parseInt(pluValue, 10) || 0;
     const plu = Math.max(1, Math.min(pluRaw, 8000));
     return padNum(plu, 4);
+}
+
+function buildPriceChange33Payload(pluValue, priceValue, options = {}) {
+    const pluRaw = Number.parseInt(pluValue, 10) || 0;
+    const plu = padNum(Math.max(1, Math.min(pluRaw, 9999)), 4);
+    const version = String(options.version || '1').slice(0, 1);
+    const price = padNum(Math.max(0, Math.min(Number.parseInt(priceValue, 10) || 0, 999999)), 6);
+    return `${plu}${version}${price}${price}`;
+}
+
+function buildVendor38Payload(vendorSlot, vendorName) {
+    const slotRaw = Number.parseInt(vendorSlot, 10) || 1;
+    const slot = String(Math.max(1, Math.min(slotRaw, 4)));
+    const name = padText(vendorName || `VENDEDOR ${slot}`, 18);
+    return `${slot}${name}`;
+}
+
+function buildCommerceHeader17Payload(line1, line2) {
+    const headerLine1 = padText(line1 || '', 18);
+    const headerLine2 = padText(line2 || '', 34);
+    return `${headerLine1}${headerLine2}`;
 }
 
 function buildBarcodeConfigPayload(type, format) {
@@ -269,6 +288,9 @@ module.exports = {
     buildSectorPayload,
     buildPlu61Payload,
     buildPlu4Payload,
+    buildPriceChange33Payload,
+    buildVendor38Payload,
+    buildCommerceHeader17Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,

@@ -4,11 +4,15 @@ const { CuoraClient } = require('./cuora-client');
 const {
     buildPlu4Payload,
     buildPlu61Payload,
+    buildPriceChange33Payload,
+    buildVendor38Payload,
+    buildCommerceHeader17Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,
     buildSectorPayload,
     inferSaleType,
+    normalizeAscii,
     parseSales72,
 } = require('./cuora-protocol');
 
@@ -38,6 +42,10 @@ function deriveItemMetrics({ units, grams }) {
 function normalizePriceFormat(value) {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized === '6d' ? '6d' : '4d2d';
+}
+
+function normalizeToken(value) {
+    return normalizeAscii(String(value || '')).toLowerCase().trim();
 }
 
 class ScaleBridge {
@@ -70,6 +78,20 @@ class ScaleBridge {
         `);
 
         await mysqlExecute(this.mysqlPool, `
+            CREATE TABLE IF NOT EXISTS scale_users (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                tenant_id BIGINT NOT NULL,
+                slot_no TINYINT UNSIGNED NOT NULL,
+                display_name VARCHAR(100) NOT NULL,
+                active TINYINT(1) NOT NULL DEFAULT 1,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY ux_scale_users_tenant_slot (tenant_id, slot_no),
+                KEY ix_scale_users_tenant (tenant_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+        `);
+
+        await mysqlExecute(this.mysqlPool, `
             CREATE TABLE IF NOT EXISTS scale_bridge_sales_item (
                 id BIGINT PRIMARY KEY AUTO_INCREMENT,
                 device_id VARCHAR(64) NOT NULL,
@@ -81,6 +103,7 @@ class ScaleBridge {
                 line_no INT NOT NULL,
                 sale_at DATETIME NOT NULL,
                 vendor_code VARCHAR(8) NOT NULL,
+                vendor_name VARCHAR(100) NULL,
                 plu_code VARCHAR(16) NOT NULL,
                 sector_code VARCHAR(8) NOT NULL,
                 units INT NOT NULL DEFAULT 0,
@@ -98,6 +121,16 @@ class ScaleBridge {
                 KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_sales_item
+                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
         try {
             await mysqlExecute(this.mysqlPool, `
                 ALTER TABLE scale_bridge_sales_item
@@ -144,6 +177,7 @@ class ScaleBridge {
                 ticket_barcode VARCHAR(64) NOT NULL,
                 printed_ticket_barcode VARCHAR(32) NULL,
                 vendor_code VARCHAR(16) NULL,
+                vendor_name VARCHAR(100) NULL,
                 sale_at DATETIME NOT NULL,
                 total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
                 item_count INT NOT NULL DEFAULT 0,
@@ -161,6 +195,16 @@ class ScaleBridge {
                 KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
         `);
+        try {
+            await mysqlExecute(this.mysqlPool, `
+                ALTER TABLE scale_bridge_ticket_map
+                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
+            `);
+        } catch (error) {
+            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
+                || String(error?.message || '').toLowerCase().includes('duplicate column');
+            if (!duplicate) throw error;
+        }
         try {
             await mysqlExecute(this.mysqlPool, `
                 ALTER TABLE scale_bridge_ticket_map
@@ -220,6 +264,7 @@ class ScaleBridge {
                AND t.ticket_id = s.ticket_id
              SET s.ticket_barcode = t.ticket_barcode,
                  s.printed_ticket_barcode = t.printed_ticket_barcode,
+                 s.vendor_name = t.vendor_name,
                  s.ticket_total_amount = t.total_amount,
                  s.ticket_item_count = t.item_count,
                  s.synced_at = NOW()
@@ -230,6 +275,7 @@ class ScaleBridge {
                     s.ticket_barcode IS NULL
                     OR s.ticket_barcode <> t.ticket_barcode
                     OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
+                    OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
                     OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
                     OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
                )`,
@@ -311,6 +357,51 @@ class ScaleBridge {
                 this.config.branchId || null,
             ]
         );
+
+        await mysqlExecute(
+            this.mysqlPool,
+            `UPDATE scale_bridge_ticket_map t
+             LEFT JOIN scale_users u
+               ON u.tenant_id = t.tenant_id
+              AND COALESCE(u.active, 1) = 1
+              AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
+             SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
+             WHERE t.device_id = ?
+               AND t.tenant_id = ?
+               AND COALESCE(t.branch_id, 0) = COALESCE(?, 0)
+               AND (
+                    t.vendor_name IS NULL
+                    OR t.vendor_name = ''
+               )`,
+            [
+                this.config.deviceId,
+                this.config.tenantId,
+                this.config.branchId || null,
+            ]
+        );
+
+        await mysqlExecute(
+            this.mysqlPool,
+            `UPDATE scale_bridge_sales_item s
+             LEFT JOIN scale_users u
+               ON u.tenant_id = s.tenant_id
+              AND COALESCE(u.active, 1) = 1
+              AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
+             SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
+                 s.synced_at = NOW()
+             WHERE s.device_id = ?
+               AND s.tenant_id = ?
+               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+               AND (
+                    s.vendor_name IS NULL
+                    OR s.vendor_name = ''
+               )`,
+            [
+                this.config.deviceId,
+                this.config.tenantId,
+                this.config.branchId || null,
+            ]
+        );
     }
 
     async signature() {
@@ -330,8 +421,100 @@ class ScaleBridge {
         };
     }
 
-    resolveSection(category) {
-        const text = String(category || '').toLowerCase();
+    async getScaleSettings(keys = []) {
+        const cleanKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter(Boolean))];
+        if (cleanKeys.length === 0) return {};
+        const placeholders = cleanKeys.map(() => '?').join(', ');
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT \`key\`, value
+             FROM settings
+             WHERE tenant_id = ?
+               AND \`key\` IN (${placeholders})`,
+            [this.config.tenantId, ...cleanKeys]
+        );
+        return rows.reduce((acc, row) => {
+            acc[String(row.key)] = row.value;
+            return acc;
+        }, {});
+    }
+
+    parseSectionMappings(rawValue) {
+        try {
+            const parsed = JSON.parse(String(rawValue || '[]'));
+            if (!Array.isArray(parsed)) return [];
+            return parsed
+                .map((row) => ({
+                    category: normalizeToken(row?.category),
+                    sectionId: Math.max(1, Math.min(99, Number.parseInt(row?.sectionId, 10) || 2)),
+                    sectionName: normalizeAscii(String(row?.sectionName || this.config.scale.sectionDefaultName || 'CARNICERIA'))
+                        .toUpperCase()
+                        .slice(0, 18) || 'CARNICERIA',
+                }))
+                .filter((row) => row.category);
+        } catch {
+            return [];
+        }
+    }
+
+    parseMarqueeText(rawPayload, fallbackText = '') {
+        const fallback = normalizeAscii(String(fallbackText || '')).slice(0, 80);
+        if (!rawPayload) return fallback;
+        try {
+            const parsed = JSON.parse(String(rawPayload));
+            if (!Array.isArray(parsed)) return fallback;
+            const active = parsed.find((line) => (
+                Number(line?.active ?? 1) === 1 && String(line?.text || '').trim().length > 0
+            ));
+            return normalizeAscii(String(active?.text || '')).slice(0, 80) || fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
+    parseTicketHeader(lines = {}) {
+        return {
+            line1: normalizeAscii(String(lines.line1 || '')).slice(0, 18),
+            line2: normalizeAscii(String(lines.line2 || '')).slice(0, 34),
+            line3: normalizeAscii(String(lines.line3 || '')).slice(0, 34),
+        };
+    }
+
+    async loadRuntimeScaleConfig() {
+        const rows = await this.getScaleSettings([
+            'scale_ticket_header_line1',
+            'scale_ticket_header_line2',
+            'scale_ticket_header_line3',
+            'scale_section_mappings',
+            'scale_marquee_messages',
+            'scale_marquee_text',
+        ]);
+
+        return {
+            ticketHeader: this.parseTicketHeader({
+                line1: rows.scale_ticket_header_line1,
+                line2: rows.scale_ticket_header_line2,
+                line3: rows.scale_ticket_header_line3,
+            }),
+            sectionMappings: this.parseSectionMappings(rows.scale_section_mappings),
+            marqueeText: this.parseMarqueeText(rows.scale_marquee_messages, rows.scale_marquee_text),
+        };
+    }
+
+    resolveSection(category, sectionMappings = []) {
+        const text = normalizeToken(category);
+        const mapped = (sectionMappings || []).find((row) => (
+            row.category
+            && text
+            && (text === row.category || text.includes(row.category) || row.category.includes(text))
+        ));
+        if (mapped) {
+            return {
+                id: mapped.sectionId,
+                name: mapped.sectionName,
+            };
+        }
+
         const meat = ['carne', 'carniceria', 'vaca', 'vacuno', 'res', 'cerdo', 'pollo', 'ave', 'cordero'];
         if (meat.some((item) => text.includes(item))) {
             return {
@@ -343,6 +526,48 @@ class ScaleBridge {
             id: this.config.scale.sectionDefaultId,
             name: this.config.scale.sectionDefaultName,
         };
+    }
+
+    async applyMarqueeConfig(marqueeText) {
+        const text = normalizeAscii(String(marqueeText || '')).slice(0, 80);
+        if (!text) return { ok: true, skipped: true, reason: 'empty' };
+
+        const fingerprint = hashObject({ marquee: text }, 20);
+        if (this.state.marqueeConfigFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const response = await this.scale.send(6, text);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar marquesina (funcion 6)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar marquesina (funcion 6): ${response.data}`);
+        }
+
+        this.state.marqueeConfigFingerprint = fingerprint;
+        return { ok: true, updated: true, text };
+    }
+
+    async applyTicketHeaderConfig(ticketHeader = {}) {
+        const line1 = normalizeAscii(String(ticketHeader.line1 || '')).slice(0, 18);
+        const line2 = normalizeAscii(String(ticketHeader.line2 || '')).slice(0, 34);
+        const fingerprint = hashObject({ line1, line2 }, 20);
+        if (this.state.ticketHeaderFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const payload = buildCommerceHeader17Payload(line1, line2);
+        const response = await this.scale.send(17, payload);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar encabezado de ticket (funcion 17)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar encabezado de ticket (funcion 17): ${response.data}`);
+        }
+
+        this.state.ticketHeaderFingerprint = fingerprint;
+        return { ok: true, updated: true, line1, line2 };
     }
 
     async applyBarcodeConfig() {
@@ -380,6 +605,27 @@ class ScaleBridge {
         return { ok: true, updated: true };
     }
 
+    async applyPriceFormatConfig(priceFormat) {
+        const normalized = normalizePriceFormat(priceFormat);
+        // En CUORA MAX V6 (fw S0060), CPr=0 trabaja en entero (6d) y CPr=2 en 4d2d.
+        const payload = normalized === '6d' ? '0' : '2';
+        const fingerprint = `${normalized}:${payload}`;
+        if (this.state.priceFormatFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const response = await this.scale.send(42, payload);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar formato de precio (funcion 42)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar formato de precio (funcion 42): ${response.data}`);
+        }
+
+        this.state.priceFormatFingerprint = fingerprint;
+        return { ok: true, updated: true, normalized, payload };
+    }
+
     async getPriceFormatSetting() {
         const rows = await mysqlQuery(
             this.mysqlPool,
@@ -393,21 +639,65 @@ class ScaleBridge {
         return normalizePriceFormat(rows[0]?.value);
     }
 
-    async syncProducts() {
-        const signature = await this.signature();
-        const protocolVersion = Number(signature.protocolVersion || 0);
-        const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
-        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
-        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
-            ? 1
-            : this.config.scale.legacyPriceMultiplier;
-        this.logger.info('Firma digital de balanza detectada', {
-            protocolVersion,
-            protocolData: signature.data,
-            useLegacyPlu4,
-            priceFormat,
-            effectiveLegacyPriceMultiplier,
+    async syncVendors() {
+        const maxSlots = 4;
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT id, slot_no, display_name
+             FROM scale_users
+             WHERE tenant_id = ?
+               AND COALESCE(active, 1) = 1
+             ORDER BY slot_no ASC, id ASC
+             LIMIT ?`,
+            [this.config.tenantId, maxSlots]
+        );
+
+        const bySlot = [];
+        for (let slot = 1; slot <= maxSlots; slot += 1) {
+            const row = rows.find((entry) => Number(entry.slot_no) === slot) || null;
+            const name = String(row?.display_name || `VENDEDOR ${slot}`).trim();
+            bySlot.push({ slot, name });
+        }
+
+        const fingerprint = hashObject({
+            tenantId: this.config.tenantId,
+            vendors: bySlot,
+        }, 20);
+
+        if (this.state.vendorConfigFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged', synced: 0 };
+        }
+
+        let synced = 0;
+        for (const vendor of bySlot) {
+            const payload = buildVendor38Payload(vendor.slot, vendor.name);
+            const response = await this.scale.send(38, payload);
+            if (!response.crc.ok) {
+                throw new Error(`CRC invalido al sincronizar vendedor ${vendor.slot}`);
+            }
+            if (String(response.data || '').startsWith('E')) {
+                throw new Error(`Error balanza al sincronizar vendedor ${vendor.slot}: ${response.data}`);
+            }
+            synced += 1;
+        }
+
+        this.state.vendorConfigFingerprint = fingerprint;
+        this.logger.info('Vendedores sincronizados en balanza', {
+            synced,
+            vendors: bySlot,
         });
+        return { ok: true, synced };
+    }
+
+    async syncRuntimeSettings(runtimeScaleConfig = null) {
+        const config = runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
+            ticketHeader: { line1: '', line2: '', line3: '' },
+            sectionMappings: [],
+            marqueeText: '',
+        }));
+
+        let forceProductRewrite = false;
+        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
 
         try {
             const barcodeResult = await this.applyBarcodeConfig();
@@ -421,6 +711,74 @@ class ScaleBridge {
         } catch (error) {
             this.logger.warn('No se pudo aplicar configuracion de barcode en balanza', { error: error.message });
         }
+
+        try {
+            const marqueeResult = await this.applyMarqueeConfig(config.marqueeText);
+            if (marqueeResult?.updated) {
+                this.logger.info('Marquesina aplicada en balanza', { text: marqueeResult.text });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar marquesina en balanza', { error: error.message });
+        }
+
+        try {
+            const headerResult = await this.applyTicketHeaderConfig(config.ticketHeader);
+            if (headerResult?.updated) {
+                this.logger.info('Encabezado de ticket aplicado en balanza', {
+                    line1: headerResult.line1,
+                    line2: headerResult.line2,
+                });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar encabezado de ticket en balanza', { error: error.message });
+        }
+
+        try {
+            const priceFormatResult = await this.applyPriceFormatConfig(priceFormat);
+            if (priceFormatResult?.updated) {
+                forceProductRewrite = true;
+                this.logger.info('Formato de precio aplicado en balanza', {
+                    priceFormat: priceFormatResult.normalized,
+                    payload: priceFormatResult.payload,
+                });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
+        }
+
+        return {
+            runtimeScaleConfig: config,
+            priceFormat,
+            forceProductRewrite,
+        };
+    }
+
+    async syncProducts(options = {}) {
+        const signature = await this.signature();
+        const protocolVersion = Number(signature.protocolVersion || 0);
+        const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
+        const priceFormat = options.priceFormat || await this.getPriceFormatSetting().catch(() => '4d2d');
+        const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
+            ticketHeader: { line1: '', line2: '', line3: '' },
+            sectionMappings: [],
+            marqueeText: '',
+        }));
+        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
+            ? Math.max(1, Number(this.config.scale.priceFormat6dMultiplier || 10))
+            : this.config.scale.legacyPriceMultiplier;
+        let forceProductRewrite = Boolean(options.forceProductRewrite);
+        const sectionMapFingerprint = hashObject(runtimeScaleConfig.sectionMappings || [], 20);
+        if (this.state.sectionMapFingerprint !== sectionMapFingerprint) {
+            forceProductRewrite = true;
+            this.state.sectionMapFingerprint = sectionMapFingerprint;
+        }
+        this.logger.info('Firma digital de balanza detectada', {
+            protocolVersion,
+            protocolData: signature.data,
+            useLegacyPlu4,
+            priceFormat,
+            effectiveLegacyPriceMultiplier,
+        });
 
         let written = 0;
         let skipped = 0;
@@ -516,6 +874,7 @@ class ScaleBridge {
                 protocolMode: useLegacyPlu4 ? 'v6-func4' : 'v7-func61',
                 priceFormat,
                 legacyPriceMultiplier: useLegacyPlu4 ? effectiveLegacyPriceMultiplier : null,
+                priceFormat6dMultiplier: priceFormat === '6d' ? effectiveLegacyPriceMultiplier : null,
                 legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v2' : null,
             });
 
@@ -527,13 +886,13 @@ class ScaleBridge {
                  LIMIT 1`,
                 [this.config.deviceId, this.config.tenantId, product.id]
             );
-            if (mapRows[0] && mapRows[0].fingerprint === fingerprint) {
+            if (!forceProductRewrite && mapRows[0] && mapRows[0].fingerprint === fingerprint) {
                 skipped += 1;
                 continue;
             }
 
             try {
-                const section = this.resolveSection(product.category);
+                const section = this.resolveSection(product.category, runtimeScaleConfig.sectionMappings);
                 const sectionKey = `${section.id}:${section.name}`;
                 if (!touchedSections.has(sectionKey)) {
                     const sectorPayload = buildSectorPayload(section.id, section.name);
@@ -550,12 +909,14 @@ class ScaleBridge {
                         saleType: inferSaleType(product.unit),
                         maintainTotals: Boolean(mapRows[0]),
                         priceMultiplier: effectiveLegacyPriceMultiplier,
+                        price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,
                     })
                     : buildPlu61Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
                         priceMultiplier: effectiveLegacyPriceMultiplier,
+                        price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,
                     });
                 const response = await this.scale.send(useLegacyPlu4 ? 4 : 61, payload);
@@ -564,6 +925,19 @@ class ScaleBridge {
                 }
                 if (String(response.data || '').startsWith('E')) {
                     throw new Error(`Error balanza al enviar PLU ${pluCode} (fn ${useLegacyPlu4 ? 4 : 61}): ${response.data}`);
+                }
+
+                if (useLegacyPlu4 && priceFormat === '6d') {
+                    // En CUORA MAX V6, reforzamos precio con fn33 para evitar desfasajes de visualizacion.
+                    const priceValue = Math.max(0, Math.min(999999, Math.round(Number(product.current_price) || 0)));
+                    const pricePayload = buildPriceChange33Payload(pluCode, priceValue, { version: '1' });
+                    const priceResponse = await this.scale.send(33, pricePayload);
+                    if (!priceResponse.crc.ok) {
+                        throw new Error(`CRC invalido al ajustar precio PLU ${pluCode} (fn 33)`);
+                    }
+                    if (String(priceResponse.data || '').startsWith('E')) {
+                        throw new Error(`Error balanza al ajustar precio PLU ${pluCode} (fn 33): ${priceResponse.data}`);
+                    }
                 }
 
                 await mysqlExecute(
@@ -607,6 +981,29 @@ class ScaleBridge {
     }
 
     async pullSales({ fromDate, toDate, closeAfter = false }) {
+        const vendorRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT slot_no, display_name
+             FROM scale_users
+             WHERE tenant_id = ?
+               AND COALESCE(active, 1) = 1
+             ORDER BY slot_no ASC`,
+            [this.config.tenantId]
+        ).catch(() => []);
+        const vendorByCode = new Map(
+            vendorRows.map((row) => [
+                String(Number.parseInt(row.slot_no, 10) || 0).padStart(2, '0'),
+                String(row.display_name || '').trim(),
+            ])
+        );
+        const resolveVendorName = (vendorCodeRaw) => {
+            const parsed = Number.parseInt(String(vendorCodeRaw || '').trim(), 10);
+            const code2 = String(Number.isFinite(parsed) ? parsed : 0).padStart(2, '0');
+            if (vendorByCode.has(code2)) return vendorByCode.get(code2) || null;
+            if (Number.isFinite(parsed) && parsed >= 1 && parsed <= 4) return `VENDEDOR ${parsed}`;
+            return null;
+        };
+
         const countRawRecords = (payload) => String(payload || '')
             .replace(/F$/, '')
             .split(';')
@@ -706,9 +1103,11 @@ class ScaleBridge {
             const ticketId = String(row.ticketId || '').trim();
             if (!ticketId) continue;
             if (!tickets.has(ticketId)) {
+                const vendorCode = String(row.vendor || '').trim();
                 tickets.set(ticketId, {
                     ticketId,
-                    vendorCode: String(row.vendor || '').trim(),
+                    vendorCode,
+                    vendorName: resolveVendorName(vendorCode),
                     saleAt,
                     totalAmount: 0,
                     itemCount: 0,
@@ -727,6 +1126,9 @@ class ScaleBridge {
                 amountTimes100: row.amountTimes100,
             });
             if (!ticket.vendorCode && row.vendor) ticket.vendorCode = String(row.vendor).trim();
+            if (!ticket.vendorName) {
+                ticket.vendorName = resolveVendorName(ticket.vendorCode);
+            }
             if (saleAt < ticket.saleAt) ticket.saleAt = saleAt;
             indexedRows.push({ row, lineNo, saleAt });
         }
@@ -757,13 +1159,14 @@ class ScaleBridge {
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_ticket_map
-                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, sale_at, total_amount, item_count, fingerprint, synced_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, vendor_name, sale_at, total_amount, item_count, fingerprint, synced_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                     scale_address = VALUES(scale_address),
                     ticket_barcode = VALUES(ticket_barcode),
                     printed_ticket_barcode = VALUES(printed_ticket_barcode),
                     vendor_code = VALUES(vendor_code),
+                    vendor_name = VALUES(vendor_name),
                     sale_at = VALUES(sale_at),
                     total_amount = VALUES(total_amount),
                     item_count = VALUES(item_count),
@@ -778,6 +1181,7 @@ class ScaleBridge {
                     ticketBarcode,
                     printedTicketBarcode,
                     ticket.vendorCode || null,
+                    ticket.vendorName || null,
                     ticket.saleAt || new Date(),
                     Number(ticket.totalAmount.toFixed(2)),
                     ticket.itemCount,
@@ -790,6 +1194,7 @@ class ScaleBridge {
                 `UPDATE scale_bridge_sales_item
                  SET ticket_barcode = ?,
                      printed_ticket_barcode = ?,
+                     vendor_name = ?,
                      synced_at = NOW()
                  WHERE device_id = ?
                    AND tenant_id = ?
@@ -798,6 +1203,7 @@ class ScaleBridge {
                 [
                     ticketBarcode,
                     printedTicketBarcode,
+                    ticket.vendorName || null,
                     this.config.deviceId,
                     this.config.tenantId,
                     this.config.branchId || null,
@@ -832,13 +1238,14 @@ class ScaleBridge {
             await mysqlExecute(
                 this.mysqlPool,
                 `INSERT INTO scale_bridge_sales_item
-                      (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode, line_no, sale_at, vendor_code, plu_code, sector_code, units, grams, drained_grams, amount, ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit, raw_payload, synced_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                      (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode, line_no, sale_at, vendor_code, vendor_name, plu_code, sector_code, units, grams, drained_grams, amount, ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit, raw_payload, synced_at)
+                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                  ON DUPLICATE KEY UPDATE
                     ticket_barcode = VALUES(ticket_barcode),
                           printed_ticket_barcode = VALUES(printed_ticket_barcode),
                     sale_at = VALUES(sale_at),
                     vendor_code = VALUES(vendor_code),
+                    vendor_name = VALUES(vendor_name),
                     plu_code = VALUES(plu_code),
                     sector_code = VALUES(sector_code),
                     units = VALUES(units),
@@ -861,6 +1268,7 @@ class ScaleBridge {
                     entry.lineNo,
                     entry.saleAt,
                     String(entry.row.vendor || '').slice(0, 8),
+                    resolveVendorName(entry.row.vendor),
                     String(entry.row.plu || '').slice(0, 16),
                     String(entry.row.sector || '').slice(0, 8),
                     entry.row.units,
@@ -896,6 +1304,13 @@ class ScaleBridge {
     async runOnce() {
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
+        const runtimeSettings = await this.syncRuntimeSettings();
+        try {
+            // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
+            await this.syncVendors();
+        } catch (error) {
+            this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
+        }
         const now = new Date();
         const from = new Date(now);
         const skewMs = Math.max(0, Number(this.config.salesResyncSkewMinutes || 0)) * 60 * 1000;
@@ -912,10 +1327,18 @@ class ScaleBridge {
 
         let products = { ok: true, processed: 0, written: 0, skipped: 0, deleted: 0, failed: 0, deferred: true };
         const lastProductSyncTs = this.state.lastProductSyncAt ? new Date(this.state.lastProductSyncAt).getTime() : NaN;
+        const runtimeSectionFingerprint = hashObject(runtimeSettings.runtimeScaleConfig?.sectionMappings || [], 20);
+        const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
         const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
+            || runtimeSettings.forceProductRewrite
+            || sectionConfigChanged
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
         if (shouldSyncProducts) {
-            products = await this.syncProducts();
+            products = await this.syncProducts({
+                runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
+                priceFormat: runtimeSettings.priceFormat,
+                forceProductRewrite: runtimeSettings.forceProductRewrite || sectionConfigChanged,
+            });
             this.state.lastProductSyncAt = new Date().toISOString();
         }
 

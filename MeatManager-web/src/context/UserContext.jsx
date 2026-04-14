@@ -39,6 +39,7 @@ export const ALL_ROUTES = [
     { path: '/config/whatsapp-marketing', label: 'Marketing WhatsApp', group: 'Configuración' },
     { path: '/config/proveedores',      label: 'Proveedores',       group: 'Configuración' },
     { path: '/config/sucursales-transfer', label: 'Transferencias Sucursales', group: 'Configuración' },
+    { path: '/config/balanza',          label: 'Balanza',           group: 'Configuración' },
     { path: '/config/seguridad',        label: 'Usuarios y Licencias',group: 'Configuración' },
     { path: '/manual',                  label: 'Manual de Usuario', group: 'Configuración' },
 ];

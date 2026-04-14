@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useLicense } from '../context/LicenseContext';
-import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
+import { fetchTable, getRemoteSetting, upsertRemoteSetting, saveTableRecord } from '../utils/apiClient';
 import './Security.css';
 
 /* ── Helpers ────────────────────────────── */
@@ -536,6 +536,13 @@ const Security = () => {
     const [showModal, setShowModal] = useState(false);
     const [editingUser, setEditingUser] = useState(null);
     const [deletedTickets, setDeletedTickets] = useState([]);
+    const [scaleUsers, setScaleUsers] = useState([
+        { slot_no: 1, display_name: 'VENDEDOR 1', active: 1 },
+        { slot_no: 2, display_name: 'VENDEDOR 2', active: 1 },
+        { slot_no: 3, display_name: 'VENDEDOR 3', active: 1 },
+        { slot_no: 4, display_name: 'VENDEDOR 4', active: 1 },
+    ]);
+    const [savingScaleUsers, setSavingScaleUsers] = useState(false);
 
     const toast = (type, text) => {
         setMessage({ type, text });
@@ -556,9 +563,67 @@ const Security = () => {
         await refreshUsers();
     }, [refreshUsers]);
 
+    const loadScaleUsers = useCallback(async () => {
+        try {
+            const rows = await fetchTable('scale_users', {
+                limit: 50,
+                orderBy: 'slot_no',
+                direction: 'ASC',
+            });
+            const bySlot = new Map((rows || []).map((row) => [Number(row.slot_no), row]));
+            const normalized = [1, 2, 3, 4].map((slotNo) => {
+                const row = bySlot.get(slotNo);
+                return {
+                    id: row?.id ?? null,
+                    slot_no: slotNo,
+                    display_name: String(row?.display_name || `VENDEDOR ${slotNo}`),
+                    active: Number(row?.active ?? 1) === 0 ? 0 : 1,
+                };
+            });
+            setScaleUsers(normalized);
+        } catch (error) {
+            toast('error', `No se pudieron leer usuarios de balanza: ${error.message}`);
+        }
+    }, []);
+
     useEffect(() => {
-        if (activeTab === 'usuarios') loadUsers();
-    }, [activeTab, loadUsers]);
+        if (activeTab === 'usuarios') {
+            loadUsers();
+            loadScaleUsers();
+        }
+    }, [activeTab, loadUsers, loadScaleUsers]);
+
+    const setScaleUserField = (slotNo, field, value) => {
+        setScaleUsers((current) => current.map((entry) => (
+            Number(entry.slot_no) === Number(slotNo)
+                ? { ...entry, [field]: value }
+                : entry
+        )));
+    };
+
+    const handleSaveScaleUsers = async () => {
+        if (!isAdmin) return toast('error', 'Solo un administrador puede editar usuarios de balanza');
+        setSavingScaleUsers(true);
+        try {
+            for (const row of scaleUsers) {
+                const payload = {
+                    slot_no: Number(row.slot_no),
+                    display_name: String(row.display_name || '').trim() || `VENDEDOR ${row.slot_no}`,
+                    active: Number(row.active ?? 1) === 0 ? 0 : 1,
+                };
+                // Upsert por (tenant_id, slot_no) para evitar problemas de id/duplicados.
+                await saveTableRecord('scale_users', 'upsert', payload);
+            }
+            await loadScaleUsers();
+            toast('success', 'Se actualizaron los vendedores de la balanza.');
+            window.alert('Se actualizaron los vendedores de la balanza.');
+        } catch (error) {
+            toast('error', `No se pudieron guardar usuarios de balanza: ${error.message}`);
+            window.alert(`No se pudieron guardar usuarios de balanza: ${error.message}`);
+        } finally {
+            setSavingScaleUsers(false);
+        }
+    };
 
     const loadDeletedTickets = useCallback(async () => {
         const history = await fetchTable('deleted_sales_history', {
@@ -765,6 +830,61 @@ const Security = () => {
             {/* ── Users Tab ─────────────────────────────── */}
             {activeTab === 'usuarios' && (
                 <div>
+                    <div className="neo-card" style={{ padding: '1rem 1.25rem', marginBottom: '1rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', marginBottom: '0.75rem' }}>
+                            <div>
+                                <div style={{ fontWeight: 700 }}>Usuarios Balanza</div>
+                                <div style={{ color: '#9ca3af', fontSize: '0.84rem' }}>
+                                    Estos nombres se sincronizan a la balanza (vendedores 1..4) y son independientes de los usuarios MM.
+                                </div>
+                            </div>
+                            <button
+                                className="btn-security primary"
+                                onClick={handleSaveScaleUsers}
+                                disabled={!isAdmin || savingScaleUsers}
+                                style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}
+                            >
+                                {savingScaleUsers ? <RefreshCw className="animate-spin" size={16} /> : <Save size={16} />}
+                                Guardar Usuarios Balanza
+                            </button>
+                        </div>
+
+                        <div style={{ display: 'grid', gap: '0.55rem' }}>
+                            {scaleUsers.map((row) => (
+                                <div
+                                    key={row.slot_no}
+                                    style={{
+                                        display: 'grid',
+                                        gridTemplateColumns: '90px minmax(220px, 1fr) 120px',
+                                        gap: '0.6rem',
+                                        alignItems: 'center',
+                                    }}
+                                >
+                                    <div style={{ color: '#9ca3af', fontSize: '0.82rem' }}>
+                                        Vendedor {row.slot_no}
+                                    </div>
+                                    <input
+                                        className="security-input"
+                                        value={row.display_name}
+                                        onChange={(e) => setScaleUserField(row.slot_no, 'display_name', e.target.value)}
+                                        maxLength={18}
+                                        disabled={!isAdmin}
+                                        placeholder={`VENDEDOR ${row.slot_no}`}
+                                    />
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', color: '#9ca3af', fontSize: '0.82rem' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={Number(row.active) === 1}
+                                            onChange={(e) => setScaleUserField(row.slot_no, 'active', e.target.checked ? 1 : 0)}
+                                            disabled={!isAdmin}
+                                        />
+                                        Activo
+                                    </label>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
                         <div className="neo-card" style={{ padding: '1rem 1.25rem' }}>
                             <div style={{ fontSize: '0.75rem', color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
