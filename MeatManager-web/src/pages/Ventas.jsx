@@ -297,12 +297,16 @@ const Ventas = () => {
             }
 
             const active = document.activeElement;
-            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+            // No robar el foco si el usuario está interactuando con algún elemento
+            // clickeable o enfocable (botones, links, selects, etc).
+            // Esto evita que el watchdog interrumpa clicks en el menú de navegación.
+            const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
+            const isInteractive = interactiveTags.includes(active?.tagName)
+                || active?.getAttribute('tabindex') != null
+                || active?.getAttribute('role') === 'button'
+                || active?.getAttribute('role') === 'link';
 
-            // Si el foco se perdió y está en el "body" u otro elemento no interactivo
-            // forzamos el foco de nuevo al scanner.
-            // Si ya está en algún INPUT (buscador, manual, etc), respetamos y no tocamos nada.
-            if (!isInput) {
+            if (!isInteractive) {
                 barcodeInputRef.current?.focus();
             }
         }, 500); // Revisa cada medio segundo
