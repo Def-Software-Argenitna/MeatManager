@@ -29,6 +29,7 @@ import {
   MapPin,
   ArrowLeftRight,
   Calculator,
+  Cpu,
   Lock,
   HelpCircle,
   Crown
