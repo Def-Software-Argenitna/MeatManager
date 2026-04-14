@@ -236,6 +236,25 @@ const ProductosCompra = () => {
         setIsModalOpen(true);
     };
 
+    const itemsWithSaleData = React.useMemo(() => {
+        const source = Array.isArray(items) ? items : [];
+        return source.map((item) => {
+            const productRecord = findProductByIdentity(products, {
+                id: item?.product_id,
+                name: item?.name,
+                plu: item?.plu,
+            });
+
+            return {
+                ...item,
+                current_price: productRecord?.current_price ?? null,
+                plu: productRecord?.plu ?? '',
+                product_category: productRecord?.category ?? null,
+                product_category_code: productRecord?.category_code ?? null,
+            };
+        });
+    }, [items, products]);
+
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
         const source = Array.isArray(itemsWithSaleData) ? itemsWithSaleData : [];
@@ -293,6 +312,16 @@ const ProductosCompra = () => {
         });
         setCollapsedGroups(nextState);
     };
+
+    React.useEffect(() => {
+        setCollapsedGroups((prev) => {
+            const next = {};
+            groupedItems.forEach((group) => {
+                next[group.key] = prev[group.key] ?? false;
+            });
+            return next;
+        });
+    }, [groupedItems]);
 
     const renderSaleCategoryOptions = () => {
         const animal = saleCategoryOptions.filter((option) => option.group === 'animal');
