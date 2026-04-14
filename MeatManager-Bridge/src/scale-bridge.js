@@ -6,11 +6,13 @@ const {
     buildPlu61Payload,
     buildPriceChange33Payload,
     buildVendor38Payload,
+    buildCommerceHeader17Payload,
     buildDeletePluPayload,
     buildBarcodeConfigPayload,
     buildSales72Payload,
     buildSectorPayload,
     inferSaleType,
+    normalizeAscii,
     parseSales72,
 } = require('./cuora-protocol');
 
@@ -40,6 +42,10 @@ function deriveItemMetrics({ units, grams }) {
 function normalizePriceFormat(value) {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized === '6d' ? '6d' : '4d2d';
+}
+
+function normalizeToken(value) {
+    return normalizeAscii(String(value || '')).toLowerCase().trim();
 }
 
 class ScaleBridge {
@@ -415,8 +421,100 @@ class ScaleBridge {
         };
     }
 
-    resolveSection(category) {
-        const text = String(category || '').toLowerCase();
+    async getScaleSettings(keys = []) {
+        const cleanKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter(Boolean))];
+        if (cleanKeys.length === 0) return {};
+        const placeholders = cleanKeys.map(() => '?').join(', ');
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT \`key\`, value
+             FROM settings
+             WHERE tenant_id = ?
+               AND \`key\` IN (${placeholders})`,
+            [this.config.tenantId, ...cleanKeys]
+        );
+        return rows.reduce((acc, row) => {
+            acc[String(row.key)] = row.value;
+            return acc;
+        }, {});
+    }
+
+    parseSectionMappings(rawValue) {
+        try {
+            const parsed = JSON.parse(String(rawValue || '[]'));
+            if (!Array.isArray(parsed)) return [];
+            return parsed
+                .map((row) => ({
+                    category: normalizeToken(row?.category),
+                    sectionId: Math.max(1, Math.min(99, Number.parseInt(row?.sectionId, 10) || 2)),
+                    sectionName: normalizeAscii(String(row?.sectionName || this.config.scale.sectionDefaultName || 'CARNICERIA'))
+                        .toUpperCase()
+                        .slice(0, 18) || 'CARNICERIA',
+                }))
+                .filter((row) => row.category);
+        } catch {
+            return [];
+        }
+    }
+
+    parseMarqueeText(rawPayload, fallbackText = '') {
+        const fallback = normalizeAscii(String(fallbackText || '')).slice(0, 80);
+        if (!rawPayload) return fallback;
+        try {
+            const parsed = JSON.parse(String(rawPayload));
+            if (!Array.isArray(parsed)) return fallback;
+            const active = parsed.find((line) => (
+                Number(line?.active ?? 1) === 1 && String(line?.text || '').trim().length > 0
+            ));
+            return normalizeAscii(String(active?.text || '')).slice(0, 80) || fallback;
+        } catch {
+            return fallback;
+        }
+    }
+
+    parseTicketHeader(lines = {}) {
+        return {
+            line1: normalizeAscii(String(lines.line1 || '')).slice(0, 18),
+            line2: normalizeAscii(String(lines.line2 || '')).slice(0, 34),
+            line3: normalizeAscii(String(lines.line3 || '')).slice(0, 34),
+        };
+    }
+
+    async loadRuntimeScaleConfig() {
+        const rows = await this.getScaleSettings([
+            'scale_ticket_header_line1',
+            'scale_ticket_header_line2',
+            'scale_ticket_header_line3',
+            'scale_section_mappings',
+            'scale_marquee_messages',
+            'scale_marquee_text',
+        ]);
+
+        return {
+            ticketHeader: this.parseTicketHeader({
+                line1: rows.scale_ticket_header_line1,
+                line2: rows.scale_ticket_header_line2,
+                line3: rows.scale_ticket_header_line3,
+            }),
+            sectionMappings: this.parseSectionMappings(rows.scale_section_mappings),
+            marqueeText: this.parseMarqueeText(rows.scale_marquee_messages, rows.scale_marquee_text),
+        };
+    }
+
+    resolveSection(category, sectionMappings = []) {
+        const text = normalizeToken(category);
+        const mapped = (sectionMappings || []).find((row) => (
+            row.category
+            && text
+            && (text === row.category || text.includes(row.category) || row.category.includes(text))
+        ));
+        if (mapped) {
+            return {
+                id: mapped.sectionId,
+                name: mapped.sectionName,
+            };
+        }
+
         const meat = ['carne', 'carniceria', 'vaca', 'vacuno', 'res', 'cerdo', 'pollo', 'ave', 'cordero'];
         if (meat.some((item) => text.includes(item))) {
             return {
@@ -428,6 +526,48 @@ class ScaleBridge {
             id: this.config.scale.sectionDefaultId,
             name: this.config.scale.sectionDefaultName,
         };
+    }
+
+    async applyMarqueeConfig(marqueeText) {
+        const text = normalizeAscii(String(marqueeText || '')).slice(0, 80);
+        if (!text) return { ok: true, skipped: true, reason: 'empty' };
+
+        const fingerprint = hashObject({ marquee: text }, 20);
+        if (this.state.marqueeConfigFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const response = await this.scale.send(6, text);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar marquesina (funcion 6)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar marquesina (funcion 6): ${response.data}`);
+        }
+
+        this.state.marqueeConfigFingerprint = fingerprint;
+        return { ok: true, updated: true, text };
+    }
+
+    async applyTicketHeaderConfig(ticketHeader = {}) {
+        const line1 = normalizeAscii(String(ticketHeader.line1 || '')).slice(0, 18);
+        const line2 = normalizeAscii(String(ticketHeader.line2 || '')).slice(0, 34);
+        const fingerprint = hashObject({ line1, line2 }, 20);
+        if (this.state.ticketHeaderFingerprint === fingerprint) {
+            return { ok: true, skipped: true, reason: 'unchanged' };
+        }
+
+        const payload = buildCommerceHeader17Payload(line1, line2);
+        const response = await this.scale.send(17, payload);
+        if (!response.crc.ok) {
+            throw new Error('CRC invalido al configurar encabezado de ticket (funcion 17)');
+        }
+        if (String(response.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al configurar encabezado de ticket (funcion 17): ${response.data}`);
+        }
+
+        this.state.ticketHeaderFingerprint = fingerprint;
+        return { ok: true, updated: true, line1, line2 };
     }
 
     async applyBarcodeConfig() {
@@ -549,22 +689,15 @@ class ScaleBridge {
         return { ok: true, synced };
     }
 
-    async syncProducts() {
-        const signature = await this.signature();
-        const protocolVersion = Number(signature.protocolVersion || 0);
-        const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
-        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
-        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
-            ? Math.max(1, Number(this.config.scale.priceFormat6dMultiplier || 10))
-            : this.config.scale.legacyPriceMultiplier;
+    async syncRuntimeSettings(runtimeScaleConfig = null) {
+        const config = runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
+            ticketHeader: { line1: '', line2: '', line3: '' },
+            sectionMappings: [],
+            marqueeText: '',
+        }));
+
         let forceProductRewrite = false;
-        this.logger.info('Firma digital de balanza detectada', {
-            protocolVersion,
-            protocolData: signature.data,
-            useLegacyPlu4,
-            priceFormat,
-            effectiveLegacyPriceMultiplier,
-        });
+        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
 
         try {
             const barcodeResult = await this.applyBarcodeConfig();
@@ -580,6 +713,27 @@ class ScaleBridge {
         }
 
         try {
+            const marqueeResult = await this.applyMarqueeConfig(config.marqueeText);
+            if (marqueeResult?.updated) {
+                this.logger.info('Marquesina aplicada en balanza', { text: marqueeResult.text });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar marquesina en balanza', { error: error.message });
+        }
+
+        try {
+            const headerResult = await this.applyTicketHeaderConfig(config.ticketHeader);
+            if (headerResult?.updated) {
+                this.logger.info('Encabezado de ticket aplicado en balanza', {
+                    line1: headerResult.line1,
+                    line2: headerResult.line2,
+                });
+            }
+        } catch (error) {
+            this.logger.warn('No se pudo aplicar encabezado de ticket en balanza', { error: error.message });
+        }
+
+        try {
             const priceFormatResult = await this.applyPriceFormatConfig(priceFormat);
             if (priceFormatResult?.updated) {
                 forceProductRewrite = true;
@@ -591,6 +745,40 @@ class ScaleBridge {
         } catch (error) {
             this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
         }
+
+        return {
+            runtimeScaleConfig: config,
+            priceFormat,
+            forceProductRewrite,
+        };
+    }
+
+    async syncProducts(options = {}) {
+        const signature = await this.signature();
+        const protocolVersion = Number(signature.protocolVersion || 0);
+        const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
+        const priceFormat = options.priceFormat || await this.getPriceFormatSetting().catch(() => '4d2d');
+        const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
+            ticketHeader: { line1: '', line2: '', line3: '' },
+            sectionMappings: [],
+            marqueeText: '',
+        }));
+        const effectiveLegacyPriceMultiplier = priceFormat === '6d'
+            ? Math.max(1, Number(this.config.scale.priceFormat6dMultiplier || 10))
+            : this.config.scale.legacyPriceMultiplier;
+        let forceProductRewrite = Boolean(options.forceProductRewrite);
+        const sectionMapFingerprint = hashObject(runtimeScaleConfig.sectionMappings || [], 20);
+        if (this.state.sectionMapFingerprint !== sectionMapFingerprint) {
+            forceProductRewrite = true;
+            this.state.sectionMapFingerprint = sectionMapFingerprint;
+        }
+        this.logger.info('Firma digital de balanza detectada', {
+            protocolVersion,
+            protocolData: signature.data,
+            useLegacyPlu4,
+            priceFormat,
+            effectiveLegacyPriceMultiplier,
+        });
 
         let written = 0;
         let skipped = 0;
@@ -704,7 +892,7 @@ class ScaleBridge {
             }
 
             try {
-                const section = this.resolveSection(product.category);
+                const section = this.resolveSection(product.category, runtimeScaleConfig.sectionMappings);
                 const sectionKey = `${section.id}:${section.name}`;
                 if (!touchedSections.has(sectionKey)) {
                     const sectorPayload = buildSectorPayload(section.id, section.name);
@@ -1116,6 +1304,7 @@ class ScaleBridge {
     async runOnce() {
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
+        const runtimeSettings = await this.syncRuntimeSettings();
         try {
             // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
             await this.syncVendors();
@@ -1138,10 +1327,18 @@ class ScaleBridge {
 
         let products = { ok: true, processed: 0, written: 0, skipped: 0, deleted: 0, failed: 0, deferred: true };
         const lastProductSyncTs = this.state.lastProductSyncAt ? new Date(this.state.lastProductSyncAt).getTime() : NaN;
+        const runtimeSectionFingerprint = hashObject(runtimeSettings.runtimeScaleConfig?.sectionMappings || [], 20);
+        const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
         const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
+            || runtimeSettings.forceProductRewrite
+            || sectionConfigChanged
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
         if (shouldSyncProducts) {
-            products = await this.syncProducts();
+            products = await this.syncProducts({
+                runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
+                priceFormat: runtimeSettings.priceFormat,
+                forceProductRewrite: runtimeSettings.forceProductRewrite || sectionConfigChanged,
+            });
             this.state.lastProductSyncAt = new Date().toISOString();
         }
 

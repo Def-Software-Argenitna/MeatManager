@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
 import { Package, Search, Filter, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet, Pencil } from 'lucide-react';
 import { scaleService, SCALE_PROTOCOLS } from '../utils/SerialScaleService';
-import { desktopApi } from '../utils/desktopApi';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
@@ -39,15 +38,10 @@ const Stock = () => {
     const [importStatus, setImportStatus] = useState(null);
     const [diagLogs, setDiagLogs] = useState([]);
     const [showDiag, setShowDiag] = useState(false);
-    const [qendraAvailable, setQendraAvailable] = useState(false);
     const [products, setProducts] = useState([]);
     const [editingPriceId, setEditingPriceId] = useState('');
     const [editingPriceValue, setEditingPriceValue] = useState('');
     const [allStock, setAllStock] = useState([]);
-
-    useEffect(() => {
-        desktopApi.qendraDbExists().then((exists) => setQendraAvailable(exists)).catch(() => setQendraAvailable(false));
-    }, []);
 
     const loadStockAndPrices = async () => {
         const [stockRows, productRows] = await Promise.all([
@@ -425,159 +419,6 @@ const Stock = () => {
         }
     };
 
-    const [qendraPreview, setQendraPreview] = useState(null); // { rows, columns, tableFound }
-    const [qendraImporting, setQendraImporting] = useState(false);
-
-    const handleImportFromQendra = async () => {
-        setQendraPreview(null);
-        setDiagLogs([]);
-        setShowDiag(true);
-        // ── Diagnóstico previo de instalación ──
-        addDiagLog('info', 'Verificando instalación de Firebird en la PC...');
-        const diag = await desktopApi.qendraCheckFirebird();
-        addDiagLog(diag.dbExists ? 'ok' : 'error',
-            `Base de datos Qendra: ${diag.dbExists ? 'ENCONTRADA ✓ (C:\\Qendra\\qendra.fdb)' : 'NO encontrada en C:\\Qendra\\qendra.fdb'}`);
-        const pathsWithDlls = (diag.paths || []).filter(p => p.dlls && p.dlls.length > 0);
-        const pathsFolder = (diag.paths || []).filter(p => p.dlls && p.dlls.length === 0);
-        if (pathsWithDlls.length > 0) {
-            pathsWithDlls.forEach(p => addDiagLog('ok', `Firebird DLL en: ${p.path} → ${p.dlls.join(', ')}`));
-        } else if (pathsFolder.length > 0) {
-            pathsFolder.forEach(p => addDiagLog('warn', `Carpeta existe pero sin DLL: ${p.path}`));
-        } else {
-            addDiagLog('warn', 'No se encontró fbclient.dll ni fbembed.dll en ninguna ruta conocida.');
-        }
-        if (diag.services.length > 0) {
-            diag.services.forEach(s =>
-                addDiagLog(s.running ? 'ok' : 'warn',
-                    `Servicio "${s.name}": ${s.running ? 'CORRIENDO ✓' : 'DETENIDO'}`)
-            );
-        } else {
-            addDiagLog('warn', 'No se encontró ningún servicio Firebird registrado en Windows.');
-        }
-        addDiagLog(diag.port3050 ? 'ok' : 'warn',
-            `Puerto 3050: ${diag.port3050 ? 'ESCUCHANDO ✓' : 'no activo'}`);
-        // ────────────────────────────────────────
-
-        addDiagLog('info', 'Conectando a Qendra (C:\\Qendra\\qendra.fdb)...');
-        addDiagLog('info', 'Si el servicio Firebird no está corriendo, se intentará iniciarlo automáticamente...');
-
-        const tablesRes = await desktopApi.qendraListTables();
-        if (!tablesRes.ok) {
-            addDiagLog('error', `No se pudo conectar: ${tablesRes.error}`);
-            if (tablesRes.hint === 'close_qendra') {
-                addDiagLog('warn', '→ QENDRA está abierto y tiene la base de datos bloqueada.');
-                addDiagLog('warn', '→ Cerrá QENDRA completamente y volvé a intentar.');
-            } else if (tablesRes.hint === 'no_firebird') {
-                addDiagLog('warn', '→ No se encontró Firebird ni embedded ni como servidor.');
-                addDiagLog('warn', '→ Verificá que fbclient.dll exista en la carpeta de QENDRA.');
-                addDiagLog('warn', '→ Detalle técnico: ' + tablesRes.error);
-            } else if (tablesRes.autoStarted) {
-                addDiagLog('warn', `Servicio "${tablesRes.autoStarted}" fue iniciado pero la conexión igual falló.`);
-            } else {
-                addDiagLog('warn', 'Verificá que el servicio Firebird esté corriendo (services.msc).');
-            }
-            return;
-        }
-        if (tablesRes.autoStarted) {
-            addDiagLog('ok', `Servicio Firebird iniciado automáticamente: ${tablesRes.autoStarted}`);
-        }
-        addDiagLog('ok', `Conectado. Tablas: ${tablesRes.tables.join(', ')}`);
-
-        const candidates = ['PLU', 'PLUS', 'ARTICULO', 'ARTICULOS', 'PRODUCTO', 'PRODUCTOS'];
-        const found = candidates.find(c => tablesRes.tables.includes(c));
-        if (!found) {
-            addDiagLog('warn', `No se encontró tabla conocida. Tablas: ${tablesRes.tables.join(', ')}`);
-            return;
-        }
-        addDiagLog('info', `Leyendo tabla: ${found}...`);
-
-        const dataRes = await desktopApi.qendraImportPlus(found);
-        if (!dataRes.ok) {
-            addDiagLog('error', `Error al leer ${found}: ${dataRes.error}`);
-            return;
-        }
-
-        const columns = Object.keys(dataRes.rows[0] || {});
-        addDiagLog('ok', `${dataRes.rows.length} productos encontrados. Columnas: ${columns.join(', ')}`);
-        addDiagLog('info', 'Revisá la tabla y confirmá la importación.');
-        setShowDiag(false);
-        setQendraPreview({ rows: dataRes.rows, columns, tableFound: found });
-    };
-
-    const handleConfirmQendraImport = async () => {
-        if (!qendraPreview) return;
-        setQendraImporting(true);
-        showStatus('loading', 'Importando productos desde Qendra...', false);
-
-        const { rows, columns } = qendraPreview;
-        // Columnas exactas de la tabla PLU de QENDRA (confirmadas por inspección directa)
-        const colNombre = columns.includes('DESCRIPCION') ? 'DESCRIPCION' : columns.find(c => /descrip|nombre|name/i.test(c));
-        const colPrecio = columns.includes('PRECIO')      ? 'PRECIO'      : columns.find(c => /precio|price|pvp/i.test(c));
-        const colPlu    = columns.includes('ID')          ? 'ID'          : columns.find(c => /^id$|^plu$|cod/i.test(c));
-        const colSec    = columns.includes('SECCION')     ? 'SECCION'     : columns.includes('ID_SECCION') ? 'ID_SECCION' : null;
-
-        // Mapa de sección → tipo de MeatManager
-        const seccionToTipo = (sec) => {
-            if (!sec) return 'otros';
-            const s = String(sec).toLowerCase();
-            if (/vac|bov|res/.test(s))    return 'vaca';
-            if (/pollo|av/.test(s))        return 'pollo';
-            if (/cerd|chanch|porcin/.test(s)) return 'cerdo';
-            if (/pesc|mariscos?/.test(s))  return 'pescado';
-            return 'otros';
-        };
-
-        let created = 0, updated = 0, skipped = 0;
-        for (const row of rows) {
-            const nombre = colNombre ? String(row[colNombre] || '').trim() : null;
-            const precio = colPrecio ? parseFloat(row[colPrecio]) : null;
-            const plu    = colPlu    ? String(row[colPlu] || '').trim() : null;
-            const seccion = colSec   ? row[colSec] : null;
-            const tipo   = seccionToTipo(seccion);
-            const esKg   = true; // PLU de balanza = siempre por peso
-
-            if (!nombre || nombre === '') { skipped++; continue; }
-
-            // Update or create price — solo si precio es un número válido > 0
-            const validPrecio = typeof precio === 'number' && !isNaN(precio) && precio > 0;
-            const unifiedProduct = await ensureUnifiedProduct({
-                products,
-                prices: [],
-                name: nombre,
-                category: tipo,
-                unit: esKg ? 'kg' : 'unidades',
-                price: validPrecio ? precio : null,
-                plu,
-                source: 'qendra',
-            });
-            if (plu && validPrecio) {
-                updated++;
-            } else if (plu && !validPrecio) {
-                skipped++;
-            }
-
-            // Ensure product exists in stock
-            const inStock = allStock.find((item) => (
-                Number(item.product_id || 0) === Number(unifiedProduct?.id || 0)
-                || String(item.name || '').trim().toLowerCase() === String(nombre || '').trim().toLowerCase()
-            ));
-            if (!inStock) {
-                await saveTableRecord('stock', 'insert', {
-                    branch_id: currentBranchId || null,
-                    product_id: unifiedProduct?.id || null,
-                    name: nombre, type: tipo, quantity: 0,
-                    unit: esKg ? 'kg' : 'unidades',
-                    updated_at: new Date().toISOString(), reference: 'qendra'
-                });
-            }
-        }
-
-        await loadStockAndPrices();
-        setQendraPreview(null);
-        setQendraImporting(false);
-        showStatus('success', `Importación exitosa — Nuevos: ${created} | Actualizados: ${updated} | Omitidos: ${skipped}`);
-    };
-
     return (
         <div className="stock-container animate-fade-in">
 
@@ -643,17 +484,6 @@ const Stock = () => {
                         <FileSpreadsheet size={20} />
                         Exportar Excel
                     </button>
-                    {window.electronAPI && qendraAvailable && (
-                        <button
-                            className="neo-button"
-                            style={{ border: '1px solid #a78bfa', color: '#a78bfa', background: 'transparent' }}
-                            onClick={handleImportFromQendra}
-                            disabled={isImporting}
-                        >
-                            <DownloadCloud size={20} />
-                            Importar desde Qendra
-                        </button>
-                    )}
                     <button
                         className="neo-button"
                         style={{ border: '1px solid #3b82f6', color: '#3b82f6', background: 'transparent' }}
@@ -870,65 +700,6 @@ const Stock = () => {
                                 <Save size={18} /> Guardar Ajuste
                             </button>
                         </form>
-                    </div>
-                </div>
-            )}
-
-            {/* ── Modal Preview Qendra ──────────────────────────────────────── */}
-            {qendraPreview && (
-                <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.8)', zIndex: 10001, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
-                    <div style={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '12px', width: '100%', maxWidth: '900px', maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.7)' }}>
-                        {/* Header */}
-                        <div style={{ padding: '1rem 1.4rem', borderBottom: '1px solid #1e293b', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                            <div>
-                                <div style={{ fontWeight: 700, color: '#e2e8f0', fontSize: '1rem' }}>📋 Vista previa — {qendraPreview.tableFound}</div>
-                                <div style={{ color: '#64748b', fontSize: '0.8rem', marginTop: '2px' }}>{qendraPreview.rows.length} productos listos para importar</div>
-                            </div>
-                            <button onClick={() => setQendraPreview(null)} style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}>✕</button>
-                        </div>
-
-                        {/* Tabla */}
-                        <div style={{ flex: 1, overflowY: 'auto', padding: '0.5rem' }}>
-                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.78rem' }}>
-                                <thead>
-                                    <tr style={{ position: 'sticky', top: 0, background: '#1e293b' }}>
-                                        {qendraPreview.columns.map(col => (
-                                            <th key={col} style={{ padding: '0.5rem 0.7rem', textAlign: 'left', color: '#94a3b8', fontWeight: 600, borderBottom: '1px solid #334155', whiteSpace: 'nowrap' }}>
-                                                {col}
-                                            </th>
-                                        ))}
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {qendraPreview.rows.map((row, i) => (
-                                        <tr key={i} style={{ borderBottom: '1px solid #1e293b', background: i % 2 === 0 ? 'transparent' : '#0f1f35' }}>
-                                            {qendraPreview.columns.map(col => (
-                                                <td key={col} style={{ padding: '0.4rem 0.7rem', color: '#cbd5e1', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                                    {row[col] != null ? String(row[col]) : '—'}
-                                                </td>
-                                            ))}
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* Footer */}
-                        <div style={{ padding: '1rem 1.4rem', borderTop: '1px solid #1e293b', display: 'flex', gap: '0.8rem', alignItems: 'center' }}>
-                            <span style={{ color: '#64748b', fontSize: '0.8rem' }}>Los productos se importarán como categoría "Vaca". Podés cambiarlos después.</span>
-                            <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.8rem' }}>
-                                <button onClick={() => setQendraPreview(null)} style={{ background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '0.5rem 1rem', cursor: 'pointer', fontSize: '0.85rem' }}>
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={handleConfirmQendraImport}
-                                    disabled={qendraImporting}
-                                    style={{ background: '#7c3aed', border: 'none', color: '#fff', borderRadius: '6px', padding: '0.5rem 1.2rem', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600 }}
-                                >
-                                    {qendraImporting ? 'Importando...' : `✅ Confirmar e Importar ${qendraPreview.rows.length} productos`}
-                                </button>
-                            </div>
-                        </div>
                     </div>
                 </div>
             )}
