@@ -87,10 +87,22 @@ const Sidebar = ({ isCollapsed }) => {
 
   const isActive = (path) => location.pathname === path;
 
+  const goToPath = React.useCallback((path) => {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath || location.pathname === normalizedPath) return;
+
+    navigate(normalizedPath);
+
+    const targetHash = `#${normalizedPath}`;
+    if (window.location.hash !== targetHash) {
+      window.location.hash = targetHash;
+    }
+  }, [location.pathname, navigate]);
+
   const handleLogout = async () => {
     await tenantLogout();
     logout();
-    navigate('/login');
+    goToPath('/login');
   };
 
   const toggleGroup = (groupKey) => {
@@ -169,12 +181,12 @@ const Sidebar = ({ isCollapsed }) => {
         onClick={() => {
           if (isLocked) {
             if (isEffectiveAdmin) {
-              navigate(item.path);
+              goToPath(item.path);
             } else {
-              navigate('/config/licencia');
+              goToPath('/config/licencia');
             }
           } else {
-            navigate(item.path);
+            goToPath(item.path);
           }
         }}
       >
