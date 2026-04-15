@@ -2789,7 +2789,7 @@ const Ventas = () => {
 
                     {/* Buscador */}
                     <input
-                        type="text"
+                        type="search"
                         name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
@@ -2860,13 +2860,22 @@ const Ventas = () => {
                                     ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
-                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <form
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            handleDeleteTicket(s.id);
+                                        }}
+                                        autoComplete="off"
+                                        style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                    >
                                         <input
                                             type="password"
+                                            name="ticket-delete-authorization-code"
                                             inputMode="numeric"
                                             value={deleteAuthorizationCode}
                                             onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Código maestro"
+                                            autoComplete="one-time-code"
                                             style={{
                                                 width: '150px',
                                                 padding: '0.45rem 0.65rem',
@@ -2877,15 +2886,18 @@ const Ventas = () => {
                                                 fontSize: '0.82rem'
                                             }}
                                         />
-                                        <button onClick={() => handleDeleteTicket(s.id)}
+                                        <button
+                                            type="submit"
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
                                             Confirmar
                                         </button>
-                                        <button onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                                             style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.35rem 0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
                                             Cancelar
                                         </button>
-                                    </div>
+                                    </form>
                                 ) : (
                                     <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
                                         style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
