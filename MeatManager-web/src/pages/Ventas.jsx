@@ -286,11 +286,50 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // Foco inicial al montar el componente únicamente
+    // Foco inicial y watchdog del scanner mientras no haya modales activos
     React.useEffect(() => {
-        const t = setTimeout(() => { barcodeInputRef.current?.focus(); }, 120);
-        return () => clearTimeout(t);
-    }, []);
+        const initialFocusTimer = setTimeout(() => {
+            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
+                barcodeInputRef.current?.focus();
+            }
+        }, 100);
+
+        const watchdog = setInterval(() => {
+            if (
+                isEditingPriceRef.current
+                || showPaymentModal
+                || showQuickCreateModal
+                || showDeleteTicketModal
+                || showTicketPreview
+                || showPrintConfirmModal
+            ) {
+                return;
+            }
+
+            const active = document.activeElement;
+            const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
+            const isInteractive = interactiveTags.includes(active?.tagName)
+                || active?.getAttribute('tabindex') != null
+                || active?.getAttribute('role') === 'button'
+                || active?.getAttribute('role') === 'link';
+
+            if (!isInteractive) {
+                barcodeInputRef.current?.focus();
+            }
+        }, 500);
+
+        return () => {
+            clearTimeout(initialFocusTimer);
+            clearInterval(watchdog);
+        };
+    }, [
+        showPaymentModal,
+        showQuickCreateModal,
+        showDeleteTicketModal,
+        showTicketPreview,
+        editingPriceId,
+        showPrintConfirmModal,
+    ]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -873,9 +912,14 @@ const Ventas = () => {
             playBeep();
             const header      = eanDigits.substring(0, 2);   // "20", "21" o "22"
             const pluRaw      = eanDigits.substring(2, 6);   // 4-dígitos PLU
-            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos importe en centavos
+            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos peso en gramos o importe
             const pluNumber   = parseInt(pluRaw, 10).toString();
-            const importePesos = parseFloat(importeRaw) / 100;
+            
+            // Si el header es 20 (Por peso), la balanza estándar exporta el peso en GRAMOS.
+            // Si el header es 21 (Por unidad) o 22 (Ticket total), podría ser importe en pesos.
+            const isWeight = header === '20';
+            const parsedWeight = isWeight ? parseFloat(importeRaw) / 1000 : 1;
+            const importePesos = !isWeight ? parseFloat(importeRaw) / 100 : 0; // Solo referencial si era precio
 
             // BCHeader 22 = BARCODESP: código resumen total del ticket, no artículo individual
             if (header === '22') {
@@ -883,6 +927,29 @@ const Ventas = () => {
                     const loaded = await loadBridgeTicketFromBarcode(cleanData);
                     if (loaded) return;
                 } catch {
+                    // Fallback para balanzas offline ("no conectadas a red"):
+                    // el código de barra contiene el TOTAL exacto de la compra.
+                    // Formato: 22(pref) + XXXX(id) + TTTTTT(total en pesos) + C(check)
+                    // Generalmente, "120727" = $120.727
+                    const parsedTotal = parseFloat(importeRaw); // Pesos enteros
+                    if (parsedTotal > 0) {
+                        const ticketFallbackProduct = {
+                            id: `ticket-balanza-offline`,
+                            name: `Ticket de Balanza Offline (#${pluRaw})`,
+                            category: 'Balanza',
+                            unit: 'un',
+                            price: parsedTotal,
+                            plu: '',
+                        };
+                        addToCart(ticketFallbackProduct, 1);
+                        setScannerError(
+                            `⚠️ Ticket agregado desde el código de barras porque la balanza está offline.`
+                        );
+                        // Limpiar advertencia automáticamente
+                        setTimeout(() => setScannerError(''), 5000);
+                        return;
+                    }
+
                     setScannerError(
                         `⚠️ No pude vincular ese código de ticket con una venta en MySQL.\n\n` +
                         `Si querés, reimprimimos el ticket con código único MM y queda 1 a 1.`
@@ -892,17 +959,17 @@ const Ventas = () => {
                 }
             }
 
-            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Importe $${importePesos}`);
+            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Raw Data=${importeRaw}`);
 
             let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
             if (priceRecord) {
-                const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
+                const weightToApply = isWeight ? parsedWeight : (priceRecord.price > 0 ? importePesos / priceRecord.price : 1);
                 let product = findProductByPriceRecord(priceRecord);
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
-                    addToCart({ ...product, price: priceRecord.price }, weight);
+                    addToCart({ ...product, price: priceRecord.price }, weightToApply);
                     setScannerError('');
                 } else {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
@@ -918,7 +985,7 @@ const Ventas = () => {
                             price: priceRecord.price,
                             plu: pluNumber,
                         };
-                        addToCart(fallbackProduct, weight);
+                        addToCart(fallbackProduct, weightToApply);
                         setScannerError('');
                     } else {
                         setScannerError(buildPluResolutionError({
