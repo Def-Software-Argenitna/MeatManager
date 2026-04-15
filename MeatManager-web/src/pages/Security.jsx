@@ -765,16 +765,43 @@ const Security = () => {
                         <form className="security-form" onSubmit={handleUpdatePin}>
                             <div className="form-group">
                                 <label>PIN Actual:</label>
-                                <input type="password" value={currentPin} onChange={e => setCurrentPin(e.target.value)} placeholder="****" maxLength={8} />
+                                <input
+                                    type="password"
+                                    name="master-pin-current"
+                                    value={currentPin}
+                                    onChange={e => setCurrentPin(e.target.value)}
+                                    placeholder="****"
+                                    maxLength={8}
+                                    autoComplete="current-password"
+                                    inputMode="numeric"
+                                />
                             </div>
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>Nuevo PIN:</label>
-                                    <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} placeholder="Nuevo" maxLength={8} />
+                                    <input
+                                        type="password"
+                                        name="master-pin-new"
+                                        value={newPin}
+                                        onChange={e => setNewPin(e.target.value)}
+                                        placeholder="Nuevo"
+                                        maxLength={8}
+                                        autoComplete="new-password"
+                                        inputMode="numeric"
+                                    />
                                 </div>
                                 <div className="form-group">
                                     <label>Confirmar Nuevo PIN:</label>
-                                    <input type="password" value={confirmPin} onChange={e => setConfirmPin(e.target.value)} placeholder="Repetir" maxLength={8} />
+                                    <input
+                                        type="password"
+                                        name="master-pin-confirm"
+                                        value={confirmPin}
+                                        onChange={e => setConfirmPin(e.target.value)}
+                                        placeholder="Repetir"
+                                        maxLength={8}
+                                        autoComplete="new-password"
+                                        inputMode="numeric"
+                                    />
                                 </div>
                             </div>
                             <button type="submit" className="btn-security primary" disabled={loading || !newPin}>
@@ -795,7 +822,13 @@ const Security = () => {
                             <form className="security-form" onSubmit={handleUpdateDeleteCode}>
                                 <div className="form-group">
                                     <label>Código actual configurado:</label>
-                                    <input type="text" value={storedDeleteCode ? 'Configurado' : 'Sin configurar'} disabled />
+                                    <div
+                                        className="security-input"
+                                        aria-live="polite"
+                                        style={{ opacity: 0.75, cursor: 'default' }}
+                                    >
+                                        {storedDeleteCode ? 'Configurado' : 'Sin configurar'}
+                                    </div>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
                                     <button
