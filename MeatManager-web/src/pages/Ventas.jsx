@@ -285,24 +285,11 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // ── FOCO PERMANENTE - POS WATCHDOG ────────────────────────────────────────
+    // Foco inicial al montar el componente únicamente
     React.useEffect(() => {
-        const focusTimer = setTimeout(() => {
-            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 100);
-
-        return () => clearTimeout(focusTimer);
-    }, [
-        showPaymentModal,
-        showQuickCreateModal,
-        showDeleteTicketModal,
-        showTicketPreview,
-        editingPriceId,
-        showPrintConfirmModal
-    ]);
-    // ────────────────────────────────────────────────────────────────────────
+        const t = setTimeout(() => { barcodeInputRef.current?.focus(); }, 120);
+        return () => clearTimeout(t);
+    }, []);
 
     React.useEffect(() => {
         let cancelled = false;
