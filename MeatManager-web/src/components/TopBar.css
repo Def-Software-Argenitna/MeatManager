@@ -3,6 +3,7 @@
     background-color: var(--color-bg-card);
     border-bottom: 1px solid var(--color-border);
     display: flex;
+    position: relative;
     align-items: center;
     justify-content: space-between;
     padding: 0 1rem 0 0.85rem;
