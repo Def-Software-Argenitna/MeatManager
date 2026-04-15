@@ -767,6 +767,7 @@ const Security = () => {
                                 <label>PIN Actual:</label>
                                 <input
                                     type="password"
+                                    id="master-pin-current"
                                     name="master-pin-current"
                                     value={currentPin}
                                     onChange={e => setCurrentPin(e.target.value)}
@@ -781,6 +782,7 @@ const Security = () => {
                                     <label>Nuevo PIN:</label>
                                     <input
                                         type="password"
+                                        id="master-pin-new"
                                         name="master-pin-new"
                                         value={newPin}
                                         onChange={e => setNewPin(e.target.value)}
@@ -794,6 +796,7 @@ const Security = () => {
                                     <label>Confirmar Nuevo PIN:</label>
                                     <input
                                         type="password"
+                                        id="master-pin-confirm"
                                         name="master-pin-confirm"
                                         value={confirmPin}
                                         onChange={e => setConfirmPin(e.target.value)}
@@ -847,6 +850,7 @@ const Security = () => {
                                         <label>Nuevo código:</label>
                                         <input
                                             type="password"
+                                            id="ticket-delete-code"
                                             name="ticket-delete-code"
                                             value={deleteCode}
                                             onChange={e => setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
@@ -860,6 +864,7 @@ const Security = () => {
                                         <label>Confirmar código:</label>
                                         <input
                                             type="password"
+                                            id="ticket-delete-code-confirm"
                                             name="ticket-delete-code-confirm"
                                             value={confirmDeleteCode}
                                             onChange={e => setConfirmDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}

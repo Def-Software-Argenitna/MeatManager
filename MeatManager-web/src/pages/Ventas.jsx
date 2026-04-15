@@ -2862,6 +2862,7 @@ const Ventas = () => {
                     {/* Buscador */}
                     <input
                         type="search"
+                        id="delete-ticket-search"
                         name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
@@ -2942,6 +2943,7 @@ const Ventas = () => {
                                     >
                                         <input
                                             type="password"
+                                            id={`ticket-delete-authorization-code-${s.id}`}
                                             name="ticket-delete-authorization-code"
                                             inputMode="numeric"
                                             value={deleteAuthorizationCode}
