@@ -287,44 +287,18 @@ const Ventas = () => {
 
     // ── FOCO PERMANENTE - POS WATCHDOG ────────────────────────────────────────
     React.useEffect(() => {
-        // Enfoque inicial rápido
-        setTimeout(() => {
+        const focusTimer = setTimeout(() => {
             if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
                 barcodeInputRef.current?.focus();
             }
         }, 100);
 
-        const watchdog = setInterval(() => {
-            // Si hay un modal abierto, pausamos el watchdog
-            if (
-                isEditingPriceRef.current || 
-                showPaymentModal || 
-                showQuickCreateModal || 
-                showDeleteTicketModal || 
-                showTicketPreview || 
-                showPrintConfirmModal
-            ) {
-                return;
-            }
-
-            const active = document.activeElement;
-            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-            const isNavigationElement = active?.closest?.('.sidebar, .top-bar') || active?.tagName === 'BUTTON' || active?.tagName === 'A';
-
-            // Si el foco se perdió y está en el "body" u otro elemento no interactivo
-            // forzamos el foco de nuevo al scanner.
-            // Si ya está en algún INPUT (buscador, manual, etc), respetamos y no tocamos nada.
-            if (!isInput && !isNavigationElement) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 500); // Revisa cada medio segundo
-
-        return () => clearInterval(watchdog);
+        return () => clearTimeout(focusTimer);
     }, [
-        showPaymentModal, 
-        showQuickCreateModal, 
-        showDeleteTicketModal, 
-        showTicketPreview, 
+        showPaymentModal,
+        showQuickCreateModal,
+        showDeleteTicketModal,
+        showTicketPreview,
         editingPriceId,
         showPrintConfirmModal
     ]);
@@ -3102,3 +3076,4 @@ const Ventas = () => {
 };
 
 export default Ventas;
+
