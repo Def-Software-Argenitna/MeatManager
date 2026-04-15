@@ -90,20 +90,7 @@ const Sidebar = ({ isCollapsed }) => {
   const goToPath = React.useCallback((path) => {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath || location.pathname === normalizedPath) return;
-
-    const leavingVentas = location.pathname === '/ventas' && normalizedPath !== '/ventas';
-    if (leavingVentas) {
-      window.location.hash = normalizedPath;
-      window.location.reload();
-      return;
-    }
-
     navigate(normalizedPath);
-
-    const targetHash = `#${normalizedPath}`;
-    if (window.location.hash !== targetHash) {
-      window.location.hash = targetHash;
-    }
   }, [location.pathname, navigate]);
 
   const handleLogout = async () => {
