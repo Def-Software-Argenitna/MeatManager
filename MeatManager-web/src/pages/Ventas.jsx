@@ -636,6 +636,41 @@ const Ventas = () => {
         });
     }, [productsCatalog, stockItems]);
 
+    const buildPluResolutionError = React.useCallback(({ rawCode, pluRaw, pluNumber, priceRecord, fallbackStockItem }) => {
+        const normalizedRaw = String(rawCode || '').trim();
+        const normalizedPlu = String(pluNumber || pluRaw || '').trim();
+        const duplicateProducts = productsCatalog.filter((product) => {
+            const plu = String(product?.plu || '').trim();
+            return plu && normalizedPlu && (plu === normalizedPlu || plu === String(pluRaw || '').trim());
+        });
+
+        const visibleProduct = priceRecord ? findProductByPriceRecord(priceRecord) : null;
+        const detailLines = [
+            `RAW: ${normalizedRaw || 'N/D'}`,
+            `PLU detectado: ${normalizedPlu || 'N/D'}`,
+        ];
+
+        if (!priceRecord) {
+            detailLines.push('Estado: el PLU no existe en el catálogo de ventas.');
+        } else if (visibleProduct) {
+            detailLines.push(`Producto visible: ${visibleProduct.name}`);
+        } else if (fallbackStockItem) {
+            detailLines.push(`Fallback stock encontrado: ${fallbackStockItem.name}`);
+        } else {
+            detailLines.push('Estado: el PLU existe, pero no se pudo resolver a un producto visible en Ventas.');
+        }
+
+        if (duplicateProducts.length > 1) {
+            detailLines.push(`Conflicto: el PLU ${normalizedPlu} está duplicado en ${duplicateProducts.length} productos (${duplicateProducts.map((product) => product.name).join(', ')}).`);
+        }
+
+        if (priceRecord?.price) {
+            detailLines.push(`Precio configurado: $${Number(priceRecord.price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+        }
+
+        return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
+    }, [findProductByPriceRecord, productsCatalog]);
+
     // Filter products
     const filteredProducts = products.filter(p => {
         const term = barcodeInputValue.trim().toLowerCase();
@@ -918,7 +953,13 @@ const Ventas = () => {
                         addToCart(fallbackProduct, weight);
                         setScannerError('');
                     } else {
-                        setScannerError(`⚠️ PLU ${pluNumber} configurado pero el producto no fue encontrado. Revisá la configuración de precios.`);
+                        setScannerError(buildPluResolutionError({
+                            rawCode: cleanData,
+                            pluRaw,
+                            pluNumber,
+                            priceRecord,
+                            fallbackStockItem: stockItem,
+                        }));
                         setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
                     }
                 }
