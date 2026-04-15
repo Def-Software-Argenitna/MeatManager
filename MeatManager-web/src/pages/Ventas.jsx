@@ -176,7 +176,7 @@ const Ventas = () => {
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['all']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -673,8 +673,7 @@ const Ventas = () => {
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
             if (hasSearch) return nextIds;
-            const filteredPrev = prev.filter((id) => nextIds.includes(id));
-            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+            return prev.filter((id) => nextIds.includes(id));
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
