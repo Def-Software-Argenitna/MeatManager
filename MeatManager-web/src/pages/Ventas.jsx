@@ -1608,9 +1608,14 @@ const Ventas = () => {
             throw new Error('La venta ya no existe.');
         }
 
+        const currentUserId = Number(currentUser?.id);
+        const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
+            ? currentUserId
+            : null;
+
         // Anular de forma atómica en el servidor: stock + balance + historial + delete
         await deleteVenta(id, {
-            deleted_by_user_id: currentUser?.id || null,
+            deleted_by_user_id: deletedByUserId,
             deleted_by_username: currentUser?.username || 'Usuario desconocido',
         });
 

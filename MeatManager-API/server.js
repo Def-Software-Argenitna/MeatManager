@@ -6142,7 +6142,11 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Registrar en historial de eliminaciones
-        const deletedBy = req.body?.deleted_by_user_id || null;
+        const deletedByRaw = req.body?.deleted_by_user_id;
+        const deletedByParsed = Number.parseInt(deletedByRaw, 10);
+        const deletedBy = Number.isFinite(deletedByParsed) && deletedByParsed > 0
+            ? deletedByParsed
+            : null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
             `INSERT INTO deleted_sales_history
