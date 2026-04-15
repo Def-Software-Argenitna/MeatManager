@@ -7,7 +7,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 0 1rem 0 0.85rem;
-    z-index: 1000;
+    z-index: 20001;
     backdrop-filter: blur(10px);
 }
 
