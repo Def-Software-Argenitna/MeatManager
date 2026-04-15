@@ -309,11 +309,12 @@ const Ventas = () => {
 
             const active = document.activeElement;
             const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
+            const isNavigationElement = active?.closest?.('.sidebar, .top-bar') || active?.tagName === 'BUTTON' || active?.tagName === 'A';
 
             // Si el foco se perdió y está en el "body" u otro elemento no interactivo
             // forzamos el foco de nuevo al scanner.
             // Si ya está en algún INPUT (buscador, manual, etc), respetamos y no tocamos nada.
-            if (!isInput) {
+            if (!isInput && !isNavigationElement) {
                 barcodeInputRef.current?.focus();
             }
         }, 500); // Revisa cada medio segundo
