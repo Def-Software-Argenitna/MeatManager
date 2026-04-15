@@ -50,11 +50,26 @@ const Sidebar = ({ isCollapsed }) => {
   const [branchNotif, setBranchNotif] = useState(0);
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState({
-    operacion: false,
-    comercial: false,
-    produccion: false,
-    configuracion: false,
+  const [openGroups, setOpenGroups] = useState(() => {
+    const p = window.location.pathname;
+    const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inComercial = ['/clientes', '/pedidos', '/logistica', '/sucursales', '/menu-digital'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inProduccion = ['/alimentos', '/otros', '/informes-pro', '/despostada'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inConfiguracion = p.startsWith('/config') || p === '/manual';
+    // Si ninguno coincide, abrir Operación por defecto
+    const anyOpen = inOperacion || inComercial || inProduccion || inConfiguracion;
+    return {
+      operacion: inOperacion || !anyOpen,
+      comercial: inComercial,
+      produccion: inProduccion,
+      configuracion: inConfiguracion,
+    };
   });
 
   React.useEffect(() => {
