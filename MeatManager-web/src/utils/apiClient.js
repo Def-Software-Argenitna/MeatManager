@@ -1,6 +1,8 @@
 import { auth } from '../firebase';
 import { buildApiUrl } from './runtimeConfig';
 
+export const SUPPORT_SESSION_EXPIRED_EVENT = 'mm:support-session-expired';
+
 export const hasTenantSession = () => !!sessionStorage.getItem('mm_tenant');
 export const getStoredAuthToken = () => sessionStorage.getItem('mm_auth_token');
 const getStoredTenantSession = () => {
@@ -34,6 +36,7 @@ const injectSupportClientIdIntoBody = (body, clientId) => {
 };
 const setStoredAuthToken = (token) => {
     if (token) {
+        _supportSessionExpiredNotified = false;
         sessionStorage.setItem('mm_auth_token', token);
         return;
     }
@@ -60,10 +63,31 @@ export const getAuthToken = async () => {
 // Si ya hay una Promise de token en curso se reutiliza la misma.
 let _tokenPromise = null;
 let _tokenExpiry = 0; // epoch ms estimado de expiración (55 min margen)
+let _supportSessionExpiredNotified = false;
 
 export const clearTokenCache = () => {
     _tokenPromise = null;
     _tokenExpiry = 0;
+};
+
+const clearLocalSessionState = () => {
+    clearTokenCache();
+    sessionStorage.removeItem('mm_tenant');
+    sessionStorage.removeItem('mm_auth_token');
+    sessionStorage.removeItem('mm_user');
+    sessionStorage.removeItem('mm_perms');
+    sessionStorage.removeItem('mm_access_profile');
+};
+
+const notifySupportSessionExpired = () => {
+    if (_supportSessionExpiredNotified) return;
+    _supportSessionExpiredNotified = true;
+    clearLocalSessionState();
+    if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent(SUPPORT_SESSION_EXPIRED_EVENT, {
+            detail: { reason: '401_unauthorized' },
+        }));
+    }
 };
 
 const getCachedToken = (forceRefresh = false) => {
@@ -133,6 +157,10 @@ export const apiFetch = async (path, options = {}) => {
             body: scopedBody,
             headers: await buildHeaders(true),
         });
+    }
+
+    if (response.status === 401 && isSupportSession(tenant)) {
+        notifySupportSessionExpired();
     }
 
     return response;
