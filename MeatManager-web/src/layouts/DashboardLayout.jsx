@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
+import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import { useLicense } from '../context/LicenseContext';
@@ -47,7 +47,6 @@ const BlockedScreen = ({ installationId, machineId, supportNumber }) => (
 
 const DashboardLayout = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    const location = useLocation();
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
 
     const toggleSidebar = () => {
@@ -65,7 +64,7 @@ const DashboardLayout = () => {
                 <Sidebar isCollapsed={isSidebarCollapsed} />
                 <main className="main-content">
                     <div className="route-stage">
-                        <div className="route-shell" key={location.pathname}>
+                        <div className="route-shell">
                             <Outlet />
                         </div>
                     </div>
