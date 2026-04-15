@@ -286,41 +286,33 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // Foco inicial y watchdog del scanner mientras no haya modales activos
+    // Foco puntual al scanner cuando la pantalla queda libre de modales.
+    // Evitamos un watchdog con setInterval porque termina robando foco a la navegacion.
     React.useEffect(() => {
-        const initialFocusTimer = setTimeout(() => {
-            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 100);
+        if (
+            isEditingPriceRef.current
+            || showPaymentModal
+            || showQuickCreateModal
+            || showDeleteTicketModal
+            || showTicketPreview
+            || showPrintConfirmModal
+        ) {
+            return undefined;
+        }
 
-        const watchdog = setInterval(() => {
-            if (
-                isEditingPriceRef.current
-                || showPaymentModal
-                || showQuickCreateModal
-                || showDeleteTicketModal
-                || showTicketPreview
-                || showPrintConfirmModal
-            ) {
-                return;
-            }
-
+        const focusScanner = () => {
             const active = document.activeElement;
-            const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
-            const isInteractive = interactiveTags.includes(active?.tagName)
-                || active?.getAttribute('tabindex') != null
-                || active?.getAttribute('role') === 'button'
-                || active?.getAttribute('role') === 'link';
-
-            if (!isInteractive) {
+            const tagName = String(active?.tagName || '').toUpperCase();
+            const isTypingElsewhere = tagName === 'INPUT' || tagName === 'TEXTAREA' || active?.isContentEditable;
+            if (!isTypingElsewhere) {
                 barcodeInputRef.current?.focus();
             }
-        }, 500);
+        };
+
+        const timer = setTimeout(focusScanner, 100);
 
         return () => {
-            clearTimeout(initialFocusTimer);
-            clearInterval(watchdog);
+            clearTimeout(timer);
         };
     }, [
         showPaymentModal,
