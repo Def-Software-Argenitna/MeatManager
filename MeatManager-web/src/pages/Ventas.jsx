@@ -2790,10 +2790,16 @@ const Ventas = () => {
                     {/* Buscador */}
                     <input
                         type="text"
+                        name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
                         onChange={e => { setDeleteTicketSearch(e.target.value); setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                         autoFocus
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-form-type="other"
                         style={{
                             padding: '0.6rem 0.9rem',
                             borderRadius: 'var(--radius-md)',

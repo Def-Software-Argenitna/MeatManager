@@ -23,6 +23,8 @@ const EMPTY_FORM = {
     assignedClientLicenseIds: [],
 };
 
+const generateTicketDeleteCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
 const hasLogisticsCapability = (license) => Boolean(
     license?.hasLogisticsCapability
     || license?.license?.hasLogisticsCapability
@@ -674,6 +676,12 @@ const Security = () => {
         }
     };
 
+    const handleGenerateDeleteCode = () => {
+        const generatedCode = generateTicketDeleteCode();
+        setDeleteCode(generatedCode);
+        setConfirmDeleteCode(generatedCode);
+    };
+
     const handleToggleActive = async (user) => {
         const activeAdmins = users.filter(u => u.role === 'admin' && u.active === 1);
         if (user.active === 1 && user.role === 'admin' && activeAdmins.length <= 1) {
@@ -789,25 +797,43 @@ const Security = () => {
                                     <label>Código actual configurado:</label>
                                     <input type="text" value={storedDeleteCode ? 'Configurado' : 'Sin configurar'} disabled />
                                 </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                        type="button"
+                                        className="btn-security secondary"
+                                        onClick={handleGenerateDeleteCode}
+                                        disabled={!isAdmin}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}
+                                    >
+                                        <RefreshCw size={16} />
+                                        Generar código
+                                    </button>
+                                </div>
                                 <div className="form-row">
                                     <div className="form-group">
                                         <label>Nuevo código:</label>
                                         <input
                                             type="password"
+                                            name="ticket-delete-code"
                                             value={deleteCode}
                                             onChange={e => setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Mínimo 4 dígitos"
                                             maxLength={12}
+                                            autoComplete="new-password"
+                                            inputMode="numeric"
                                         />
                                     </div>
                                     <div className="form-group">
                                         <label>Confirmar código:</label>
                                         <input
                                             type="password"
+                                            name="ticket-delete-code-confirm"
                                             value={confirmDeleteCode}
                                             onChange={e => setConfirmDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Repetir código"
                                             maxLength={12}
+                                            autoComplete="new-password"
+                                            inputMode="numeric"
                                         />
                                     </div>
                                 </div>
