@@ -1,6 +1,5 @@
-import React, { useMemo, useState } from 'react';
-import { Outlet, useLocation } from 'react-router-dom';
-import { motion, AnimatePresence, useReducedMotion } from 'framer-motion';
+import React, { useState } from 'react';
+import { Outlet } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
 import { useLicense } from '../context/LicenseContext';
@@ -48,60 +47,11 @@ const BlockedScreen = ({ installationId, machineId, supportNumber }) => (
 
 const DashboardLayout = () => {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
-    const location = useLocation();
-    const prefersReducedMotion = useReducedMotion();
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
 
     const toggleSidebar = () => {
         setIsSidebarCollapsed(!isSidebarCollapsed);
     };
-
-    const routeMotion = useMemo(() => {
-        const directions = [
-            { x: -56, y: 0, rotateX: 0.8, rotateY: -2.4 },
-            { x: 56, y: 0, rotateX: 0.8, rotateY: 2.4 },
-            { x: 0, y: -44, rotateX: -2.8, rotateY: 0 },
-            { x: 0, y: 44, rotateX: 2.8, rotateY: 0 },
-        ];
-        const seed = location.pathname.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-        return directions[seed % directions.length];
-    }, [location.pathname]);
-
-    const pageTransition = prefersReducedMotion
-        ? {
-            initial: { opacity: 0 },
-            animate: { opacity: 1 },
-            exit: { opacity: 0 },
-        }
-        : {
-            initial: {
-                opacity: 0,
-                x: routeMotion.x * 0.2,
-                y: routeMotion.y * 0.2,
-                scale: 0.996,
-                filter: 'blur(3px)',
-            },
-            animate: {
-                opacity: 1,
-                x: 0,
-                y: 0,
-                scale: 1,
-                filter: 'blur(0px)',
-                transition: {
-                    duration: 0.3,
-                    ease: [0.22, 1, 0.36, 1],
-                },
-            },
-            exit: {
-                opacity: 0,
-                scale: 0.998,
-                filter: 'blur(2px)',
-                transition: {
-                    duration: 0.12,
-                    ease: 'easeInOut',
-                },
-            },
-        };
 
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
@@ -114,18 +64,9 @@ const DashboardLayout = () => {
                 <Sidebar isCollapsed={isSidebarCollapsed} />
                 <main className="main-content">
                     <div className="route-stage">
-                        <AnimatePresence mode="wait" initial={false}>
-                            <motion.div
-                                key={location.pathname}
-                                className="route-shell"
-                                initial="initial"
-                                animate="animate"
-                                exit="exit"
-                                variants={pageTransition}
-                            >
-                                <Outlet />
-                            </motion.div>
-                        </AnimatePresence>
+                        <div className="route-shell">
+                            <Outlet />
+                        </div>
                     </div>
                 </main>
             </div>

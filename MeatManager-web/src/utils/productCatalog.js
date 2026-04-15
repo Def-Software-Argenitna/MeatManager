@@ -4,6 +4,7 @@ export const normalizeProductName = (value) => String(value || '').trim().toLowe
 export const normalizeProductKey = (value) => normalizeProductName(value).replace(/\s+/g, '_');
 export const buildProductCanonicalKey = (name) => normalizeProductKey(name);
 export const buildLegacyPriceProductId = (name, category) => `${normalizeProductKey(name)}-${normalizeProductKey(category || 'general')}`;
+export const normalizePlu = (value) => String(value || '').trim();
 
 const toNumber = (value) => {
     const parsed = Number(value);
@@ -30,7 +31,7 @@ export const findProductByIdentity = (products, { id, name, plu }) => {
     }
 
     const normalizedKey = buildProductCanonicalKey(name);
-    const normalizedPlu = String(plu || '').trim();
+    const normalizedPlu = normalizePlu(plu);
     return [...list]
         .sort(sortByRecency)
         .find((item) => {
@@ -43,6 +44,24 @@ export const findProductByIdentity = (products, { id, name, plu }) => {
                 (normalizedPlu && itemPlu && itemPlu === normalizedPlu)
             );
         }) || null;
+};
+
+export const findProductByPlu = (products, plu, excludeProductId = null) => {
+    const normalizedPlu = normalizePlu(plu);
+    if (!normalizedPlu) return null;
+
+    return (Array.isArray(products) ? products : [])
+        .find((item) => {
+            if (excludeProductId != null && Number(item?.id) === Number(excludeProductId)) return false;
+            return normalizePlu(item?.plu) === normalizedPlu;
+        }) || null;
+};
+
+export const assertUniqueProductPluLocal = (products, plu, excludeProductId = null) => {
+    const conflict = findProductByPlu(products, plu, excludeProductId);
+    if (!conflict) return null;
+
+    throw new Error(`El PLU ${normalizePlu(plu)} ya esta usado por "${conflict.name}".`);
 };
 
 export const findLegacyPriceRecord = (prices, name, category) => {
@@ -158,7 +177,9 @@ export const ensureUnifiedProduct = async ({
     const trimmedCategory = String(category || 'general').trim() || 'general';
     const trimmedUnit = String(unit || 'kg').trim() || 'kg';
     const incomingPrice = toNumber(price);
-    const trimmedPlu = String(plu || '').trim();
+    const trimmedPlu = normalizePlu(plu);
+
+    assertUniqueProductPluLocal(products, trimmedPlu, preferredProductId);
     const canonicalKey = buildProductCanonicalKey(trimmedName);
 
     let existingProduct = findProductByIdentity(products, {

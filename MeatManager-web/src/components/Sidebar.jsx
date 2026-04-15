@@ -51,11 +51,30 @@ const Sidebar = ({ isCollapsed }) => {
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
-    operacion: false,
+    operacion: true,
     comercial: false,
     produccion: false,
     configuracion: false,
   });
+
+  // Mantener abierto el grupo que contiene la ruta activa
+  React.useEffect(() => {
+    const p = location.pathname;
+    const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inComercial = ['/clientes', '/pedidos', '/logistica', '/sucursales', '/menu-digital'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inProduccion = ['/alimentos', '/otros', '/informes-pro', '/despostada'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inConfiguracion = p.startsWith('/config') || p === '/manual';
+    if (inOperacion) setOpenGroups(prev => ({ ...prev, operacion: true }));
+    if (inComercial) setOpenGroups(prev => ({ ...prev, comercial: true }));
+    if (inProduccion) setOpenGroups(prev => ({ ...prev, produccion: true }));
+    if (inConfiguracion) setOpenGroups(prev => ({ ...prev, configuracion: true }));
+  }, [location.pathname]);
 
   React.useEffect(() => {
     const checkMaster = async () => {
@@ -87,10 +106,16 @@ const Sidebar = ({ isCollapsed }) => {
 
   const isActive = (path) => location.pathname === path;
 
+  const goToPath = React.useCallback((path) => {
+    const normalizedPath = String(path || '').trim();
+    if (!normalizedPath || location.pathname === normalizedPath) return;
+    navigate(normalizedPath);
+  }, [location.pathname, navigate]);
+
   const handleLogout = async () => {
     await tenantLogout();
     logout();
-    navigate('/login');
+    goToPath('/login');
   };
 
   const toggleGroup = (groupKey) => {
@@ -169,12 +194,12 @@ const Sidebar = ({ isCollapsed }) => {
         onClick={() => {
           if (isLocked) {
             if (isEffectiveAdmin) {
-              navigate(item.path);
+              goToPath(item.path);
             } else {
-              navigate('/config/licencia');
+              goToPath('/config/licencia');
             }
           } else {
-            navigate(item.path);
+            goToPath(item.path);
           }
         }}
       >

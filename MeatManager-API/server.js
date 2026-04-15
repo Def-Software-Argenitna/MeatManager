@@ -1624,6 +1624,28 @@ async function ensureTenantScopedForeignKeys(conn) {
         },
     ];
 
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET plu = NULL
+         WHERE plu IS NOT NULL
+           AND TRIM(CAST(plu AS CHAR)) = ''`
+    );
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_plu'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                 ADD UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)`
+            );
+        } catch (error) {
+            if (error?.code === 'ER_DUP_ENTRY') {
+                console.warn('[DB] No se pudo crear uniq_products_tenant_plu porque existen PLU duplicados. Limpialos y reiniciá la API.');
+            } else if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
+
     for (const definition of fkDefinitions) {
         if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, definition.table, definition.indexName))) {
             try {
@@ -3073,9 +3095,9 @@ function getSchemaTables() {
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
             UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
+            UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
-            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id),
-            INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
+            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -4248,6 +4270,37 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+function normalizePluValue(value) {
+    const normalized = String(value ?? '').trim();
+    return normalized || null;
+}
+
+async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
+    const normalizedPlu = normalizePluValue(plu);
+    if (!normalizedPlu) return null;
+
+    const params = [tenantId, normalizedPlu];
+    let sql = 'SELECT id, name, plu FROM products WHERE tenant_id = ? AND plu = ?';
+    if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
+        sql += ' AND id <> ?';
+        params.push(Number(excludeProductId));
+    }
+    sql += ' ORDER BY id ASC LIMIT 1';
+
+    const [rows] = await pool.query(sql, params);
+    return rows?.[0] || null;
+}
+
+async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null) {
+    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId);
+    if (!conflict) return;
+
+    const normalizedPlu = normalizePluValue(plu);
+    const error = new Error(`El PLU ${normalizedPlu} ya esta asignado a "${conflict.name}" (producto ${conflict.id})`);
+    error.statusCode = 409;
+    throw error;
+}
+
 async function resolveProductRecordCategory(pool, tenantId, record) {
     if (!record || typeof record !== 'object') return record;
 
@@ -4594,6 +4647,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
+            if (table === 'products') {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu);
+            }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
                 if (table === 'promotions') {
@@ -4632,6 +4689,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const filtered = await filterRecord(normalizedRecord, true); // excluir id del SET
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
+            }
+            if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId);
             }
             const scope = tenantWhereClause(table, tenantId);
             await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
@@ -4682,7 +4743,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
     } catch (err) {
         console.error('[DATA ERROR]', err.message);
-        res.status(500).json({ error: 'Error de datos: ' + err.message });
+        res.status(err.statusCode || 500).json({ error: 'Error de datos: ' + err.message });
     }
 });
 
@@ -4908,7 +4969,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         if (!Number.isFinite(price) || price < 0) {
             return res.status(400).json({ error: 'price inválido' });
         }
-        const plu = String(req.body?.plu || '').trim() || null;
+        const plu = normalizePluValue(req.body?.plu);
         const source = String(req.body?.source || 'manual').trim().slice(0, 50);
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -4919,6 +4980,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             [tenantId, productId]
         );
         if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        await assertUniqueProductPlu(pool, tenantId, plu, productId);
 
         const now = new Date();
         const [result] = await pool.query(
@@ -4934,7 +4996,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         return res.json({ ok: true, id: result.insertId });
     } catch (err) {
         console.error('[PRODUCT PRICES WRITE ERROR]', err.message);
-        res.status(500).json({ error: err.message });
+        res.status(err.statusCode || 500).json({ error: err.message });
     }
 });
 
@@ -6080,7 +6142,11 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Registrar en historial de eliminaciones
-        const deletedBy = req.body?.deleted_by_user_id || null;
+        const deletedByRaw = req.body?.deleted_by_user_id;
+        const deletedByParsed = Number.parseInt(deletedByRaw, 10);
+        const deletedBy = Number.isFinite(deletedByParsed) && deletedByParsed > 0
+            ? deletedByParsed
+            : null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
             `INSERT INTO deleted_sales_history

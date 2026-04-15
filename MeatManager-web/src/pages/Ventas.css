@@ -3,7 +3,8 @@
     grid-template-columns: 340px minmax(0, 1fr);
     grid-template-rows: 1fr;
     gap: 1.25rem;
-    height: calc(100vh - 4.5rem);
+    min-height: 0;
+    height: 100%;
     padding: 1rem;
     overflow: hidden;
 }

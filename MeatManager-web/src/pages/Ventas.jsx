@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -7,10 +7,11 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
-import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
+import { scaleService } from '../utils/SerialScaleService';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -160,12 +161,23 @@ const Ventas = () => {
         setToastMsg({ text, type });
         toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
     }, []);
+
+    React.useEffect(() => {
+        return () => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+            processingRef.current = false;
+            window.electronAPI?.offScaleDiagnostic?.();
+            scaleService.disconnect().catch(() => {});
+        };
+    }, []);
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['all']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -274,32 +286,27 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // ── FOCO PERMANENTE - POS WATCHDOG ────────────────────────────────────────
+    // Foco inicial y watchdog del scanner mientras no haya modales activos
     React.useEffect(() => {
-        // Enfoque inicial rápido
-        setTimeout(() => {
+        const initialFocusTimer = setTimeout(() => {
             if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
                 barcodeInputRef.current?.focus();
             }
         }, 100);
 
         const watchdog = setInterval(() => {
-            // Si hay un modal abierto, pausamos el watchdog
             if (
-                isEditingPriceRef.current || 
-                showPaymentModal || 
-                showQuickCreateModal || 
-                showDeleteTicketModal || 
-                showTicketPreview || 
-                showPrintConfirmModal
+                isEditingPriceRef.current
+                || showPaymentModal
+                || showQuickCreateModal
+                || showDeleteTicketModal
+                || showTicketPreview
+                || showPrintConfirmModal
             ) {
                 return;
             }
 
             const active = document.activeElement;
-            // No robar el foco si el usuario está interactuando con algún elemento
-            // clickeable o enfocable (botones, links, selects, etc).
-            // Esto evita que el watchdog interrumpa clicks en el menú de navegación.
             const interactiveTags = ['INPUT', 'TEXTAREA', 'BUTTON', 'A', 'SELECT', 'LABEL'];
             const isInteractive = interactiveTags.includes(active?.tagName)
                 || active?.getAttribute('tabindex') != null
@@ -309,18 +316,20 @@ const Ventas = () => {
             if (!isInteractive) {
                 barcodeInputRef.current?.focus();
             }
-        }, 500); // Revisa cada medio segundo
+        }, 500);
 
-        return () => clearInterval(watchdog);
+        return () => {
+            clearTimeout(initialFocusTimer);
+            clearInterval(watchdog);
+        };
     }, [
-        showPaymentModal, 
-        showQuickCreateModal, 
-        showDeleteTicketModal, 
-        showTicketPreview, 
+        showPaymentModal,
+        showQuickCreateModal,
+        showDeleteTicketModal,
+        showTicketPreview,
         editingPriceId,
-        showPrintConfirmModal
+        showPrintConfirmModal,
     ]);
-    // ────────────────────────────────────────────────────────────────────────
 
     React.useEffect(() => {
         let cancelled = false;
@@ -629,6 +638,41 @@ const Ventas = () => {
         });
     }, [productsCatalog, stockItems]);
 
+    const buildPluResolutionError = React.useCallback(({ rawCode, pluRaw, pluNumber, priceRecord, fallbackStockItem }) => {
+        const normalizedRaw = String(rawCode || '').trim();
+        const normalizedPlu = String(pluNumber || pluRaw || '').trim();
+        const duplicateProducts = productsCatalog.filter((product) => {
+            const plu = String(product?.plu || '').trim();
+            return plu && normalizedPlu && (plu === normalizedPlu || plu === String(pluRaw || '').trim());
+        });
+
+        const visibleProduct = priceRecord ? findProductByPriceRecord(priceRecord) : null;
+        const detailLines = [
+            `RAW: ${normalizedRaw || 'N/D'}`,
+            `PLU detectado: ${normalizedPlu || 'N/D'}`,
+        ];
+
+        if (!priceRecord) {
+            detailLines.push('Estado: el PLU no existe en el catálogo de ventas.');
+        } else if (visibleProduct) {
+            detailLines.push(`Producto visible: ${visibleProduct.name}`);
+        } else if (fallbackStockItem) {
+            detailLines.push(`Fallback stock encontrado: ${fallbackStockItem.name}`);
+        } else {
+            detailLines.push('Estado: el PLU existe, pero no se pudo resolver a un producto visible en Ventas.');
+        }
+
+        if (duplicateProducts.length > 1) {
+            detailLines.push(`Conflicto: el PLU ${normalizedPlu} está duplicado en ${duplicateProducts.length} productos (${duplicateProducts.map((product) => product.name).join(', ')}).`);
+        }
+
+        if (priceRecord?.price) {
+            detailLines.push(`Precio configurado: $${Number(priceRecord.price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`);
+        }
+
+        return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
+    }, [findProductByPriceRecord, productsCatalog]);
+
     // Filter products
     const filteredProducts = products.filter(p => {
         const term = barcodeInputValue.trim().toLowerCase();
@@ -669,8 +713,7 @@ const Ventas = () => {
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
             if (hasSearch) return nextIds;
-            const filteredPrev = prev.filter((id) => nextIds.includes(id));
-            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+            return prev.filter((id) => nextIds.includes(id));
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
@@ -691,17 +734,23 @@ const Ventas = () => {
         const plu = pluVal;
         const product = products.find((item) => item.id === productId);
         if (product) {
-            await ensureUnifiedProduct({
-                products: productsCatalog,
-                prices: [],
-                preferredProductId: product.productId,
-                name: product.name,
-                category: product.category,
-                unit: product.unit,
-                price,
-                plu,
-                source: 'ventas_manual',
-            });
+            try {
+                assertUniqueProductPluLocal(productsCatalog, plu, product.productId);
+                await ensureUnifiedProduct({
+                    products: productsCatalog,
+                    prices: [],
+                    preferredProductId: product.productId,
+                    name: product.name,
+                    category: product.category,
+                    unit: product.unit,
+                    price,
+                    plu,
+                    source: 'ventas_manual',
+                });
+            } catch (error) {
+                showToast(`⚠️ ${error.message}`, 'warning');
+                return;
+            }
         }
         await refreshVentasData();
         setEditingPriceId(null);
@@ -939,7 +988,13 @@ const Ventas = () => {
                         addToCart(fallbackProduct, weightToApply);
                         setScannerError('');
                     } else {
-                        setScannerError(`⚠️ PLU ${pluNumber} configurado pero el producto no fue encontrado. Revisá la configuración de precios.`);
+                        setScannerError(buildPluResolutionError({
+                            rawCode: cleanData,
+                            pluRaw,
+                            pluNumber,
+                            priceRecord,
+                            fallbackStockItem: stockItem,
+                        }));
                         setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
                     }
                 }
@@ -1620,9 +1675,14 @@ const Ventas = () => {
             throw new Error('La venta ya no existe.');
         }
 
+        const currentUserId = Number(currentUser?.id);
+        const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
+            ? currentUserId
+            : null;
+
         // Anular de forma atómica en el servidor: stock + balance + historial + delete
         await deleteVenta(id, {
-            deleted_by_user_id: currentUser?.id || null,
+            deleted_by_user_id: deletedByUserId,
             deleted_by_username: currentUser?.username || 'Usuario desconocido',
         });
 
@@ -2801,11 +2861,18 @@ const Ventas = () => {
 
                     {/* Buscador */}
                     <input
-                        type="text"
+                        type="search"
+                        id="delete-ticket-search"
+                        name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
                         onChange={e => { setDeleteTicketSearch(e.target.value); setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                         autoFocus
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-form-type="other"
                         style={{
                             padding: '0.6rem 0.9rem',
                             borderRadius: 'var(--radius-md)',
@@ -2866,13 +2933,23 @@ const Ventas = () => {
                                     ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
-                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <form
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            handleDeleteTicket(s.id);
+                                        }}
+                                        autoComplete="off"
+                                        style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                    >
                                         <input
                                             type="password"
+                                            id={`ticket-delete-authorization-code-${s.id}`}
+                                            name="ticket-delete-authorization-code"
                                             inputMode="numeric"
                                             value={deleteAuthorizationCode}
                                             onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Código maestro"
+                                            autoComplete="one-time-code"
                                             style={{
                                                 width: '150px',
                                                 padding: '0.45rem 0.65rem',
@@ -2883,15 +2960,18 @@ const Ventas = () => {
                                                 fontSize: '0.82rem'
                                             }}
                                         />
-                                        <button onClick={() => handleDeleteTicket(s.id)}
+                                        <button
+                                            type="submit"
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
                                             Confirmar
                                         </button>
-                                        <button onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                                             style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.35rem 0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
                                             Cancelar
                                         </button>
-                                    </div>
+                                    </form>
                                 ) : (
                                     <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
                                         style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
@@ -3050,3 +3130,4 @@ const Ventas = () => {
 };
 
 export default Ventas;
+
