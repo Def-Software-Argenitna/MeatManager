@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -11,6 +11,7 @@ import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedPr
 import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
+import { scaleService } from '../utils/SerialScaleService';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -176,7 +177,7 @@ const Ventas = () => {
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['all']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -285,49 +286,11 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // ── FOCO PERMANENTE - POS WATCHDOG ────────────────────────────────────────
+    // Foco inicial al montar el componente únicamente
     React.useEffect(() => {
-        // Enfoque inicial rápido
-        setTimeout(() => {
-            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 100);
-
-        const watchdog = setInterval(() => {
-            // Si hay un modal abierto, pausamos el watchdog
-            if (
-                isEditingPriceRef.current || 
-                showPaymentModal || 
-                showQuickCreateModal || 
-                showDeleteTicketModal || 
-                showTicketPreview || 
-                showPrintConfirmModal
-            ) {
-                return;
-            }
-
-            const active = document.activeElement;
-            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-
-            // Si el foco se perdió y está en el "body" u otro elemento no interactivo
-            // forzamos el foco de nuevo al scanner.
-            // Si ya está en algún INPUT (buscador, manual, etc), respetamos y no tocamos nada.
-            if (!isInput) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 500); // Revisa cada medio segundo
-
-        return () => clearInterval(watchdog);
-    }, [
-        showPaymentModal, 
-        showQuickCreateModal, 
-        showDeleteTicketModal, 
-        showTicketPreview, 
-        editingPriceId,
-        showPrintConfirmModal
-    ]);
-    // ────────────────────────────────────────────────────────────────────────
+        const t = setTimeout(() => { barcodeInputRef.current?.focus(); }, 120);
+        return () => clearTimeout(t);
+    }, []);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -711,8 +674,7 @@ const Ventas = () => {
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
             if (hasSearch) return nextIds;
-            const filteredPrev = prev.filter((id) => nextIds.includes(id));
-            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+            return prev.filter((id) => nextIds.includes(id));
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
@@ -1729,37 +1691,6 @@ const Ventas = () => {
                 ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
             </div>
         )}
-        {/* TOP BAR - Premium TPV Style */}
-        <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.75rem 1.5rem', background: 'rgba(10, 10, 10, 0.8)',
-            backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.05)',
-            color: 'var(--color-text-main)', zIndex: 100
-        }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ width: '32px', height: '32px', background: 'var(--color-primary)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Beef size={20} color="#000" />
-                    </div>
-                    <span style={{ fontWeight: '800', fontSize: '1.1rem', letterSpacing: '0.02em' }}>CENTRO DE <span style={{ color: 'var(--color-primary)' }}>VENTAS</span></span>
-                </div>
-                <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.1)' }}></div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', fontWeight: '500' }}>
-                    {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
-                    <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <User size={14} />
-                    </div>
-                    <span style={{ color: 'var(--color-text-muted)' }}>Cajero:</span>
-                    <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
-                </div>
-            </div>
-        </div>
-
         <div className={`pos-container animate-fade-in ${showCartMobile ? 'show-cart-mobile' : ''}`}>
             {/* Mobile Cart FAB */}
             <button
@@ -3107,3 +3038,4 @@ const Ventas = () => {
 };
 
 export default Ventas;
+
