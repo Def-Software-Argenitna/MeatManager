@@ -7,7 +7,7 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
-import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -733,17 +733,23 @@ const Ventas = () => {
         const plu = pluVal;
         const product = products.find((item) => item.id === productId);
         if (product) {
-            await ensureUnifiedProduct({
-                products: productsCatalog,
-                prices: [],
-                preferredProductId: product.productId,
-                name: product.name,
-                category: product.category,
-                unit: product.unit,
-                price,
-                plu,
-                source: 'ventas_manual',
-            });
+            try {
+                assertUniqueProductPluLocal(productsCatalog, plu, product.productId);
+                await ensureUnifiedProduct({
+                    products: productsCatalog,
+                    prices: [],
+                    preferredProductId: product.productId,
+                    name: product.name,
+                    category: product.category,
+                    unit: product.unit,
+                    price,
+                    plu,
+                    source: 'ventas_manual',
+                });
+            } catch (error) {
+                showToast(`⚠️ ${error.message}`, 'warning');
+                return;
+            }
         }
         await refreshVentasData();
         setEditingPriceId(null);
