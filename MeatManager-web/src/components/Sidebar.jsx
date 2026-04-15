@@ -50,8 +50,16 @@ const Sidebar = ({ isCollapsed }) => {
   const [branchNotif, setBranchNotif] = useState(0);
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
-  const [openGroups, setOpenGroups] = useState(() => {
-    const p = window.location.pathname;
+  const [openGroups, setOpenGroups] = useState({
+    operacion: true,
+    comercial: false,
+    produccion: false,
+    configuracion: false,
+  });
+
+  // Mantener abierto el grupo que contiene la ruta activa
+  React.useEffect(() => {
+    const p = location.pathname;
     const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
       (path) => p === path || p.startsWith(path + '/')
     );
@@ -62,15 +70,11 @@ const Sidebar = ({ isCollapsed }) => {
       (path) => p === path || p.startsWith(path + '/')
     );
     const inConfiguracion = p.startsWith('/config') || p === '/manual';
-    // Si ninguno coincide, abrir Operación por defecto
-    const anyOpen = inOperacion || inComercial || inProduccion || inConfiguracion;
-    return {
-      operacion: inOperacion || !anyOpen,
-      comercial: inComercial,
-      produccion: inProduccion,
-      configuracion: inConfiguracion,
-    };
-  });
+    if (inOperacion) setOpenGroups(prev => ({ ...prev, operacion: true }));
+    if (inComercial) setOpenGroups(prev => ({ ...prev, comercial: true }));
+    if (inProduccion) setOpenGroups(prev => ({ ...prev, produccion: true }));
+    if (inConfiguracion) setOpenGroups(prev => ({ ...prev, configuracion: true }));
+  }, [location.pathname]);
 
   React.useEffect(() => {
     const checkMaster = async () => {
