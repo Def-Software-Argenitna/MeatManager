@@ -59,6 +59,67 @@ Ejecucion unica:
 npm run once
 ```
 
+## App de escritorio (tray + autostart + updater)
+
+Esta version incluye scaffold de escritorio `MeatManager Bridge` con:
+
+- icono en bandeja del sistema (tray),
+- ventana de estado,
+- arranque automatico con Windows,
+- bridge ejecutandose en segundo plano,
+- chequeo de updates desde GitHub Releases.
+
+### Variables de auto-update (GitHub Releases)
+
+Definir en entorno de la app desktop:
+
+- `BRIDGE_UPDATE_OWNER` (usuario/organizacion GitHub)
+- `BRIDGE_UPDATE_REPO` (repositorio)
+
+Si no se definen, el bridge funciona normal pero sin update automatico.
+
+### Comandos desktop
+
+```bash
+npm run start:desktop
+```
+
+Empaquetado de prueba:
+
+```bash
+npm run pack:desktop
+```
+
+Instalador Windows NSIS:
+
+```bash
+npm run dist:desktop
+```
+
+Notas:
+
+- En modo desktop, el runtime del bridge se guarda en `%APPDATA%/MeatManager Bridge/runtime`.
+- `public/branding/def-software-tray.png` y `def-software-tray-update.png` son los iconos base de tray.
+- Si el repo tiene `repository.url` apuntando a GitHub, el updater usa ese destino por defecto.
+
+## Releases desde GitHub (auto-update)
+
+Hay workflow en:
+
+- `.github/workflows/bridge-desktop-release.yml`
+
+Publica instalador al pushear tags:
+
+- `bridge-v0.1.0`
+- `bridge-v0.1.1`
+
+Para firma digital en Windows (opcional), configurar secrets del repo:
+
+- `CSC_LINK` (certificado code-signing en base64 o URL)
+- `CSC_KEY_PASSWORD`
+
+Si no hay certificado, el instalador se publica sin firma (puede mostrar advertencia de editor desconocido en Windows).
+
 ## Endpoints locales
 
 - `GET /health`

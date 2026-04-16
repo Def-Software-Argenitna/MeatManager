@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MeatManager Bridge</title>
+  <style>
+    :root {
+      --bg: #0b1220;
+      --card: #121c30;
+      --line: #1f2a43;
+      --text: #e7ecf7;
+      --muted: #9fb0d1;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
+      --cta: #38bdf8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: radial-gradient(circle at top, #14213b 0%, var(--bg) 58%);
+      color: var(--text);
+      font-family: "Segoe UI", "Inter", sans-serif;
+    }
+    .wrap {
+      max-width: 980px;
+      margin: 0 auto;
+      padding: 18px;
+      display: grid;
+      gap: 14px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: color-mix(in oklab, var(--card) 94%, #000);
+      padding: 14px;
+    }
+    .head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    .sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .86rem;
+    }
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: .8rem;
+      padding: 6px 10px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+    .dot.ok { background: var(--ok); }
+    .dot.bad { background: var(--bad); }
+    .dot.warn { background: var(--warn); }
+    .label {
+      color: var(--muted);
+      font-size: .8rem;
+      margin-bottom: 6px;
+    }
+    .value {
+      font-size: .95rem;
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #16233d;
+      color: var(--text);
+      padding: 9px 12px;
+      font-size: .86rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.primary {
+      background: color-mix(in oklab, var(--cta) 35%, #0f172a);
+      border-color: color-mix(in oklab, var(--cta) 40%, var(--line));
+    }
+    .event {
+      color: var(--muted);
+      font-size: .82rem;
+      border-top: 1px solid var(--line);
+      margin-top: 12px;
+      padding-top: 12px;
+      white-space: pre-wrap;
+    }
+    @media (max-width: 780px) {
+      .status-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="card">
+      <div class="head">
+        <div>
+          <h1>MeatManager Bridge</h1>
+          <div class="sub">Estado en tiempo real de la conexión con balanza y MeatManager.</div>
+        </div>
+        <div id="update-pill" class="pill"><span class="dot"></span><span>Sin novedades</span></div>
+      </div>
+    </section>
+
+    <section class="card status-grid">
+      <article>
+        <div class="label">Proceso Bridge</div>
+        <div id="bridge-process" class="value">-</div>
+      </article>
+      <article>
+        <div class="label">API local del bridge</div>
+        <div id="bridge-http" class="value">-</div>
+      </article>
+      <article>
+        <div class="label">Última sincronización</div>
+        <div id="last-run-at" class="value">-</div>
+      </article>
+      <article>
+        <div class="label">Último estado/error</div>
+        <div id="last-error" class="value">-</div>
+      </article>
+    </section>
+
+    <section class="card">
+      <div class="actions">
+        <button id="btn-restart">Reiniciar bridge</button>
+        <button id="btn-check-updates">Buscar actualización</button>
+        <button id="btn-install-update" class="primary">Aplicar actualización</button>
+        <button id="btn-open-logs">Abrir carpeta de logs</button>
+      </div>
+      <div id="event" class="event">Listo.</div>
+    </section>
+  </main>
+  <script src="./renderer.js"></script>
+</body>
+</html>

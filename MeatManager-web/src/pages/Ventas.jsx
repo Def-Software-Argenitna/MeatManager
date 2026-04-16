@@ -134,6 +134,7 @@ const Ventas = () => {
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
     const [quickProductPlu, setQuickProductPlu] = useState('');
     const [scannerError, setScannerError] = useState('');
+    const [isScaleSyncing, setIsScaleSyncing] = useState(false);
     const [barcodeInputValue, setBarcodeInputValue] = useState('');
     const barcodeInputRef = React.useRef(null);
     const [showDeleteTicketModal, setShowDeleteTicketModal] = useState(false);
@@ -296,6 +297,7 @@ const Ventas = () => {
             || showDeleteTicketModal
             || showTicketPreview
             || showPrintConfirmModal
+            || isScaleSyncing
         ) {
             return undefined;
         }
@@ -321,6 +323,7 @@ const Ventas = () => {
         showTicketPreview,
         editingPriceId,
         showPrintConfirmModal,
+        isScaleSyncing,
     ]);
 
     React.useEffect(() => {
@@ -761,15 +764,29 @@ const Ventas = () => {
         console.log("📦 Escaneando código RAW:", cleanData, `(${cleanData.length} chars)`);
 
         const loadBridgeTicketFromBarcode = async (barcodeValue) => {
-            const payload = await fetchScaleTicketByBarcode(barcodeValue);
-            const rows = Array.isArray(payload?.items) ? payload.items : [];
-            if (!rows.length) {
-                setScannerError('⚠️ El ticket existe pero no tiene items para cargar.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+            setIsScaleSyncing(true);
+            try {
+                let payload = await fetchScaleTicketByBarcode(barcodeValue);
+                let rows = Array.isArray(payload?.items) ? payload.items : [];
 
-            const previewItems = rows.map((row) => {
+                // Espera activa corta: el ticket puede existir antes de que sus items queden persistidos.
+                if (!rows.length) {
+                    const retryUntil = Date.now() + 12000;
+                    while (!rows.length && Date.now() < retryUntil) {
+                        await new Promise((resolve) => setTimeout(resolve, 700));
+                        payload = await fetchScaleTicketByBarcode(barcodeValue);
+                        rows = Array.isArray(payload?.items) ? payload.items : [];
+                    }
+                }
+
+                if (!rows.length) {
+                    setScannerError('');
+                    showToast('El ticket todavía se está sincronizando. Reintentá en unos segundos.', 'warning');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
+
+                const previewItems = rows.map((row) => {
                 const pluRawFromItem = String(row?.plu || '').trim();
                 const pluRawFromProduct = String(row?.product?.plu || '').trim();
                 const pluRaw = pluRawFromItem || pluRawFromProduct;
@@ -839,24 +856,21 @@ const Ventas = () => {
                 };
             });
 
-            if (!previewItems.length) {
-                setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+                if (!previewItems.length) {
+                    setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
 
-            setTicketPreviewItems(previewItems);
-            setShowTicketPreview(true);
-            setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
-            const vendor = String(payload?.ticket?.vendorCode || '').trim();
-            if (vendor) {
-                setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
-                setTimeout(() => setScannerError(''), 3000);
-            } else {
+                setTicketPreviewItems(previewItems);
+                setShowTicketPreview(true);
+                setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
                 setScannerError('');
+                playBeep();
+                return true;
+            } finally {
+                setIsScaleSyncing(false);
             }
-            playBeep();
-            return true;
         };
 
         // ============ FORMATO TICKET BRIDGE (MM...) ============
@@ -1759,6 +1773,37 @@ const Ventas = () => {
                 }}
             >
                 ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
+            </div>
+        )}
+        {isScaleSyncing && (
+            <div
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    zIndex: 99990,
+                    backgroundColor: 'rgba(0,0,0,0.72)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <div
+                    style={{
+                        width: 'min(420px, 92vw)',
+                        borderRadius: '14px',
+                        border: '1px solid rgba(245, 158, 11, 0.45)',
+                        background: 'rgba(13, 18, 24, 0.96)',
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+                        padding: '1rem 1.1rem',
+                    }}
+                >
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#fbbf24' }}>
+                        Sincronizando ventas de la balanza...
+                    </div>
+                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                        Esperá un momento, estamos buscando el ticket y sus artículos.
+                    </div>
+                </div>
             </div>
         )}
         <div className={`pos-container animate-fade-in ${showCartMobile ? 'show-cart-mobile' : ''}`}>
