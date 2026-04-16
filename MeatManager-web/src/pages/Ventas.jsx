@@ -766,10 +766,22 @@ const Ventas = () => {
         const loadBridgeTicketFromBarcode = async (barcodeValue) => {
             setIsScaleSyncing(true);
             try {
-                const payload = await fetchScaleTicketByBarcode(barcodeValue);
-                const rows = Array.isArray(payload?.items) ? payload.items : [];
+                let payload = await fetchScaleTicketByBarcode(barcodeValue);
+                let rows = Array.isArray(payload?.items) ? payload.items : [];
+
+                // Espera activa corta: el ticket puede existir antes de que sus items queden persistidos.
                 if (!rows.length) {
-                    setScannerError('⚠️ El ticket existe pero no tiene items para cargar.');
+                    const retryUntil = Date.now() + 12000;
+                    while (!rows.length && Date.now() < retryUntil) {
+                        await new Promise((resolve) => setTimeout(resolve, 700));
+                        payload = await fetchScaleTicketByBarcode(barcodeValue);
+                        rows = Array.isArray(payload?.items) ? payload.items : [];
+                    }
+                }
+
+                if (!rows.length) {
+                    setScannerError('');
+                    showToast('El ticket todavía se está sincronizando. Reintentá en unos segundos.', 'warning');
                     setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
                     return true;
                 }
@@ -853,13 +865,7 @@ const Ventas = () => {
                 setTicketPreviewItems(previewItems);
                 setShowTicketPreview(true);
                 setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
-                const vendor = String(payload?.ticket?.vendorCode || '').trim();
-                if (vendor) {
-                    setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
-                    setTimeout(() => setScannerError(''), 3000);
-                } else {
-                    setScannerError('');
-                }
+                setScannerError('');
                 playBeep();
                 return true;
             } finally {
