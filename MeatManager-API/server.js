@@ -5491,6 +5491,35 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             );
         }
 
+        // Fallback extra de resiliencia: si por cualquier motivo el mapeo por
+        // device/ticket no matchea (cambio de device_id, recaptura parcial, etc),
+        // buscamos por cualquier identificador estable del ticket dentro del tenant.
+        if (!itemRows.length) {
+            const anyIdConditions = [];
+            const anyIdParams = [tenantId];
+            if (ticket.ticket_id) {
+                anyIdConditions.push('s.ticket_id = ?');
+                anyIdParams.push(ticket.ticket_id);
+            }
+            if (ticket.ticket_barcode) {
+                anyIdConditions.push('UPPER(s.ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.ticket_barcode);
+            }
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                anyIdConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.printed_ticket_barcode);
+            }
+
+            if (anyIdConditions.length > 0) {
+                [itemRows] = await pool.query(
+                    `${itemBaseSql}
+                       AND (${anyIdConditions.join(' OR ')})
+                     ORDER BY s.sale_at DESC, s.line_no ASC`,
+                    anyIdParams
+                );
+            }
+        }
+
         const items = itemRows.map((row) => {
             const grams = Number(row.grams || 0);
             const units = Number(row.units || 0);
