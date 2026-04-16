@@ -371,6 +371,35 @@ const ConfiguracionPromociones = () => {
         };
     };
 
+    const tierPayloadPreview = useMemo(() => {
+        const normalized = buildNormalizedTiers().sort((a, b) => a.min_qty_kg - b.min_qty_kg);
+        return normalized.map((tier, index) => ({
+            ...tier,
+            ...buildTierPromoIdentity(index),
+        }));
+    }, [
+        editingId,
+        extraPromoTiers,
+        form.min_qty_kg,
+        form.promo_name,
+        form.promo_plu,
+        form.promo_price_mode,
+        form.promo_total_price,
+        promoSuggestion.nextPromoNumber,
+    ]);
+
+    const tierCodesPreviewText = useMemo(
+        () => tierPayloadPreview.map((tier) => tier.promo_plu).filter(Boolean).join(', '),
+        [tierPayloadPreview]
+    );
+    const tierCodeSummary = useMemo(
+        () => tierPayloadPreview
+            .filter((tier) => tier.promo_plu)
+            .map((tier, index) => `${tier.promo_name || `P${index + 1}`}: ${tier.promo_plu}`)
+            .join(' · '),
+        [tierPayloadPreview]
+    );
+
     const togglePromoStatus = async (row) => {
         try {
             setSaving(true);
@@ -393,6 +422,7 @@ const ConfiguracionPromociones = () => {
         const productName = String(form.product_name || '').trim();
         const promoName = String(form.promo_name || '').trim();
         const tiers = buildNormalizedTiers();
+        const sorted = [...tiers].sort((a, b) => a.min_qty_kg - b.min_qty_kg);
 
         if (!productName) throw new Error('Selecciona un articulo para la promo.');
         if (!promoName) throw new Error('Ingresa un nombre para el codigo promo.');
@@ -402,7 +432,7 @@ const ConfiguracionPromociones = () => {
             if (!(tier.promo_total_price > 0)) throw new Error(`El precio promo del nivel ${index + 1} debe ser mayor a 0.`);
         });
 
-        const tierPromoPluValues = tiers.map((_, index) => buildTierPromoIdentity(index).promo_plu);
+        const tierPromoPluValues = sorted.map((_, index) => buildTierPromoIdentity(index).promo_plu);
         tierPromoPluValues.forEach((promoPlu, index) => {
             if (!promoPlu || Number(promoPlu) < 1000) {
                 throw new Error(`El PLU de promo del nivel ${index + 1} debe ser numérico y mayor o igual a 1000.`);
@@ -419,7 +449,6 @@ const ConfiguracionPromociones = () => {
         ));
         if (duplicatedPromoPlu) throw new Error(`El PLU promo ${duplicatedPromoPlu} ya existe. Usa otro código base.`);
 
-        const sorted = [...tiers].sort((a, b) => a.min_qty_kg - b.min_qty_kg);
         for (let i = 1; i < sorted.length; i += 1) {
             if (Math.abs(sorted[i].min_qty_kg - sorted[i - 1].min_qty_kg) < 0.0005) {
                 throw new Error('No puede haber niveles con el mismo mínimo de kg.');
@@ -447,9 +476,7 @@ const ConfiguracionPromociones = () => {
     const previewLine = useMemo(() => {
         const product = selectedProductName || 'Artículo';
         const branchScope = form.branch_id ? `Solo en ${selectedBranchName}` : 'Disponible en todas las sucursales';
-        const tiers = buildNormalizedTiers()
-            .filter((tier) => tier.min_qty_kg > 0 && tier.promo_total_price > 0)
-            .sort((a, b) => a.min_qty_kg - b.min_qty_kg);
+        const tiers = tierPayloadPreview.filter((tier) => tier.min_qty_kg > 0 && tier.promo_total_price > 0);
         const stockRule = form.stock_mode === PROMO_STOCK_MODES.FIXED
             ? `Cupo promo: ${form.stock_cap_kg_limit ? `${formatKg(form.stock_cap_kg_limit)} kg` : 'X kg'}`
             : '';
@@ -472,6 +499,11 @@ const ConfiguracionPromociones = () => {
                                         ? `$${formatMoney(tier.promo_total_price)} por kg`
                                         : `$${formatMoney(tier.promo_total_price)} total`}
                                 </span>
+                                {tier.promo_plu ? (
+                                    <span style={{ marginLeft: '0.55rem', fontSize: '0.75rem', opacity: 0.9 }}>
+                                        · Código {tier.promo_plu}
+                                    </span>
+                                ) : null}
                             </div>
                         ))}
                     </div>
@@ -485,7 +517,7 @@ const ConfiguracionPromociones = () => {
                 </div>
             </div>
         );
-    }, [extraPromoTiers, form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_price_mode, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
+    }, [form.branch_id, form.end_condition, form.end_date, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName, tierPayloadPreview]);
 
     const savePromotion = async ({ keepCreating = false } = {}) => {
         try {
@@ -498,10 +530,9 @@ const ConfiguracionPromociones = () => {
                 const identity = buildTierPromoIdentity(index);
                 return { ...tier, ...identity };
             });
-            const firstCreated = tierPayloads[0] || null;
-            const lastCreated = tierPayloads[tierPayloads.length - 1] || null;
-            const createdPromoIdentity = firstCreated
-                ? ` PLUs: ${firstCreated.promo_plu}${lastCreated && lastCreated.promo_plu !== firstCreated.promo_plu ? ` a ${lastCreated.promo_plu}` : ''}.`
+            const createdPromoCodes = tierPayloads.map((tier) => tier.promo_plu).filter(Boolean);
+            const createdPromoIdentity = createdPromoCodes.length
+                ? ` Códigos: ${createdPromoCodes.join(', ')}.`
                 : '';
 
             const basePayload = {
@@ -593,7 +624,8 @@ const ConfiguracionPromociones = () => {
                 let successText = '';
                 if (editingId) {
                     const extraText = createdCount > 0 ? ` Se agregaron ${createdCount} niveles nuevos.` : '';
-                    successText = `Promoción actualizada con éxito.${extraText}`;
+                    const identityText = createdPromoIdentity || '';
+                    successText = `Promoción actualizada con éxito.${extraText}${identityText}`;
                 } else {
                     const baseText = createdCount > 1
                         ? `Se crearon ${createdCount} niveles de promoción.`
@@ -986,6 +1018,22 @@ const ConfiguracionPromociones = () => {
                                                         </button>
                                                     </div>
                                                 ))}
+                                            </div>
+                                        )}
+                                        {tierCodesPreviewText && (
+                                            <div
+                                                style={{
+                                                    padding: '0.55rem 0.7rem',
+                                                    border: '1px dashed rgba(255,255,255,0.15)',
+                                                    borderRadius: '10px',
+                                                    fontSize: '0.78rem',
+                                                    color: 'var(--color-text-muted)',
+                                                }}
+                                            >
+                                                <strong style={{ color: 'var(--color-text-main)', marginRight: '0.35rem' }}>
+                                                    Códigos que se crearán:
+                                                </strong>
+                                                <span>{tierCodeSummary}</span>
                                             </div>
                                         )}
                                     </div>
