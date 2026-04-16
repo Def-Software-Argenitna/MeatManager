@@ -1777,6 +1777,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
             await ensureColumn(conn, 'promotions', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'promotions', 'promo_price_mode', '`promo_price_mode` VARCHAR(20) NOT NULL DEFAULT \'total_kg\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
             await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
@@ -3341,6 +3342,7 @@ function getSchemaTables() {
             product_name        VARCHAR(150) NOT NULL,
             min_qty_kg          DECIMAL(12,3) NOT NULL,
             promo_total_price   DECIMAL(12,2) NOT NULL,
+            promo_price_mode    VARCHAR(20) NOT NULL DEFAULT 'total_kg',
             stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
             stock_cap_kg_limit  DECIMAL(12,3) NULL,
             end_condition       VARCHAR(20) NOT NULL DEFAULT 'none',
@@ -4409,13 +4411,17 @@ function formatPromoBroadcastMessage({ businessName, promo }) {
     const safeBusiness = String(businessName || '').trim();
     const safeProduct = String(promo?.product_name || 'Producto').trim();
     const minKg = Number(promo?.min_qty_kg || 0).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-    const total = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPrice = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPriceMode = String(promo?.promo_price_mode || 'total_kg').trim().toLowerCase();
+    const promoText = promoPriceMode === 'per_kg'
+        ? `${safeProduct}: desde *${minKg} kg*, cada kg a *$${promoPrice}*`
+        : `${safeProduct}: llevando *${minKg} kg* pagás *$${promoPrice}* en total`;
     const header = safeBusiness ? `🥩 *${safeBusiness}*` : '🥩 *Nueva promo*';
     return [
         header,
         '',
         '🔥 *PROMOCIÓN NUEVA*',
-        `${safeProduct}: llevando *${minKg} kg* pagás *$${total}*`,
+        promoText,
         '',
         'Te esperamos en el local.',
     ].join('\n');
@@ -4431,7 +4437,7 @@ async function getTenantSettingValue(pool, tenantId, key) {
 
 async function getActivePromotions(pool, tenantId, limit = 25) {
     const [rows] = await pool.query(
-        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, active
+        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, promo_price_mode, active
          FROM promotions
          WHERE \`${TENANT_COLUMN}\` = ? AND active = 1
          ORDER BY id DESC
@@ -4659,6 +4665,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                         product_name: filtered.product_name || null,
                         min_qty_kg: filtered.min_qty_kg || 0,
                         promo_total_price: filtered.promo_total_price || 0,
+                        promo_price_mode: filtered.promo_price_mode || 'total_kg',
                         active: Number(filtered.active ?? 1) === 1,
                     };
                     if (promoToBroadcast.active) {
