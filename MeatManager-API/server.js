@@ -6491,6 +6491,41 @@ app.get('/api/internal-admin/clients', verifyInternalAdminSession, async (req, r
     }
 });
 
+app.get('/api/internal-admin/clients/:clientId/branches', verifyInternalAdminSession, async (req, res) => {
+    try {
+        const clientId = Number.parseInt(req.params.clientId, 10);
+        if (!Number.isFinite(clientId) || clientId <= 0) {
+            return res.status(400).json({ error: 'clientId invalido' });
+        }
+
+        const conn = await clientsControlPool.getConnection();
+        try {
+            const [rows] = await conn.query(
+                `SELECT
+                    b.id,
+                    b.clientId,
+                    b.name,
+                    b.address,
+                    b.status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
+                 WHERE b.clientId = ?
+                 ORDER BY b.name ASC`,
+                [clientId]
+            );
+
+            return res.json({
+                ok: true,
+                branches: rows,
+            });
+        } finally {
+            conn.release();
+        }
+    } catch (err) {
+        console.error('[INTERNAL ADMIN CLIENT BRANCHES ERROR]', err.message);
+        return res.status(500).json({ error: 'No se pudieron leer las sucursales del cliente' });
+    }
+});
+
 // ── RUTA: GET /api/firebase-users ──────────────────────────────────────────
 // Lista usuarios web/Firebase de la misma empresa (mismo CUIT).
 app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {

@@ -6,9 +6,6 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
     checkUpdates: () => ipcRenderer.invoke('update:check'),
     installUpdateNow: () => ipcRenderer.invoke('update:install-now'),
     openLogDir: () => ipcRenderer.invoke('app:open-log-dir'),
-    getConfig: () => ipcRenderer.invoke('config:get'),
-    saveConfig: (values) => ipcRenderer.invoke('config:save', values),
-    listScalePorts: () => ipcRenderer.invoke('scale:list-ports'),
     onStatus: (handler) => {
         const listener = (_, payload) => handler(payload);
         ipcRenderer.on('bridge-status', listener);
