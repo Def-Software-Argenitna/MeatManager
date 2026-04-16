@@ -203,7 +203,7 @@ const ConfiguracionPromociones = () => {
             .filter((value) => Number.isFinite(value) && value > 0);
 
         const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
-        const suggestedName = productName ? `${productName} P${nextPromoNumber}` : '';
+        const suggestedName = productName ? `${productName}_P${nextPromoNumber}` : '';
         const suggestedPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
 
         return { nextPromoNumber, suggestedName, suggestedPlu };
@@ -235,7 +235,7 @@ const ConfiguracionPromociones = () => {
             })
             .filter((value) => Number.isFinite(value) && value > 0);
         const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
-        const suggestedPromoName = productName ? `${productName} P${nextPromoNumber}` : '';
+        const suggestedPromoName = productName ? `${productName}_P${nextPromoNumber}` : '';
         const suggestedPromoPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
 
         setForm((prev) => ({
@@ -795,7 +795,7 @@ const ConfiguracionPromociones = () => {
                                                 value={form.promo_name}
                                                 disabled={readOnly || saving || !form.product_id}
                                                 onChange={(e) => setField('promo_name', e.target.value)}
-                                                placeholder={promoSuggestion.suggestedName || 'Articulo P1'}
+                                                placeholder={promoSuggestion.suggestedName || 'Articulo_P1'}
                                             />
                                         </div>
                                         <div className="input-field">
