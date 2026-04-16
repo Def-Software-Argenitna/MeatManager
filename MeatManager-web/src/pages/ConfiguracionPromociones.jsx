@@ -7,7 +7,7 @@ import {
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
-import { normalizePromotion, PROMO_END_CONDITIONS, PROMO_STOCK_MODES } from '../utils/promotions';
+import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_STOCK_MODES } from '../utils/promotions';
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
@@ -28,12 +28,17 @@ const endConditionLabel = (value) => {
 };
 
 const KG_PRESETS = ['0.500', '1.000', '1.500', '2.000', '3.000', '5.000'];
+const PROMO_PLU_STEP = 1000;
+const PROMO_SUFFIX_REGEX = /_P(\d+)$/i;
 
 const emptyForm = {
     branch_id: '',
     category_id_filter: '',
     product_id: '',
     product_name: '',
+    promo_name: '',
+    promo_plu: '',
+    promo_unit_price: '',
     min_qty_kg: '',
     promo_total_price: '',
     stock_mode: PROMO_STOCK_MODES.ALL,
@@ -160,6 +165,32 @@ const ConfiguracionPromociones = () => {
         const product = productsById.get(Number(form.product_id));
         return String(product?.name || form.product_name || '');
     }, [form.product_id, form.product_name, productsById]);
+    const selectedProduct = useMemo(() => {
+        if (!form.product_id) return null;
+        return productsById.get(Number(form.product_id)) || null;
+    }, [form.product_id, productsById]);
+
+    const promoSuggestion = useMemo(() => {
+        if (!selectedProduct) return { nextPromoNumber: 1, suggestedName: '', suggestedPlu: '' };
+
+        const productId = Number(selectedProduct.id);
+        const productName = String(selectedProduct.name || '').trim();
+        const basePlu = Number(normalizePluCode(selectedProduct.plu));
+        const relatedPromos = (Array.isArray(promotions) ? promotions : []).filter((row) => Number(row?.product_id || 0) === productId);
+
+        const usedNumbers = relatedPromos
+            .map((row) => {
+                const match = String(row?.promo_name || '').trim().match(PROMO_SUFFIX_REGEX);
+                return match ? Number(match[1]) : 0;
+            })
+            .filter((value) => Number.isFinite(value) && value > 0);
+
+        const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
+        const suggestedName = productName ? `${productName}_P${nextPromoNumber}` : '';
+        const suggestedPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
+
+        return { nextPromoNumber, suggestedName, suggestedPlu };
+    }, [promotions, selectedProduct]);
 
     const selectedBranchName = useMemo(() => {
         if (!form.branch_id) return 'Todas las sucursales';
@@ -173,14 +204,30 @@ const ConfiguracionPromociones = () => {
     const selectProduct = (productIdRaw) => {
         const productId = productIdRaw ? Number(productIdRaw) : null;
         if (!productId) {
-            setForm((prev) => ({ ...prev, product_id: '', product_name: '' }));
+            setForm((prev) => ({ ...prev, product_id: '', product_name: '', promo_name: '', promo_plu: '' }));
             return;
         }
         const product = productsById.get(productId);
+        const productName = String(product?.name || '');
+        const basePlu = Number(normalizePluCode(product?.plu));
+        const relatedPromos = (Array.isArray(promotions) ? promotions : []).filter((row) => Number(row?.product_id || 0) === productId);
+        const usedNumbers = relatedPromos
+            .map((row) => {
+                const match = String(row?.promo_name || '').trim().match(PROMO_SUFFIX_REGEX);
+                return match ? Number(match[1]) : 0;
+            })
+            .filter((value) => Number.isFinite(value) && value > 0);
+        const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
+        const suggestedPromoName = productName ? `${productName}_P${nextPromoNumber}` : '';
+        const suggestedPromoPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
+
         setForm((prev) => ({
             ...prev,
             product_id: String(productId),
-            product_name: String(product?.name || ''),
+            product_name: productName,
+            promo_name: suggestedPromoName,
+            promo_plu: suggestedPromoPlu,
+            promo_unit_price: prev.promo_unit_price || '',
         }));
     };
 
@@ -199,6 +246,9 @@ const ConfiguracionPromociones = () => {
             category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
             product_id: row.product_id != null ? String(row.product_id) : '',
             product_name: String(row.product_name || ''),
+            promo_name: String(row.promo_name || ''),
+            promo_plu: normalizePluCode(row.promo_plu),
+            promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
@@ -221,6 +271,9 @@ const ConfiguracionPromociones = () => {
             category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
             product_id: row.product_id != null ? String(row.product_id) : '',
             product_name: String(row.product_name || ''),
+            promo_name: String(row.promo_name || ''),
+            promo_plu: normalizePluCode(row.promo_plu),
+            promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
@@ -234,6 +287,16 @@ const ConfiguracionPromociones = () => {
         setStatus({ type: 'ok', text: 'Promo duplicada al formulario. Ajusta y guarda.' });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
+
+    useEffect(() => {
+        const minQty = toNumber(form.min_qty_kg, 3);
+        const unitPrice = toNumber(form.promo_unit_price, 2);
+        if (!(minQty > 0) || !(unitPrice > 0)) return;
+        const computedTotal = toNumber(minQty * unitPrice, 2);
+        const currentTotal = toNumber(form.promo_total_price, 2);
+        if (Math.abs(computedTotal - currentTotal) <= 0.009) return;
+        setForm((prev) => ({ ...prev, promo_total_price: String(computedTotal) }));
+    }, [form.min_qty_kg, form.promo_total_price, form.promo_unit_price]);
 
     const togglePromoStatus = async (row) => {
         try {
@@ -255,10 +318,22 @@ const ConfiguracionPromociones = () => {
 
     const validateForm = () => {
         const minQty = toNumber(form.min_qty_kg, 3);
-        const promoTotal = toNumber(form.promo_total_price, 2);
+        const promoUnitPrice = toNumber(form.promo_unit_price, 2);
+        const promoTotal = promoUnitPrice > 0
+            ? toNumber(minQty * promoUnitPrice, 2)
+            : toNumber(form.promo_total_price, 2);
         const productName = String(form.product_name || '').trim();
+        const promoName = String(form.promo_name || '').trim();
+        const promoPlu = normalizePluCode(form.promo_plu);
 
         if (!productName) throw new Error('Selecciona un articulo para la promo.');
+        if (!promoName) throw new Error('Ingresa un nombre para el codigo promo.');
+        if (!promoPlu || Number(promoPlu) < 1000) throw new Error('El PLU de promo debe ser numerico y mayor o igual a 1000.');
+        const duplicatedPromoPlu = (Array.isArray(promotions) ? promotions : []).find((row) => (
+            normalizePluCode(row?.promo_plu) === promoPlu
+            && Number(row?.id || 0) !== Number(editingId || 0)
+        ));
+        if (duplicatedPromoPlu) throw new Error('Ese PLU promo ya existe. Usa el sugerido o uno libre.');
         if (!(minQty > 0)) throw new Error('El minimo en kg debe ser mayor a 0.');
         if (!(promoTotal > 0)) throw new Error('El precio promo debe ser mayor a 0.');
 
@@ -317,8 +392,15 @@ const ConfiguracionPromociones = () => {
                 branch_id: form.branch_id ? Number(form.branch_id) : null,
                 product_id: form.product_id ? Number(form.product_id) : null,
                 product_name: String(form.product_name || '').trim(),
+                promo_name: String(form.promo_name || '').trim(),
+                promo_plu: normalizePluCode(form.promo_plu) || null,
+                promo_unit_price: toNumber(form.promo_unit_price, 2) > 0
+                    ? toNumber(form.promo_unit_price, 2)
+                    : null,
                 min_qty_kg: toNumber(form.min_qty_kg, 3),
-                promo_total_price: toNumber(form.promo_total_price, 2),
+                promo_total_price: toNumber(form.promo_unit_price, 2) > 0
+                    ? toNumber(toNumber(form.min_qty_kg, 3) * toNumber(form.promo_unit_price, 2), 2)
+                    : toNumber(form.promo_total_price, 2),
                 stock_mode: form.stock_mode || PROMO_STOCK_MODES.ALL,
                 stock_cap_kg_limit: form.stock_mode === PROMO_STOCK_MODES.FIXED
                     ? toNumber(form.stock_cap_kg_limit, 3)
@@ -406,6 +488,12 @@ const ConfiguracionPromociones = () => {
                         <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong>
                     </span>
                 </div>
+                {(row.promo_name || row.promo_plu) && (
+                    <div className="promo-detail-item">
+                        <FiTag className="text-muted"/>
+                        <span>{String(row.promo_name || '').trim() || 'Promo'} {row.promo_plu ? `· PLU ${row.promo_plu}` : ''}</span>
+                    </div>
+                )}
                 <div className="promo-details-grid">
                     <div className="promo-detail-item">
                         <FiMapPin className="text-muted"/>
@@ -532,6 +620,8 @@ const ConfiguracionPromociones = () => {
                                                         category_id_filter: e.target.value,
                                                         product_id: '',
                                                         product_name: '',
+                                                        promo_name: '',
+                                                        promo_plu: '',
                                                     }));
                                                 }}
                                             >
@@ -565,6 +655,26 @@ const ConfiguracionPromociones = () => {
                                     <h3>Regla de Promoción</h3>
                                     <div className="input-group-row two-cols">
                                         <div className="input-field">
+                                            <label>Nombre Promo</label>
+                                            <input
+                                                type="text"
+                                                value={form.promo_name}
+                                                disabled={readOnly || saving || !form.product_id}
+                                                onChange={(e) => setField('promo_name', e.target.value)}
+                                                placeholder={promoSuggestion.suggestedName || 'Articulo_P1'}
+                                            />
+                                        </div>
+                                        <div className="input-field">
+                                            <label>PLU Promo (>= 1000)</label>
+                                            <input
+                                                type="text"
+                                                value={form.promo_plu}
+                                                disabled={readOnly || saving || !form.product_id}
+                                                onChange={(e) => setField('promo_plu', normalizePluCode(e.target.value))}
+                                                placeholder={promoSuggestion.suggestedPlu || '1028'}
+                                            />
+                                        </div>
+                                        <div className="input-field">
                                             <label>Kg Mínimo</label>
                                             <input
                                                 type="number"
@@ -581,6 +691,18 @@ const ConfiguracionPromociones = () => {
                                                     </span>
                                                 ))}
                                             </div>
+                                        </div>
+                                        <div className="input-field">
+                                            <label>Precio Promo por Kg ($)</label>
+                                            <input
+                                                type="number"
+                                                min="0.01" step="0.01"
+                                                value={form.promo_unit_price}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('promo_unit_price', e.target.value)}
+                                                placeholder="Ej. 8500"
+                                                className="price-input"
+                                            />
                                         </div>
                                         <div className="input-field">
                                             <label>Precio Promo Total ($)</label>

@@ -2,6 +2,7 @@ const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const round3 = (value) => Math.round((Number(value) || 0) * 1000) / 1000;
 
 const normalizeKey = (value) => String(value || '').trim().toLowerCase();
+export const normalizePluCode = (value) => String(value || '').replace(/\D/g, '');
 
 const normalizeProductNameKey = (value) => (
     String(value || '')
@@ -47,6 +48,9 @@ export const normalizePromotion = (row) => {
         branch_id: row?.branch_id != null ? Number(row.branch_id) : null,
         product_id: row?.product_id != null ? Number(row.product_id) : null,
         product_name: String(row?.product_name || '').trim(),
+        promo_name: String(row?.promo_name || '').trim(),
+        promo_plu: normalizePluCode(row?.promo_plu),
+        promo_unit_price: round2(row?.promo_unit_price),
         min_qty_kg: minQtyKg,
         promo_total_price: promoTotalPrice,
         active: row?.active === true || Number(row?.active) === 1,
@@ -139,6 +143,32 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
     const quantity = Number(item?.quantity) || 0;
     const unitPrice = Number(item?.price) || 0;
     const baseSubtotal = round2(unitPrice * quantity);
+    const forcedPromoId = Number(item?.forcedPromo?.id);
+
+    if (item?.promoLocked && quantity > 0 && unitPrice > 0) {
+        return {
+            quantity,
+            unitPrice,
+            subtotal: baseSubtotal,
+            baseSubtotal,
+            discount: 0,
+            promo: Number.isFinite(forcedPromoId) && forcedPromoId > 0
+                ? {
+                    id: forcedPromoId,
+                    min_qty_kg: Number(item?.forcedPromo?.min_qty_kg) || null,
+                    promo_total_price: Number(item?.forcedPromo?.promo_total_price) || null,
+                    bundles: null,
+                    covered_qty: round3(quantity),
+                    remaining_qty: 0,
+                    eligible_qty: round3(quantity),
+                    end_condition: null,
+                    stock_mode: null,
+                    forced_by_promo_plu: true,
+                    promo_plu: normalizePluCode(item?.forcedPromo?.promo_plu),
+                }
+                : null,
+        };
+    }
 
     if (!isKgUnit(item?.unit) || quantity <= 0 || unitPrice <= 0) {
         return {

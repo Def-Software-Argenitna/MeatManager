@@ -144,6 +144,7 @@ const Stock = () => {
 
         return Object.values(grouped)
             .filter((item) => Math.abs(item.quantity) > 0.0001)
+            .filter((item) => !/_p\d+$/i.test(String(item.name || '').trim()))
             .map((item) => {
                 const matchedProduct = findProductByIdentity(products, {
                     id: item.product_ref_id,
