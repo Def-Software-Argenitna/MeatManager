@@ -7,9 +7,11 @@ const runtimeRootDir = String(process.env.BRIDGE_APP_DATA_DIR || '').trim()
     ? path.resolve(String(process.env.BRIDGE_APP_DATA_DIR || '').trim())
     : rootDir;
 const envFile = path.join(rootDir, '.env');
+const runtimeOverridesFile = path.join(runtimeRootDir, 'data', 'config-overrides.json');
+const rootOverridesFile = path.join(rootDir, 'data', 'config-overrides.json');
 const overridesFile = process.env.BRIDGE_OVERRIDES_FILE
     ? path.resolve(process.env.BRIDGE_OVERRIDES_FILE)
-    : path.join(runtimeRootDir, 'data', 'config-overrides.json');
+    : (fs.existsSync(runtimeOverridesFile) ? runtimeOverridesFile : rootOverridesFile);
 if (fs.existsSync(envFile)) {
     dotenv.config({ path: envFile });
 } else {
