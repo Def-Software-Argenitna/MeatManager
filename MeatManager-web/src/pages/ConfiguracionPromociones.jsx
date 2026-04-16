@@ -555,18 +555,20 @@ const ConfiguracionPromociones = () => {
                 }));
                 setExtraPromoTiers([]);
             } else {
+                let successText = '';
                 if (editingId) {
                     const extraText = createdCount > 0 ? ` Se agregaron ${createdCount} niveles nuevos.` : '';
-                    setStatus({ type: 'ok', text: `Promoción actualizada con éxito.${extraText}` });
+                    successText = `Promoción actualizada con éxito.${extraText}`;
                 } else {
                     const baseText = createdCount > 1
                         ? `Se crearon ${createdCount} niveles de promoción.`
                         : 'Promoción creada exitosamente.';
                     const identityText = createdPromoIdentity ? ` ${createdPromoIdentity}.` : '';
                     const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
-                    setStatus({ type: 'ok', text: `${baseText}${identityText}${broadcastText}` });
+                    successText = `${baseText}${identityText}${broadcastText}`;
                 }
                 resetForm();
+                setStatus({ type: 'ok', text: successText });
             }
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudo guardar la promocion.' });
@@ -797,7 +799,7 @@ const ConfiguracionPromociones = () => {
                                             />
                                         </div>
                                         <div className="input-field">
-                                            <label>PLU Promo (>= 1000)</label>
+                                            <label>PLU Promo (&gt;= 1000)</label>
                                             <input
                                                 type="text"
                                                 value={form.promo_plu}
