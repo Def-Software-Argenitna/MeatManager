@@ -150,6 +150,11 @@ const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
 const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
+const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
+    .trim()
+    .replace(/\/+$/, '');
+const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
+const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.env.SCALE_BRIDGE_PULL_LOOKBACK_MINUTES || '45', 10) || 45);
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
@@ -5282,6 +5287,50 @@ function buildScaleTicketItemSelect(schema) {
     ].join(', ');
 }
 
+async function triggerScaleBridgePullSales({
+    reason = 'barcode_lookup',
+    barcode = '',
+    lookbackMinutes = SCALE_BRIDGE_PULL_LOOKBACK_MINUTES,
+} = {}) {
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - (Math.max(1, Number(lookbackMinutes) || 1) * 60 * 1000));
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${SCALE_BRIDGE_DIRECT_BASE_URL}/api/scale/pull-sales`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromDate: fromDate.toISOString(),
+                toDate: now.toISOString(),
+                closeAfter: false,
+            }),
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.ok === false) {
+            console.warn('[SCALE LOOKUP] pull-sales devolvio error', {
+                reason,
+                barcode,
+                status: response.status,
+                message: payload?.error || null,
+            });
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.warn('[SCALE LOOKUP] pull-sales no disponible', {
+            reason,
+            barcode,
+            baseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+            error: error?.name === 'AbortError' ? 'timeout' : (error?.message || String(error)),
+        });
+        return false;
+    } finally {
+        clearTimeout(timeoutHandle);
+    }
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
@@ -5317,9 +5366,31 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         // Lectura resiliente: cuando el usuario escanea inmediatamente después de imprimir,
         // damos una ventana corta para que el bridge termine de persistir el ticket.
         if (!ticketRows.length && isScaleSummaryBarcode) {
-            const retryUntil = Date.now() + 7000;
+            const pullPromise = triggerScaleBridgePullSales({
+                reason: 'lookup_summary_barcode',
+                barcode,
+            });
+            const retryUntil = Date.now() + 7500;
             while (!ticketRows.length && Date.now() < retryUntil) {
-                await new Promise((resolve) => setTimeout(resolve, 700));
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+            if (!ticketRows.length) {
+                await pullPromise.catch(() => false);
                 [ticketRows] = await pool.query(
                     `SELECT ${ticketSelect}
                      FROM scale_bridge_ticket_map

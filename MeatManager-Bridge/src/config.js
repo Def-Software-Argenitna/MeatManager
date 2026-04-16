@@ -80,6 +80,8 @@ const config = {
         ssl: boolEnv('MYSQL_SSL', false),
     },
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
+    salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
+    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 2000),
     productSyncIntervalMs: intEnv('PRODUCT_SYNC_INTERVAL_MS', 30000),
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),

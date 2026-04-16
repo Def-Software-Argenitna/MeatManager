@@ -775,7 +775,7 @@ class ScaleBridge {
                 .filter(Boolean)
         );
 
-        // Si un PLU volvió a existir en MM, lo removemos del cache para no bloquear futuros eventos.
+        // Si un PLU volvio a existir en MM, lo removemos del cache para no bloquear futuros eventos.
         for (const plu of Object.keys(cleanupCache)) {
             if (expected.has(plu)) delete cleanupCache[plu];
         }
@@ -823,7 +823,7 @@ class ScaleBridge {
             const pluNumber = Number.parseInt(plu, 10);
             // En CUORA V6, fn5 trabaja en 1..8000. Evitamos clamping silencioso.
             if (!Number.isFinite(pluNumber) || pluNumber < 1 || pluNumber > 8000) {
-                this.logger.warn('PLU huérfano fuera de rango de borrado fn5, se omite', { plu });
+                this.logger.warn('PLU huerfano fuera de rango de borrado fn5, se omite', { plu });
                 failed += 1;
                 continue;
             }
@@ -832,10 +832,10 @@ class ScaleBridge {
                 const deletePayload = buildDeletePluPayload(plu);
                 const deleteResp = await this.scale.send(5, deletePayload);
                 if (!deleteResp.crc.ok) {
-                    throw new Error(`CRC invalido al borrar PLU huérfano ${plu}`);
+                    throw new Error(`CRC invalido al borrar PLU huerfano ${plu}`);
                 }
                 if (String(deleteResp.data || '').startsWith('E')) {
-                    throw new Error(`Error balanza al borrar PLU huérfano ${plu}: ${deleteResp.data}`);
+                    throw new Error(`Error balanza al borrar PLU huerfano ${plu}: ${deleteResp.data}`);
                 }
 
                 await mysqlExecute(
@@ -853,14 +853,14 @@ class ScaleBridge {
                 deleted += 1;
             } catch (error) {
                 failed += 1;
-                this.logger.warn('No se pudo borrar un PLU huérfano en balanza', {
+                this.logger.warn('No se pudo borrar un PLU huerfano en balanza', {
                     plu,
                     error: error.message,
                 });
             }
         }
 
-        this.logger.info('Limpieza automática de PLU huérfanos completada', {
+        this.logger.info('Limpieza automatica de PLU huerfanos completada', {
             detected: orphanPluCodesRaw.length,
             attempted: orphanPluCodes.length,
             deleted,
@@ -1151,8 +1151,8 @@ class ScaleBridge {
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         let responseData = String(response.data || '');
         if (responseData.startsWith('E7')) {
-            // En algunos firmwares la consulta por día devuelve E7 aunque existan ventas.
-            // Fallback: rango anual y luego consulta sin parámetros.
+            // En algunos firmwares la consulta por dia devuelve E7 aunque existan ventas.
+            // Fallback: rango anual y luego consulta sin parametros.
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),
@@ -1165,7 +1165,7 @@ class ScaleBridge {
             responseData = String(response.data || '');
 
             if (responseData.startsWith('E7')) {
-                this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parámetros', {
+                this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parametros', {
                     annualPayload,
                     response: responseData,
                 });
@@ -1478,6 +1478,7 @@ class ScaleBridge {
 
     async runOnce(options = {}) {
         const reason = String(options.reason || 'scheduled');
+        const skipSales = options.skipSales === true;
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
         const runtimeSettings = await this.syncRuntimeSettings();
@@ -1525,50 +1526,53 @@ class ScaleBridge {
             this.state.lastProductSyncAt = new Date().toISOString();
         }
 
-        let sales = { ok: false, fetched: 0, stored: 0, error: null };
-        try {
-            sales = await this.pullSales({
-                fromDate: from,
-                toDate: now,
-                closeAfter: this.config.closeSalesAfterPull,
-            });
+        let sales = { ok: true, fetched: 0, stored: 0, skipped: skipSales, error: null };
+        if (!skipSales) {
+            try {
+                sales = await this.pullSales({
+                    fromDate: from,
+                    toDate: now,
+                    closeAfter: this.config.closeSalesAfterPull,
+                });
 
-            // Si no hubo datos en la ventana incremental, intentamos un backfill
-            // para recuperar ventas demoradas sin depender de intervención manual.
-            if (sales.ok && Number(sales.fetched || 0) === 0) {
-                const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
-                const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
-                if (shouldBackfill) {
-                    const backfillFrom = new Date(now);
-                    backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
-                    this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
-                        from: backfillFrom.toISOString(),
-                        to: now.toISOString(),
-                    });
-                    const backfill = await this.pullSales({
-                        fromDate: backfillFrom,
-                        toDate: now,
-                        closeAfter: this.config.closeSalesAfterPull,
-                    });
-                    this.state.lastSalesBackfillAt = new Date().toISOString();
-                    if (Number(backfill.fetched || 0) > 0) {
-                        this.logger.info('Backfill de ventas recupero registros', {
-                            fetched: backfill.fetched,
-                            tickets: backfill.tickets,
+                // Si no hubo datos en la ventana incremental, intentamos un backfill
+                // para recuperar ventas demoradas sin depender de intervencion manual.
+                if (sales.ok && Number(sales.fetched || 0) === 0) {
+                    const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
+                    const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
+                    if (shouldBackfill) {
+                        const backfillFrom = new Date(now);
+                        backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
+                        this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
+                            from: backfillFrom.toISOString(),
+                            to: now.toISOString(),
                         });
-                        sales = { ...backfill, backfill: true };
+                        const backfill = await this.pullSales({
+                            fromDate: backfillFrom,
+                            toDate: now,
+                            closeAfter: this.config.closeSalesAfterPull,
+                        });
+                        this.state.lastSalesBackfillAt = new Date().toISOString();
+                        if (Number(backfill.fetched || 0) > 0) {
+                            this.logger.info('Backfill de ventas recupero registros', {
+                                fetched: backfill.fetched,
+                                tickets: backfill.tickets,
+                            });
+                            sales = { ...backfill, backfill: true };
+                        }
                     }
                 }
-            }
 
-            // El cursor avanza solo cuando realmente ingresan ventas.
-            if (sales.ok && Number(sales.fetched || 0) > 0) {
-                this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+                // El cursor avanza solo cuando realmente ingresan ventas.
+                if (sales.ok && Number(sales.fetched || 0) > 0) {
+                    this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+                }
+            } catch (error) {
+                sales = { ok: false, fetched: 0, stored: 0, error: error.message };
+                this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });
             }
-        } catch (error) {
-            sales = { ok: false, fetched: 0, stored: 0, error: error.message };
-            this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });
         }
+
 
         this.state.lastRunAt = new Date().toISOString();
         this.state.lastRunStatus = 'ok';
