@@ -774,6 +774,27 @@ function saveInstallation(payload) {
     return installation;
 }
 
+function saveRuntimeDevices(devicesPayload = []) {
+    if (!isInstallationValid(installation)) {
+        throw new Error('Primero completa la configuracion inicial');
+    }
+    const cleanDevices = sanitizeInstallation({
+        ...installation,
+        devices: Array.isArray(devicesPayload) ? devicesPayload : [],
+    })?.devices || [];
+    if (!cleanDevices.length) {
+        throw new Error('Debes configurar al menos una balanza con puerto COM');
+    }
+    installation = {
+        ...installation,
+        devices: cleanDevices,
+        configuredAt: new Date().toISOString(),
+    };
+    writeJsonFile(installationFilePath(), installation);
+    startBridgeProcesses();
+    return installation;
+}
+
 function startStatusPolling() {
     fetchBridgeStatus();
     statusTimer = setInterval(fetchBridgeStatus, STATUS_POLL_MS);
@@ -848,6 +869,21 @@ function setupIpc() {
             return { ok: true, installation: saved };
         } catch (error) {
             return { ok: false, error: error.message || 'No se pudo guardar configuracion' };
+        }
+    });
+
+    ipcMain.handle('config:get', async () => ({
+        ok: true,
+        installation,
+        supportedModels: SUPPORTED_SCALE_MODELS,
+    }));
+    ipcMain.handle('config:ports', async () => ({ ok: true, ports: await listAvailableSerialPorts() }));
+    ipcMain.handle('config:save', async (_, payload = {}) => {
+        try {
+            const saved = saveRuntimeDevices(payload?.devices);
+            return { ok: true, installation: saved };
+        } catch (error) {
+            return { ok: false, error: error.message || 'No se pudo guardar configuracion de balanzas' };
         }
     });
 }

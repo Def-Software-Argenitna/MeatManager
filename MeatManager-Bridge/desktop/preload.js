@@ -13,6 +13,9 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
     onboardingBranches: (payload) => ipcRenderer.invoke('onboarding:branches', payload),
     onboardingPorts: () => ipcRenderer.invoke('onboarding:ports'),
     onboardingSave: (payload) => ipcRenderer.invoke('onboarding:save', payload),
+    getConfig: () => ipcRenderer.invoke('config:get'),
+    configPorts: () => ipcRenderer.invoke('config:ports'),
+    configSave: (payload) => ipcRenderer.invoke('config:save', payload),
 
     onStatus: (handler) => {
         const listener = (_, payload) => handler(payload);

@@ -9,6 +9,7 @@ const updatePillEl = document.getElementById('update-pill');
 const statusCard = document.getElementById('status-card');
 const actionsCard = document.getElementById('actions-card');
 const onboardingCard = document.getElementById('onboarding-card');
+const configCard = document.getElementById('config-card');
 
 const btnRestart = document.getElementById('btn-restart');
 const btnCheckUpdates = document.getElementById('btn-check-updates');
@@ -27,6 +28,10 @@ const obDetectPorts = document.getElementById('ob-detect-ports');
 const obAddScale = document.getElementById('ob-add-scale');
 const obDevices = document.getElementById('ob-devices');
 const obSave = document.getElementById('ob-save');
+const cfgDetectPorts = document.getElementById('cfg-detect-ports');
+const cfgSave = document.getElementById('cfg-save');
+const cfgFeedbackEl = document.getElementById('cfg-feedback');
+const cfgDevicesEl = document.getElementById('cfg-devices');
 
 let onboardingRequired = false;
 let onboardingToken = '';
@@ -37,6 +42,8 @@ let onboardingPorts = [];
 let onboardingDevices = [];
 let supportedModels = ['Systel Cuora Max'];
 let onboardingBusy = false;
+let configPorts = [];
+let configDevices = [];
 
 function setOnboardingFeedback(message, tone = 'info') {
     if (!obFeedbackEl) return;
@@ -63,6 +70,20 @@ function setUpdatePill(status, message) {
     if (message) eventEl.textContent = message;
 }
 
+function setConfigFeedback(message, tone = 'info') {
+    if (!cfgFeedbackEl) return;
+    cfgFeedbackEl.textContent = message || '';
+    if (tone === 'ok') {
+        cfgFeedbackEl.style.color = '#22c55e';
+        return;
+    }
+    if (tone === 'error') {
+        cfgFeedbackEl.style.color = '#ef4444';
+        return;
+    }
+    cfgFeedbackEl.style.color = '#9fb0d1';
+}
+
 function formatDate(value) {
     if (!value) return '-';
     try {
@@ -76,8 +97,10 @@ function setOnboardingMode(enabled) {
     onboardingRequired = enabled;
     onboardingCard.classList.toggle('hidden', !enabled);
     actionsCard.classList.toggle('hidden', enabled);
+    configCard.classList.toggle('hidden', enabled);
     if (!enabled) {
         setOnboardingFeedback('');
+        loadRuntimeConfig().catch(() => {});
     }
 }
 
@@ -157,6 +180,35 @@ function portsOptionsHtml(selected) {
     return options.join('');
 }
 
+function portsOptionsHtmlFrom(ports, selected) {
+    const options = ['<option value="">Seleccionar puerto...</option>'];
+    (ports || []).forEach((port) => {
+        const value = String(port.path || '').trim();
+        if (!value) return;
+        options.push(`<option value="${value}" ${selected === value ? 'selected' : ''}>${value}</option>`);
+    });
+    return options.join('');
+}
+
+function pickNextAvailablePort(ports, used = []) {
+    const usedSet = new Set((used || []).filter(Boolean));
+    return (ports || []).map((port) => String(port.path || '').trim()).find((p) => p && !usedSet.has(p)) || '';
+}
+
+function autofillDevicePorts(devices, ports) {
+    const next = Array.isArray(devices) ? devices.map((d) => ({ ...d })) : [];
+    const used = next.map((d) => String(d.port || '').trim()).filter(Boolean);
+    next.forEach((device) => {
+        if (String(device.port || '').trim()) return;
+        const candidate = pickNextAvailablePort(ports, used);
+        if (candidate) {
+            device.port = candidate;
+            used.push(candidate);
+        }
+    });
+    return next;
+}
+
 function renderOnboardingDevices() {
     obDevices.innerHTML = '';
     onboardingDevices.forEach((device, index) => {
@@ -202,9 +254,21 @@ async function detectPorts() {
         return;
     }
     onboardingPorts = Array.isArray(result.ports) ? result.ports : [];
+    onboardingDevices = autofillDevicePorts(onboardingDevices, onboardingPorts);
+    if (!onboardingDevices.length && onboardingPorts.length > 0) {
+        onboardingDevices.push({
+            id: `scale-${Date.now()}-1`,
+            name: 'Balanza 1',
+            model: obModel.value || supportedModels[0] || 'Systel Cuora Max',
+            port: onboardingPorts[0].path,
+            address: '20',
+            baudRate: '115200',
+            enabled: true,
+        });
+    }
     renderOnboardingDevices();
     setOnboardingFeedback(onboardingPorts.length
-        ? `Puertos detectados: ${onboardingPorts.map((p) => p.path).join(', ')}`
+        ? `Puertos detectados/autocompletados: ${onboardingPorts.map((p) => p.path).join(', ')}`
         : 'No se detectaron puertos COM.');
 }
 
@@ -306,11 +370,12 @@ obClient.addEventListener('change', async () => {
 obDetectPorts.addEventListener('click', detectPorts);
 
 obAddScale.addEventListener('click', () => {
+    const used = onboardingDevices.map((d) => String(d.port || '').trim()).filter(Boolean);
     onboardingDevices.push({
         id: `scale-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
         name: `Balanza ${onboardingDevices.length + 1}`,
         model: obModel.value || supportedModels[0] || 'Systel Cuora Max',
-        port: onboardingPorts[onboardingDevices.length]?.path || '',
+        port: pickNextAvailablePort(onboardingPorts, used) || '',
         address: '20',
         baudRate: '115200',
         enabled: true,
@@ -375,6 +440,102 @@ obSave.addEventListener('click', async () => {
 window.bridgeDesktop.onStatus(renderStatus);
 window.bridgeDesktop.onUpdateEvent((payload) => {
     setUpdatePill(payload?.status, payload?.message);
+});
+
+function renderConfigDevices() {
+    cfgDevicesEl.innerHTML = '';
+    configDevices.forEach((device, index) => {
+        const row = document.createElement('div');
+        row.className = 'device-row';
+        row.innerHTML = `
+            <div class="device-head">
+              <strong>${device.name || `Balanza ${index + 1}`}</strong>
+            </div>
+            <div class="device-grid">
+              <div class="field"><label>Nombre</label><input data-cfg-field="name" data-cfg-index="${index}" value="${device.name || ''}" /></div>
+              <div class="field"><label>Modelo</label><input value="${device.model || 'Systel Cuora Max'}" readonly /></div>
+              <div class="field"><label>Puerto COM</label><select data-cfg-field="port" data-cfg-index="${index}">${portsOptionsHtmlFrom(configPorts, device.port)}</select></div>
+              <div class="field"><label>Direccion balanza</label><input data-cfg-field="address" data-cfg-index="${index}" value="${device.address || '20'}" /></div>
+            </div>
+        `;
+        cfgDevicesEl.appendChild(row);
+    });
+
+    cfgDevicesEl.querySelectorAll('[data-cfg-field]').forEach((input) => {
+        input.addEventListener('change', () => {
+            const idx = Number(input.getAttribute('data-cfg-index'));
+            const field = input.getAttribute('data-cfg-field');
+            if (!configDevices[idx]) return;
+            configDevices[idx][field] = String(input.value || '').trim();
+        });
+    });
+}
+
+async function detectConfigPorts() {
+    const result = await window.bridgeDesktop.configPorts();
+    if (!result?.ok) {
+        setConfigFeedback(result?.error || 'No se pudieron leer puertos', 'error');
+        return;
+    }
+    configPorts = Array.isArray(result.ports) ? result.ports : [];
+    configDevices = autofillDevicePorts(configDevices, configPorts);
+    renderConfigDevices();
+    setConfigFeedback(configPorts.length
+        ? `Puertos detectados/autocompletados: ${configPorts.map((p) => p.path).join(', ')}`
+        : 'No se detectaron puertos COM.');
+}
+
+async function loadRuntimeConfig() {
+    const payload = await window.bridgeDesktop.getConfig();
+    if (!payload?.ok) return;
+    const devices = Array.isArray(payload?.installation?.devices) ? payload.installation.devices : [];
+    configDevices = devices.map((device, index) => ({
+        id: device.id || `scale-${index + 1}`,
+        name: device.name || `Balanza ${index + 1}`,
+        model: device.model || 'Systel Cuora Max',
+        port: device.port || '',
+        address: String(device.address || '20'),
+        baudRate: String(device.baudRate || '115200'),
+        enabled: device.enabled !== false,
+    }));
+    await detectConfigPorts();
+}
+
+cfgDetectPorts?.addEventListener('click', detectConfigPorts);
+
+cfgSave?.addEventListener('click', async () => {
+    if (!configDevices.length) {
+        setConfigFeedback('No hay balanzas configuradas.', 'error');
+        return;
+    }
+    const invalid = configDevices.find((device) => !String(device.port || '').trim());
+    if (invalid) {
+        setConfigFeedback(`Falta puerto COM en ${invalid.name}.`, 'error');
+        return;
+    }
+    const unique = new Set(configDevices.map((d) => d.port));
+    if (unique.size !== configDevices.length) {
+        setConfigFeedback('No se puede repetir puerto COM entre balanzas.', 'error');
+        return;
+    }
+
+    const result = await window.bridgeDesktop.configSave({
+        devices: configDevices.map((device, index) => ({
+            id: device.id || `scale-${index + 1}`,
+            name: device.name || `Balanza ${index + 1}`,
+            model: device.model || 'Systel Cuora Max',
+            port: device.port,
+            address: device.address || '20',
+            baudRate: device.baudRate || '115200',
+            enabled: true,
+        })),
+    });
+    if (!result?.ok) {
+        setConfigFeedback(result?.error || 'No se pudo guardar configuracion', 'error');
+        return;
+    }
+    setConfigFeedback('Configuracion guardada. Bridge reiniciado.', 'ok');
+    eventEl.textContent = 'Configuracion de balanzas guardada y bridge reiniciado.';
 });
 
 window.bridgeDesktop.getStatus().then(renderStatus);

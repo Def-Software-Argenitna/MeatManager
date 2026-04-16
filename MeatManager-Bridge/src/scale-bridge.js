@@ -530,14 +530,14 @@ class ScaleBridge {
 
     async applyMarqueeConfig(marqueeText) {
         const text = normalizeAscii(String(marqueeText || '')).slice(0, 80);
-        if (!text) return { ok: true, skipped: true, reason: 'empty' };
+        const payload = text || ' '.repeat(80);
 
-        const fingerprint = hashObject({ marquee: text }, 20);
+        const fingerprint = hashObject({ marquee: payload }, 20);
         if (this.state.marqueeConfigFingerprint === fingerprint) {
             return { ok: true, skipped: true, reason: 'unchanged' };
         }
 
-        const response = await this.scale.send(6, text);
+        const response = await this.scale.send(6, payload);
         if (!response.crc.ok) {
             throw new Error('CRC invalido al configurar marquesina (funcion 6)');
         }
@@ -546,7 +546,7 @@ class ScaleBridge {
         }
 
         this.state.marqueeConfigFingerprint = fingerprint;
-        return { ok: true, updated: true, text };
+        return { ok: true, updated: true, text, cleared: !text };
     }
 
     async applyTicketHeaderConfig(ticketHeader = {}) {
