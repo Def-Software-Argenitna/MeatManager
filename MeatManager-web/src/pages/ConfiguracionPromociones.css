@@ -472,6 +472,22 @@ button:disabled {
     display: flex;
     flex-direction: column;
     gap: 2rem;
+    max-height: min(72vh, 980px);
+    overflow-y: auto;
+    padding-right: 0.35rem;
+}
+
+.promos-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.promos-container::-webkit-scrollbar-thumb {
+    background: rgba(249, 115, 22, 0.35);
+    border-radius: 999px;
+}
+
+.promos-container::-webkit-scrollbar-track {
+    background: rgba(255, 255, 255, 0.04);
 }
 
 .group-title {
@@ -702,6 +718,9 @@ button:disabled {
 }
 
 @media (max-width: 600px) {
+    .promos-container {
+        max-height: 60vh;
+    }
     .promo-details-grid {
         grid-template-columns: 1fr;
     }
