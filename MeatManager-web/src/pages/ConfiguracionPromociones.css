@@ -482,6 +482,32 @@ button:disabled {
     color: #9ca3af;
 }
 
+.promo-search-row {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+    padding: 0 0.75rem;
+    margin-bottom: 1rem;
+    max-width: 420px;
+}
+
+.promo-search-row input {
+    background: transparent;
+    border: none;
+    color: #e5e7eb;
+    padding: 0.65rem 0;
+    font-size: 0.92rem;
+    width: 100%;
+    outline: none;
+}
+
+.promo-search-row input::placeholder {
+    color: #9ca3af;
+}
+
 .promos-container {
     display: flex;
     flex-direction: column;

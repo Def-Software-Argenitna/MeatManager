@@ -1081,16 +1081,16 @@ const ConfiguracionPromociones = () => {
                                     )) : null}
                                 </select>
                             </div>
-                            <div className="filter-box">
-                                <FiSearch className="filter-icon" />
-                                <input
-                                    type="text"
-                                    value={listSearch}
-                                    disabled={loading}
-                                    onChange={(e) => setListSearch(e.target.value)}
-                                    placeholder="Buscar por nombre o PLU"
-                                />
-                            </div>
+                        </div>
+                        <div className="promo-search-row">
+                            <FiSearch className="filter-icon" />
+                            <input
+                                type="text"
+                                value={listSearch}
+                                disabled={loading}
+                                onChange={(e) => setListSearch(e.target.value)}
+                                placeholder="Buscar promo por producto, nombre o PLU"
+                            />
                         </div>
 
                         {filteredRows.length === 0 ? (
