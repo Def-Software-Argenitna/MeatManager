@@ -7,7 +7,7 @@ import {
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
-import { normalizePromotion, PROMO_END_CONDITIONS, PROMO_STOCK_MODES } from '../utils/promotions';
+import { normalizePromotion, PROMO_END_CONDITIONS, PROMO_PRICE_MODES, PROMO_STOCK_MODES } from '../utils/promotions';
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
@@ -36,6 +36,7 @@ const emptyForm = {
     product_name: '',
     min_qty_kg: '',
     promo_total_price: '',
+    promo_price_mode: PROMO_PRICE_MODES.TOTAL_KG,
     stock_mode: PROMO_STOCK_MODES.ALL,
     stock_cap_kg_limit: '',
     end_condition: PROMO_END_CONDITIONS.NONE,
@@ -201,6 +202,7 @@ const ConfiguracionPromociones = () => {
             product_name: String(row.product_name || ''),
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
+            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
             stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
             end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
@@ -223,6 +225,7 @@ const ConfiguracionPromociones = () => {
             product_name: String(row.product_name || ''),
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
+            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
             stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
             end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
@@ -285,6 +288,9 @@ const ConfiguracionPromociones = () => {
         const branchScope = form.branch_id ? `Solo en ${selectedBranchName}` : 'Disponible en todas las sucursales';
         const minKg = form.min_qty_kg ? `${formatKg(form.min_qty_kg)} kg` : 'X kg';
         const promoPrice = form.promo_total_price ? `$${formatMoney(form.promo_total_price)}` : '$X';
+        const promoPriceLabel = form.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+            ? `${promoPrice} por kg`
+            : `${promoPrice} el total`;
         const stockRule = form.stock_mode === PROMO_STOCK_MODES.FIXED
             ? `Cupo promo: ${form.stock_cap_kg_limit ? `${formatKg(form.stock_cap_kg_limit)} kg` : 'X kg'}`
             : '';
@@ -296,7 +302,7 @@ const ConfiguracionPromociones = () => {
 
         return (
             <div className="promo-preview-content">
-                <strong><FiTag className="icon-mr"/> {product}</strong>: Llevando {minKg} o más, pagás <span className="highlight-price">{promoPrice}</span> el total.
+                <strong><FiTag className="icon-mr"/> {product}</strong>: Llevando {minKg} o más, pagás <span className="highlight-price">{promoPriceLabel}</span>.
                 <div className="preview-badges">
                     <span className="preview-badge"><FiMapPin /> {branchScope}</span>
                     {stockRule && <span className="preview-badge"><FiBox /> {stockRule}</span>}
@@ -304,7 +310,7 @@ const ConfiguracionPromociones = () => {
                 </div>
             </div>
         );
-    }, [form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
+    }, [form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_price_mode, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
 
     const savePromotion = async ({ keepCreating = false } = {}) => {
         try {
@@ -319,6 +325,7 @@ const ConfiguracionPromociones = () => {
                 product_name: String(form.product_name || '').trim(),
                 min_qty_kg: toNumber(form.min_qty_kg, 3),
                 promo_total_price: toNumber(form.promo_total_price, 2),
+                promo_price_mode: form.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
                 stock_mode: form.stock_mode || PROMO_STOCK_MODES.ALL,
                 stock_cap_kg_limit: form.stock_mode === PROMO_STOCK_MODES.FIXED
                     ? toNumber(form.stock_cap_kg_limit, 3)
@@ -403,7 +410,15 @@ const ConfiguracionPromociones = () => {
             <div className="promo-card-body">
                 <div className="promo-detail-main">
                     <span className="promo-price-tag">
-                        <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong>
+                        {row.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? (
+                            <>
+                                Desde <strong>{formatKg(row.min_qty_kg)} kg</strong>, cada kg a <strong>\${formatMoney(row.promo_total_price)}</strong>
+                            </>
+                        ) : (
+                            <>
+                                <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong> total
+                            </>
+                        )}
                     </span>
                 </div>
                 <div className="promo-details-grid">
@@ -583,14 +598,25 @@ const ConfiguracionPromociones = () => {
                                             </div>
                                         </div>
                                         <div className="input-field">
-                                            <label>Precio Promo Total ($)</label>
+                                            <label>Tipo de precio promo</label>
+                                            <select
+                                                value={form.promo_price_mode}
+                                                disabled={readOnly || saving}
+                                                onChange={(e) => setField('promo_price_mode', e.target.value)}
+                                            >
+                                                <option value={PROMO_PRICE_MODES.TOTAL_KG}>Precio por total de kg</option>
+                                                <option value={PROMO_PRICE_MODES.PER_KG}>Precio por kg</option>
+                                            </select>
+                                        </div>
+                                        <div className="input-field">
+                                            <label>{form.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Precio Promo por Kg ($)' : 'Precio Promo Total ($)'}</label>
                                             <input
                                                 type="number"
                                                 min="0.01" step="0.01"
                                                 value={form.promo_total_price}
                                                 disabled={readOnly || saving}
                                                 onChange={(e) => setField('promo_total_price', e.target.value)}
-                                                placeholder="Ej. 15000"
+                                                placeholder={form.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Ej. 4750 (por kg)' : 'Ej. 9500 (total)'}
                                                 className="price-input"
                                             />
                                         </div>

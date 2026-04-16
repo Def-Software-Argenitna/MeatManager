@@ -1321,8 +1321,14 @@ const Ventas = () => {
 
     // El subtotal del carrito se calcula con promociones activas por kg.
     const cartPricing = React.useMemo(
-        () => buildCartPricing({ cart, promotions, stockQtyByItem, now: new Date() }),
-        [cart, promotions, stockQtyByItem]
+        () => buildCartPricing({
+            cart,
+            promotions,
+            stockQtyByItem,
+            now: new Date(),
+            roundLineToInteger: priceFormat === '6d',
+        }),
+        [cart, promotions, stockQtyByItem, priceFormat]
     );
     const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
@@ -1904,7 +1910,9 @@ const Ventas = () => {
                                 </div>
                                 {line?.promo ? (
                                     <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
-                                        Promo: {toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por ${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        Promo: {line.promo.promo_price_mode === 'per_kg'
+                                            ? `desde ${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg, cada kg a $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                            : `${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total`}
                                     </div>
                                 ) : null}
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
