@@ -4,10 +4,13 @@ const path = require('path');
 const LEVELS = ['debug', 'info', 'warn', 'error'];
 
 class Logger {
-    constructor({ logFile, level = 'info' }) {
+    constructor({ logFile, level = 'info', truncateOnStart = false }) {
         this.logFile = logFile;
         this.level = LEVELS.includes(level) ? level : 'info';
         fs.mkdirSync(path.dirname(logFile), { recursive: true });
+        if (truncateOnStart) {
+            fs.writeFileSync(this.logFile, '', 'utf8');
+        }
     }
 
     shouldLog(level) {

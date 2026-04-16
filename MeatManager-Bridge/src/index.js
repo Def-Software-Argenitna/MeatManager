@@ -10,7 +10,7 @@ const { CuoraClient } = require('./cuora-client');
 fs.mkdirSync(config.dataDir, { recursive: true });
 fs.mkdirSync(config.logsDir, { recursive: true });
 
-const logger = new Logger({ logFile: config.logFile, level: config.logLevel });
+const logger = new Logger({ logFile: config.logFile, level: config.logLevel, truncateOnStart: true });
 const state = config.resetStateOnStart ? resetState(config.stateFile) : loadState(config.stateFile);
 const stateStore = { save: (nextState) => saveState(config.stateFile, nextState) };
 const mysqlPool = buildMySqlPool(config.mysql);
