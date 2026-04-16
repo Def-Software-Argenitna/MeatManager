@@ -4273,16 +4273,34 @@ function normalizeColumnValue(value, columnType) {
 }
 
 function normalizePluValue(value) {
-    const normalized = String(value ?? '').trim();
-    return normalized || null;
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    if (!/^\d+$/.test(raw)) {
+        const error = new Error('El PLU debe contener solo numeros');
+        error.statusCode = 400;
+        throw error;
+    }
+    const numeric = Number.parseInt(raw, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        const error = new Error('El PLU debe ser un numero mayor a 0');
+        error.statusCode = 400;
+        throw error;
+    }
+    return String(numeric);
 }
 
 async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
     const normalizedPlu = normalizePluValue(plu);
     if (!normalizedPlu) return null;
 
-    const params = [tenantId, normalizedPlu];
-    let sql = 'SELECT id, name, plu FROM products WHERE tenant_id = ? AND plu = ?';
+    const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+    let sql = `SELECT id, name, plu
+               FROM products
+               WHERE tenant_id = ?
+                 AND (
+                    plu = ?
+                    OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                 )`;
     if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
         sql += ' AND id <> ?';
         params.push(Number(excludeProductId));
