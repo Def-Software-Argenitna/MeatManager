@@ -15,6 +15,7 @@ const SUPPORTED_SCALE_MODELS = [DEFAULT_SCALE_MODEL];
 
 const DEFAULT_API_BASE_URL = String(process.env.BRIDGE_API_BASE_URL || '').trim();
 const FALLBACK_API_BASE_URL = 'https://meatmanager.def-software.com';
+const FIREBASE_API_KEY = String(process.env.BRIDGE_FIREBASE_API_KEY || 'AIzaSyCzgv2OrxRrIfmux3BBWe80Um5sukOImEM').trim();
 const DEFAULT_DB_CONFIG = {
     host: String(process.env.BRIDGE_MYSQL_HOST || '34.136.100.63').trim(),
     port: String(process.env.BRIDGE_MYSQL_PORT || '3306').trim(),
@@ -93,7 +94,8 @@ function getLegacyOverrides() {
 function isInstallationValid(candidate) {
     if (!candidate || typeof candidate !== 'object') return false;
     if (Number.parseInt(candidate.onboardingVersion || '0', 10) < 1) return false;
-    if (String(candidate.auth?.mode || '').trim() !== 'internal-admin') return false;
+    const authMode = String(candidate.auth?.mode || '').trim();
+    if (!['internal-admin', 'tenant-admin'].includes(authMode)) return false;
     if (!String(candidate.auth?.adminEmail || '').trim()) return false;
     if (!candidate.client || !Number.isFinite(Number(candidate.client.id))) return false;
     if (!candidate.branch || !Number.isFinite(Number(candidate.branch.id))) return false;
@@ -257,6 +259,21 @@ function resolveApiBaseUrl(preferred = '') {
     return selected.replace(/\/$/, '');
 }
 
+function normalizeAuthErrorMessage(rawMessage = '') {
+    const code = String(rawMessage || '').trim().toUpperCase();
+    if (!code) return 'No se pudo iniciar sesion';
+    if (code.includes('INVALID_LOGIN_CREDENTIALS') || code.includes('INVALID_PASSWORD') || code.includes('EMAIL_NOT_FOUND')) {
+        return 'Credenciales invalidas';
+    }
+    if (code.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
+        return 'Demasiados intentos. Espera unos minutos e intenta de nuevo.';
+    }
+    if (code.includes('USER_DISABLED')) {
+        return 'El usuario esta deshabilitado';
+    }
+    return rawMessage;
+}
+
 function httpJsonRequest(urlOrOptions, { method = 'GET', headers = {}, body = null, timeout = 5000 } = {}) {
     return new Promise((resolve, reject) => {
         const requestOptions = typeof urlOrOptions === 'string'
@@ -294,7 +311,10 @@ function httpJsonRequest(urlOrOptions, { method = 'GET', headers = {}, body = nu
                         }
                     })();
                     if (status < 200 || status >= 300) {
-                        const err = new Error(parsed?.error || `HTTP ${status}`);
+                        const apiError = typeof parsed?.error === 'string'
+                            ? parsed.error
+                            : (typeof parsed?.error?.message === 'string' ? parsed.error.message : null);
+                        const err = new Error(apiError || `HTTP ${status}`);
                         err.statusCode = status;
                         reject(err);
                         return;
@@ -645,23 +665,72 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
     const base = resolveApiBaseUrl(apiBaseUrl);
     if (!base) throw new Error('No hay URL API configurada en este Bridge');
     if (!identifier || !password) throw new Error('Completa email/usuario y contrasena');
+    if (!FIREBASE_API_KEY) throw new Error('Falta FIREBASE API KEY en Bridge');
 
-    return httpJsonRequest(`${base}/api/internal-admin/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: { identifier, password },
+    let idToken = '';
+    try {
+        const firebaseLogin = await httpJsonRequest(
+            `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
+            {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: {
+                    email: String(identifier).trim(),
+                    password: String(password),
+                    returnSecureToken: true,
+                },
+                timeout: 10000,
+            }
+        );
+        idToken = String(firebaseLogin?.idToken || '').trim();
+    } catch (error) {
+        throw new Error(normalizeAuthErrorMessage(error?.message || 'Credenciales invalidas'));
+    }
+
+    if (!idToken) throw new Error('No se pudo obtener token de autenticacion');
+
+    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
+        headers: { Authorization: `Bearer ${idToken}` },
         timeout: 10000,
     });
+
+    const user = me?.user || {};
+    if (String(user.role || '').toLowerCase() !== 'admin') {
+        throw new Error('El usuario no tiene rol admin para configurar el Bridge');
+    }
+
+    return {
+        ok: true,
+        token: idToken,
+        admin: {
+            email: user.email || String(identifier).trim(),
+            name: user.username || '',
+            lastname: '',
+            role: user.role || 'admin',
+        },
+    };
 }
 
 async function onboardingFetchClients({ apiBaseUrl, token, search = '' }) {
     const base = resolveApiBaseUrl(apiBaseUrl);
     if (!base || !token) throw new Error('Sesion admin invalida');
-    const query = search ? `?search=${encodeURIComponent(String(search).trim())}` : '';
-    return httpJsonRequest(`${base}/api/internal-admin/clients${query}`, {
+    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
     });
+    const user = me?.user || {};
+    if (!user?.clientId) {
+        throw new Error('No se encontro cliente asociado al admin');
+    }
+
+    const needle = String(search || '').trim().toLowerCase();
+    const clients = [{
+        id: Number(user.clientId),
+        businessName: String(user.businessName || `Cliente ${user.clientId}`),
+        status: String(user.clientStatus || 'ACTIVE'),
+    }].filter((client) => !needle || client.businessName.toLowerCase().includes(needle));
+
+    return { ok: true, clients };
 }
 
 async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
@@ -670,7 +739,16 @@ async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
     if (!base || !token || !Number.isFinite(numericClientId) || numericClientId <= 0) {
         throw new Error('Datos invalidos para sucursales');
     }
-    return httpJsonRequest(`${base}/api/internal-admin/clients/${numericClientId}/branches`, {
+    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 10000,
+    });
+    const currentClientId = Number(me?.user?.clientId || 0);
+    if (!Number.isFinite(currentClientId) || currentClientId <= 0 || currentClientId !== numericClientId) {
+        throw new Error('No tienes acceso a ese cliente');
+    }
+
+    return httpJsonRequest(`${base}/api/client/branches`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
     });
@@ -681,7 +759,7 @@ function saveInstallation(payload) {
         ...payload,
         onboardingVersion: 1,
         auth: {
-            mode: 'internal-admin',
+            mode: 'tenant-admin',
             adminEmail: String(payload?.auth?.adminEmail || '').trim(),
             adminName: String(payload?.auth?.adminName || '').trim(),
             verifiedAt: new Date().toISOString(),
