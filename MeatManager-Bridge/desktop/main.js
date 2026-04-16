@@ -90,6 +90,9 @@ function getLegacyOverrides() {
 
 function isInstallationValid(candidate) {
     if (!candidate || typeof candidate !== 'object') return false;
+    if (Number.parseInt(candidate.onboardingVersion || '0', 10) < 1) return false;
+    if (String(candidate.auth?.mode || '').trim() !== 'internal-admin') return false;
+    if (!String(candidate.auth?.adminEmail || '').trim()) return false;
     if (!candidate.client || !Number.isFinite(Number(candidate.client.id))) return false;
     if (!candidate.branch || !Number.isFinite(Number(candidate.branch.id))) return false;
     if (!Array.isArray(candidate.devices) || candidate.devices.length === 0) return false;
@@ -114,6 +117,13 @@ function sanitizeInstallation(candidate) {
         .filter((device) => device.port);
 
     return {
+        onboardingVersion: Number.parseInt(candidate.onboardingVersion || '0', 10) || 0,
+        auth: {
+            mode: String(candidate.auth?.mode || '').trim(),
+            adminEmail: String(candidate.auth?.adminEmail || '').trim(),
+            adminName: String(candidate.auth?.adminName || '').trim(),
+            verifiedAt: String(candidate.auth?.verifiedAt || '').trim(),
+        },
         apiBaseUrl: String(candidate.apiBaseUrl || DEFAULT_API_BASE_URL || '').trim(),
         client: {
             id: Number(candidate.client?.id || 0),
@@ -131,33 +141,6 @@ function sanitizeInstallation(candidate) {
 function loadInstallation() {
     const parsed = sanitizeInstallation(parseJsonFile(installationFilePath(), null));
     if (isInstallationValid(parsed)) return parsed;
-
-    const legacy = getLegacyOverrides();
-    const legacyClientId = Number.parseInt(legacy.BRIDGE_CLIENT_ID || '', 10);
-    const legacyBranchId = Number.parseInt(legacy.BRIDGE_BRANCH_ID || '', 10);
-    const legacyPort = String(legacy.SCALE_PORT || '').trim();
-
-    if (Number.isFinite(legacyClientId) && Number.isFinite(legacyBranchId) && legacyPort) {
-        const migrated = {
-            apiBaseUrl: DEFAULT_API_BASE_URL,
-            client: { id: legacyClientId, name: `Cliente ${legacyClientId}` },
-            branch: { id: legacyBranchId, name: `Sucursal ${legacyBranchId}` },
-            devices: [
-                {
-                    id: 'scale-1',
-                    name: 'Balanza 1',
-                    model: DEFAULT_SCALE_MODEL,
-                    port: legacyPort,
-                    address: String(legacy.SCALE_ADDRESS || DEFAULT_BRIDGE_OVERRIDES.SCALE_ADDRESS),
-                    baudRate: String(legacy.SCALE_BAUD_RATE || DEFAULT_BRIDGE_OVERRIDES.SCALE_BAUD_RATE),
-                    enabled: true,
-                },
-            ],
-            configuredAt: new Date().toISOString(),
-        };
-        writeJsonFile(installationFilePath(), migrated);
-        return migrated;
-    }
 
     return null;
 }
@@ -679,7 +662,16 @@ async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
 }
 
 function saveInstallation(payload) {
-    const next = sanitizeInstallation(payload);
+    const next = sanitizeInstallation({
+        ...payload,
+        onboardingVersion: 1,
+        auth: {
+            mode: 'internal-admin',
+            adminEmail: String(payload?.auth?.adminEmail || '').trim(),
+            adminName: String(payload?.auth?.adminName || '').trim(),
+            verifiedAt: new Date().toISOString(),
+        },
+    });
     if (!isInstallationValid(next)) {
         throw new Error('Configuracion incompleta');
     }

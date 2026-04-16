@@ -30,6 +30,7 @@ const obSave = document.getElementById('ob-save');
 
 let onboardingRequired = false;
 let onboardingToken = '';
+let onboardingAdmin = null;
 let onboardingClients = [];
 let onboardingBranches = [];
 let onboardingPorts = [];
@@ -235,6 +236,7 @@ obLogin.addEventListener('click', async () => {
         return;
     }
     onboardingToken = login.token;
+    onboardingAdmin = login.admin || null;
 
     const clients = await window.bridgeDesktop.onboardingClients({
         apiBaseUrl: obApiUrl.value,
@@ -315,6 +317,10 @@ obSave.addEventListener('click', async () => {
 
     const save = await window.bridgeDesktop.onboardingSave({
         apiBaseUrl: obApiUrl.value,
+        auth: {
+            adminEmail: onboardingAdmin?.email || '',
+            adminName: [onboardingAdmin?.name, onboardingAdmin?.lastname].filter(Boolean).join(' ').trim(),
+        },
         client: { id: clientId, name: client?.businessName || `Cliente ${clientId}` },
         branch: { id: branchId, name: branch?.name || `Sucursal ${branchId}` },
         devices: onboardingDevices.map((device, index) => ({
