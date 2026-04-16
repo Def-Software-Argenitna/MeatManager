@@ -455,6 +455,12 @@ const ConfiguracionPromociones = () => {
             setSaving(true);
             setStatus(null);
             const currentCategoryId = String(form.category_id_filter || '');
+            const createdPromoName = String(form.promo_name || '').trim();
+            const createdPromoPlu = normalizePluCode(form.promo_plu);
+            const createdPromoIdentity = [
+                createdPromoName ? `Nombre: ${createdPromoName}` : '',
+                createdPromoPlu ? `PLU: ${createdPromoPlu}` : '',
+            ].filter(Boolean).join(' | ');
             const tiers = buildNormalizedTiers().sort((a, b) => a.min_qty_kg - b.min_qty_kg);
 
             const basePayload = {
@@ -529,8 +535,9 @@ const ConfiguracionPromociones = () => {
             const queuedBroadcastCount = Number(totalQueuedBroadcast || 0);
             if (keepCreating && !editingId) {
                 const baseText = 'Promoción creada exitosamente. Lista para cargar otra.';
+                const identityText = createdPromoIdentity ? ` ${createdPromoIdentity}.` : '';
                 const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
-                setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
+                setStatus({ type: 'ok', text: `${baseText}${identityText}${broadcastText}` });
                 setForm((prev) => ({
                     ...emptyForm,
                     category_id_filter: currentCategoryId || prev.category_id_filter || '',
@@ -545,8 +552,9 @@ const ConfiguracionPromociones = () => {
                     const baseText = createdCount > 1
                         ? `Se crearon ${createdCount} niveles de promoción.`
                         : 'Promoción creada exitosamente.';
+                    const identityText = createdPromoIdentity ? ` ${createdPromoIdentity}.` : '';
                     const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
-                    setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
+                    setStatus({ type: 'ok', text: `${baseText}${identityText}${broadcastText}` });
                 }
                 resetForm();
             }
