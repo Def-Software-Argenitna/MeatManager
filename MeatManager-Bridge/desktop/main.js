@@ -134,6 +134,8 @@ function updateTrayMenu() {
 
 function bridgeScriptPath() {
     if (app.isPackaged) {
+        const asarPath = path.join(app.getAppPath(), 'src', 'index.js');
+        if (fs.existsSync(asarPath)) return asarPath;
         const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'index.js');
         if (fs.existsSync(unpackedPath)) return unpackedPath;
     }
