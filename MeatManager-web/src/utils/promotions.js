@@ -100,8 +100,7 @@ const getRemainingKgByStockMode = ({ promo, currentStockQty }) => {
         const used = Number(promo.used_kg) || 0;
         return round3(Math.max(0, limit - used));
     }
-    const stockQty = Number(currentStockQty) || 0;
-    return round3(Math.max(0, stockQty));
+    return Number.POSITIVE_INFINITY;
 };
 
 export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() }) => {
@@ -119,7 +118,9 @@ export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() 
     }
 
     if (promo.end_condition === PROMO_END_CONDITIONS.STOCK) {
-        const remainingByStock = getRemainingKgByStockMode({ promo, currentStockQty });
+        const remainingByStock = promo.stock_mode === PROMO_STOCK_MODES.FIXED
+            ? getRemainingKgByStockMode({ promo, currentStockQty })
+            : round3(Math.max(0, Number(currentStockQty) || 0));
         if (remainingByStock <= 0) return false;
     }
 
@@ -139,7 +140,10 @@ const getPromotionRemainingEligibleKg = ({ promo, currentStockQty }) => {
     }
 
     if (promo.end_condition === PROMO_END_CONDITIONS.STOCK) {
-        remainingByCondition = Math.min(remainingByCondition, remainingByStockMode);
+        const remainingByStockCondition = promo.stock_mode === PROMO_STOCK_MODES.FIXED
+            ? remainingByStockMode
+            : round3(Math.max(0, Number(currentStockQty) || 0));
+        remainingByCondition = Math.min(remainingByCondition, remainingByStockCondition);
     }
 
     // El tope por stock_mode aplica siempre, aunque la condición de fin sea otra.
