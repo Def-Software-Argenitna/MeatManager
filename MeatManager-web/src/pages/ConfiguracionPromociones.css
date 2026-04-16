@@ -468,6 +468,20 @@ button:disabled {
     outline: none;
 }
 
+.filter-box input {
+    background: transparent;
+    border: none;
+    color: #e5e7eb;
+    padding: 0.6rem 0.5rem;
+    font-size: 0.9rem;
+    width: 210px;
+    outline: none;
+}
+
+.filter-box input::placeholder {
+    color: #9ca3af;
+}
+
 .promos-container {
     display: flex;
     flex-direction: column;

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import {
     FiTag, FiEdit2, FiCopy, FiTrash2, FiSave, FiPlus,
     FiX, FiCheckCircle, FiClock, FiBox, FiMapPin,
-    FiInfo, FiActivity, FiXCircle
+    FiInfo, FiActivity, FiXCircle, FiSearch
 } from 'react-icons/fi';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
@@ -19,6 +19,7 @@ const toNumber = (value, decimals = 2) => {
 
 const formatKg = (value) => toNumber(value, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const formatMoney = (value) => toNumber(value, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const normalizeText = (value) => String(value || '').trim().toLowerCase();
 
 const endConditionLabel = (value) => {
     if (value === PROMO_END_CONDITIONS.STOCK) return 'Agotar stock promo';
@@ -69,6 +70,7 @@ const ConfiguracionPromociones = () => {
     const [form, setForm] = useState(emptyForm);
     const [extraPromoTiers, setExtraPromoTiers] = useState([]);
     const [listBranchFilter, setListBranchFilter] = useState('');
+    const [listSearch, setListSearch] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [status, setStatus] = useState(null);
@@ -128,14 +130,22 @@ const ConfiguracionPromociones = () => {
     const filteredRows = useMemo(() => {
         const list = Array.isArray(promotions) ? promotions : [];
         const branchId = Number(listBranchFilter || 0);
+        const search = normalizeText(listSearch);
         return list
             .filter((row) => {
                 if (!branchId) return true;
                 return Number(row.branch_id || 0) === branchId;
             })
+            .filter((row) => {
+                if (!search) return true;
+                const productName = normalizeText(row?.product_name);
+                const promoName = normalizeText(row?.promo_name);
+                const promoPlu = normalizeText(row?.promo_plu);
+                return productName.includes(search) || promoName.includes(search) || promoPlu.includes(search);
+            })
             .slice()
             .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
-    }, [listBranchFilter, promotions]);
+    }, [listBranchFilter, listSearch, promotions]);
 
     const activeRows = useMemo(
         () => filteredRows.filter((row) => row.active),
@@ -1070,6 +1080,16 @@ const ConfiguracionPromociones = () => {
                                         </option>
                                     )) : null}
                                 </select>
+                            </div>
+                            <div className="filter-box">
+                                <FiSearch className="filter-icon" />
+                                <input
+                                    type="text"
+                                    value={listSearch}
+                                    disabled={loading}
+                                    onChange={(e) => setListSearch(e.target.value)}
+                                    placeholder="Buscar por nombre o PLU"
+                                />
                             </div>
                         </div>
 
