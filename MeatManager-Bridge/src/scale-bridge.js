@@ -1301,10 +1301,60 @@ class ScaleBridge {
         };
     }
 
-    async runOnce() {
+    async consolidatePluCatalogOnStartup() {
+        const duplicatePluRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT effective_plu_code, COUNT(*) AS qty
+             FROM (
+                SELECT COALESCE(
+                    NULLIF(TRIM(CAST(plu AS CHAR)), ''),
+                    CAST(id AS CHAR)
+                ) AS effective_plu_code
+                FROM products
+                WHERE tenant_id = ?
+                  AND COALESCE(current_price, 0) > 0
+             ) x
+             GROUP BY effective_plu_code
+             HAVING COUNT(*) > 1
+             ORDER BY effective_plu_code`,
+            [this.config.tenantId]
+        );
+
+        if (duplicatePluRows.length > 0) {
+            const sample = duplicatePluRows.slice(0, 10).map((row) => `${row.effective_plu_code}(${row.qty})`);
+            throw new Error(`PLU duplicados detectados al iniciar: ${sample.join(', ')}`);
+        }
+
+        const deletedMapRows = await mysqlExecute(
+            this.mysqlPool,
+            `DELETE FROM scale_bridge_product_map
+             WHERE device_id = ?
+               AND tenant_id = ?`,
+            [this.config.deviceId, this.config.tenantId]
+        );
+
+        const removedMappings = Number(deletedMapRows?.affectedRows || 0);
+        this.logger.info('Consolidado general de PLU ejecutado al iniciar', {
+            tenantId: this.config.tenantId,
+            deviceId: this.config.deviceId,
+            removedMappings,
+        });
+
+        this.state.startupPluConsolidatedAt = new Date().toISOString();
+        this.stateStore.save(this.state);
+
+        return { ok: true, removedMappings, forceProductRewrite: true };
+    }
+
+    async runOnce(options = {}) {
+        const reason = String(options.reason || 'scheduled');
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
         const runtimeSettings = await this.syncRuntimeSettings();
+        let startupPluConsolidation = { forceProductRewrite: false, removedMappings: 0 };
+        if (reason === 'startup') {
+            startupPluConsolidation = await this.consolidatePluCatalogOnStartup();
+        }
         try {
             // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
             await this.syncVendors();
@@ -1331,13 +1381,16 @@ class ScaleBridge {
         const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
         const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
             || runtimeSettings.forceProductRewrite
+            || startupPluConsolidation.forceProductRewrite
             || sectionConfigChanged
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
         if (shouldSyncProducts) {
             products = await this.syncProducts({
                 runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
                 priceFormat: runtimeSettings.priceFormat,
-                forceProductRewrite: runtimeSettings.forceProductRewrite || sectionConfigChanged,
+                forceProductRewrite: runtimeSettings.forceProductRewrite
+                    || startupPluConsolidation.forceProductRewrite
+                    || sectionConfigChanged,
             });
             this.state.lastProductSyncAt = new Date().toISOString();
         }

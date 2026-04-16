@@ -69,7 +69,7 @@ async function runCycle(reason = 'scheduled') {
     running = true;
     logger.info('Iniciando ciclo de sincronizacion', { reason });
     try {
-        const result = await bridge.runOnce();
+        const result = await bridge.runOnce({ reason });
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
         return { ok: true, result };
     } catch (error) {

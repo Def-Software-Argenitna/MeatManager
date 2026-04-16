@@ -4273,16 +4273,34 @@ function normalizeColumnValue(value, columnType) {
 }
 
 function normalizePluValue(value) {
-    const normalized = String(value ?? '').trim();
-    return normalized || null;
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    if (!/^\d+$/.test(raw)) {
+        const error = new Error('El PLU debe contener solo numeros');
+        error.statusCode = 400;
+        throw error;
+    }
+    const numeric = Number.parseInt(raw, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        const error = new Error('El PLU debe ser un numero mayor a 0');
+        error.statusCode = 400;
+        throw error;
+    }
+    return String(numeric);
 }
 
 async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
     const normalizedPlu = normalizePluValue(plu);
     if (!normalizedPlu) return null;
 
-    const params = [tenantId, normalizedPlu];
-    let sql = 'SELECT id, name, plu FROM products WHERE tenant_id = ? AND plu = ?';
+    const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+    let sql = `SELECT id, name, plu
+               FROM products
+               WHERE tenant_id = ?
+                 AND (
+                    plu = ?
+                    OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                 )`;
     if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
         sql += ' AND id <> ?';
         params.push(Number(excludeProductId));
@@ -5437,21 +5455,41 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         }
 
         const ticket = ticketRows[0];
-        const [itemRows] = await pool.query(
-                        `SELECT ${itemSelect}
+        const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
               AND (
-                                     CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                                     OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                   CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                   OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
               )
-             WHERE s.tenant_id = ?
+             WHERE s.tenant_id = ?`;
+
+        let [itemRows] = await pool.query(
+            `${itemBaseSql}
                AND s.device_id = ?
                AND s.ticket_id = ?
              ORDER BY s.line_no ASC`,
             [tenantId, ticket.device_id, ticket.ticket_id]
         );
+
+        // Fallback defensivo:
+        // algunos firmwares/lectores pueden desalinear el identificador interno,
+        // pero los barcodes del ticket siguen siendo estables.
+        if (!itemRows.length) {
+            const barcodeConditions = ['UPPER(s.ticket_barcode) = UPPER(?)'];
+            const barcodeParams = [tenantId, ticket.ticket_barcode];
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                barcodeConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                barcodeParams.push(ticket.printed_ticket_barcode);
+            }
+            [itemRows] = await pool.query(
+                `${itemBaseSql}
+                   AND (${barcodeConditions.join(' OR ')})
+                 ORDER BY s.line_no ASC`,
+                barcodeParams
+            );
+        }
 
         const items = itemRows.map((row) => {
             const grams = Number(row.grams || 0);

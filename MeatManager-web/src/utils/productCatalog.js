@@ -4,7 +4,14 @@ export const normalizeProductName = (value) => String(value || '').trim().toLowe
 export const normalizeProductKey = (value) => normalizeProductName(value).replace(/\s+/g, '_');
 export const buildProductCanonicalKey = (name) => normalizeProductKey(name);
 export const buildLegacyPriceProductId = (name, category) => `${normalizeProductKey(name)}-${normalizeProductKey(category || 'general')}`;
-export const normalizePlu = (value) => String(value || '').trim();
+export const normalizePlu = (value) => {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (!/^\d+$/.test(raw)) return raw;
+    const numeric = Number.parseInt(raw, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '';
+    return String(numeric);
+};
 
 const toNumber = (value) => {
     const parsed = Number(value);
