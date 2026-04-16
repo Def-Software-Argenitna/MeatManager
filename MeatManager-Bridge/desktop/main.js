@@ -145,7 +145,7 @@ function runtimeDir() {
 }
 
 function startBridgeProcess() {
-    if (bridgeProc && !bridgeProc.killed) return;
+    if (bridgeProc && bridgeProc.exitCode == null && !bridgeProc.killed) return;
     const scriptPath = bridgeScriptPath();
     if (!fs.existsSync(scriptPath)) {
         lastStatus.bridgeProcess = {
@@ -191,6 +191,7 @@ function startBridgeProcess() {
         sendStatusToRenderer();
     });
     bridgeProc.on('exit', () => {
+        bridgeProc = null;
         lastStatus.bridgeProcess = {
             ...lastStatus.bridgeProcess,
             running: false,
