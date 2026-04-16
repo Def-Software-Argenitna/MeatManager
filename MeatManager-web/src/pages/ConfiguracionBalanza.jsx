@@ -292,21 +292,21 @@ const ConfiguracionBalanza = () => {
                     <input
                         value={ticketHeader.line1}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line1: e.target.value }))}
-                        placeholder="Línea 1 (ej: CARNICERÍA CÉSAR)"
+                        placeholder="Nombre del local"
                         maxLength={18}
                         disabled={!isAdmin || loading}
                     />
                     <input
                         value={ticketHeader.line2}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line2: e.target.value }))}
-                        placeholder="Línea 2"
+                        placeholder="Direccion"
                         maxLength={34}
                         disabled={!isAdmin || loading}
                     />
                     <input
                         value={ticketHeader.line3}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line3: e.target.value }))}
-                        placeholder="Línea 3"
+                        placeholder="Telefono/Whatsapp"
                         maxLength={34}
                         disabled={!isAdmin || loading}
                     />
