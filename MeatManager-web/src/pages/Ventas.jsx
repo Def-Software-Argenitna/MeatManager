@@ -565,6 +565,16 @@ const Ventas = () => {
         )) || null;
     }, [promotions]);
 
+    const getCurrentStockQty = React.useCallback(({ productId, productName }) => {
+        const normalizedName = String(productName || '').trim().toUpperCase();
+        return (Array.isArray(stockItems) ? stockItems : []).reduce((sum, row) => {
+            const sameProductId = productId != null && Number(row?.product_id) === Number(productId);
+            const sameName = normalizedName && String(row?.name || '').trim().toUpperCase() === normalizedName;
+            if (!sameProductId && !sameName) return sum;
+            return sum + toNumber(row?.quantity);
+        }, 0);
+    }, [stockItems]);
+
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
         const normalized = normalizePluCode(pluValue) || String(pluValue || '').trim();
         if (!normalized) return null;
@@ -575,7 +585,14 @@ const Ventas = () => {
             const minQtyKg = toNumber(promo?.min_qty_kg, 3);
             const fallbackUnitPrice = minQtyKg > 0 ? toNumber(promo?.promo_total_price) / minQtyKg : 0;
             const resolvedPromoUnitPrice = promoUnitPrice > 0 ? promoUnitPrice : fallbackUnitPrice;
+            const promoStockQty = getCurrentStockQty({
+                productId: promo?.product_id,
+                productName: promo?.product_name,
+            });
             if (resolvedPromoUnitPrice > 0) {
+                if (!(promoStockQty > 0)) {
+                    return null;
+                }
                 return {
                     id: promo?.product_id || null,
                     product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
@@ -603,7 +620,7 @@ const Ventas = () => {
             plu: product.plu || '',
             updated_at: product.updated_at,
         };
-    }, [findPromotionByPromoPlu, productsCatalog]);
+    }, [findPromotionByPromoPlu, getCurrentStockQty, productsCatalog]);
 
     const findStockItemByName = React.useCallback((name) => {
         const normalized = String(name || '').trim().toUpperCase();
