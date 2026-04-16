@@ -6,6 +6,10 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const isCurrentAccountPurchase = (purchase) => (
+    Boolean(purchase?.is_account)
+    || ['cta_cte', 'cuenta corriente'].includes(normalizeText(purchase?.payment_method))
+);
 
 const Proveedores = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -19,6 +23,7 @@ const Proveedores = () => {
     const [ledgerSupplier, setLedgerSupplier] = useState(null);
     const [showPaymentModal, setShowPaymentModal] = useState(false);
     const [paymentSupplier, setPaymentSupplier] = useState(null);
+    const [selectedPurchaseDetail, setSelectedPurchaseDetail] = useState(null);
     const [paymentForm, setPaymentForm] = useState({
         amount: '',
         payment_method: '',
@@ -50,14 +55,25 @@ const Proveedores = () => {
     ];
 
     const loadSuppliersData = React.useCallback(async () => {
-        const [suppliersRows, comprasRows, pagosRows, paymentMethodsRows] = await Promise.all([
+        const [suppliersRows, comprasRows, comprasItemsRows, pagosRows, paymentMethodsRows] = await Promise.all([
             fetchTable('suppliers'),
             fetchTable('compras'),
+            fetchTable('compras_items', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
             fetchTable('caja_movimientos'),
             fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
         ]);
+        const itemsByPurchaseId = new Map();
+        (Array.isArray(comprasItemsRows) ? comprasItemsRows : []).forEach((item) => {
+            const key = Number(item.purchase_id);
+            const list = itemsByPurchaseId.get(key) || [];
+            list.push({ ...item, name: item.product_name || item.name || '' });
+            itemsByPurchaseId.set(key, list);
+        });
         setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
-        setCompras(Array.isArray(comprasRows) ? comprasRows : []);
+        setCompras((Array.isArray(comprasRows) ? comprasRows : []).map((compra) => ({
+            ...compra,
+            items_detail: compra.items_detail || itemsByPurchaseId.get(Number(compra.id)) || [],
+        })));
         setPagos((Array.isArray(pagosRows) ? pagosRows : []).filter((item) => item.category === 'Pago Proveedor'));
         setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
     }, []);
@@ -152,6 +168,7 @@ const Proveedores = () => {
         const ledgerRows = [
             ...comprasProveedor.map((c) => ({
                 id: `compra-${c.id}`,
+                purchaseId: c.id,
                 date: c.date,
                 kind: 'haber',
                 concept: `Compra ${c.invoice_num ? `#${c.invoice_num}` : ''}`.trim(),
@@ -190,6 +207,13 @@ const Proveedores = () => {
         });
         setShowPaymentModal(true);
     };
+
+    const openPurchaseDetailFromLedger = React.useCallback((row) => {
+        if (row?.kind !== 'haber' || !row?.purchaseId) return;
+        const purchase = (compras || []).find((item) => Number(item.id) === Number(row.purchaseId));
+        if (!purchase) return;
+        setSelectedPurchaseDetail(purchase);
+    }, [compras]);
 
     const handlePrintSupplierLedger = React.useCallback((supplier) => {
         if (!supplier) return;
@@ -488,7 +512,16 @@ const Proveedores = () => {
                                 </thead>
                                 <tbody>
                                     {getSupplierLedger(ledgerSupplier.name).map((row) => (
-                                        <tr key={row.id} style={{ borderTop: '1px solid var(--color-border)' }}>
+                                        <tr
+                                            key={row.id}
+                                            style={{
+                                                borderTop: '1px solid var(--color-border)',
+                                                cursor: row.kind === 'haber' && row.purchaseId ? 'pointer' : 'default',
+                                                background: row.kind === 'haber' && row.purchaseId ? 'rgba(255,255,255,0.02)' : 'transparent',
+                                            }}
+                                            onClick={() => openPurchaseDetailFromLedger(row)}
+                                            title={row.kind === 'haber' && row.purchaseId ? 'Ver detalle de la compra' : ''}
+                                        >
                                             <td style={{ padding: '0.6rem' }}>{row.date ? new Date(row.date).toLocaleDateString() : '-'}</td>
                                             <td style={{ padding: '0.6rem' }}>{row.concept}</td>
                                             <td style={{ padding: '0.6rem' }}>{row.payment_method || '-'}</td>
@@ -497,6 +530,76 @@ const Proveedores = () => {
                                             <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 700 }}>{`$${Number(row.balance || 0).toLocaleString()}`}</td>
                                         </tr>
                                     ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>,
+                document.body
+            )}
+
+            {selectedPurchaseDetail && createPortal(
+                <div className="modal-overlay" onClick={() => setSelectedPurchaseDetail(null)}>
+                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '900px', width: '92%', padding: '1.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+                            <div>
+                                <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold', marginBottom: '0.25rem' }}>Detalle de compra</h2>
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.92rem' }}>
+                                    {selectedPurchaseDetail.supplier || '-'}{selectedPurchaseDetail.invoice_num ? ` · Comprobante ${selectedPurchaseDetail.invoice_num}` : ''}
+                                </div>
+                            </div>
+                            <button onClick={() => setSelectedPurchaseDetail(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                            <div className="neo-card" style={{ padding: '0.75rem' }}>
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Fecha</div>
+                                <div style={{ fontWeight: 700 }}>{selectedPurchaseDetail.date ? new Date(selectedPurchaseDetail.date).toLocaleDateString() : '-'}</div>
+                            </div>
+                            <div className="neo-card" style={{ padding: '0.75rem' }}>
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Pago</div>
+                                <div style={{ fontWeight: 700 }}>{selectedPurchaseDetail.payment_method || '-'}</div>
+                            </div>
+                            <div className="neo-card" style={{ padding: '0.75rem' }}>
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Total</div>
+                                <div style={{ fontWeight: 700 }}>${Number(selectedPurchaseDetail.total || 0).toLocaleString()}</div>
+                            </div>
+                            <div className="neo-card" style={{ padding: '0.75rem' }}>
+                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Cuenta corriente</div>
+                                <div style={{ fontWeight: 700 }}>{isCurrentAccountPurchase(selectedPurchaseDetail) ? 'Si' : 'No'}</div>
+                            </div>
+                        </div>
+
+                        <div style={{ maxHeight: '52vh', overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: '10px' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                                <thead style={{ position: 'sticky', top: 0, background: 'var(--color-bg-main)' }}>
+                                    <tr>
+                                        <th style={{ textAlign: 'left', padding: '0.65rem' }}>Articulo</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Cant.</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Peso</th>
+                                        <th style={{ textAlign: 'left', padding: '0.65rem' }}>Unidad</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>P. unitario</th>
+                                        <th style={{ textAlign: 'right', padding: '0.65rem' }}>Subtotal</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {(Array.isArray(selectedPurchaseDetail.items_detail) ? selectedPurchaseDetail.items_detail : []).map((item, index) => (
+                                        <tr key={`${selectedPurchaseDetail.id}-${index}`} style={{ borderTop: '1px solid var(--color-border)' }}>
+                                            <td style={{ padding: '0.6rem' }}>{item.product_name || item.name || '-'}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right' }}>{Number(item.quantity || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right' }}>{Number(item.weight || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '0.6rem' }}>{item.unit || '-'}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right' }}>${Number(item.unit_price || 0).toLocaleString()}</td>
+                                            <td style={{ padding: '0.6rem', textAlign: 'right', fontWeight: 700 }}>${Number(item.subtotal || 0).toLocaleString()}</td>
+                                        </tr>
+                                    ))}
+                                    {(!Array.isArray(selectedPurchaseDetail.items_detail) || selectedPurchaseDetail.items_detail.length === 0) && (
+                                        <tr>
+                                            <td colSpan="6" style={{ padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
+                                                Esta compra no tiene items detallados guardados.
+                                            </td>
+                                        </tr>
+                                    )}
                                 </tbody>
                             </table>
                         </div>

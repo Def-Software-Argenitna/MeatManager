@@ -31,6 +31,21 @@ const parseJson = (raw, fallback) => {
     }
 };
 
+const normalizeCategoryKey = (value) => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+
+const extractMarqueeText = (value) => {
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (!value || typeof value !== 'object') return '';
+    const nested = value.text ?? value.message ?? value.value ?? value.content ?? '';
+    if (nested === value) return '';
+    return extractMarqueeText(nested);
+};
+
 const normalizeSectionMappings = (rawMappings) => {
     if (!Array.isArray(rawMappings)) return [];
     return rawMappings
@@ -46,7 +61,7 @@ const normalizeMarqueeLines = (raw) => {
     if (!Array.isArray(raw)) return DEFAULT_MARQUEE_LINES;
     const rows = raw.map((item, index) => ({
         id: index + 1,
-        text: String(item?.text || item || '').trim(),
+        text: extractMarqueeText(item),
         active: Number(item?.active ?? 1) === 0 ? 0 : 1,
     }));
     while (rows.length < 3) {
@@ -116,16 +131,37 @@ const ConfiguracionBalanza = () => {
                 line3: String(line3 || ''),
             });
 
-            const mappings = normalizeSectionMappings(parseJson(sectionMappingsRaw, []));
-            setSectionMappings(mappings.length > 0 ? mappings : [EMPTY_SECTION_MAP]);
             setMarqueeLines(normalizeMarqueeLines(parseJson(marqueeRaw, [])));
 
             const fromProducts = (productsRows || []).map((row) => String(row?.category || '').trim()).filter(Boolean);
             const fromCatalog = (productCategoryRows || [])
                 .map((row) => String(row?.name || row?.code || '').trim())
                 .filter(Boolean);
-            const unique = [...new Set([...fromProducts, ...fromCatalog])].sort((a, b) => a.localeCompare(b, 'es'));
+            const canonicalByKey = new Map();
+            for (const category of fromCatalog) {
+                const key = normalizeCategoryKey(category);
+                if (!key || canonicalByKey.has(key)) continue;
+                canonicalByKey.set(key, category);
+            }
+            for (const category of fromProducts) {
+                const key = normalizeCategoryKey(category);
+                if (!key || canonicalByKey.has(key)) continue;
+                canonicalByKey.set(key, category);
+            }
+
+            const unique = [...canonicalByKey.values()].sort((a, b) => a.localeCompare(b, 'es'));
             setCategoryOptions(unique);
+
+            const mappings = normalizeSectionMappings(parseJson(sectionMappingsRaw, []))
+                .map((row) => {
+                    const key = normalizeCategoryKey(row.category);
+                    if (!key) return row;
+                    return {
+                        ...row,
+                        category: canonicalByKey.get(key) || row.category,
+                    };
+                });
+            setSectionMappings(mappings.length > 0 ? mappings : [EMPTY_SECTION_MAP]);
         } catch (error) {
             showMessage('error', `No se pudo cargar Configuración Balanza: ${error.message}`);
         } finally {
@@ -256,21 +292,21 @@ const ConfiguracionBalanza = () => {
                     <input
                         value={ticketHeader.line1}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line1: e.target.value }))}
-                        placeholder="Línea 1 (ej: CARNICERÍA CÉSAR)"
+                        placeholder="Nombre del local"
                         maxLength={18}
                         disabled={!isAdmin || loading}
                     />
                     <input
                         value={ticketHeader.line2}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line2: e.target.value }))}
-                        placeholder="Línea 2"
+                        placeholder="Direccion"
                         maxLength={34}
                         disabled={!isAdmin || loading}
                     />
                     <input
                         value={ticketHeader.line3}
                         onChange={(e) => setTicketHeader((current) => ({ ...current, line3: e.target.value }))}
-                        placeholder="Línea 3"
+                        placeholder="Telefono/Whatsapp"
                         maxLength={34}
                         disabled={!isAdmin || loading}
                     />

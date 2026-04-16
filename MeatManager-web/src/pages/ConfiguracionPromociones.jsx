@@ -7,7 +7,7 @@ import {
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
-import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_STOCK_MODES } from '../utils/promotions';
+import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_PRICE_MODES, PROMO_STOCK_MODES } from '../utils/promotions';
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
@@ -30,6 +30,11 @@ const endConditionLabel = (value) => {
 const KG_PRESETS = ['0.500', '1.000', '1.500', '2.000', '3.000', '5.000'];
 const PROMO_PLU_STEP = 1000;
 const PROMO_SUFFIX_REGEX = /_P(\d+)$/i;
+const createEmptyTier = (priceMode = PROMO_PRICE_MODES.TOTAL_KG) => ({
+    min_qty_kg: '',
+    promo_total_price: '',
+    promo_price_mode: priceMode,
+});
 
 const emptyForm = {
     branch_id: '',
@@ -41,6 +46,7 @@ const emptyForm = {
     promo_unit_price: '',
     min_qty_kg: '',
     promo_total_price: '',
+    promo_price_mode: PROMO_PRICE_MODES.TOTAL_KG,
     stock_mode: PROMO_STOCK_MODES.ALL,
     stock_cap_kg_limit: '',
     end_condition: PROMO_END_CONDITIONS.NONE,
@@ -61,6 +67,7 @@ const ConfiguracionPromociones = () => {
     const [promotions, setPromotions] = useState([]);
     const [editingId, setEditingId] = useState(null);
     const [form, setForm] = useState(emptyForm);
+    const [extraPromoTiers, setExtraPromoTiers] = useState([]);
     const [listBranchFilter, setListBranchFilter] = useState('');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -234,6 +241,7 @@ const ConfiguracionPromociones = () => {
     const resetForm = () => {
         setEditingId(null);
         setForm(emptyForm);
+        setExtraPromoTiers([]);
         setStatus(null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -251,6 +259,7 @@ const ConfiguracionPromociones = () => {
             promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
+            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
             stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
             end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
@@ -259,6 +268,7 @@ const ConfiguracionPromociones = () => {
             active: row.active === true || Number(row.active) === 1,
             notes: String(row.notes || ''),
         });
+        setExtraPromoTiers([]);
         setStatus(null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -276,6 +286,7 @@ const ConfiguracionPromociones = () => {
             promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
             min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
             promo_total_price: String(toNumber(row.promo_total_price, 2)),
+            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
             stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
             stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
             end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
@@ -284,6 +295,7 @@ const ConfiguracionPromociones = () => {
             active: row.active === true || Number(row.active) === 1,
             notes: String(row.notes || ''),
         });
+        setExtraPromoTiers([]);
         setStatus({ type: 'ok', text: 'Promo duplicada al formulario. Ajusta y guarda.' });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -297,6 +309,39 @@ const ConfiguracionPromociones = () => {
         if (Math.abs(computedTotal - currentTotal) <= 0.009) return;
         setForm((prev) => ({ ...prev, promo_total_price: String(computedTotal) }));
     }, [form.min_qty_kg, form.promo_total_price, form.promo_unit_price]);
+    const addExtraTier = () => {
+        setExtraPromoTiers((prev) => ([
+            ...prev,
+            createEmptyTier(form.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG),
+        ]));
+    };
+
+    const updateExtraTier = (index, patch) => {
+        setExtraPromoTiers((prev) => prev.map((tier, tierIndex) => (
+            tierIndex === index ? { ...tier, ...patch } : tier
+        )));
+    };
+
+    const removeExtraTier = (index) => {
+        setExtraPromoTiers((prev) => prev.filter((_, tierIndex) => tierIndex !== index));
+    };
+
+    const buildNormalizedTiers = () => {
+        const baseTier = {
+            min_qty_kg: form.min_qty_kg,
+            promo_total_price: form.promo_total_price,
+            promo_price_mode: form.promo_price_mode,
+        };
+        const all = [baseTier, ...(Array.isArray(extraPromoTiers) ? extraPromoTiers : [])];
+
+        return all.map((tier) => ({
+            min_qty_kg: toNumber(tier?.min_qty_kg, 3),
+            promo_total_price: toNumber(tier?.promo_total_price, 2),
+            promo_price_mode: tier?.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+                ? PROMO_PRICE_MODES.PER_KG
+                : PROMO_PRICE_MODES.TOTAL_KG,
+        }));
+    };
 
     const togglePromoStatus = async (row) => {
         try {
@@ -317,14 +362,10 @@ const ConfiguracionPromociones = () => {
     };
 
     const validateForm = () => {
-        const minQty = toNumber(form.min_qty_kg, 3);
-        const promoUnitPrice = toNumber(form.promo_unit_price, 2);
-        const promoTotal = promoUnitPrice > 0
-            ? toNumber(minQty * promoUnitPrice, 2)
-            : toNumber(form.promo_total_price, 2);
         const productName = String(form.product_name || '').trim();
         const promoName = String(form.promo_name || '').trim();
         const promoPlu = normalizePluCode(form.promo_plu);
+        const tiers = buildNormalizedTiers();
 
         if (!productName) throw new Error('Selecciona un articulo para la promo.');
         if (!promoName) throw new Error('Ingresa un nombre para el codigo promo.');
@@ -334,8 +375,18 @@ const ConfiguracionPromociones = () => {
             && Number(row?.id || 0) !== Number(editingId || 0)
         ));
         if (duplicatedPromoPlu) throw new Error('Ese PLU promo ya existe. Usa el sugerido o uno libre.');
-        if (!(minQty > 0)) throw new Error('El minimo en kg debe ser mayor a 0.');
-        if (!(promoTotal > 0)) throw new Error('El precio promo debe ser mayor a 0.');
+
+        tiers.forEach((tier, index) => {
+            if (!(tier.min_qty_kg > 0)) throw new Error(`El mínimo en kg del nivel ${index + 1} debe ser mayor a 0.`);
+            if (!(tier.promo_total_price > 0)) throw new Error(`El precio promo del nivel ${index + 1} debe ser mayor a 0.`);
+        });
+
+        const sorted = [...tiers].sort((a, b) => a.min_qty_kg - b.min_qty_kg);
+        for (let i = 1; i < sorted.length; i += 1) {
+            if (Math.abs(sorted[i].min_qty_kg - sorted[i - 1].min_qty_kg) < 0.0005) {
+                throw new Error('No puede haber niveles con el mismo mínimo de kg.');
+            }
+        }
 
         if (form.stock_mode === PROMO_STOCK_MODES.FIXED) {
             const cap = toNumber(form.stock_cap_kg_limit, 3);
@@ -358,8 +409,9 @@ const ConfiguracionPromociones = () => {
     const previewLine = useMemo(() => {
         const product = selectedProductName || 'Artículo';
         const branchScope = form.branch_id ? `Solo en ${selectedBranchName}` : 'Disponible en todas las sucursales';
-        const minKg = form.min_qty_kg ? `${formatKg(form.min_qty_kg)} kg` : 'X kg';
-        const promoPrice = form.promo_total_price ? `$${formatMoney(form.promo_total_price)}` : '$X';
+        const tiers = buildNormalizedTiers()
+            .filter((tier) => tier.min_qty_kg > 0 && tier.promo_total_price > 0)
+            .sort((a, b) => a.min_qty_kg - b.min_qty_kg);
         const stockRule = form.stock_mode === PROMO_STOCK_MODES.FIXED
             ? `Cupo promo: ${form.stock_cap_kg_limit ? `${formatKg(form.stock_cap_kg_limit)} kg` : 'X kg'}`
             : '';
@@ -371,7 +423,23 @@ const ConfiguracionPromociones = () => {
 
         return (
             <div className="promo-preview-content">
-                <strong><FiTag className="icon-mr"/> {product}</strong>: Llevando {minKg} o más, pagás <span className="highlight-price">{promoPrice}</span> el total.
+                <strong><FiTag className="icon-mr"/> {product}</strong>
+                {tiers.length ? (
+                    <div style={{ marginTop: '0.35rem', display: 'grid', gap: '0.2rem' }}>
+                        {tiers.map((tier, index) => (
+                            <div key={`${tier.min_qty_kg}-${tier.promo_total_price}-${index}`}>
+                                Desde {formatKg(tier.min_qty_kg)} kg: {' '}
+                                <span className="highlight-price">
+                                    {tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+                                        ? `$${formatMoney(tier.promo_total_price)} por kg`
+                                        : `$${formatMoney(tier.promo_total_price)} total`}
+                                </span>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div style={{ marginTop: '0.35rem' }}>Define al menos un nivel de promo.</div>
+                )}
                 <div className="preview-badges">
                     <span className="preview-badge"><FiMapPin /> {branchScope}</span>
                     {stockRule && <span className="preview-badge"><FiBox /> {stockRule}</span>}
@@ -379,7 +447,7 @@ const ConfiguracionPromociones = () => {
                 </div>
             </div>
         );
-    }, [form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
+    }, [extraPromoTiers, form.branch_id, form.end_condition, form.end_date, form.min_qty_kg, form.promo_price_mode, form.promo_total_price, form.sold_kg_limit, form.stock_cap_kg_limit, form.stock_mode, selectedBranchName, selectedProductName]);
 
     const savePromotion = async ({ keepCreating = false } = {}) => {
         try {
@@ -387,20 +455,14 @@ const ConfiguracionPromociones = () => {
             setSaving(true);
             setStatus(null);
             const currentCategoryId = String(form.category_id_filter || '');
+            const tiers = buildNormalizedTiers().sort((a, b) => a.min_qty_kg - b.min_qty_kg);
 
-            const payload = {
+            const basePayload = {
                 branch_id: form.branch_id ? Number(form.branch_id) : null,
                 product_id: form.product_id ? Number(form.product_id) : null,
                 product_name: String(form.product_name || '').trim(),
                 promo_name: String(form.promo_name || '').trim(),
                 promo_plu: normalizePluCode(form.promo_plu) || null,
-                promo_unit_price: toNumber(form.promo_unit_price, 2) > 0
-                    ? toNumber(form.promo_unit_price, 2)
-                    : null,
-                min_qty_kg: toNumber(form.min_qty_kg, 3),
-                promo_total_price: toNumber(form.promo_unit_price, 2) > 0
-                    ? toNumber(toNumber(form.min_qty_kg, 3) * toNumber(form.promo_unit_price, 2), 2)
-                    : toNumber(form.promo_total_price, 2),
                 stock_mode: form.stock_mode || PROMO_STOCK_MODES.ALL,
                 stock_cap_kg_limit: form.stock_mode === PROMO_STOCK_MODES.FIXED
                     ? toNumber(form.stock_cap_kg_limit, 3)
@@ -416,15 +478,55 @@ const ConfiguracionPromociones = () => {
                 notes: String(form.notes || '').trim() || null,
             };
 
-            let saveResult = null;
+            let totalQueuedBroadcast = 0;
+            let createdCount = 0;
             if (editingId) {
-                saveResult = await saveTableRecord('promotions', 'update', payload, editingId);
+                const [firstTier, ...remainingTiers] = tiers;
+                const updatePayload = {
+                    ...basePayload,
+                    min_qty_kg: firstTier.min_qty_kg,
+                    promo_total_price: firstTier.promo_total_price,
+                    promo_price_mode: firstTier.promo_price_mode,
+                    promo_unit_price: firstTier.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+                        ? firstTier.promo_total_price
+                        : (firstTier.min_qty_kg > 0 ? toNumber(firstTier.promo_total_price / firstTier.min_qty_kg, 2) : null),
+                };
+                const updateResult = await saveTableRecord('promotions', 'update', updatePayload, editingId);
+                totalQueuedBroadcast += Number(updateResult?.broadcast?.queued || 0);
+
+                for (const tier of remainingTiers) {
+                    const insertPayload = {
+                        ...basePayload,
+                        min_qty_kg: tier.min_qty_kg,
+                        promo_total_price: tier.promo_total_price,
+                        promo_price_mode: tier.promo_price_mode,
+                        promo_unit_price: tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+                            ? tier.promo_total_price
+                            : (tier.min_qty_kg > 0 ? toNumber(tier.promo_total_price / tier.min_qty_kg, 2) : null),
+                    };
+                    const insertResult = await saveTableRecord('promotions', 'insert', insertPayload);
+                    totalQueuedBroadcast += Number(insertResult?.broadcast?.queued || 0);
+                    createdCount += 1;
+                }
             } else {
-                saveResult = await saveTableRecord('promotions', 'insert', payload);
+                for (const tier of tiers) {
+                    const insertPayload = {
+                        ...basePayload,
+                        min_qty_kg: tier.min_qty_kg,
+                        promo_total_price: tier.promo_total_price,
+                        promo_price_mode: tier.promo_price_mode,
+                        promo_unit_price: tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG
+                            ? tier.promo_total_price
+                            : (tier.min_qty_kg > 0 ? toNumber(tier.promo_total_price / tier.min_qty_kg, 2) : null),
+                    };
+                    const insertResult = await saveTableRecord('promotions', 'insert', insertPayload);
+                    totalQueuedBroadcast += Number(insertResult?.broadcast?.queued || 0);
+                    createdCount += 1;
+                }
             }
 
             await loadData();
-            const queuedBroadcastCount = Number(saveResult?.broadcast?.queued || 0);
+            const queuedBroadcastCount = Number(totalQueuedBroadcast || 0);
             if (keepCreating && !editingId) {
                 const baseText = 'Promoción creada exitosamente. Lista para cargar otra.';
                 const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
@@ -434,11 +536,15 @@ const ConfiguracionPromociones = () => {
                     category_id_filter: currentCategoryId || prev.category_id_filter || '',
                     active: true,
                 }));
+                setExtraPromoTiers([]);
             } else {
                 if (editingId) {
-                    setStatus({ type: 'ok', text: 'Promoción actualizada con éxito.' });
+                    const extraText = createdCount > 0 ? ` Se agregaron ${createdCount} niveles nuevos.` : '';
+                    setStatus({ type: 'ok', text: `Promoción actualizada con éxito.${extraText}` });
                 } else {
-                    const baseText = 'Promoción creada exitosamente.';
+                    const baseText = createdCount > 1
+                        ? `Se crearon ${createdCount} niveles de promoción.`
+                        : 'Promoción creada exitosamente.';
                     const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
                     setStatus({ type: 'ok', text: `${baseText}${broadcastText}` });
                 }
@@ -485,7 +591,15 @@ const ConfiguracionPromociones = () => {
             <div className="promo-card-body">
                 <div className="promo-detail-main">
                     <span className="promo-price-tag">
-                        <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong>
+                        {row.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? (
+                            <>
+                                Desde <strong>{formatKg(row.min_qty_kg)} kg</strong>, cada kg a <strong>\${formatMoney(row.promo_total_price)}</strong>
+                            </>
+                        ) : (
+                            <>
+                                <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong> total
+                            </>
+                        )}
                     </span>
                 </div>
                 {(row.promo_name || row.promo_plu) && (
@@ -693,26 +807,25 @@ const ConfiguracionPromociones = () => {
                                             </div>
                                         </div>
                                         <div className="input-field">
-                                            <label>Precio Promo por Kg ($)</label>
-                                            <input
-                                                type="number"
-                                                min="0.01" step="0.01"
-                                                value={form.promo_unit_price}
+                                            <label>Tipo de precio promo</label>
+                                            <select
+                                                value={form.promo_price_mode}
                                                 disabled={readOnly || saving}
-                                                onChange={(e) => setField('promo_unit_price', e.target.value)}
-                                                placeholder="Ej. 8500"
-                                                className="price-input"
-                                            />
+                                                onChange={(e) => setField('promo_price_mode', e.target.value)}
+                                            >
+                                                <option value={PROMO_PRICE_MODES.TOTAL_KG}>Precio por total de kg</option>
+                                                <option value={PROMO_PRICE_MODES.PER_KG}>Precio por kg</option>
+                                            </select>
                                         </div>
                                         <div className="input-field">
-                                            <label>Precio Promo Total ($)</label>
+                                            <label>{form.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Precio Promo por Kg ($)' : 'Precio Promo Total ($)'}</label>
                                             <input
                                                 type="number"
                                                 min="0.01" step="0.01"
                                                 value={form.promo_total_price}
                                                 disabled={readOnly || saving}
                                                 onChange={(e) => setField('promo_total_price', e.target.value)}
-                                                placeholder="Ej. 15000"
+                                                placeholder={form.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Ej. 4750 (por kg)' : 'Ej. 9500 (total)'}
                                                 className="price-input"
                                             />
                                         </div>
@@ -738,6 +851,86 @@ const ConfiguracionPromociones = () => {
                                                     onChange={(e) => setField('stock_cap_kg_limit', e.target.value)}
                                                     placeholder="Ej. 100.000"
                                                 />
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.55rem' }}>
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                            <label style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                                                Escalas adicionales para el mismo artículo
+                                            </label>
+                                            <button
+                                                type="button"
+                                                className="btn-secondary"
+                                                disabled={readOnly || saving}
+                                                onClick={addExtraTier}
+                                                style={{ padding: '0.35rem 0.65rem' }}
+                                            >
+                                                <FiPlus /> Agregar nivel
+                                            </button>
+                                        </div>
+                                        {extraPromoTiers.length > 0 && (
+                                            <div style={{ display: 'grid', gap: '0.5rem' }}>
+                                                {extraPromoTiers.map((tier, index) => (
+                                                    <div
+                                                        key={`tier-${index}`}
+                                                        style={{
+                                                            display: 'grid',
+                                                            gridTemplateColumns: '1fr 1fr 1fr auto',
+                                                            gap: '0.5rem',
+                                                            alignItems: 'end',
+                                                            padding: '0.6rem',
+                                                            border: '1px solid rgba(255,255,255,0.08)',
+                                                            borderRadius: '10px',
+                                                        }}
+                                                    >
+                                                        <div className="input-field">
+                                                            <label>Mínimo kg (nivel {index + 2})</label>
+                                                            <input
+                                                                type="number"
+                                                                min="0.001"
+                                                                step="0.001"
+                                                                value={tier.min_qty_kg}
+                                                                disabled={readOnly || saving}
+                                                                onChange={(e) => updateExtraTier(index, { min_qty_kg: e.target.value })}
+                                                                placeholder="Ej. 3.000"
+                                                            />
+                                                        </div>
+                                                        <div className="input-field">
+                                                            <label>Tipo</label>
+                                                            <select
+                                                                value={tier.promo_price_mode}
+                                                                disabled={readOnly || saving}
+                                                                onChange={(e) => updateExtraTier(index, { promo_price_mode: e.target.value })}
+                                                            >
+                                                                <option value={PROMO_PRICE_MODES.TOTAL_KG}>Total de kg</option>
+                                                                <option value={PROMO_PRICE_MODES.PER_KG}>Por kg</option>
+                                                            </select>
+                                                        </div>
+                                                        <div className="input-field">
+                                                            <label>{tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Precio por kg ($)' : 'Precio total ($)'}</label>
+                                                            <input
+                                                                type="number"
+                                                                min="0.01"
+                                                                step="0.01"
+                                                                value={tier.promo_total_price}
+                                                                disabled={readOnly || saving}
+                                                                onChange={(e) => updateExtraTier(index, { promo_total_price: e.target.value })}
+                                                                placeholder={tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Ej. 4300' : 'Ej. 12000'}
+                                                            />
+                                                        </div>
+                                                        <button
+                                                            type="button"
+                                                            className="btn-icon danger-text"
+                                                            title="Eliminar nivel"
+                                                            disabled={readOnly || saving}
+                                                            onClick={() => removeExtraTier(index)}
+                                                            style={{ height: '38px' }}
+                                                        >
+                                                            <FiTrash2 />
+                                                        </button>
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                     </div>

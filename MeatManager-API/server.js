@@ -150,6 +150,11 @@ const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
 const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
+const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
+    .trim()
+    .replace(/\/+$/, '');
+const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
+const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.env.SCALE_BRIDGE_PULL_LOOKBACK_MINUTES || '45', 10) || 45);
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
@@ -1636,6 +1641,28 @@ async function ensureTenantScopedForeignKeys(conn) {
         },
     ];
 
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET plu = NULL
+         WHERE plu IS NOT NULL
+           AND TRIM(CAST(plu AS CHAR)) = ''`
+    );
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_plu'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                 ADD UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)`
+            );
+        } catch (error) {
+            if (error?.code === 'ER_DUP_ENTRY') {
+                console.warn('[DB] No se pudo crear uniq_products_tenant_plu porque existen PLU duplicados. Limpialos y reiniciá la API.');
+            } else if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
+
     for (const definition of fkDefinitions) {
         if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, definition.table, definition.indexName))) {
             try {
@@ -1785,6 +1812,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'promotions', 'promo_name', '`promo_name` VARCHAR(191) NULL AFTER `product_name`');
             await ensureColumn(conn, 'promotions', 'promo_plu', '`promo_plu` VARCHAR(32) NULL AFTER `promo_name`');
             await ensureColumn(conn, 'promotions', 'promo_unit_price', '`promo_unit_price` DECIMAL(12,2) NULL AFTER `promo_total_price`');
+            await ensureColumn(conn, 'promotions', 'promo_price_mode', '`promo_price_mode` VARCHAR(20) NOT NULL DEFAULT \'total_kg\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
             await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
@@ -3105,9 +3133,9 @@ function getSchemaTables() {
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
             UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
+            UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
-            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id),
-            INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
+            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -3354,6 +3382,7 @@ function getSchemaTables() {
             min_qty_kg          DECIMAL(12,3) NOT NULL,
             promo_total_price   DECIMAL(12,2) NOT NULL,
             promo_unit_price    DECIMAL(12,2) NULL,
+            promo_price_mode    VARCHAR(20) NOT NULL DEFAULT 'total_kg',
             stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
             stock_cap_kg_limit  DECIMAL(12,3) NULL,
             end_condition       VARCHAR(20) NOT NULL DEFAULT 'none',
@@ -4286,6 +4315,55 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+function normalizePluValue(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    if (!/^\d+$/.test(raw)) {
+        const error = new Error('El PLU debe contener solo numeros');
+        error.statusCode = 400;
+        throw error;
+    }
+    const numeric = Number.parseInt(raw, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        const error = new Error('El PLU debe ser un numero mayor a 0');
+        error.statusCode = 400;
+        throw error;
+    }
+    return String(numeric);
+}
+
+async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
+    const normalizedPlu = normalizePluValue(plu);
+    if (!normalizedPlu) return null;
+
+    const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+    let sql = `SELECT id, name, plu
+               FROM products
+               WHERE tenant_id = ?
+                 AND (
+                    plu = ?
+                    OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                 )`;
+    if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
+        sql += ' AND id <> ?';
+        params.push(Number(excludeProductId));
+    }
+    sql += ' ORDER BY id ASC LIMIT 1';
+
+    const [rows] = await pool.query(sql, params);
+    return rows?.[0] || null;
+}
+
+async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null) {
+    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId);
+    if (!conflict) return;
+
+    const normalizedPlu = normalizePluValue(plu);
+    const error = new Error(`El PLU ${normalizedPlu} ya esta asignado a "${conflict.name}" (producto ${conflict.id})`);
+    error.statusCode = 409;
+    throw error;
+}
+
 async function resolveProductRecordCategory(pool, tenantId, record) {
     if (!record || typeof record !== 'object') return record;
 
@@ -4394,13 +4472,17 @@ function formatPromoBroadcastMessage({ businessName, promo }) {
     const safeBusiness = String(businessName || '').trim();
     const safeProduct = String(promo?.product_name || 'Producto').trim();
     const minKg = Number(promo?.min_qty_kg || 0).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-    const total = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPrice = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPriceMode = String(promo?.promo_price_mode || 'total_kg').trim().toLowerCase();
+    const promoText = promoPriceMode === 'per_kg'
+        ? `${safeProduct}: desde *${minKg} kg*, cada kg a *$${promoPrice}*`
+        : `${safeProduct}: llevando *${minKg} kg* pagás *$${promoPrice}* en total`;
     const header = safeBusiness ? `🥩 *${safeBusiness}*` : '🥩 *Nueva promo*';
     return [
         header,
         '',
         '🔥 *PROMOCIÓN NUEVA*',
-        `${safeProduct}: llevando *${minKg} kg* pagás *$${total}*`,
+        promoText,
         '',
         'Te esperamos en el local.',
     ].join('\n');
@@ -4416,7 +4498,7 @@ async function getTenantSettingValue(pool, tenantId, key) {
 
 async function getActivePromotions(pool, tenantId, limit = 25) {
     const [rows] = await pool.query(
-        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, active
+        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, promo_price_mode, active
          FROM promotions
          WHERE \`${TENANT_COLUMN}\` = ? AND active = 1
          ORDER BY id DESC
@@ -4632,6 +4714,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
+            if (table === 'products') {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu);
+            }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
                 if (table === 'promotions') {
@@ -4640,6 +4726,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                         product_name: filtered.product_name || null,
                         min_qty_kg: filtered.min_qty_kg || 0,
                         promo_total_price: filtered.promo_total_price || 0,
+                        promo_price_mode: filtered.promo_price_mode || 'total_kg',
                         active: Number(filtered.active ?? 1) === 1,
                     };
                     if (promoToBroadcast.active) {
@@ -4670,6 +4757,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const filtered = await filterRecord(normalizedRecord, true); // excluir id del SET
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
+            }
+            if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId);
             }
             const scope = tenantWhereClause(table, tenantId);
             await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
@@ -4731,7 +4822,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
     } catch (err) {
         console.error('[DATA ERROR]', err.message);
-        res.status(500).json({ error: 'Error de datos: ' + err.message });
+        res.status(err.statusCode || 500).json({ error: 'Error de datos: ' + err.message });
     }
 });
 
@@ -4957,7 +5048,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         if (!Number.isFinite(price) || price < 0) {
             return res.status(400).json({ error: 'price inválido' });
         }
-        const plu = String(req.body?.plu || '').trim() || null;
+        const plu = normalizePluValue(req.body?.plu);
         const source = String(req.body?.source || 'manual').trim().slice(0, 50);
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -4968,6 +5059,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             [tenantId, productId]
         );
         if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        await assertUniqueProductPlu(pool, tenantId, plu, productId);
 
         const now = new Date();
         const [result] = await pool.query(
@@ -4983,7 +5075,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         return res.json({ ok: true, id: result.insertId });
     } catch (err) {
         console.error('[PRODUCT PRICES WRITE ERROR]', err.message);
-        res.status(500).json({ error: err.message });
+        res.status(err.statusCode || 500).json({ error: err.message });
     }
 });
 
@@ -5255,11 +5347,56 @@ function buildScaleTicketItemSelect(schema) {
     ].join(', ');
 }
 
+async function triggerScaleBridgePullSales({
+    reason = 'barcode_lookup',
+    barcode = '',
+    lookbackMinutes = SCALE_BRIDGE_PULL_LOOKBACK_MINUTES,
+} = {}) {
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - (Math.max(1, Number(lookbackMinutes) || 1) * 60 * 1000));
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${SCALE_BRIDGE_DIRECT_BASE_URL}/api/scale/pull-sales`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromDate: fromDate.toISOString(),
+                toDate: now.toISOString(),
+                closeAfter: false,
+            }),
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.ok === false) {
+            console.warn('[SCALE LOOKUP] pull-sales devolvio error', {
+                reason,
+                barcode,
+                status: response.status,
+                message: payload?.error || null,
+            });
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.warn('[SCALE LOOKUP] pull-sales no disponible', {
+            reason,
+            barcode,
+            baseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+            error: error?.name === 'AbortError' ? 'timeout' : (error?.message || String(error)),
+        });
+        return false;
+    } finally {
+        clearTimeout(timeoutHandle);
+    }
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
         if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
         const barcodeDigits = barcode.replace(/\D/g, '');
+        const isScaleSummaryBarcode = barcodeDigits.length >= 12 && barcodeDigits.startsWith('22');
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -5286,6 +5423,52 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             );
         }
 
+        // Lectura resiliente: cuando el usuario escanea inmediatamente después de imprimir,
+        // damos una ventana corta para que el bridge termine de persistir el ticket.
+        if (!ticketRows.length && isScaleSummaryBarcode) {
+            const pullPromise = triggerScaleBridgePullSales({
+                reason: 'lookup_summary_barcode',
+                barcode,
+            });
+            const retryUntil = Date.now() + 7500;
+            while (!ticketRows.length && Date.now() < retryUntil) {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+            if (!ticketRows.length) {
+                await pullPromise.catch(() => false);
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+        }
+
         if (!ticketRows.length && scaleSchema.ticketStatus) {
             const statusConditions = ['UPPER(ticket_barcode) = UPPER(?)'];
             const statusParams = [tenantId, barcode];
@@ -5308,7 +5491,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
         }
 
-        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+        if (!ticketRows.length && isScaleSummaryBarcode) {
             const totalRaw = Number.parseInt(barcodeDigits.substring(6, 12), 10);
             const totalCandidates = Array.from(new Set([
                 Number.isFinite(totalRaw) ? totalRaw : 0,
@@ -5428,21 +5611,70 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         }
 
         const ticket = ticketRows[0];
-        const [itemRows] = await pool.query(
-                        `SELECT ${itemSelect}
+        const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
               AND (
-                                     CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                                     OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                   CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                   OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
               )
-             WHERE s.tenant_id = ?
+             WHERE s.tenant_id = ?`;
+
+        let [itemRows] = await pool.query(
+            `${itemBaseSql}
                AND s.device_id = ?
                AND s.ticket_id = ?
              ORDER BY s.line_no ASC`,
             [tenantId, ticket.device_id, ticket.ticket_id]
         );
+
+        // Fallback defensivo:
+        // algunos firmwares/lectores pueden desalinear el identificador interno,
+        // pero los barcodes del ticket siguen siendo estables.
+        if (!itemRows.length) {
+            const barcodeConditions = ['UPPER(s.ticket_barcode) = UPPER(?)'];
+            const barcodeParams = [tenantId, ticket.ticket_barcode];
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                barcodeConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                barcodeParams.push(ticket.printed_ticket_barcode);
+            }
+            [itemRows] = await pool.query(
+                `${itemBaseSql}
+                   AND (${barcodeConditions.join(' OR ')})
+                 ORDER BY s.line_no ASC`,
+                barcodeParams
+            );
+        }
+
+        // Fallback extra de resiliencia: si por cualquier motivo el mapeo por
+        // device/ticket no matchea (cambio de device_id, recaptura parcial, etc),
+        // buscamos por cualquier identificador estable del ticket dentro del tenant.
+        if (!itemRows.length) {
+            const anyIdConditions = [];
+            const anyIdParams = [tenantId];
+            if (ticket.ticket_id) {
+                anyIdConditions.push('s.ticket_id = ?');
+                anyIdParams.push(ticket.ticket_id);
+            }
+            if (ticket.ticket_barcode) {
+                anyIdConditions.push('UPPER(s.ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.ticket_barcode);
+            }
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                anyIdConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.printed_ticket_barcode);
+            }
+
+            if (anyIdConditions.length > 0) {
+                [itemRows] = await pool.query(
+                    `${itemBaseSql}
+                       AND (${anyIdConditions.join(' OR ')})
+                     ORDER BY s.sale_at DESC, s.line_no ASC`,
+                    anyIdParams
+                );
+            }
+        }
 
         const items = itemRows.map((row) => {
             const grams = Number(row.grams || 0);
@@ -6140,7 +6372,11 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Registrar en historial de eliminaciones
-        const deletedBy = req.body?.deleted_by_user_id || null;
+        const deletedByRaw = req.body?.deleted_by_user_id;
+        const deletedByParsed = Number.parseInt(deletedByRaw, 10);
+        const deletedBy = Number.isFinite(deletedByParsed) && deletedByParsed > 0
+            ? deletedByParsed
+            : null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
             `INSERT INTO deleted_sales_history

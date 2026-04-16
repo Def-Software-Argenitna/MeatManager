@@ -4,7 +4,7 @@ import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, Shield
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
-import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 
 const IVA_OPTIONS = [10.5, 21];
@@ -129,6 +129,13 @@ const ProductosCompra = () => {
         const salePrice = parseFloat(formData.sale_price);
         if (Number.isNaN(salePrice) || salePrice <= 0) {
             alert('⚠️ El precio de venta debe ser un numero valido.');
+            return;
+        }
+
+        try {
+            assertUniqueProductPluLocal(products, formData.sale_plu, editingItem?.product_id || null);
+        } catch (error) {
+            alert(`⚠️ ${error.message}`);
             return;
         }
 

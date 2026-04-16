@@ -190,6 +190,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <button
         key={item.path}
+        type="button"
         className={`nav-item ${isActive(item.path) ? 'active' : ''} ${isLocked ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
         onClick={() => {
           if (isLocked) {
@@ -235,6 +236,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <div className="nav-group">
         <button
+          type="button"
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
           onClick={() => {
             if (isCollapsed) return;
@@ -275,6 +277,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <div className="nav-group" key={groupKey}>
         <button
+          type="button"
           className={`nav-item nav-group-trigger ${isGroupActive ? 'active' : ''}`}
           onClick={() => toggleGroup(groupKey)}
         >
@@ -355,6 +358,7 @@ const Sidebar = ({ isCollapsed }) => {
             </div>
           )}
           <button
+            type="button"
             style={{ marginLeft: isCollapsed ? '0' : 'auto', flexShrink: 0, padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
             onClick={handleLogout}
             title="Cerrar Sesion"

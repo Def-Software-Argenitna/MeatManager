@@ -7,7 +7,7 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
-import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -134,6 +134,7 @@ const Ventas = () => {
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
     const [quickProductPlu, setQuickProductPlu] = useState('');
     const [scannerError, setScannerError] = useState('');
+    const [isScaleSyncing, setIsScaleSyncing] = useState(false);
     const [barcodeInputValue, setBarcodeInputValue] = useState('');
     const barcodeInputRef = React.useRef(null);
     const [showDeleteTicketModal, setShowDeleteTicketModal] = useState(false);
@@ -286,11 +287,44 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // Foco inicial al montar el componente únicamente
+    // Foco puntual al scanner cuando la pantalla queda libre de modales.
+    // Evitamos un watchdog con setInterval porque termina robando foco a la navegacion.
     React.useEffect(() => {
-        const t = setTimeout(() => { barcodeInputRef.current?.focus(); }, 120);
-        return () => clearTimeout(t);
-    }, []);
+        if (
+            isEditingPriceRef.current
+            || showPaymentModal
+            || showQuickCreateModal
+            || showDeleteTicketModal
+            || showTicketPreview
+            || showPrintConfirmModal
+            || isScaleSyncing
+        ) {
+            return undefined;
+        }
+
+        const focusScanner = () => {
+            const active = document.activeElement;
+            const tagName = String(active?.tagName || '').toUpperCase();
+            const isTypingElsewhere = tagName === 'INPUT' || tagName === 'TEXTAREA' || active?.isContentEditable;
+            if (!isTypingElsewhere) {
+                barcodeInputRef.current?.focus();
+            }
+        };
+
+        const timer = setTimeout(focusScanner, 100);
+
+        return () => {
+            clearTimeout(timer);
+        };
+    }, [
+        showPaymentModal,
+        showQuickCreateModal,
+        showDeleteTicketModal,
+        showTicketPreview,
+        editingPriceId,
+        showPrintConfirmModal,
+        isScaleSyncing,
+    ]);
 
     React.useEffect(() => {
         let cancelled = false;
@@ -743,17 +777,23 @@ const Ventas = () => {
         const plu = pluVal;
         const product = products.find((item) => item.id === productId);
         if (product) {
-            await ensureUnifiedProduct({
-                products: productsCatalog,
-                prices: [],
-                preferredProductId: product.productId,
-                name: product.name,
-                category: product.category,
-                unit: product.unit,
-                price,
-                plu,
-                source: 'ventas_manual',
-            });
+            try {
+                assertUniqueProductPluLocal(productsCatalog, plu, product.productId);
+                await ensureUnifiedProduct({
+                    products: productsCatalog,
+                    prices: [],
+                    preferredProductId: product.productId,
+                    name: product.name,
+                    category: product.category,
+                    unit: product.unit,
+                    price,
+                    plu,
+                    source: 'ventas_manual',
+                });
+            } catch (error) {
+                showToast(`⚠️ ${error.message}`, 'warning');
+                return;
+            }
         }
         await refreshVentasData();
         setEditingPriceId(null);
@@ -772,15 +812,29 @@ const Ventas = () => {
         console.log("📦 Escaneando código RAW:", cleanData, `(${cleanData.length} chars)`);
 
         const loadBridgeTicketFromBarcode = async (barcodeValue) => {
-            const payload = await fetchScaleTicketByBarcode(barcodeValue);
-            const rows = Array.isArray(payload?.items) ? payload.items : [];
-            if (!rows.length) {
-                setScannerError('⚠️ El ticket existe pero no tiene items para cargar.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+            setIsScaleSyncing(true);
+            try {
+                let payload = await fetchScaleTicketByBarcode(barcodeValue);
+                let rows = Array.isArray(payload?.items) ? payload.items : [];
 
-            const previewItems = rows.map((row) => {
+                // Espera activa corta: el ticket puede existir antes de que sus items queden persistidos.
+                if (!rows.length) {
+                    const retryUntil = Date.now() + 12000;
+                    while (!rows.length && Date.now() < retryUntil) {
+                        await new Promise((resolve) => setTimeout(resolve, 700));
+                        payload = await fetchScaleTicketByBarcode(barcodeValue);
+                        rows = Array.isArray(payload?.items) ? payload.items : [];
+                    }
+                }
+
+                if (!rows.length) {
+                    setScannerError('');
+                    showToast('El ticket todavía se está sincronizando. Reintentá en unos segundos.', 'warning');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
+
+                const previewItems = rows.map((row) => {
                 const pluRawFromItem = String(row?.plu || '').trim();
                 const pluRawFromProduct = String(row?.product?.plu || '').trim();
                 const pluRaw = pluRawFromItem || pluRawFromProduct;
@@ -850,24 +904,21 @@ const Ventas = () => {
                 };
             });
 
-            if (!previewItems.length) {
-                setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+                if (!previewItems.length) {
+                    setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
 
-            setTicketPreviewItems(previewItems);
-            setShowTicketPreview(true);
-            setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
-            const vendor = String(payload?.ticket?.vendorCode || '').trim();
-            if (vendor) {
-                setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
-                setTimeout(() => setScannerError(''), 3000);
-            } else {
+                setTicketPreviewItems(previewItems);
+                setShowTicketPreview(true);
+                setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
                 setScannerError('');
+                playBeep();
+                return true;
+            } finally {
+                setIsScaleSyncing(false);
             }
-            playBeep();
-            return true;
         };
 
         // ============ FORMATO TICKET BRIDGE (MM...) ============
@@ -915,9 +966,14 @@ const Ventas = () => {
             playBeep();
             const header      = eanDigits.substring(0, 2);   // "20", "21" o "22"
             const pluRaw      = eanDigits.substring(2, 6);   // 4-dígitos PLU
-            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos importe en centavos
+            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos peso en gramos o importe
             const pluNumber   = parseInt(pluRaw, 10).toString();
-            const importePesos = parseFloat(importeRaw) / 100;
+            
+            // Si el header es 20 (Por peso), la balanza estándar exporta el peso en GRAMOS.
+            // Si el header es 21 (Por unidad) o 22 (Ticket total), podría ser importe en pesos.
+            const isWeight = header === '20';
+            const parsedWeight = isWeight ? parseFloat(importeRaw) / 1000 : 1;
+            const importePesos = !isWeight ? parseFloat(importeRaw) / 100 : 0; // Solo referencial si era precio
 
             // BCHeader 22 = BARCODESP: código resumen total del ticket, no artículo individual
             if (header === '22') {
@@ -925,6 +981,29 @@ const Ventas = () => {
                     const loaded = await loadBridgeTicketFromBarcode(cleanData);
                     if (loaded) return;
                 } catch {
+                    // Fallback para balanzas offline ("no conectadas a red"):
+                    // el código de barra contiene el TOTAL exacto de la compra.
+                    // Formato: 22(pref) + XXXX(id) + TTTTTT(total en pesos) + C(check)
+                    // Generalmente, "120727" = $120.727
+                    const parsedTotal = parseFloat(importeRaw); // Pesos enteros
+                    if (parsedTotal > 0) {
+                        const ticketFallbackProduct = {
+                            id: `ticket-balanza-offline`,
+                            name: `Ticket de Balanza Offline (#${pluRaw})`,
+                            category: 'Balanza',
+                            unit: 'un',
+                            price: parsedTotal,
+                            plu: '',
+                        };
+                        addToCart(ticketFallbackProduct, 1);
+                        setScannerError(
+                            `⚠️ Ticket agregado desde el código de barras porque la balanza está offline.`
+                        );
+                        // Limpiar advertencia automáticamente
+                        setTimeout(() => setScannerError(''), 5000);
+                        return;
+                    }
+
                     setScannerError(
                         `⚠️ No pude vincular ese código de ticket con una venta en MySQL.\n\n` +
                         `Si querés, reimprimimos el ticket con código único MM y queda 1 a 1.`
@@ -934,17 +1013,17 @@ const Ventas = () => {
                 }
             }
 
-            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Importe $${importePesos}`);
+            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Raw Data=${importeRaw}`);
 
             let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
             if (priceRecord) {
-                const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
+                const weightToApply = isWeight ? parsedWeight : (priceRecord.price > 0 ? importePesos / priceRecord.price : 1);
                 let product = findProductByPriceRecord(priceRecord);
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
-                    addToCart(buildCartProductFromPriceRecord(product, priceRecord), weight);
+                    addToCart(buildCartProductFromPriceRecord(product, priceRecord), weightToApply);
                     setScannerError('');
                 } else {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
@@ -960,7 +1039,7 @@ const Ventas = () => {
                             price: priceRecord.price,
                             plu: pluNumber,
                         };
-                        addToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weight);
+                        addToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weightToApply);
                         setScannerError('');
                     } else {
                         setScannerError(buildPluResolutionError({
@@ -1310,8 +1389,14 @@ const Ventas = () => {
 
     // El subtotal del carrito se calcula con promociones activas por kg.
     const cartPricing = React.useMemo(
-        () => buildCartPricing({ cart, promotions, stockQtyByItem, now: new Date() }),
-        [cart, promotions, stockQtyByItem]
+        () => buildCartPricing({
+            cart,
+            promotions,
+            stockQtyByItem,
+            now: new Date(),
+            roundLineToInteger: priceFormat === '6d',
+        }),
+        [cart, promotions, stockQtyByItem, priceFormat]
     );
     const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
@@ -1656,9 +1741,14 @@ const Ventas = () => {
             throw new Error('La venta ya no existe.');
         }
 
+        const currentUserId = Number(currentUser?.id);
+        const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
+            ? currentUserId
+            : null;
+
         // Anular de forma atómica en el servidor: stock + balance + historial + delete
         await deleteVenta(id, {
-            deleted_by_user_id: currentUser?.id || null,
+            deleted_by_user_id: deletedByUserId,
             deleted_by_username: currentUser?.username || 'Usuario desconocido',
         });
 
@@ -1737,6 +1827,37 @@ const Ventas = () => {
                 }}
             >
                 ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
+            </div>
+        )}
+        {isScaleSyncing && (
+            <div
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    zIndex: 99990,
+                    backgroundColor: 'rgba(0,0,0,0.72)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <div
+                    style={{
+                        width: 'min(420px, 92vw)',
+                        borderRadius: '14px',
+                        border: '1px solid rgba(245, 158, 11, 0.45)',
+                        background: 'rgba(13, 18, 24, 0.96)',
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+                        padding: '1rem 1.1rem',
+                    }}
+                >
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#fbbf24' }}>
+                        Sincronizando ventas de la balanza...
+                    </div>
+                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                        Esperá un momento, estamos buscando el ticket y sus artículos.
+                    </div>
+                </div>
             </div>
         )}
         <div className={`pos-container animate-fade-in ${showCartMobile ? 'show-cart-mobile' : ''}`}>
@@ -1888,7 +2009,9 @@ const Ventas = () => {
                                 </div>
                                 {line?.promo ? (
                                     <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
-                                        Promo: {toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por ${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        Promo: {line.promo.promo_price_mode === 'per_kg'
+                                            ? `desde ${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg, cada kg a $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                            : `${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total`}
                                     </div>
                                 ) : null}
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
@@ -2837,11 +2960,18 @@ const Ventas = () => {
 
                     {/* Buscador */}
                     <input
-                        type="text"
+                        type="search"
+                        id="delete-ticket-search"
+                        name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
                         onChange={e => { setDeleteTicketSearch(e.target.value); setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                         autoFocus
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-form-type="other"
                         style={{
                             padding: '0.6rem 0.9rem',
                             borderRadius: 'var(--radius-md)',
@@ -2902,13 +3032,23 @@ const Ventas = () => {
                                     ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
-                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <form
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            handleDeleteTicket(s.id);
+                                        }}
+                                        autoComplete="off"
+                                        style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                    >
                                         <input
                                             type="password"
+                                            id={`ticket-delete-authorization-code-${s.id}`}
+                                            name="ticket-delete-authorization-code"
                                             inputMode="numeric"
                                             value={deleteAuthorizationCode}
                                             onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Código maestro"
+                                            autoComplete="one-time-code"
                                             style={{
                                                 width: '150px',
                                                 padding: '0.45rem 0.65rem',
@@ -2919,15 +3059,18 @@ const Ventas = () => {
                                                 fontSize: '0.82rem'
                                             }}
                                         />
-                                        <button onClick={() => handleDeleteTicket(s.id)}
+                                        <button
+                                            type="submit"
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
                                             Confirmar
                                         </button>
-                                        <button onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                                             style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.35rem 0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
                                             Cancelar
                                         </button>
-                                    </div>
+                                    </form>
                                 ) : (
                                     <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
                                         style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>

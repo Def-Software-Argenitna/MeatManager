@@ -145,6 +145,7 @@ function AppRoutes() {
   useHiddenDigitalPaymentShortcuts();
 
   const { tenant } = useTenant();
+  const location = useLocation();
   const tenantRenderKey = tenant?.clientId || tenant?.uid || 'anonymous';
   const protect = (path, element) => (
     <RequirePermission path={path}>
@@ -153,7 +154,7 @@ function AppRoutes() {
   );
 
   return (
-          <Routes key={tenantRenderKey}>
+          <Routes key={location.pathname}>
             <Route path="/login" element={lazyElement(Login)} />
 
             <Route element={<RequireAuth />}>

@@ -1,5 +1,9 @@
 const round2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
 const round3 = (value) => Math.round((Number(value) || 0) * 1000) / 1000;
+const round0 = (value) => {
+    const numeric = Number(value) || 0;
+    return numeric >= 0 ? Math.round(numeric) : -Math.round(Math.abs(numeric));
+};
 
 const normalizeKey = (value) => String(value || '').trim().toLowerCase();
 export const normalizePluCode = (value) => String(value || '').replace(/\D/g, '');
@@ -33,9 +37,15 @@ export const PROMO_STOCK_MODES = {
     FIXED: 'fixed_kg',
 };
 
+export const PROMO_PRICE_MODES = {
+    TOTAL_KG: 'total_kg',
+    PER_KG: 'per_kg',
+};
+
 export const normalizePromotion = (row) => {
     const minQtyKg = round3(row?.min_qty_kg);
     const promoTotalPrice = round2(row?.promo_total_price);
+    const promoPriceMode = normalizeKey(row?.promo_price_mode) || PROMO_PRICE_MODES.TOTAL_KG;
     const usedKg = round3(row?.used_kg);
     const soldKgLimit = round3(row?.sold_kg_limit);
     const stockCapKg = round3(row?.stock_cap_kg_limit);
@@ -53,6 +63,9 @@ export const normalizePromotion = (row) => {
         promo_unit_price: round2(row?.promo_unit_price),
         min_qty_kg: minQtyKg,
         promo_total_price: promoTotalPrice,
+        promo_price_mode: Object.values(PROMO_PRICE_MODES).includes(promoPriceMode)
+            ? promoPriceMode
+            : PROMO_PRICE_MODES.TOTAL_KG,
         active: row?.active === true || Number(row?.active) === 1,
         used_kg: usedKg,
         sold_kg_limit: soldKgLimit > 0 ? soldKgLimit : null,
@@ -91,8 +104,7 @@ const getRemainingKgByStockMode = ({ promo, currentStockQty }) => {
         const used = Number(promo.used_kg) || 0;
         return round3(Math.max(0, limit - used));
     }
-    const stockQty = Number(currentStockQty) || 0;
-    return round3(Math.max(0, stockQty));
+    return Number.POSITIVE_INFINITY;
 };
 
 export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() }) => {
@@ -110,7 +122,9 @@ export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() 
     }
 
     if (promo.end_condition === PROMO_END_CONDITIONS.STOCK) {
-        const remainingByStock = getRemainingKgByStockMode({ promo, currentStockQty });
+        const remainingByStock = promo.stock_mode === PROMO_STOCK_MODES.FIXED
+            ? getRemainingKgByStockMode({ promo, currentStockQty })
+            : round3(Math.max(0, Number(currentStockQty) || 0));
         if (remainingByStock <= 0) return false;
     }
 
@@ -130,7 +144,10 @@ const getPromotionRemainingEligibleKg = ({ promo, currentStockQty }) => {
     }
 
     if (promo.end_condition === PROMO_END_CONDITIONS.STOCK) {
-        remainingByCondition = Math.min(remainingByCondition, remainingByStockMode);
+        const remainingByStockCondition = promo.stock_mode === PROMO_STOCK_MODES.FIXED
+            ? remainingByStockMode
+            : round3(Math.max(0, Number(currentStockQty) || 0));
+        remainingByCondition = Math.min(remainingByCondition, remainingByStockCondition);
     }
 
     // El tope por stock_mode aplica siempre, aunque la condición de fin sea otra.
@@ -215,12 +232,24 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
             ? Math.min(quantity, remainingEligibleKg)
             : quantity;
 
+        const priceMode = promo.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG;
         const bundles = Math.floor(eligibleQty / minQty);
         if (bundles <= 0) return;
 
-        const coveredQty = round3(bundles * minQty);
-        const remainingQty = round3(Math.max(0, quantity - coveredQty));
-        const subtotal = round2((bundles * promoPrice) + (remainingQty * unitPrice));
+        let coveredQty = 0;
+        let remainingQty = 0;
+        let subtotal = 0;
+
+        if (priceMode === PROMO_PRICE_MODES.PER_KG) {
+            coveredQty = round3(eligibleQty);
+            remainingQty = round3(Math.max(0, quantity - coveredQty));
+            subtotal = round2((coveredQty * promoPrice) + (remainingQty * unitPrice));
+        } else {
+            coveredQty = round3(bundles * minQty);
+            remainingQty = round3(Math.max(0, quantity - coveredQty));
+            subtotal = round2((bundles * promoPrice) + (remainingQty * unitPrice));
+        }
+
         const discount = round2(baseSubtotal - subtotal);
 
         if (discount <= 0) return;
@@ -233,6 +262,7 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
                 coveredQty,
                 remainingQty,
                 eligibleQty,
+                priceMode,
             };
         }
     });
@@ -258,6 +288,7 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
             id: best.promo.id,
             min_qty_kg: best.promo.min_qty_kg,
             promo_total_price: best.promo.promo_total_price,
+            promo_price_mode: best.priceMode,
             bundles: best.bundles,
             covered_qty: best.coveredQty,
             remaining_qty: best.remainingQty,
@@ -268,21 +299,43 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
     };
 };
 
-export const buildCartPricing = ({ cart, promotions, stockQtyByItem, now = new Date() }) => {
+export const buildCartPricing = ({
+    cart,
+    promotions,
+    stockQtyByItem,
+    now = new Date(),
+    roundLineToInteger = false,
+}) => {
     const lineMap = new Map();
     let subtotal = 0;
     let totalDiscount = 0;
 
     (Array.isArray(cart) ? cart : []).forEach((item) => {
         const line = resolveCartLinePricing({ item, promotions, stockQtyByItem, now });
-        lineMap.set(item.id, line);
-        subtotal = round2(subtotal + line.subtotal);
-        totalDiscount = round2(totalDiscount + line.discount);
+        const normalizedLine = roundLineToInteger
+            ? {
+                ...line,
+                subtotal: round0(line.subtotal),
+                discount: round0(line.discount),
+                baseSubtotal: round0(line.baseSubtotal),
+            }
+            : line;
+
+        lineMap.set(item.id, normalizedLine);
+
+        if (roundLineToInteger) {
+            subtotal += normalizedLine.subtotal;
+            totalDiscount += normalizedLine.discount;
+            return;
+        }
+
+        subtotal = round2(subtotal + normalizedLine.subtotal);
+        totalDiscount = round2(totalDiscount + normalizedLine.discount);
     });
 
     return {
         lineMap,
-        subtotal,
-        totalDiscount,
+        subtotal: roundLineToInteger ? round0(subtotal) : subtotal,
+        totalDiscount: roundLineToInteger ? round0(totalDiscount) : totalDiscount,
     };
 };

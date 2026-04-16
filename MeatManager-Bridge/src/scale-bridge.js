@@ -753,6 +753,132 @@ class ScaleBridge {
         };
     }
 
+    canonicalPluCode(value) {
+        const raw = String(value || '').trim();
+        if (!raw || !/^\d+$/.test(raw)) return '';
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return '';
+        return String(parsed);
+    }
+
+    async cleanupOrphanPluCodes(expectedProducts = []) {
+        const nowMs = Date.now();
+        const cooldownMs = 12 * 60 * 60 * 1000; // 12h
+        const cleanupCacheRaw = this.state.orphanPluCleanupCache && typeof this.state.orphanPluCleanupCache === 'object'
+            ? this.state.orphanPluCleanupCache
+            : {};
+        const cleanupCache = { ...cleanupCacheRaw };
+
+        const expected = new Set(
+            (Array.isArray(expectedProducts) ? expectedProducts : [])
+                .map((row) => this.canonicalPluCode(row.effective_plu_code || row.plu || row.id))
+                .filter(Boolean)
+        );
+
+        // Si un PLU volvio a existir en MM, lo removemos del cache para no bloquear futuros eventos.
+        for (const plu of Object.keys(cleanupCache)) {
+            if (expected.has(plu)) delete cleanupCache[plu];
+        }
+
+        const observedRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT DISTINCT plu_code
+             FROM (
+                SELECT m.plu_code
+                FROM scale_bridge_product_map m
+                WHERE m.device_id = ?
+                  AND m.tenant_id = ?
+                UNION ALL
+                SELECT s.plu_code
+                FROM scale_bridge_sales_item s
+                WHERE s.device_id = ?
+                  AND s.tenant_id = ?
+                  AND s.sale_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)
+             ) x
+             WHERE TRIM(COALESCE(plu_code, '')) <> ''`,
+            [this.config.deviceId, this.config.tenantId, this.config.deviceId, this.config.tenantId]
+        );
+
+        const orphanPluCodesRaw = [...new Set(
+            observedRows
+                .map((row) => this.canonicalPluCode(row.plu_code))
+                .filter((plu) => plu && !expected.has(plu))
+        )];
+
+        const orphanPluCodes = orphanPluCodesRaw.filter((plu) => {
+            const lastTs = Number(cleanupCache[plu] || 0);
+            return !lastTs || (nowMs - lastTs) >= cooldownMs;
+        });
+
+        if (!orphanPluCodes.length) {
+            this.state.orphanPluCleanupCache = cleanupCache;
+            this.stateStore.save(this.state);
+            return { ok: true, detected: 0, deleted: 0, failed: 0 };
+        }
+
+        let deleted = 0;
+        let failed = 0;
+
+        for (const plu of orphanPluCodes) {
+            const pluNumber = Number.parseInt(plu, 10);
+            // En CUORA V6, fn5 trabaja en 1..8000. Evitamos clamping silencioso.
+            if (!Number.isFinite(pluNumber) || pluNumber < 1 || pluNumber > 8000) {
+                this.logger.warn('PLU huerfano fuera de rango de borrado fn5, se omite', { plu });
+                failed += 1;
+                continue;
+            }
+
+            try {
+                const deletePayload = buildDeletePluPayload(plu);
+                const deleteResp = await this.scale.send(5, deletePayload);
+                if (!deleteResp.crc.ok) {
+                    throw new Error(`CRC invalido al borrar PLU huerfano ${plu}`);
+                }
+                if (String(deleteResp.data || '').startsWith('E')) {
+                    throw new Error(`Error balanza al borrar PLU huerfano ${plu}: ${deleteResp.data}`);
+                }
+
+                await mysqlExecute(
+                    this.mysqlPool,
+                    `DELETE FROM scale_bridge_product_map
+                     WHERE device_id = ?
+                       AND tenant_id = ?
+                       AND (
+                            TRIM(CAST(plu_code AS CHAR)) = ?
+                            OR (TRIM(CAST(plu_code AS CHAR)) REGEXP '^[0-9]+$' AND CAST(TRIM(CAST(plu_code AS CHAR)) AS UNSIGNED) = ?)
+                       )`,
+                    [this.config.deviceId, this.config.tenantId, plu, pluNumber]
+                );
+                cleanupCache[plu] = nowMs;
+                deleted += 1;
+            } catch (error) {
+                failed += 1;
+                this.logger.warn('No se pudo borrar un PLU huerfano en balanza', {
+                    plu,
+                    error: error.message,
+                });
+            }
+        }
+
+        this.logger.info('Limpieza automatica de PLU huerfanos completada', {
+            detected: orphanPluCodesRaw.length,
+            attempted: orphanPluCodes.length,
+            deleted,
+            failed,
+        });
+
+        this.state.orphanPluCleanupCache = cleanupCache;
+        this.stateStore.save(this.state);
+
+        return {
+            ok: true,
+            detected: orphanPluCodesRaw.length,
+            attempted: orphanPluCodes.length,
+            deleted,
+            failed,
+        };
+    }
+
     async syncProducts(options = {}) {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
@@ -861,6 +987,10 @@ class ScaleBridge {
              ORDER BY updated_at ASC, id ASC`,
             [this.config.tenantId]
         );
+
+        const orphanCleanup = await this.cleanupOrphanPluCodes(products);
+        deleted += Number(orphanCleanup.deleted || 0);
+        failed += Number(orphanCleanup.failed || 0);
 
         for (const product of products) {
             const pluCode = String(product.effective_plu_code || product.plu || product.id);
@@ -1021,8 +1151,8 @@ class ScaleBridge {
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         let responseData = String(response.data || '');
         if (responseData.startsWith('E7')) {
-            // En algunos firmwares la consulta por día devuelve E7 aunque existan ventas.
-            // Fallback: rango anual y luego consulta sin parámetros.
+            // En algunos firmwares la consulta por dia devuelve E7 aunque existan ventas.
+            // Fallback: rango anual y luego consulta sin parametros.
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),
@@ -1035,7 +1165,7 @@ class ScaleBridge {
             responseData = String(response.data || '');
 
             if (responseData.startsWith('E7')) {
-                this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parámetros', {
+                this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parametros', {
                     annualPayload,
                     response: responseData,
                 });
@@ -1301,10 +1431,61 @@ class ScaleBridge {
         };
     }
 
-    async runOnce() {
+    async consolidatePluCatalogOnStartup() {
+        const duplicatePluRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT effective_plu_code, COUNT(*) AS qty
+             FROM (
+                SELECT COALESCE(
+                    NULLIF(TRIM(CAST(plu AS CHAR)), ''),
+                    CAST(id AS CHAR)
+                ) AS effective_plu_code
+                FROM products
+                WHERE tenant_id = ?
+                  AND COALESCE(current_price, 0) > 0
+             ) x
+             GROUP BY effective_plu_code
+             HAVING COUNT(*) > 1
+             ORDER BY effective_plu_code`,
+            [this.config.tenantId]
+        );
+
+        if (duplicatePluRows.length > 0) {
+            const sample = duplicatePluRows.slice(0, 10).map((row) => `${row.effective_plu_code}(${row.qty})`);
+            throw new Error(`PLU duplicados detectados al iniciar: ${sample.join(', ')}`);
+        }
+
+        const deletedMapRows = await mysqlExecute(
+            this.mysqlPool,
+            `DELETE FROM scale_bridge_product_map
+             WHERE device_id = ?
+               AND tenant_id = ?`,
+            [this.config.deviceId, this.config.tenantId]
+        );
+
+        const removedMappings = Number(deletedMapRows?.affectedRows || 0);
+        this.logger.info('Consolidado general de PLU ejecutado al iniciar', {
+            tenantId: this.config.tenantId,
+            deviceId: this.config.deviceId,
+            removedMappings,
+        });
+
+        this.state.startupPluConsolidatedAt = new Date().toISOString();
+        this.stateStore.save(this.state);
+
+        return { ok: true, removedMappings, forceProductRewrite: true };
+    }
+
+    async runOnce(options = {}) {
+        const reason = String(options.reason || 'scheduled');
+        const skipSales = options.skipSales === true;
         await this.ensureSchema();
         await this.normalizeStoredSalesItems();
         const runtimeSettings = await this.syncRuntimeSettings();
+        let startupPluConsolidation = { forceProductRewrite: false, removedMappings: 0 };
+        if (reason === 'startup') {
+            startupPluConsolidation = await this.consolidatePluCatalogOnStartup();
+        }
         try {
             // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
             await this.syncVendors();
@@ -1331,61 +1512,67 @@ class ScaleBridge {
         const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
         const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
             || runtimeSettings.forceProductRewrite
+            || startupPluConsolidation.forceProductRewrite
             || sectionConfigChanged
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
         if (shouldSyncProducts) {
             products = await this.syncProducts({
                 runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
                 priceFormat: runtimeSettings.priceFormat,
-                forceProductRewrite: runtimeSettings.forceProductRewrite || sectionConfigChanged,
+                forceProductRewrite: runtimeSettings.forceProductRewrite
+                    || startupPluConsolidation.forceProductRewrite
+                    || sectionConfigChanged,
             });
             this.state.lastProductSyncAt = new Date().toISOString();
         }
 
-        let sales = { ok: false, fetched: 0, stored: 0, error: null };
-        try {
-            sales = await this.pullSales({
-                fromDate: from,
-                toDate: now,
-                closeAfter: this.config.closeSalesAfterPull,
-            });
+        let sales = { ok: true, fetched: 0, stored: 0, skipped: skipSales, error: null };
+        if (!skipSales) {
+            try {
+                sales = await this.pullSales({
+                    fromDate: from,
+                    toDate: now,
+                    closeAfter: this.config.closeSalesAfterPull,
+                });
 
-            // Si no hubo datos en la ventana incremental, intentamos un backfill
-            // para recuperar ventas demoradas sin depender de intervención manual.
-            if (sales.ok && Number(sales.fetched || 0) === 0) {
-                const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
-                const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
-                if (shouldBackfill) {
-                    const backfillFrom = new Date(now);
-                    backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
-                    this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
-                        from: backfillFrom.toISOString(),
-                        to: now.toISOString(),
-                    });
-                    const backfill = await this.pullSales({
-                        fromDate: backfillFrom,
-                        toDate: now,
-                        closeAfter: this.config.closeSalesAfterPull,
-                    });
-                    this.state.lastSalesBackfillAt = new Date().toISOString();
-                    if (Number(backfill.fetched || 0) > 0) {
-                        this.logger.info('Backfill de ventas recupero registros', {
-                            fetched: backfill.fetched,
-                            tickets: backfill.tickets,
+                // Si no hubo datos en la ventana incremental, intentamos un backfill
+                // para recuperar ventas demoradas sin depender de intervencion manual.
+                if (sales.ok && Number(sales.fetched || 0) === 0) {
+                    const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
+                    const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
+                    if (shouldBackfill) {
+                        const backfillFrom = new Date(now);
+                        backfillFrom.setDate(backfillFrom.getDate() - this.config.salesLookbackDays);
+                        this.logger.info('Sin ventas en ventana incremental, ejecutando backfill de ventas', {
+                            from: backfillFrom.toISOString(),
+                            to: now.toISOString(),
                         });
-                        sales = { ...backfill, backfill: true };
+                        const backfill = await this.pullSales({
+                            fromDate: backfillFrom,
+                            toDate: now,
+                            closeAfter: this.config.closeSalesAfterPull,
+                        });
+                        this.state.lastSalesBackfillAt = new Date().toISOString();
+                        if (Number(backfill.fetched || 0) > 0) {
+                            this.logger.info('Backfill de ventas recupero registros', {
+                                fetched: backfill.fetched,
+                                tickets: backfill.tickets,
+                            });
+                            sales = { ...backfill, backfill: true };
+                        }
                     }
                 }
-            }
 
-            // El cursor avanza solo cuando realmente ingresan ventas.
-            if (sales.ok && Number(sales.fetched || 0) > 0) {
-                this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+                // El cursor avanza solo cuando realmente ingresan ventas.
+                if (sales.ok && Number(sales.fetched || 0) > 0) {
+                    this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+                }
+            } catch (error) {
+                sales = { ok: false, fetched: 0, stored: 0, error: error.message };
+                this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });
             }
-        } catch (error) {
-            sales = { ok: false, fetched: 0, stored: 0, error: error.message };
-            this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });
         }
+
 
         this.state.lastRunAt = new Date().toISOString();
         this.state.lastRunStatus = 'ok';
