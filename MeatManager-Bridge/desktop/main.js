@@ -1,6 +1,7 @@
 ﻿const path = require('path');
 const fs = require('fs');
 const http = require('http');
+const https = require('https');
 const { fork } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
 const { SerialPort } = require('serialport');
@@ -258,7 +259,9 @@ function httpJsonRequest(urlOrOptions, { method = 'GET', headers = {}, body = nu
             })()
             : urlOrOptions;
 
-        const req = http.request(
+        const transport = String(requestOptions?.protocol || '').startsWith('https') ? https : http;
+
+        const req = transport.request(
             {
                 ...requestOptions,
                 method,
@@ -799,3 +802,5 @@ bootstrap().catch((error) => {
     console.error('[desktop bootstrap error]', error);
     app.exit(1);
 });
+
+

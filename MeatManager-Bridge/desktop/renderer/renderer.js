@@ -19,6 +19,7 @@ const obApiUrl = document.getElementById('ob-api-url');
 const obIdentifier = document.getElementById('ob-identifier');
 const obPassword = document.getElementById('ob-password');
 const obLogin = document.getElementById('ob-login');
+const obFeedbackEl = document.getElementById('ob-feedback');
 const obAfterLogin = document.getElementById('ob-after-login');
 const obClient = document.getElementById('ob-client');
 const obBranch = document.getElementById('ob-branch');
@@ -36,6 +37,21 @@ let onboardingBranches = [];
 let onboardingPorts = [];
 let onboardingDevices = [];
 let supportedModels = ['Systel Cuora Max'];
+let onboardingBusy = false;
+
+function setOnboardingFeedback(message, tone = 'info') {
+    if (!obFeedbackEl) return;
+    obFeedbackEl.textContent = message || '';
+    if (tone === 'ok') {
+        obFeedbackEl.style.color = '#22c55e';
+        return;
+    }
+    if (tone === 'error') {
+        obFeedbackEl.style.color = '#ef4444';
+        return;
+    }
+    obFeedbackEl.style.color = '#9fb0d1';
+}
 
 function setUpdatePill(status, message) {
     if (status === 'available' || status === 'downloaded') {
@@ -61,6 +77,9 @@ function setOnboardingMode(enabled) {
     onboardingRequired = enabled;
     onboardingCard.classList.toggle('hidden', !enabled);
     actionsCard.classList.toggle('hidden', enabled);
+    if (!enabled) {
+        setOnboardingFeedback('');
+    }
 }
 
 function renderStatus(status) {
@@ -180,14 +199,14 @@ function renderOnboardingDevices() {
 async function detectPorts() {
     const result = await window.bridgeDesktop.onboardingPorts();
     if (!result?.ok) {
-        eventEl.textContent = result?.error || 'No se pudieron leer puertos';
+        setOnboardingFeedback(result?.error || 'No se pudieron leer puertos', 'error');
         return;
     }
     onboardingPorts = Array.isArray(result.ports) ? result.ports : [];
     renderOnboardingDevices();
-    eventEl.textContent = onboardingPorts.length
+    setOnboardingFeedback(onboardingPorts.length
         ? `Puertos detectados: ${onboardingPorts.map((p) => p.path).join(', ')}`
-        : 'No se detectaron puertos COM.';
+        : 'No se detectaron puertos COM.');
 }
 
 async function loadOnboardingInitialState() {
@@ -225,32 +244,43 @@ btnOpenLogs.addEventListener('click', async () => {
 });
 
 obLogin.addEventListener('click', async () => {
+    if (onboardingBusy) return;
+    onboardingBusy = true;
+    obLogin.disabled = true;
+    setOnboardingFeedback('Validando credenciales de admin...');
     const payload = {
         apiBaseUrl: obApiUrl.value,
         identifier: obIdentifier.value,
         password: obPassword.value,
     };
-    const login = await window.bridgeDesktop.onboardingLogin(payload);
-    if (!login?.ok) {
-        eventEl.textContent = login?.error || 'No se pudo iniciar sesion';
-        return;
-    }
-    onboardingToken = login.token;
-    onboardingAdmin = login.admin || null;
+    try {
+        const login = await window.bridgeDesktop.onboardingLogin(payload);
+        if (!login?.ok) {
+            setOnboardingFeedback(login?.error || 'No se pudo iniciar sesion', 'error');
+            return;
+        }
+        onboardingToken = login.token;
+        onboardingAdmin = login.admin || null;
 
-    const clients = await window.bridgeDesktop.onboardingClients({
-        apiBaseUrl: obApiUrl.value,
-        token: onboardingToken,
-    });
-    if (!clients?.ok) {
-        eventEl.textContent = clients?.error || 'No se pudieron leer clientes';
-        return;
-    }
+        const clients = await window.bridgeDesktop.onboardingClients({
+            apiBaseUrl: obApiUrl.value,
+            token: onboardingToken,
+        });
+        if (!clients?.ok) {
+            setOnboardingFeedback(clients?.error || 'No se pudieron leer clientes', 'error');
+            return;
+        }
 
-    onboardingClients = Array.isArray(clients.clients) ? clients.clients : [];
-    fillClientSelect(onboardingClients);
-    obAfterLogin.classList.remove('hidden');
-    eventEl.textContent = `Sesion iniciada como ${login?.admin?.email || 'admin'}. Selecciona cliente/sucursal.`;
+        onboardingClients = Array.isArray(clients.clients) ? clients.clients : [];
+        fillClientSelect(onboardingClients);
+        obAfterLogin.classList.remove('hidden');
+        setOnboardingFeedback(`Sesion iniciada como ${login?.admin?.email || 'admin'}.`, 'ok');
+    } catch (error) {
+        setOnboardingFeedback(error?.message || 'No se pudo iniciar sesion', 'error');
+    } finally {
+        onboardingBusy = false;
+        obLogin.disabled = false;
+    }
 });
 
 obClient.addEventListener('change', async () => {
@@ -266,12 +296,13 @@ obClient.addEventListener('change', async () => {
         clientId,
     });
     if (!branches?.ok) {
-        eventEl.textContent = branches?.error || 'No se pudieron leer sucursales';
+        setOnboardingFeedback(branches?.error || 'No se pudieron leer sucursales', 'error');
         fillBranchSelect([]);
         return;
     }
     onboardingBranches = Array.isArray(branches.branches) ? branches.branches : [];
     fillBranchSelect(onboardingBranches);
+    setOnboardingFeedback(`Sucursales cargadas: ${onboardingBranches.length}.`);
 });
 
 obDetectPorts.addEventListener('click', detectPorts);
@@ -293,22 +324,22 @@ obSave.addEventListener('click', async () => {
     const clientId = Number(obClient.value || 0);
     const branchId = Number(obBranch.value || 0);
     if (!clientId || !branchId) {
-        eventEl.textContent = 'Selecciona cliente y sucursal.';
+        setOnboardingFeedback('Selecciona cliente y sucursal.', 'error');
         return;
     }
     if (!onboardingDevices.length) {
-        eventEl.textContent = 'Agrega al menos una balanza.';
+        setOnboardingFeedback('Agrega al menos una balanza.', 'error');
         return;
     }
     const invalidPort = onboardingDevices.find((device) => !String(device.port || '').trim());
     if (invalidPort) {
-        eventEl.textContent = `Falta puerto COM en ${invalidPort.name}.`;
+        setOnboardingFeedback(`Falta puerto COM en ${invalidPort.name}.`, 'error');
         return;
     }
 
     const uniquePorts = new Set(onboardingDevices.map((device) => device.port));
     if (uniquePorts.size !== onboardingDevices.length) {
-        eventEl.textContent = 'No se puede repetir el mismo puerto COM en dos balanzas.';
+        setOnboardingFeedback('No se puede repetir el mismo puerto COM en dos balanzas.', 'error');
         return;
     }
 
@@ -335,10 +366,11 @@ obSave.addEventListener('click', async () => {
     });
 
     if (!save?.ok) {
-        eventEl.textContent = save?.error || 'No se pudo guardar configuracion';
+        setOnboardingFeedback(save?.error || 'No se pudo guardar configuracion', 'error');
         return;
     }
 
+    setOnboardingFeedback('Vinculacion guardada. Iniciando sincronizacion...', 'ok');
     eventEl.textContent = 'Vinculacion guardada. Iniciando sincronizacion...';
     setOnboardingMode(false);
 });
