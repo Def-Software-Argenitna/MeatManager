@@ -2,7 +2,6 @@ const path = require('path');
 const fs = require('fs');
 const { fork } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
-const { autoUpdater } = require('electron-updater');
 
 const APP_NAME = 'MeatManager Bridge';
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4045', 10);
@@ -16,6 +15,7 @@ let statusTimer = null;
 let updateTimer = null;
 let isQuitting = false;
 let updateAvailable = false;
+let autoUpdater = null;
 let lastStatus = {
     bridgeProcess: { running: false, pid: null, restarts: 0 },
     bridgeHttp: { reachable: false, running: false, lastRunStatus: null, lastError: null, lastRunAt: null },
@@ -176,6 +176,20 @@ function startBridgeProcess() {
         running: true,
         pid: bridgeProc.pid || null,
     };
+    bridgeProc.on('error', (error) => {
+        lastStatus.bridgeProcess = {
+            ...lastStatus.bridgeProcess,
+            running: false,
+            pid: null,
+        };
+        lastStatus.bridgeHttp = {
+            ...lastStatus.bridgeHttp,
+            reachable: false,
+            running: false,
+            lastError: `No se pudo iniciar bridge: ${error.message}`,
+        };
+        sendStatusToRenderer();
+    });
     bridgeProc.on('exit', () => {
         lastStatus.bridgeProcess = {
             ...lastStatus.bridgeProcess,
@@ -270,6 +284,18 @@ function configureAutoLaunch() {
 }
 
 function configureAutoUpdate() {
+    try {
+        ({ autoUpdater } = require('electron-updater'));
+    } catch (error) {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-event', {
+                status: 'error',
+                message: `Auto-update no disponible: ${formatUpdateError(error)}`,
+            });
+        }
+        return;
+    }
+
     const { owner, repo } = resolveGithubPublishTarget();
     if (!owner || !repo) return;
 
@@ -299,6 +325,16 @@ function configureAutoUpdate() {
 }
 
 function checkForUpdatesNow(manual = false) {
+    if (!autoUpdater) {
+        if (manual && mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-event', {
+                status: 'error',
+                message: 'Auto-update no inicializado.',
+            });
+        }
+        return;
+    }
+
     const { owner, repo } = resolveGithubPublishTarget();
     if (!owner || !repo) {
         if (manual && mainWindow && !mainWindow.isDestroyed()) {
@@ -316,20 +352,6 @@ function checkForUpdatesNow(manual = false) {
                 message: `No se pudo buscar actualizacion: ${formatUpdateError(error)}`,
             });
         }
-    });
-    bridgeProc.on('error', (error) => {
-        lastStatus.bridgeProcess = {
-            ...lastStatus.bridgeProcess,
-            running: false,
-            pid: null,
-        };
-        lastStatus.bridgeHttp = {
-            ...lastStatus.bridgeHttp,
-            reachable: false,
-            running: false,
-            lastError: `No se pudo iniciar bridge: ${error.message}`,
-        };
-        sendStatusToRenderer();
     });
 }
 
