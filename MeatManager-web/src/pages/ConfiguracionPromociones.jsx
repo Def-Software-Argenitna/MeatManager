@@ -91,6 +91,7 @@ const ConfiguracionPromociones = () => {
     const [categories, setCategories] = useState([]);
     const [branches, setBranches] = useState([]);
     const [promotions, setPromotions] = useState([]);
+    const [stockRows, setStockRows] = useState([]);
     const [editingId, setEditingId] = useState(null);
     const [editingTierIds, setEditingTierIds] = useState([]);
     const [form, setForm] = useState(emptyForm);
@@ -104,17 +105,19 @@ const ConfiguracionPromociones = () => {
     const loadData = async () => {
         setLoading(true);
         try {
-            const [productRows, promotionRows, categoryRows, branchBundle] = await Promise.all([
+            const [productRows, promotionRows, categoryRows, branchBundle, stockItems] = await Promise.all([
                 fetchTable('products', { orderBy: 'name', direction: 'ASC', limit: 10000 }).catch(() => []),
                 fetchTable('promotions', { orderBy: 'id', direction: 'DESC', limit: 5000 }).catch(() => []),
                 fetchTable('product_categories', { orderBy: 'name', direction: 'ASC', limit: 5000 }).catch(() => []),
                 fetchClientBranches().catch(() => ({ branches: [] })),
+                fetchTable('stock', { orderBy: 'updated_at', direction: 'DESC', limit: 5000 }).catch(() => []),
             ]);
 
             setProducts(Array.isArray(productRows) ? productRows : []);
             setPromotions((Array.isArray(promotionRows) ? promotionRows : []).map(normalizePromotion));
             setCategories(Array.isArray(categoryRows) ? categoryRows : []);
             setBranches(Array.isArray(branchBundle?.branches) ? branchBundle.branches : []);
+            setStockRows(Array.isArray(stockItems) ? stockItems : []);
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudieron cargar las promociones.' });
         } finally {
@@ -233,6 +236,68 @@ const ConfiguracionPromociones = () => {
         });
         return grouped;
     }, [promotions]);
+    const stockByIdentity = useMemo(() => {
+        const byProduct = new Map();
+        const byName = new Map();
+        const normalizeName = (value) => String(value || '')
+            .trim()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+        const addQty = (map, key, qty) => {
+            map.set(key, toNumber((map.get(key) || 0) + qty, 3));
+        };
+
+        (Array.isArray(stockRows) ? stockRows : []).forEach((row) => {
+            const qty = Number(row?.quantity);
+            if (!Number.isFinite(qty) || Math.abs(qty) <= 0.000001) return;
+            const branchId = Number(row?.branch_id);
+            const branchKey = Number.isFinite(branchId) && branchId > 0 ? String(branchId) : 'all';
+            const productId = Number(row?.product_id);
+            if (Number.isFinite(productId) && productId > 0) {
+                addQty(byProduct, `${productId}|${branchKey}`, qty);
+                addQty(byProduct, `${productId}|*`, qty);
+            }
+            const normalizedName = normalizeName(row?.name);
+            if (normalizedName) {
+                addQty(byName, `${normalizedName}|${branchKey}`, qty);
+                addQty(byName, `${normalizedName}|*`, qty);
+            }
+        });
+
+        return { byProduct, byName };
+    }, [stockRows]);
+    const getPromoStockQty = (promoRow) => {
+        const branchId = Number(promoRow?.branch_id);
+        const scopedBranch = Number.isFinite(branchId) && branchId > 0 ? String(branchId) : null;
+        const productId = Number(promoRow?.product_id);
+        const normalizedName = String(promoRow?.product_name || '')
+            .trim()
+            .toLowerCase()
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+
+        if (Number.isFinite(productId) && productId > 0) {
+            if (scopedBranch) {
+                return toNumber(
+                    (stockByIdentity.byProduct.get(`${productId}|${scopedBranch}`) || 0)
+                    + (stockByIdentity.byProduct.get(`${productId}|all`) || 0),
+                    3
+                );
+            }
+            return toNumber(stockByIdentity.byProduct.get(`${productId}|*`) || 0, 3);
+        }
+
+        if (!normalizedName) return 0;
+        if (scopedBranch) {
+            return toNumber(
+                (stockByIdentity.byName.get(`${normalizedName}|${scopedBranch}`) || 0)
+                + (stockByIdentity.byName.get(`${normalizedName}|all`) || 0),
+                3
+            );
+        }
+        return toNumber(stockByIdentity.byName.get(`${normalizedName}|*`) || 0, 3);
+    };
 
     const branchesById = useMemo(() => {
         const map = new Map();
@@ -810,6 +875,8 @@ const ConfiguracionPromociones = () => {
     const renderPromoCard = (group) => {
         const row = group?.representative;
         const tiers = tiersByGroupKey.get(group?.key) || (Array.isArray(group?.tiers) ? group.tiers : []);
+        const currentStockQty = getPromoStockQty(row);
+        const hasCurrentStock = currentStockQty > 0;
         return (
             <div key={group?.key || row?.id} className={`promo-card ${row?.active ? 'is-active' : 'is-inactive'}`}>
             <div className="promo-card-header">
@@ -873,6 +940,16 @@ const ConfiguracionPromociones = () => {
                             Stock: {row?.stock_mode === PROMO_STOCK_MODES.FIXED
                                 ? `Cupo de ${formatKg(row?.stock_cap_kg_limit)} kg`
                                 : 'Ilimitado'}
+                        </span>
+                    </div>
+                    <div className="promo-detail-item">
+                        <FiActivity className="text-muted"/>
+                        <span>
+                            Disponibilidad:
+                            <span className={`status-badge ${hasCurrentStock ? 'on' : 'off'}`} style={{ marginLeft: '0.4rem' }}>
+                                {hasCurrentStock ? 'Con stock' : 'Sin stock'}
+                            </span>
+                            {hasCurrentStock ? ` (${formatKg(currentStockQty)} kg)` : ''}
                         </span>
                     </div>
                     <div className="promo-detail-item">
