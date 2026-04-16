@@ -21,7 +21,10 @@ if (fs.existsSync(envFile)) {
 let overrides = {};
 if (fs.existsSync(overridesFile)) {
     try {
-        overrides = JSON.parse(fs.readFileSync(overridesFile, 'utf8'));
+        const rawOverrides = fs.readFileSync(overridesFile, 'utf8');
+        // Some editors/write paths save UTF-8 with BOM; strip it so JSON.parse never falls back to defaults.
+        const normalizedOverrides = rawOverrides.replace(/^\uFEFF/, '').trim();
+        overrides = normalizedOverrides ? JSON.parse(normalizedOverrides) : {};
     } catch {
         overrides = {};
     }
