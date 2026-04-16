@@ -15,7 +15,6 @@ const btnCheckUpdates = document.getElementById('btn-check-updates');
 const btnInstallUpdate = document.getElementById('btn-install-update');
 const btnOpenLogs = document.getElementById('btn-open-logs');
 
-const obApiUrl = document.getElementById('ob-api-url');
 const obIdentifier = document.getElementById('ob-identifier');
 const obPassword = document.getElementById('ob-password');
 const obLogin = document.getElementById('ob-login');
@@ -215,7 +214,9 @@ async function loadOnboardingInitialState() {
         ? payload.supportedModels
         : ['Systel Cuora Max'];
     fillModelSelect(supportedModels);
-    obApiUrl.value = payload?.installation?.apiBaseUrl || payload?.defaultApiBaseUrl || '';
+    if (!payload?.defaultApiBaseUrl) {
+        setOnboardingFeedback('No se detecto URL API del sistema. Contacta soporte.', 'error');
+    }
 
     if (payload?.required) {
         setOnboardingMode(true);
@@ -249,7 +250,6 @@ obLogin.addEventListener('click', async () => {
     obLogin.disabled = true;
     setOnboardingFeedback('Validando credenciales de admin...');
     const payload = {
-        apiBaseUrl: obApiUrl.value,
         identifier: obIdentifier.value,
         password: obPassword.value,
     };
@@ -263,7 +263,6 @@ obLogin.addEventListener('click', async () => {
         onboardingAdmin = login.admin || null;
 
         const clients = await window.bridgeDesktop.onboardingClients({
-            apiBaseUrl: obApiUrl.value,
             token: onboardingToken,
         });
         if (!clients?.ok) {
@@ -291,7 +290,6 @@ obClient.addEventListener('change', async () => {
     }
 
     const branches = await window.bridgeDesktop.onboardingBranches({
-        apiBaseUrl: obApiUrl.value,
         token: onboardingToken,
         clientId,
     });
@@ -347,7 +345,6 @@ obSave.addEventListener('click', async () => {
     const branch = onboardingBranches.find((row) => Number(row.id) === branchId);
 
     const save = await window.bridgeDesktop.onboardingSave({
-        apiBaseUrl: obApiUrl.value,
         auth: {
             adminEmail: onboardingAdmin?.email || '',
             adminName: [onboardingAdmin?.name, onboardingAdmin?.lastname].filter(Boolean).join(' ').trim(),

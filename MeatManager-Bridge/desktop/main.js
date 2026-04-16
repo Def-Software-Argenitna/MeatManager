@@ -14,6 +14,7 @@ const DEFAULT_SCALE_MODEL = 'Systel Cuora Max';
 const SUPPORTED_SCALE_MODELS = [DEFAULT_SCALE_MODEL];
 
 const DEFAULT_API_BASE_URL = String(process.env.BRIDGE_API_BASE_URL || '').trim();
+const FALLBACK_API_BASE_URL = 'https://meatmanager.def-software.com';
 const DEFAULT_DB_CONFIG = {
     host: String(process.env.BRIDGE_MYSQL_HOST || '34.136.100.63').trim(),
     port: String(process.env.BRIDGE_MYSQL_PORT || '3306').trim(),
@@ -243,6 +244,17 @@ function formatUpdateError(error) {
     }
     const firstLine = raw.split('\n').map((line) => line.trim()).find(Boolean) || raw;
     return firstLine.length > 220 ? `${firstLine.slice(0, 220)}...` : firstLine;
+}
+
+function resolveApiBaseUrl(preferred = '') {
+    const candidates = [
+        String(preferred || '').trim(),
+        String(installation?.apiBaseUrl || '').trim(),
+        DEFAULT_API_BASE_URL,
+        FALLBACK_API_BASE_URL,
+    ];
+    const selected = candidates.find((value) => value) || '';
+    return selected.replace(/\/$/, '');
 }
 
 function httpJsonRequest(urlOrOptions, { method = 'GET', headers = {}, body = null, timeout = 5000 } = {}) {
@@ -630,8 +642,8 @@ async function listAvailableSerialPorts() {
 }
 
 async function onboardingLogin({ apiBaseUrl, identifier, password }) {
-    const base = String(apiBaseUrl || '').trim().replace(/\/$/, '');
-    if (!base) throw new Error('Ingresa la URL de API');
+    const base = resolveApiBaseUrl(apiBaseUrl);
+    if (!base) throw new Error('No hay URL API configurada en este Bridge');
     if (!identifier || !password) throw new Error('Completa email/usuario y contrasena');
 
     return httpJsonRequest(`${base}/api/internal-admin/login`, {
@@ -643,7 +655,7 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
 }
 
 async function onboardingFetchClients({ apiBaseUrl, token, search = '' }) {
-    const base = String(apiBaseUrl || '').trim().replace(/\/$/, '');
+    const base = resolveApiBaseUrl(apiBaseUrl);
     if (!base || !token) throw new Error('Sesion admin invalida');
     const query = search ? `?search=${encodeURIComponent(String(search).trim())}` : '';
     return httpJsonRequest(`${base}/api/internal-admin/clients${query}`, {
@@ -653,7 +665,7 @@ async function onboardingFetchClients({ apiBaseUrl, token, search = '' }) {
 }
 
 async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
-    const base = String(apiBaseUrl || '').trim().replace(/\/$/, '');
+    const base = resolveApiBaseUrl(apiBaseUrl);
     const numericClientId = Number.parseInt(clientId, 10);
     if (!base || !token || !Number.isFinite(numericClientId) || numericClientId <= 0) {
         throw new Error('Datos invalidos para sucursales');
@@ -720,7 +732,7 @@ function setupIpc() {
         required: !isInstallationValid(installation),
         installation,
         supportedModels: SUPPORTED_SCALE_MODELS,
-        defaultApiBaseUrl: DEFAULT_API_BASE_URL,
+        defaultApiBaseUrl: resolveApiBaseUrl(),
     }));
 
     ipcMain.handle('onboarding:ports', async () => ({ ok: true, ports: await listAvailableSerialPorts() }));
