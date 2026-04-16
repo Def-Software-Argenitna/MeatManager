@@ -753,6 +753,107 @@ class ScaleBridge {
         };
     }
 
+    canonicalPluCode(value) {
+        const raw = String(value || '').trim();
+        if (!raw || !/^\d+$/.test(raw)) return '';
+        const parsed = Number.parseInt(raw, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return '';
+        return String(parsed);
+    }
+
+    async cleanupOrphanPluCodes(expectedProducts = []) {
+        const expected = new Set(
+            (Array.isArray(expectedProducts) ? expectedProducts : [])
+                .map((row) => this.canonicalPluCode(row.effective_plu_code || row.plu || row.id))
+                .filter(Boolean)
+        );
+
+        const observedRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT DISTINCT plu_code
+             FROM (
+                SELECT m.plu_code
+                FROM scale_bridge_product_map m
+                WHERE m.device_id = ?
+                  AND m.tenant_id = ?
+                UNION ALL
+                SELECT s.plu_code
+                FROM scale_bridge_sales_item s
+                WHERE s.device_id = ?
+                  AND s.tenant_id = ?
+                  AND s.sale_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)
+             ) x
+             WHERE TRIM(COALESCE(plu_code, '')) <> ''`,
+            [this.config.deviceId, this.config.tenantId, this.config.deviceId, this.config.tenantId]
+        );
+
+        const orphanPluCodes = [...new Set(
+            observedRows
+                .map((row) => this.canonicalPluCode(row.plu_code))
+                .filter((plu) => plu && !expected.has(plu))
+        )];
+
+        if (!orphanPluCodes.length) {
+            return { ok: true, detected: 0, deleted: 0, failed: 0 };
+        }
+
+        let deleted = 0;
+        let failed = 0;
+
+        for (const plu of orphanPluCodes) {
+            const pluNumber = Number.parseInt(plu, 10);
+            // En CUORA V6, fn5 trabaja en 1..8000. Evitamos clamping silencioso.
+            if (!Number.isFinite(pluNumber) || pluNumber < 1 || pluNumber > 8000) {
+                this.logger.warn('PLU huérfano fuera de rango de borrado fn5, se omite', { plu });
+                failed += 1;
+                continue;
+            }
+
+            try {
+                const deletePayload = buildDeletePluPayload(plu);
+                const deleteResp = await this.scale.send(5, deletePayload);
+                if (!deleteResp.crc.ok) {
+                    throw new Error(`CRC invalido al borrar PLU huérfano ${plu}`);
+                }
+                if (String(deleteResp.data || '').startsWith('E')) {
+                    throw new Error(`Error balanza al borrar PLU huérfano ${plu}: ${deleteResp.data}`);
+                }
+
+                await mysqlExecute(
+                    this.mysqlPool,
+                    `DELETE FROM scale_bridge_product_map
+                     WHERE device_id = ?
+                       AND tenant_id = ?
+                       AND (
+                            TRIM(CAST(plu_code AS CHAR)) = ?
+                            OR (TRIM(CAST(plu_code AS CHAR)) REGEXP '^[0-9]+$' AND CAST(TRIM(CAST(plu_code AS CHAR)) AS UNSIGNED) = ?)
+                       )`,
+                    [this.config.deviceId, this.config.tenantId, plu, pluNumber]
+                );
+                deleted += 1;
+            } catch (error) {
+                failed += 1;
+                this.logger.warn('No se pudo borrar un PLU huérfano en balanza', {
+                    plu,
+                    error: error.message,
+                });
+            }
+        }
+
+        this.logger.info('Limpieza automática de PLU huérfanos completada', {
+            detected: orphanPluCodes.length,
+            deleted,
+            failed,
+        });
+
+        return {
+            ok: true,
+            detected: orphanPluCodes.length,
+            deleted,
+            failed,
+        };
+    }
+
     async syncProducts(options = {}) {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
@@ -861,6 +962,10 @@ class ScaleBridge {
              ORDER BY updated_at ASC, id ASC`,
             [this.config.tenantId]
         );
+
+        const orphanCleanup = await this.cleanupOrphanPluCodes(products);
+        deleted += Number(orphanCleanup.deleted || 0);
+        failed += Number(orphanCleanup.failed || 0);
 
         for (const product of products) {
             const pluCode = String(product.effective_plu_code || product.plu || product.id);
