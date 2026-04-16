@@ -5287,6 +5287,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         const barcode = String(req.params.barcode || '').trim();
         if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
         const barcodeDigits = barcode.replace(/\D/g, '');
+        const isScaleSummaryBarcode = barcodeDigits.length >= 12 && barcodeDigits.startsWith('22');
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -5313,6 +5314,30 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             );
         }
 
+        // Lectura resiliente: cuando el usuario escanea inmediatamente después de imprimir,
+        // damos una ventana corta para que el bridge termine de persistir el ticket.
+        if (!ticketRows.length && isScaleSummaryBarcode) {
+            const retryUntil = Date.now() + 7000;
+            while (!ticketRows.length && Date.now() < retryUntil) {
+                await new Promise((resolve) => setTimeout(resolve, 700));
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+        }
+
         if (!ticketRows.length && scaleSchema.ticketStatus) {
             const statusConditions = ['UPPER(ticket_barcode) = UPPER(?)'];
             const statusParams = [tenantId, barcode];
@@ -5335,7 +5360,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
         }
 
-        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+        if (!ticketRows.length && isScaleSummaryBarcode) {
             const totalRaw = Number.parseInt(barcodeDigits.substring(6, 12), 10);
             const totalCandidates = Array.from(new Set([
                 Number.isFinite(totalRaw) ? totalRaw : 0,
