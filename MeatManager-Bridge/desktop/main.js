@@ -1,4 +1,5 @@
 const path = require('path');
+const fs = require('fs');
 const { fork } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
@@ -44,7 +45,7 @@ function getIconPath(fileName) {
     const appBase = path.join(app.getAppPath(), 'public', 'branding');
     const devBase = path.join(__dirname, '..', 'public', 'branding');
     const first = app.isPackaged ? path.join(appBase, fileName) : path.join(devBase, fileName);
-    if (require('fs').existsSync(first)) return first;
+    if (fs.existsSync(first)) return first;
     const fallback = path.join(devBase, fileName);
     return fallback;
 }
@@ -132,6 +133,10 @@ function updateTrayMenu() {
 }
 
 function bridgeScriptPath() {
+    if (app.isPackaged) {
+        const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'index.js');
+        if (fs.existsSync(unpackedPath)) return unpackedPath;
+    }
     return path.join(app.getAppPath(), 'src', 'index.js');
 }
 
@@ -142,6 +147,21 @@ function runtimeDir() {
 function startBridgeProcess() {
     if (bridgeProc && !bridgeProc.killed) return;
     const scriptPath = bridgeScriptPath();
+    if (!fs.existsSync(scriptPath)) {
+        lastStatus.bridgeProcess = {
+            ...lastStatus.bridgeProcess,
+            running: false,
+            pid: null,
+        };
+        lastStatus.bridgeHttp = {
+            ...lastStatus.bridgeHttp,
+            reachable: false,
+            running: false,
+            lastError: `No se encontro script bridge en ${scriptPath}`,
+        };
+        sendStatusToRenderer();
+        return;
+    }
     bridgeProc = fork(scriptPath, [], {
         env: {
             ...process.env,
@@ -296,6 +316,20 @@ function checkForUpdatesNow(manual = false) {
                 message: `No se pudo buscar actualizacion: ${formatUpdateError(error)}`,
             });
         }
+    });
+    bridgeProc.on('error', (error) => {
+        lastStatus.bridgeProcess = {
+            ...lastStatus.bridgeProcess,
+            running: false,
+            pid: null,
+        };
+        lastStatus.bridgeHttp = {
+            ...lastStatus.bridgeHttp,
+            reachable: false,
+            running: false,
+            lastError: `No se pudo iniciar bridge: ${error.message}`,
+        };
+        sendStatusToRenderer();
     });
 }
 
