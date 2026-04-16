@@ -3,8 +3,13 @@ const path = require('path');
 const dotenv = require('dotenv');
 
 const rootDir = path.resolve(__dirname, '..');
+const runtimeRootDir = String(process.env.BRIDGE_APP_DATA_DIR || '').trim()
+    ? path.resolve(String(process.env.BRIDGE_APP_DATA_DIR || '').trim())
+    : rootDir;
 const envFile = path.join(rootDir, '.env');
-const overridesFile = path.join(rootDir, 'data', 'config-overrides.json');
+const overridesFile = process.env.BRIDGE_OVERRIDES_FILE
+    ? path.resolve(process.env.BRIDGE_OVERRIDES_FILE)
+    : path.join(runtimeRootDir, 'data', 'config-overrides.json');
 if (fs.existsSync(envFile)) {
     dotenv.config({ path: envFile });
 } else {
@@ -39,12 +44,13 @@ const strEnv = (name, fallback = '') => {
 
 const config = {
     rootDir,
-    dataDir: path.join(rootDir, 'data'),
-    logsDir: path.join(rootDir, 'logs'),
+    runtimeRootDir,
+    dataDir: path.join(runtimeRootDir, 'data'),
+    logsDir: path.join(runtimeRootDir, 'logs'),
     envFile,
     overridesFile,
-    stateFile: path.resolve(rootDir, strEnv('STATE_FILE', './data/state.json')),
-    logFile: path.resolve(rootDir, strEnv('LOG_FILE', './logs/bridge.log')),
+    stateFile: path.resolve(runtimeRootDir, strEnv('STATE_FILE', './data/state.json')),
+    logFile: path.resolve(runtimeRootDir, strEnv('LOG_FILE', './logs/bridge.log')),
     resetStateOnStart: boolEnv('RESET_STATE_ON_START', true),
     deviceId: strEnv('BRIDGE_DEVICE_ID', 'CUORA-LOCAL-01'),
     bridgeName: strEnv('BRIDGE_NAME', 'Cuora Direct Bridge'),
