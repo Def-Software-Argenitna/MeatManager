@@ -1,12 +1,12 @@
 {
-  "lastProductSyncAt": "2026-04-16T01:46:05.037Z",
+  "lastProductSyncAt": "2026-04-16T01:49:45.488Z",
   "lastTicketSyncAt": "2026-04-16T01:42:49.000Z",
   "lastSalesBackfillAt": null,
-  "lastRunAt": "2026-04-16T01:46:13.280Z",
+  "lastRunAt": "2026-04-16T01:49:53.592Z",
   "lastRunStatus": "ok",
   "lastRunMessage": "Productos:108/1 Ventas:19",
   "lastError": null,
-  "barcodeConfigFingerprint": "658984495524461d4e0a",
+  "barcodeConfigFingerprint": null,
   "priceFormatFingerprint": "6d:0",
   "vendorConfigFingerprint": "3127a398e418f5980910",
   "marqueeConfigFingerprint": "3c7771739afec4a6d77f",
@@ -14,5 +14,8 @@
   "sectionMapFingerprint": "7bf206069e7d90e8000d",
   "ticketFingerprints": {},
   "productFingerprints": {},
-  "startupPluConsolidatedAt": "2026-04-16T01:45:02.128Z"
+  "startupPluConsolidatedAt": "2026-04-16T01:48:42.435Z",
+  "orphanPluCleanupCache": {
+    "9": 1776304123431
+  }
 }
