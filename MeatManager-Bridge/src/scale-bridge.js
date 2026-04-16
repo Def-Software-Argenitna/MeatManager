@@ -762,11 +762,23 @@ class ScaleBridge {
     }
 
     async cleanupOrphanPluCodes(expectedProducts = []) {
+        const nowMs = Date.now();
+        const cooldownMs = 12 * 60 * 60 * 1000; // 12h
+        const cleanupCacheRaw = this.state.orphanPluCleanupCache && typeof this.state.orphanPluCleanupCache === 'object'
+            ? this.state.orphanPluCleanupCache
+            : {};
+        const cleanupCache = { ...cleanupCacheRaw };
+
         const expected = new Set(
             (Array.isArray(expectedProducts) ? expectedProducts : [])
                 .map((row) => this.canonicalPluCode(row.effective_plu_code || row.plu || row.id))
                 .filter(Boolean)
         );
+
+        // Si un PLU volvió a existir en MM, lo removemos del cache para no bloquear futuros eventos.
+        for (const plu of Object.keys(cleanupCache)) {
+            if (expected.has(plu)) delete cleanupCache[plu];
+        }
 
         const observedRows = await mysqlQuery(
             this.mysqlPool,
@@ -787,13 +799,20 @@ class ScaleBridge {
             [this.config.deviceId, this.config.tenantId, this.config.deviceId, this.config.tenantId]
         );
 
-        const orphanPluCodes = [...new Set(
+        const orphanPluCodesRaw = [...new Set(
             observedRows
                 .map((row) => this.canonicalPluCode(row.plu_code))
                 .filter((plu) => plu && !expected.has(plu))
         )];
 
+        const orphanPluCodes = orphanPluCodesRaw.filter((plu) => {
+            const lastTs = Number(cleanupCache[plu] || 0);
+            return !lastTs || (nowMs - lastTs) >= cooldownMs;
+        });
+
         if (!orphanPluCodes.length) {
+            this.state.orphanPluCleanupCache = cleanupCache;
+            this.stateStore.save(this.state);
             return { ok: true, detected: 0, deleted: 0, failed: 0 };
         }
 
@@ -830,6 +849,7 @@ class ScaleBridge {
                        )`,
                     [this.config.deviceId, this.config.tenantId, plu, pluNumber]
                 );
+                cleanupCache[plu] = nowMs;
                 deleted += 1;
             } catch (error) {
                 failed += 1;
@@ -841,14 +861,19 @@ class ScaleBridge {
         }
 
         this.logger.info('Limpieza automática de PLU huérfanos completada', {
-            detected: orphanPluCodes.length,
+            detected: orphanPluCodesRaw.length,
+            attempted: orphanPluCodes.length,
             deleted,
             failed,
         });
 
+        this.state.orphanPluCleanupCache = cleanupCache;
+        this.stateStore.save(this.state);
+
         return {
             ok: true,
-            detected: orphanPluCodes.length,
+            detected: orphanPluCodesRaw.length,
+            attempted: orphanPluCodes.length,
             deleted,
             failed,
         };
