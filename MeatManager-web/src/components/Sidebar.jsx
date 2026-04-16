@@ -50,8 +50,6 @@ const Sidebar = ({ isCollapsed }) => {
   const [branchNotif, setBranchNotif] = useState(0);
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
-  const latestPathRef = React.useRef(location.pathname);
-  const navAttemptRef = React.useRef(0);
   const [openGroups, setOpenGroups] = useState({
     operacion: true,
     comercial: false,
@@ -60,10 +58,6 @@ const Sidebar = ({ isCollapsed }) => {
   });
 
   // Mantener abierto el grupo que contiene la ruta activa
-  React.useEffect(() => {
-    latestPathRef.current = location.pathname;
-  }, [location.pathname]);
-
   React.useEffect(() => {
     const p = location.pathname;
     const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
@@ -115,30 +109,7 @@ const Sidebar = ({ isCollapsed }) => {
   const goToPath = React.useCallback((path) => {
     const normalizedPath = String(path || '').trim();
     if (!normalizedPath || location.pathname === normalizedPath) return;
-    const fromPath = latestPathRef.current;
-    navAttemptRef.current += 1;
-    const navAttemptId = navAttemptRef.current;
-
     navigate(normalizedPath);
-
-    // Fallback para HashRouter en escenarios donde un handler global
-    // deja la UI "pegada" y no termina de aplicar la navegación SPA.
-    window.setTimeout(() => {
-      if (window.location.hash !== `#${normalizedPath}`) {
-        window.location.hash = normalizedPath;
-      }
-    }, 0);
-
-    // Si venimos de Ventas y la ruta no cambia (bug reportado), forzamos
-    // recarga en la nueva hash para evitar quedar bloqueados.
-    window.setTimeout(() => {
-      if (navAttemptRef.current !== navAttemptId) return;
-      if (fromPath !== '/ventas') return;
-      if (latestPathRef.current === normalizedPath) return;
-
-      window.location.hash = normalizedPath;
-      window.location.reload();
-    }, 220);
   }, [location.pathname, navigate]);
 
   const handleLogout = async () => {
