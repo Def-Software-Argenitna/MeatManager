@@ -41,16 +41,21 @@ function resolveGithubPublishTarget() {
 }
 
 function getIconPath(fileName) {
+    const appBase = path.join(app.getAppPath(), 'public', 'branding');
     const devBase = path.join(__dirname, '..', 'public', 'branding');
-    const prodBase = path.join(process.resourcesPath, 'public', 'branding');
-    const candidate = app.isPackaged ? path.join(prodBase, fileName) : path.join(devBase, fileName);
-    return candidate;
+    const first = app.isPackaged ? path.join(appBase, fileName) : path.join(devBase, fileName);
+    if (require('fs').existsSync(first)) return first;
+    const fallback = path.join(devBase, fileName);
+    return fallback;
 }
 
 function buildTrayIcon() {
     const fileName = updateAvailable ? 'def-software-tray-update.png' : 'def-software-tray.png';
     const pngPath = getIconPath(fileName);
     let icon = nativeImage.createFromPath(pngPath);
+    if (icon.isEmpty()) {
+        icon = nativeImage.createFromPath(getIconPath('def-software-512.png'));
+    }
     if (!icon.isEmpty()) {
         icon = icon.resize({ width: 18, height: 18, quality: 'best' });
     }
@@ -60,6 +65,19 @@ function buildTrayIcon() {
 function sendStatusToRenderer() {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send('bridge-status', lastStatus);
+}
+
+function formatUpdateError(error) {
+    const raw = String(error?.message || error || '').trim();
+    if (!raw) return 'No se pudo verificar actualizaciones.';
+    if (raw.includes('Unable to find latest version on GitHub')) {
+        return 'No se encontro una release valida para auto-update. Usa tags semver (ej: v0.2.1) y release publicada.';
+    }
+    if (raw.includes('Cannot parse releases feed')) {
+        return 'No se pudo leer el feed de releases de GitHub.';
+    }
+    const firstLine = raw.split('\n').map((line) => line.trim()).find(Boolean) || raw;
+    return firstLine.length > 220 ? `${firstLine.slice(0, 220)}...` : firstLine;
 }
 
 async function fetchBridgeStatus() {
@@ -191,6 +209,7 @@ function quitApp() {
 }
 
 function createMainWindow() {
+    const windowIcon = getIconPath('app.ico');
     mainWindow = new BrowserWindow({
         width: 920,
         height: 620,
@@ -198,6 +217,7 @@ function createMainWindow() {
         minHeight: 500,
         show: !process.argv.includes('--hidden'),
         title: APP_NAME,
+        icon: windowIcon,
         autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -273,7 +293,7 @@ function checkForUpdatesNow(manual = false) {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-event', {
                 status: 'error',
-                message: `No se pudo buscar actualización: ${error.message}`,
+                message: `No se pudo buscar actualizacion: ${formatUpdateError(error)}`,
             });
         }
     });
@@ -312,6 +332,7 @@ function setupIpc() {
 
 async function bootstrap() {
     app.setName(APP_NAME);
+    app.setAppUserModelId('com.defsoftware.meatmanager.bridge');
     const hasLock = app.requestSingleInstanceLock();
     if (!hasLock) {
         app.quit();

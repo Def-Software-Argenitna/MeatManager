@@ -3,6 +3,7 @@ name: Bridge Desktop Release
 on:
   push:
     tags:
+      - "v*"
       - "bridge-v*"
   workflow_dispatch:
 

@@ -30,7 +30,8 @@
   "devDependencies": {
     "electron": "^37.2.5",
     "electron-builder": "^25.1.8",
-    "node-gyp": "^10.3.1"
+    "node-gyp": "^10.3.1",
+    "png-to-ico": "^3.0.1"
   },
   "overrides": {
     "node-gyp": "^10.3.1"
@@ -58,12 +59,16 @@
       "target": [
         "nsis"
       ],
+      "icon": "public/branding/app.ico",
       "artifactName": "MeatManager-Bridge-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
+      "installerIcon": "public/branding/app.ico",
+      "uninstallerIcon": "public/branding/app.ico",
+      "installerHeaderIcon": "public/branding/app.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
     }
