@@ -353,6 +353,24 @@ const ConfiguracionPromociones = () => {
         }));
     };
 
+    const buildTierPromoIdentity = (tierIndex) => {
+        const rawPromoName = String(form.promo_name || '').trim();
+        const nameMatch = rawPromoName.match(PROMO_SUFFIX_REGEX);
+        const namePrefix = (nameMatch ? rawPromoName.replace(PROMO_SUFFIX_REGEX, '') : rawPromoName).replace(/[_\s]+$/, '');
+        const defaultPromoNumber = editingId ? 1 : promoSuggestion.nextPromoNumber;
+        const startPromoNumber = nameMatch ? Number(nameMatch[1]) : defaultPromoNumber;
+
+        const normalizedPromoPlu = Number(normalizePluCode(form.promo_plu));
+        const sequentialPromoPlu = normalizedPromoPlu > 0
+            ? String(normalizedPromoPlu + (tierIndex * PROMO_PLU_STEP))
+            : '';
+
+        return {
+            promo_name: namePrefix ? `${namePrefix}_P${startPromoNumber + tierIndex}` : rawPromoName,
+            promo_plu: sequentialPromoPlu,
+        };
+    };
+
     const togglePromoStatus = async (row) => {
         try {
             setSaving(true);
@@ -374,22 +392,32 @@ const ConfiguracionPromociones = () => {
     const validateForm = () => {
         const productName = String(form.product_name || '').trim();
         const promoName = String(form.promo_name || '').trim();
-        const promoPlu = normalizePluCode(form.promo_plu);
         const tiers = buildNormalizedTiers();
 
         if (!productName) throw new Error('Selecciona un articulo para la promo.');
         if (!promoName) throw new Error('Ingresa un nombre para el codigo promo.');
-        if (!promoPlu || Number(promoPlu) < 1000) throw new Error('El PLU de promo debe ser numerico y mayor o igual a 1000.');
-        const duplicatedPromoPlu = (Array.isArray(promotions) ? promotions : []).find((row) => (
-            normalizePluCode(row?.promo_plu) === promoPlu
-            && Number(row?.id || 0) !== Number(editingId || 0)
-        ));
-        if (duplicatedPromoPlu) throw new Error('Ese PLU promo ya existe. Usa el sugerido o uno libre.');
 
         tiers.forEach((tier, index) => {
             if (!(tier.min_qty_kg > 0)) throw new Error(`El mínimo en kg del nivel ${index + 1} debe ser mayor a 0.`);
             if (!(tier.promo_total_price > 0)) throw new Error(`El precio promo del nivel ${index + 1} debe ser mayor a 0.`);
         });
+
+        const tierPromoPluValues = tiers.map((_, index) => buildTierPromoIdentity(index).promo_plu);
+        tierPromoPluValues.forEach((promoPlu, index) => {
+            if (!promoPlu || Number(promoPlu) < 1000) {
+                throw new Error(`El PLU de promo del nivel ${index + 1} debe ser numérico y mayor o igual a 1000.`);
+            }
+        });
+        if (new Set(tierPromoPluValues).size !== tierPromoPluValues.length) {
+            throw new Error('Los niveles no pueden compartir el mismo PLU de promo.');
+        }
+        const duplicatedPromoPlu = tierPromoPluValues.find((promoPlu) => (
+            (Array.isArray(promotions) ? promotions : []).some((row) => (
+                normalizePluCode(row?.promo_plu) === promoPlu
+                && Number(row?.id || 0) !== Number(editingId || 0)
+            ))
+        ));
+        if (duplicatedPromoPlu) throw new Error(`El PLU promo ${duplicatedPromoPlu} ya existe. Usa otro código base.`);
 
         const sorted = [...tiers].sort((a, b) => a.min_qty_kg - b.min_qty_kg);
         for (let i = 1; i < sorted.length; i += 1) {
@@ -465,20 +493,21 @@ const ConfiguracionPromociones = () => {
             setSaving(true);
             setStatus(null);
             const currentCategoryId = String(form.category_id_filter || '');
-            const createdPromoName = String(form.promo_name || '').trim();
-            const createdPromoPlu = normalizePluCode(form.promo_plu);
-            const createdPromoIdentity = [
-                createdPromoName ? `Nombre: ${createdPromoName}` : '',
-                createdPromoPlu ? `PLU: ${createdPromoPlu}` : '',
-            ].filter(Boolean).join(' | ');
             const tiers = buildNormalizedTiers().sort((a, b) => a.min_qty_kg - b.min_qty_kg);
+            const tierPayloads = tiers.map((tier, index) => {
+                const identity = buildTierPromoIdentity(index);
+                return { ...tier, ...identity };
+            });
+            const firstCreated = tierPayloads[0] || null;
+            const lastCreated = tierPayloads[tierPayloads.length - 1] || null;
+            const createdPromoIdentity = firstCreated
+                ? ` PLUs: ${firstCreated.promo_plu}${lastCreated && lastCreated.promo_plu !== firstCreated.promo_plu ? ` a ${lastCreated.promo_plu}` : ''}.`
+                : '';
 
             const basePayload = {
                 branch_id: form.branch_id ? Number(form.branch_id) : null,
                 product_id: form.product_id ? Number(form.product_id) : null,
                 product_name: String(form.product_name || '').trim(),
-                promo_name: String(form.promo_name || '').trim(),
-                promo_plu: normalizePluCode(form.promo_plu) || null,
                 stock_mode: form.stock_mode || PROMO_STOCK_MODES.ALL,
                 stock_cap_kg_limit: form.stock_mode === PROMO_STOCK_MODES.FIXED
                     ? toNumber(form.stock_cap_kg_limit, 3)
@@ -497,9 +526,11 @@ const ConfiguracionPromociones = () => {
             let totalQueuedBroadcast = 0;
             let createdCount = 0;
             if (editingId) {
-                const [firstTier, ...remainingTiers] = tiers;
+                const [firstTier, ...remainingTiers] = tierPayloads;
                 const updatePayload = {
                     ...basePayload,
+                    promo_name: firstTier.promo_name,
+                    promo_plu: firstTier.promo_plu || null,
                     min_qty_kg: firstTier.min_qty_kg,
                     promo_total_price: firstTier.promo_total_price,
                     promo_price_mode: firstTier.promo_price_mode,
@@ -513,6 +544,8 @@ const ConfiguracionPromociones = () => {
                 for (const tier of remainingTiers) {
                     const insertPayload = {
                         ...basePayload,
+                        promo_name: tier.promo_name,
+                        promo_plu: tier.promo_plu || null,
                         min_qty_kg: tier.min_qty_kg,
                         promo_total_price: tier.promo_total_price,
                         promo_price_mode: tier.promo_price_mode,
@@ -525,9 +558,11 @@ const ConfiguracionPromociones = () => {
                     createdCount += 1;
                 }
             } else {
-                for (const tier of tiers) {
+                for (const tier of tierPayloads) {
                     const insertPayload = {
                         ...basePayload,
+                        promo_name: tier.promo_name,
+                        promo_plu: tier.promo_plu || null,
                         min_qty_kg: tier.min_qty_kg,
                         promo_total_price: tier.promo_total_price,
                         promo_price_mode: tier.promo_price_mode,
@@ -545,7 +580,7 @@ const ConfiguracionPromociones = () => {
             const queuedBroadcastCount = Number(totalQueuedBroadcast || 0);
             if (keepCreating && !editingId) {
                 const baseText = 'Promoción creada exitosamente. Lista para cargar otra.';
-                const identityText = createdPromoIdentity ? ` ${createdPromoIdentity}.` : '';
+                const identityText = createdPromoIdentity || '';
                 const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
                 setStatus({ type: 'ok', text: `${baseText}${identityText}${broadcastText}` });
                 setForm((prev) => ({
@@ -563,7 +598,7 @@ const ConfiguracionPromociones = () => {
                     const baseText = createdCount > 1
                         ? `Se crearon ${createdCount} niveles de promoción.`
                         : 'Promoción creada exitosamente.';
-                    const identityText = createdPromoIdentity ? ` ${createdPromoIdentity}.` : '';
+                    const identityText = createdPromoIdentity || '';
                     const broadcastText = queuedBroadcastCount > 0 ? ` WhatsApp: ${queuedBroadcastCount} envíos en cola.` : '';
                     successText = `${baseText}${identityText}${broadcastText}`;
                 }
