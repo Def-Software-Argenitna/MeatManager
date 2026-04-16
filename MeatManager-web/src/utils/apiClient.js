@@ -198,6 +198,7 @@ export const fetchTable = async (table, options = {}) => {
     if (options.offset) query.set('offset', String(options.offset));
     if (options.orderBy) query.set('orderBy', options.orderBy);
     if (options.direction) query.set('direction', options.direction);
+    if (options.includeInactive) query.set('include_inactive', '1');
 
     const suffix = query.toString() ? `?${query.toString()}` : '';
     const res = await apiFetch(`/api/table/${table}${suffix}`);

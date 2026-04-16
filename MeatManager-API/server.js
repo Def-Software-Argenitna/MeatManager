@@ -1627,6 +1627,18 @@ async function ensureTenantScopedForeignKeys(conn) {
             indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.product_prices
                 ADD INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at)`,
         },
+        {
+            table: 'promotions',
+            constraint: 'promotions_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                ADD CONSTRAINT promotions_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE CASCADE`,
+            indexName: 'idx_promotions_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                ADD INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
     ];
 
     await conn.query(
@@ -1671,6 +1683,19 @@ async function ensureTenantScopedForeignKeys(conn) {
             }
         }
     }
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'promotions', 'uniq_promotions_tenant_promo_plu'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                 ADD UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu)`
+            );
+        } catch (error) {
+            if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_CANT_CREATE_TABLE'].includes(error?.code)) {
+                throw error;
+            }
+        }
+    }
 }
 
 async function ensureOperationalTenantIsolation() {
@@ -1694,6 +1719,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
+            await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
@@ -1782,6 +1809,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
             await ensureColumn(conn, 'promotions', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'promotions', 'promo_name', '`promo_name` VARCHAR(191) NULL AFTER `product_name`');
+            await ensureColumn(conn, 'promotions', 'promo_plu', '`promo_plu` VARCHAR(32) NULL AFTER `promo_name`');
+            await ensureColumn(conn, 'promotions', 'promo_unit_price', '`promo_unit_price` DECIMAL(12,2) NULL AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'promo_price_mode', '`promo_price_mode` VARCHAR(20) NOT NULL DEFAULT \'total_kg\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
@@ -3095,6 +3125,8 @@ function getSchemaTables() {
             unit            VARCHAR(20),
             current_price   DECIMAL(12,2) DEFAULT 0,
             plu             VARCHAR(20),
+            active          TINYINT(1) NOT NULL DEFAULT 1,
+            deleted_at      DATETIME NULL,
             source          VARCHAR(50),
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -3345,8 +3377,11 @@ function getSchemaTables() {
             branch_id           INT NULL,
             product_id          INT NULL,
             product_name        VARCHAR(150) NOT NULL,
+            promo_name          VARCHAR(191) NULL,
+            promo_plu           VARCHAR(32) NULL,
             min_qty_kg          DECIMAL(12,3) NOT NULL,
             promo_total_price   DECIMAL(12,2) NOT NULL,
+            promo_unit_price    DECIMAL(12,2) NULL,
             promo_price_mode    VARCHAR(20) NOT NULL DEFAULT 'total_kg',
             stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
             stock_cap_kg_limit  DECIMAL(12,3) NULL,
@@ -3362,7 +3397,10 @@ function getSchemaTables() {
             INDEX idx_promotions_tenant (\`${TENANT_COLUMN}\`),
             INDEX idx_promotions_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
-            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name)
+            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name),
+            UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu),
+            CONSTRAINT promotions_product_fk FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES products(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS branch_transfers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -4733,6 +4771,17 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para delete' });
             const scope = tenantWhereClause(table, tenantId);
+            if (table === 'products') {
+                const [result] = await pool.query(
+                    `UPDATE \`${table}\`
+                     SET active = 0,
+                         deleted_at = NOW(),
+                         updated_at = NOW()
+                     WHERE id = ? AND ${scope.sql}`,
+                    [numId, ...scope.params]
+                );
+                return res.json({ ok: true, archived: Number(result?.affectedRows || 0) > 0 });
+            }
             await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}`, [numId, ...scope.params]);
             return res.json({ ok: true });
         }
@@ -5043,16 +5092,27 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
         const orderBy = String(req.query.orderBy || 'id').trim();
         const direction = String(req.query.direction || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        const includeInactive = String(req.query.include_inactive || '').trim() === '1';
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         const validCols = await getTableColumns(pool, dbName, table);
         const safeOrderBy = validCols.includes(orderBy) ? orderBy : (validCols.includes('id') ? 'id' : validCols[0]);
         const scope = tenantWhereClause(table, tenantId);
+        const extraWhere = [];
+        const extraParams = [];
+
+        if (table === 'products' && validCols.includes('active') && !includeInactive) {
+            extraWhere.push('COALESCE(active, 1) = 1');
+        }
+
+        const whereSql = extraWhere.length > 0
+            ? `${scope.sql} AND ${extraWhere.join(' AND ')}`
+            : scope.sql;
 
         let [rows] = await pool.query(
-            `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-            [...scope.params, limit, offset]
+            `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+            [...scope.params, ...extraParams, limit, offset]
         );
 
         // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
@@ -5069,8 +5129,8 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
             }
             [rows] = await pool.query(
-                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-                [...scope.params, limit, offset]
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
             );
         }
 
@@ -5095,8 +5155,8 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 );
             }
             [rows] = await pool.query(
-                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-                [...scope.params, limit, offset]
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
             );
         }
 
