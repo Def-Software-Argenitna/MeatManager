@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -113,8 +113,43 @@
       padding-top: 12px;
       white-space: pre-wrap;
     }
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .field {
+      display: grid;
+      gap: 6px;
+    }
+    .field label {
+      color: var(--muted);
+      font-size: .78rem;
+    }
+    .field input, .field select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #0f1a2d;
+      color: var(--text);
+      font-size: .84rem;
+    }
+    .config-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .hidden {
+      display: none;
+    }
     @media (max-width: 780px) {
       .status-grid {
+        grid-template-columns: 1fr;
+      }
+      .config-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -126,7 +161,7 @@
       <div class="head">
         <div>
           <h1>MeatManager Bridge</h1>
-          <div class="sub">Estado en tiempo real de la conexión con balanza y MeatManager.</div>
+          <div class="sub">Estado en tiempo real de la conexion con balanza y MeatManager.</div>
         </div>
         <div id="update-pill" class="pill"><span class="dot"></span><span>Sin novedades</span></div>
       </div>
@@ -142,11 +177,11 @@
         <div id="bridge-http" class="value">-</div>
       </article>
       <article>
-        <div class="label">Última sincronización</div>
+        <div class="label">Ultima sincronizacion</div>
         <div id="last-run-at" class="value">-</div>
       </article>
       <article>
-        <div class="label">Último estado/error</div>
+        <div class="label">Ultimo estado/error</div>
         <div id="last-error" class="value">-</div>
       </article>
     </section>
@@ -154,10 +189,28 @@
     <section class="card">
       <div class="actions">
         <button id="btn-restart">Reiniciar bridge</button>
-        <button id="btn-check-updates">Buscar actualización</button>
-        <button id="btn-install-update" class="primary">Aplicar actualización</button>
+        <button id="btn-check-updates">Buscar actualizacion</button>
+        <button id="btn-install-update" class="primary">Aplicar actualizacion</button>
         <button id="btn-open-logs">Abrir carpeta de logs</button>
+        <button id="btn-toggle-config">Configuracion</button>
       </div>
+      <section id="config-panel" class="hidden">
+        <div class="config-grid">
+          <div class="field"><label>Tenant ID</label><input id="cfg-client-id" /></div>
+          <div class="field"><label>Sucursal ID</label><input id="cfg-branch-id" /></div>
+          <div class="field"><label>Puerto COM</label><select id="cfg-scale-port"></select></div>
+          <div class="field"><label>MySQL Host</label><input id="cfg-mysql-host" /></div>
+          <div class="field"><label>MySQL Puerto</label><input id="cfg-mysql-port" /></div>
+          <div class="field"><label>MySQL DB</label><input id="cfg-mysql-db" /></div>
+          <div class="field"><label>MySQL Usuario</label><input id="cfg-mysql-user" /></div>
+          <div class="field"><label>MySQL Password</label><input id="cfg-mysql-password" type="password" /></div>
+          <div class="field"><label>Sync Interval (ms)</label><input id="cfg-sync-interval" /></div>
+        </div>
+        <div class="config-actions">
+          <button id="btn-refresh-ports">Detectar puertos</button>
+          <button id="btn-save-config" class="primary">Guardar y reiniciar bridge</button>
+        </div>
+      </section>
       <div id="event" class="event">Listo.</div>
     </section>
   </main>

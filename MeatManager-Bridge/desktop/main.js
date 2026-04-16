@@ -8,6 +8,25 @@ const APP_NAME = 'MeatManager Bridge';
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4045', 10);
 const STATUS_POLL_MS = 4000;
 const UPDATE_POLL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_OVERRIDES = {
+    BRIDGE_CLIENT_ID: '4',
+    BRIDGE_BRANCH_ID: '5',
+    MYSQL_HOST: '34.136.100.63',
+    MYSQL_PORT: '3306',
+    MYSQL_DATABASE: 'meatmanager',
+    MYSQL_USER: 'root',
+    MYSQL_PASSWORD: '',
+    MYSQL_SSL: 'false',
+    SCALE_PORT: 'COM3',
+    SCALE_ADDRESS: '20',
+    SCALE_BAUD_RATE: '115200',
+    SYNC_INTERVAL_MS: '1000',
+    PRODUCT_SYNC_INTERVAL_MS: '5000',
+    SCALE_BARCODE_CONFIG_ENABLED: 'true',
+    SCALE_BARCODE_WEIGHT_FORMAT: '20PPPPIIIIII',
+    SCALE_BARCODE_UNIT_FORMAT: '21PPPPIIIIII',
+    SCALE_BARCODE_TOTAL_FORMAT: '2220AAIIIIII',
+};
 
 let mainWindow = null;
 let tray = null;
@@ -172,6 +191,31 @@ function bridgeScriptPath() {
 
 function runtimeDir() {
     return path.join(app.getPath('userData'), 'runtime');
+}
+
+function runtimeOverridesPath() {
+    return path.join(runtimeDir(), 'data', 'config-overrides.json');
+}
+
+function loadRuntimeOverrides() {
+    const file = runtimeOverridesPath();
+    if (!fs.existsSync(file)) return { ...DEFAULT_OVERRIDES };
+    try {
+        const raw = fs.readFileSync(file, 'utf8');
+        const normalized = raw.replace(/^\uFEFF/, '').trim();
+        const parsed = normalized ? JSON.parse(normalized) : {};
+        return { ...DEFAULT_OVERRIDES, ...parsed };
+    } catch {
+        return { ...DEFAULT_OVERRIDES };
+    }
+}
+
+function saveRuntimeOverrides(nextOverrides) {
+    const dataDir = path.dirname(runtimeOverridesPath());
+    fs.mkdirSync(dataDir, { recursive: true });
+    const payload = { ...DEFAULT_OVERRIDES, ...nextOverrides };
+    fs.writeFileSync(runtimeOverridesPath(), JSON.stringify(payload, null, 2), 'utf8');
+    return payload;
 }
 
 function startBridgeProcess() {
@@ -414,6 +458,55 @@ function setupIpc() {
         const target = path.join(runtimeDir(), 'logs');
         await shell.openPath(target);
         return { ok: true };
+    });
+    ipcMain.handle('config:get', async () => {
+        return {
+            ok: true,
+            overridesPath: runtimeOverridesPath(),
+            values: loadRuntimeOverrides(),
+        };
+    });
+    ipcMain.handle('config:save', async (_, values = {}) => {
+        const sanitized = {};
+        Object.entries(values || {}).forEach(([key, value]) => {
+            sanitized[String(key)] = String(value ?? '').trim();
+        });
+        const saved = saveRuntimeOverrides(sanitized);
+        restartBridgeProcess();
+        return { ok: true, values: saved };
+    });
+    ipcMain.handle('scale:list-ports', async () => {
+        try {
+            const payload = await new Promise((resolve, reject) => {
+                const req = http.request(
+                    {
+                        hostname: '127.0.0.1',
+                        port: BRIDGE_PORT,
+                        path: '/api/scale/ports',
+                        method: 'GET',
+                        timeout: 3000,
+                    },
+                    (res) => {
+                        let data = '';
+                        res.setEncoding('utf8');
+                        res.on('data', (chunk) => { data += chunk; });
+                        res.on('end', () => {
+                            try {
+                                resolve(JSON.parse(data || '{}'));
+                            } catch {
+                                reject(new Error('invalid_json'));
+                            }
+                        });
+                    }
+                );
+                req.on('error', reject);
+                req.on('timeout', () => req.destroy(new Error('timeout')));
+                req.end();
+            });
+            return payload;
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
     });
 }
 
