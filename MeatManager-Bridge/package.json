@@ -42,6 +42,8 @@
     "appId": "com.defsoftware.meatmanager.bridge",
     "productName": "MeatManager Bridge",
     "asar": true,
+    "npmRebuild": false,
+    "buildDependenciesFromSource": false,
     "files": [
       "desktop/**/*",
       "src/**/*",
