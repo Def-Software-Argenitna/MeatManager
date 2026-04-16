@@ -20,6 +20,11 @@ const toNumber = (value, decimals = 2) => {
 const formatKg = (value) => toNumber(value, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 const formatMoney = (value) => toNumber(value, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const normalizeNullableNumber = (value, decimals = 3) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return '';
+    return String(toNumber(parsed, decimals));
+};
 
 const endConditionLabel = (value) => {
     if (value === PROMO_END_CONDITIONS.STOCK) return 'Agotar stock promo';
@@ -31,6 +36,26 @@ const endConditionLabel = (value) => {
 const KG_PRESETS = ['0.500', '1.000', '1.500', '2.000', '3.000', '5.000'];
 const PROMO_PLU_STEP = 1000;
 const PROMO_SUFFIX_REGEX = /(?:_|\s*)P(\d+)$/i;
+const getPromoBaseName = (promoName, fallback = '') => {
+    const raw = String(promoName || '').trim();
+    if (!raw) return String(fallback || '').trim();
+    const normalized = raw.replace(PROMO_SUFFIX_REGEX, '').replace(/[_\s]+$/, '').trim();
+    return normalized || raw;
+};
+const buildPromoGroupKey = (row) => {
+    const baseName = getPromoBaseName(row?.promo_name, row?.product_name);
+    return [
+        Number(row?.product_id || 0),
+        row?.branch_id == null ? 'all' : Number(row?.branch_id),
+        normalizeText(baseName),
+        normalizeText(row?.stock_mode || PROMO_STOCK_MODES.ALL),
+        normalizeNullableNumber(row?.stock_cap_kg_limit, 3),
+        normalizeText(row?.end_condition || PROMO_END_CONDITIONS.NONE),
+        normalizeNullableNumber(row?.sold_kg_limit, 3),
+        row?.end_date ? String(row.end_date).slice(0, 16) : '',
+        normalizeText(row?.notes || ''),
+    ].join('|');
+};
 const createEmptyTier = (priceMode = PROMO_PRICE_MODES.TOTAL_KG) => ({
     min_qty_kg: '',
     promo_total_price: '',
@@ -67,6 +92,7 @@ const ConfiguracionPromociones = () => {
     const [branches, setBranches] = useState([]);
     const [promotions, setPromotions] = useState([]);
     const [editingId, setEditingId] = useState(null);
+    const [editingTierIds, setEditingTierIds] = useState([]);
     const [form, setForm] = useState(emptyForm);
     const [extraPromoTiers, setExtraPromoTiers] = useState([]);
     const [listBranchFilter, setListBranchFilter] = useState('');
@@ -147,15 +173,66 @@ const ConfiguracionPromociones = () => {
             .sort((a, b) => Number(b.id || 0) - Number(a.id || 0));
     }, [listBranchFilter, listSearch, promotions]);
 
-    const activeRows = useMemo(
-        () => filteredRows.filter((row) => row.active),
-        [filteredRows]
+    const promotionGroups = useMemo(() => {
+        const grouped = new Map();
+        filteredRows.forEach((row) => {
+            const key = buildPromoGroupKey(row);
+            const existing = grouped.get(key);
+            if (existing) {
+                existing.tiers.push(row);
+                if (Number(row?.id || 0) > Number(existing.representative?.id || 0)) {
+                    existing.representative = row;
+                }
+                return;
+            }
+            grouped.set(key, {
+                key,
+                representative: row,
+                tiers: [row],
+            });
+        });
+
+        return Array.from(grouped.values())
+            .map((group) => ({
+                ...group,
+                tiers: [...group.tiers].sort((a, b) => {
+                    const minDiff = Number(a?.min_qty_kg || 0) - Number(b?.min_qty_kg || 0);
+                    if (Math.abs(minDiff) > 0.0005) return minDiff;
+                    return Number(a?.id || 0) - Number(b?.id || 0);
+                }),
+            }))
+            .sort((a, b) => Number(b?.representative?.id || 0) - Number(a?.representative?.id || 0));
+    }, [filteredRows]);
+
+    const activeGroups = useMemo(
+        () => promotionGroups.filter((group) => group.representative?.active),
+        [promotionGroups]
     );
 
-    const inactiveRows = useMemo(
-        () => filteredRows.filter((row) => !row.active),
-        [filteredRows]
+    const inactiveGroups = useMemo(
+        () => promotionGroups.filter((group) => !group.representative?.active),
+        [promotionGroups]
     );
+    const tiersByGroupKey = useMemo(() => {
+        const grouped = new Map();
+        (Array.isArray(promotions) ? promotions : []).forEach((row) => {
+            const key = buildPromoGroupKey(row);
+            const current = grouped.get(key) || [];
+            current.push(row);
+            grouped.set(key, current);
+        });
+        grouped.forEach((rows, key) => {
+            grouped.set(
+                key,
+                rows.slice().sort((a, b) => {
+                    const minDiff = Number(a?.min_qty_kg || 0) - Number(b?.min_qty_kg || 0);
+                    if (Math.abs(minDiff) > 0.0005) return minDiff;
+                    return Number(a?.id || 0) - Number(b?.id || 0);
+                })
+            );
+        });
+        return grouped;
+    }, [promotions]);
 
     const branchesById = useMemo(() => {
         const map = new Map();
@@ -250,62 +327,92 @@ const ConfiguracionPromociones = () => {
 
     const resetForm = () => {
         setEditingId(null);
+        setEditingTierIds([]);
         setForm(emptyForm);
         setExtraPromoTiers([]);
         setStatus(null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    const startEdit = (row) => {
-        const isoEndDate = row.end_date ? String(row.end_date).slice(0, 16) : '';
-        setEditingId(Number(row.id));
+    const buildTierDraftFromRow = (row) => ({
+        min_qty_kg: String(toNumber(row?.min_qty_kg, 3)),
+        promo_total_price: String(toNumber(row?.promo_total_price, 2)),
+        promo_price_mode: row?.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
+    });
+
+    const startEditRows = (rows) => {
+        const sortedRows = (Array.isArray(rows) ? rows : [])
+            .filter((row) => Number(row?.id || 0) > 0)
+            .slice()
+            .sort((a, b) => {
+                const minDiff = Number(a?.min_qty_kg || 0) - Number(b?.min_qty_kg || 0);
+                if (Math.abs(minDiff) > 0.0005) return minDiff;
+                return Number(a?.id || 0) - Number(b?.id || 0);
+            });
+        const baseRow = sortedRows[0];
+        if (!baseRow) return;
+        const isoEndDate = baseRow.end_date ? String(baseRow.end_date).slice(0, 16) : '';
+        setEditingId(Number(baseRow.id));
+        setEditingTierIds(sortedRows.map((row) => Number(row.id)).filter((idValue) => Number.isFinite(idValue) && idValue > 0));
         setForm({
-            branch_id: row.branch_id != null ? String(row.branch_id) : '',
-            category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
-            product_id: row.product_id != null ? String(row.product_id) : '',
-            product_name: String(row.product_name || ''),
-            promo_name: String(row.promo_name || ''),
-            promo_plu: normalizePluCode(row.promo_plu),
-            promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
-            min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
-            promo_total_price: String(toNumber(row.promo_total_price, 2)),
-            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
-            stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
-            stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
-            end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
-            sold_kg_limit: row.sold_kg_limit != null ? String(toNumber(row.sold_kg_limit, 3)) : '',
+            branch_id: baseRow.branch_id != null ? String(baseRow.branch_id) : '',
+            category_id_filter: baseRow.product_id != null ? String(productsById.get(Number(baseRow.product_id))?.category_id || '') : '',
+            product_id: baseRow.product_id != null ? String(baseRow.product_id) : '',
+            product_name: String(baseRow.product_name || ''),
+            promo_name: String(baseRow.promo_name || ''),
+            promo_plu: normalizePluCode(baseRow.promo_plu),
+            promo_unit_price: baseRow.promo_unit_price != null ? String(toNumber(baseRow.promo_unit_price, 2)) : '',
+            min_qty_kg: String(toNumber(baseRow.min_qty_kg, 3)),
+            promo_total_price: String(toNumber(baseRow.promo_total_price, 2)),
+            promo_price_mode: baseRow.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
+            stock_mode: baseRow.stock_mode || PROMO_STOCK_MODES.ALL,
+            stock_cap_kg_limit: baseRow.stock_cap_kg_limit != null ? String(toNumber(baseRow.stock_cap_kg_limit, 3)) : '',
+            end_condition: baseRow.end_condition || PROMO_END_CONDITIONS.NONE,
+            sold_kg_limit: baseRow.sold_kg_limit != null ? String(toNumber(baseRow.sold_kg_limit, 3)) : '',
             end_date: isoEndDate,
-            active: row.active === true || Number(row.active) === 1,
-            notes: String(row.notes || ''),
+            active: baseRow.active === true || Number(baseRow.active) === 1,
+            notes: String(baseRow.notes || ''),
         });
-        setExtraPromoTiers([]);
+        setExtraPromoTiers(sortedRows.slice(1).map(buildTierDraftFromRow));
         setStatus(null);
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const duplicatePromotion = (row) => {
-        const isoEndDate = row.end_date ? String(row.end_date).slice(0, 16) : '';
+        const groupKey = buildPromoGroupKey(row);
+        const relatedRows = (Array.isArray(promotions) ? promotions : []).filter((item) => buildPromoGroupKey(item) === groupKey);
+        const sortedRows = (relatedRows.length > 0 ? relatedRows : [row])
+            .slice()
+            .sort((a, b) => {
+                const minDiff = Number(a?.min_qty_kg || 0) - Number(b?.min_qty_kg || 0);
+                if (Math.abs(minDiff) > 0.0005) return minDiff;
+                return Number(a?.id || 0) - Number(b?.id || 0);
+            });
+        const baseRow = sortedRows[0];
+        if (!baseRow) return;
+        const isoEndDate = baseRow.end_date ? String(baseRow.end_date).slice(0, 16) : '';
         setEditingId(null);
+        setEditingTierIds([]);
         setForm({
-            branch_id: row.branch_id != null ? String(row.branch_id) : '',
-            category_id_filter: row.product_id != null ? String(productsById.get(Number(row.product_id))?.category_id || '') : '',
-            product_id: row.product_id != null ? String(row.product_id) : '',
-            product_name: String(row.product_name || ''),
-            promo_name: String(row.promo_name || ''),
-            promo_plu: normalizePluCode(row.promo_plu),
-            promo_unit_price: row.promo_unit_price != null ? String(toNumber(row.promo_unit_price, 2)) : '',
-            min_qty_kg: String(toNumber(row.min_qty_kg, 3)),
-            promo_total_price: String(toNumber(row.promo_total_price, 2)),
-            promo_price_mode: row.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
-            stock_mode: row.stock_mode || PROMO_STOCK_MODES.ALL,
-            stock_cap_kg_limit: row.stock_cap_kg_limit != null ? String(toNumber(row.stock_cap_kg_limit, 3)) : '',
-            end_condition: row.end_condition || PROMO_END_CONDITIONS.NONE,
-            sold_kg_limit: row.sold_kg_limit != null ? String(toNumber(row.sold_kg_limit, 3)) : '',
+            branch_id: baseRow.branch_id != null ? String(baseRow.branch_id) : '',
+            category_id_filter: baseRow.product_id != null ? String(productsById.get(Number(baseRow.product_id))?.category_id || '') : '',
+            product_id: baseRow.product_id != null ? String(baseRow.product_id) : '',
+            product_name: String(baseRow.product_name || ''),
+            promo_name: String(baseRow.promo_name || ''),
+            promo_plu: normalizePluCode(baseRow.promo_plu),
+            promo_unit_price: baseRow.promo_unit_price != null ? String(toNumber(baseRow.promo_unit_price, 2)) : '',
+            min_qty_kg: String(toNumber(baseRow.min_qty_kg, 3)),
+            promo_total_price: String(toNumber(baseRow.promo_total_price, 2)),
+            promo_price_mode: baseRow.promo_price_mode || PROMO_PRICE_MODES.TOTAL_KG,
+            stock_mode: baseRow.stock_mode || PROMO_STOCK_MODES.ALL,
+            stock_cap_kg_limit: baseRow.stock_cap_kg_limit != null ? String(toNumber(baseRow.stock_cap_kg_limit, 3)) : '',
+            end_condition: baseRow.end_condition || PROMO_END_CONDITIONS.NONE,
+            sold_kg_limit: baseRow.sold_kg_limit != null ? String(toNumber(baseRow.sold_kg_limit, 3)) : '',
             end_date: isoEndDate,
-            active: row.active === true || Number(row.active) === 1,
-            notes: String(row.notes || ''),
+            active: baseRow.active === true || Number(baseRow.active) === 1,
+            notes: String(baseRow.notes || ''),
         });
-        setExtraPromoTiers([]);
+        setExtraPromoTiers(sortedRows.slice(1).map(buildTierDraftFromRow));
         setStatus({ type: 'ok', text: 'Promo duplicada al formulario. Ajusta y guarda.' });
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
@@ -400,16 +507,29 @@ const ConfiguracionPromociones = () => {
         [tierPayloadPreview]
     );
 
-    const togglePromoStatus = async (row) => {
+    const togglePromoStatus = async (rows) => {
         try {
             setSaving(true);
-            const newActiveStatus = !row.active;
-            await saveTableRecord('promotions', 'update', { active: newActiveStatus ? 1 : 0 }, row.id);
+            const targetRows = (Array.isArray(rows) ? rows : [rows])
+                .filter((row) => Number(row?.id || 0) > 0);
+            if (targetRows.length === 0) return;
+            const newActiveStatus = !targetRows[0].active;
+
+            for (const row of targetRows) {
+                await saveTableRecord('promotions', 'update', { active: newActiveStatus ? 1 : 0 }, row.id);
+            }
             await loadData();
-            setStatus({ type: 'ok', text: `Promoción ${newActiveStatus ? 'activada' : 'desactivada'} correctamente.` });
-            
-            if (editingId && Number(editingId) === Number(row.id)) {
-                setForm(prev => ({ ...prev, active: newActiveStatus }));
+            const groupText = targetRows.length > 1 ? ` (${targetRows.length} niveles)` : '';
+            setStatus({ type: 'ok', text: `Promoción ${newActiveStatus ? 'activada' : 'desactivada'} correctamente${groupText}.` });
+
+            const editedIds = new Set(
+                (Array.isArray(editingTierIds) && editingTierIds.length > 0
+                    ? editingTierIds
+                    : [editingId])
+                    .map((idValue) => Number(idValue))
+            );
+            if (targetRows.some((row) => editedIds.has(Number(row.id)))) {
+                setForm((prev) => ({ ...prev, active: newActiveStatus }));
             }
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudo cambiar el estado de la promoción.' });
@@ -441,10 +561,17 @@ const ConfiguracionPromociones = () => {
         if (new Set(tierPromoPluValues).size !== tierPromoPluValues.length) {
             throw new Error('Los niveles no pueden compartir el mismo PLU de promo.');
         }
+        const editingIdsSet = new Set(
+            (Array.isArray(editingTierIds) && editingTierIds.length > 0
+                ? editingTierIds
+                : [editingId])
+                .map((idValue) => Number(idValue))
+                .filter((idValue) => Number.isFinite(idValue) && idValue > 0)
+        );
         const duplicatedPromoPlu = tierPromoPluValues.find((promoPlu) => (
             (Array.isArray(promotions) ? promotions : []).some((row) => (
                 normalizePluCode(row?.promo_plu) === promoPlu
-                && Number(row?.id || 0) !== Number(editingId || 0)
+                && !editingIdsSet.has(Number(row?.id || 0))
             ))
         ));
         if (duplicatedPromoPlu) throw new Error(`El PLU promo ${duplicatedPromoPlu} ya existe. Usa otro código base.`);
@@ -557,23 +684,15 @@ const ConfiguracionPromociones = () => {
             let totalQueuedBroadcast = 0;
             let createdCount = 0;
             if (editingId) {
-                const [firstTier, ...remainingTiers] = tierPayloads;
-                const updatePayload = {
-                    ...basePayload,
-                    promo_name: firstTier.promo_name,
-                    promo_plu: firstTier.promo_plu || null,
-                    min_qty_kg: firstTier.min_qty_kg,
-                    promo_total_price: firstTier.promo_total_price,
-                    promo_price_mode: firstTier.promo_price_mode,
-                    promo_unit_price: firstTier.promo_price_mode === PROMO_PRICE_MODES.PER_KG
-                        ? firstTier.promo_total_price
-                        : (firstTier.min_qty_kg > 0 ? toNumber(firstTier.promo_total_price / firstTier.min_qty_kg, 2) : null),
-                };
-                const updateResult = await saveTableRecord('promotions', 'update', updatePayload, editingId);
-                totalQueuedBroadcast += Number(updateResult?.broadcast?.queued || 0);
+                const editableTierIds = (Array.isArray(editingTierIds) && editingTierIds.length > 0
+                    ? editingTierIds
+                    : [editingId])
+                    .map((idValue) => Number(idValue))
+                    .filter((idValue) => Number.isFinite(idValue) && idValue > 0);
 
-                for (const tier of remainingTiers) {
-                    const insertPayload = {
+                for (let index = 0; index < tierPayloads.length; index += 1) {
+                    const tier = tierPayloads[index];
+                    const tierPayload = {
                         ...basePayload,
                         promo_name: tier.promo_name,
                         promo_plu: tier.promo_plu || null,
@@ -584,9 +703,21 @@ const ConfiguracionPromociones = () => {
                             ? tier.promo_total_price
                             : (tier.min_qty_kg > 0 ? toNumber(tier.promo_total_price / tier.min_qty_kg, 2) : null),
                     };
-                    const insertResult = await saveTableRecord('promotions', 'insert', insertPayload);
-                    totalQueuedBroadcast += Number(insertResult?.broadcast?.queued || 0);
-                    createdCount += 1;
+                    const targetId = editableTierIds[index];
+
+                    if (targetId) {
+                        const updateResult = await saveTableRecord('promotions', 'update', tierPayload, targetId);
+                        totalQueuedBroadcast += Number(updateResult?.broadcast?.queued || 0);
+                    } else {
+                        const insertResult = await saveTableRecord('promotions', 'insert', tierPayload);
+                        totalQueuedBroadcast += Number(insertResult?.broadcast?.queued || 0);
+                        createdCount += 1;
+                    }
+                }
+
+                const removedTierIds = editableTierIds.slice(tierPayloads.length);
+                for (const staleTierId of removedTierIds) {
+                    await saveTableRecord('promotions', 'delete', null, staleTierId);
                 }
             } else {
                 for (const tier of tierPayloads) {
@@ -644,17 +775,31 @@ const ConfiguracionPromociones = () => {
         }
     };
 
-    const deletePromotion = async (row) => {
+    const deletePromotion = async (rows) => {
         try {
-            if (!window.confirm(`¿Seguro que deseas eliminar la promoción de ${row.product_name}?`)) return;
+            const targetRows = (Array.isArray(rows) ? rows : [rows])
+                .filter((row) => Number(row?.id || 0) > 0);
+            if (targetRows.length === 0) return;
+            const baseRow = targetRows[0];
+            const levelText = targetRows.length > 1 ? ` y sus ${targetRows.length} niveles` : '';
+            if (!window.confirm(`¿Seguro que deseas eliminar la promoción de ${baseRow.product_name}${levelText}?`)) return;
             setSaving(true);
             setStatus(null);
-            await saveTableRecord('promotions', 'delete', null, row.id);
+            for (const row of targetRows) {
+                await saveTableRecord('promotions', 'delete', null, row.id);
+            }
             await loadData();
-            if (editingId && Number(editingId) === Number(row.id)) {
+            const editedIds = new Set(
+                (Array.isArray(editingTierIds) && editingTierIds.length > 0
+                    ? editingTierIds
+                    : [editingId])
+                    .map((idValue) => Number(idValue))
+            );
+            if (targetRows.some((row) => editedIds.has(Number(row.id)))) {
                 resetForm();
             }
-            setStatus({ type: 'ok', text: 'Promoción eliminada.' });
+            const levelMessage = targetRows.length > 1 ? ` Se borraron ${targetRows.length} niveles.` : '';
+            setStatus({ type: 'ok', text: `Promoción eliminada.${levelMessage}` });
         } catch (error) {
             setStatus({ type: 'error', text: error.message || 'No se pudo eliminar la promocion.' });
         } finally {
@@ -662,44 +807,56 @@ const ConfiguracionPromociones = () => {
         }
     };
 
-    const renderPromoCard = (row) => (
-        <div key={row.id} className={`promo-card ${row.active ? 'is-active' : 'is-inactive'}`}>
+    const renderPromoCard = (group) => {
+        const row = group?.representative;
+        const tiers = tiersByGroupKey.get(group?.key) || (Array.isArray(group?.tiers) ? group.tiers : []);
+        return (
+            <div key={group?.key || row?.id} className={`promo-card ${row?.active ? 'is-active' : 'is-inactive'}`}>
             <div className="promo-card-header">
                 <div className="promo-card-title">
                     <FiTag className="promo-icon"/>
-                    <h3>{row.product_name}</h3>
+                    <h3>{row?.product_name}</h3>
                 </div>
                 <div className="promo-card-status">
-                    <span className={`status-badge ${row.active ? 'on' : 'off'}`}>
-                        {row.active ? <><FiCheckCircle/> Activa</> : <><FiXCircle/> Inactiva</>}
+                    <span className={`status-badge ${row?.active ? 'on' : 'off'}`}>
+                        {row?.active ? <><FiCheckCircle/> Activa</> : <><FiXCircle/> Inactiva</>}
                     </span>
                 </div>
             </div>
             <div className="promo-card-body">
                 <div className="promo-detail-main">
-                    <span className="promo-price-tag">
-                        {row.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? (
-                            <>
-                                Desde <strong>{formatKg(row.min_qty_kg)} kg</strong>, cada kg a <strong>\${formatMoney(row.promo_total_price)}</strong>
-                            </>
-                        ) : (
-                            <>
-                                <strong>{formatKg(row.min_qty_kg)} kg</strong> por <strong>\${formatMoney(row.promo_total_price)}</strong> total
-                            </>
-                        )}
-                    </span>
+                    <div style={{ display: 'grid', gap: '0.4rem' }}>
+                        {tiers.map((tier, index) => (
+                            <span key={`${tier?.id || index}`} className="promo-price-tag">
+                                {tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? (
+                                    <>
+                                        Desde <strong>{formatKg(tier.min_qty_kg)} kg</strong>, cada kg a <strong>\${formatMoney(tier.promo_total_price)}</strong>
+                                    </>
+                                ) : (
+                                    <>
+                                        <strong>{formatKg(tier.min_qty_kg)} kg</strong> por <strong>\${formatMoney(tier.promo_total_price)}</strong> total
+                                    </>
+                                )}
+                                {(tier.promo_name || tier.promo_plu) && (
+                                    <span style={{ marginLeft: '0.45rem', fontSize: '0.83rem', opacity: 0.9 }}>
+                                        · {String(tier.promo_name || '').trim() || `Promo ${index + 1}`} {tier.promo_plu ? `· PLU ${tier.promo_plu}` : ''}
+                                    </span>
+                                )}
+                            </span>
+                        ))}
+                    </div>
                 </div>
-                {(row.promo_name || row.promo_plu) && (
+                {tiers.length > 1 && (
                     <div className="promo-detail-item">
-                        <FiTag className="text-muted"/>
-                        <span>{String(row.promo_name || '').trim() || 'Promo'} {row.promo_plu ? `· PLU ${row.promo_plu}` : ''}</span>
+                        <FiInfo className="text-muted"/>
+                        <span>{tiers.length} niveles configurados para este artículo.</span>
                     </div>
                 )}
                 <div className="promo-details-grid">
                     <div className="promo-detail-item">
                         <FiMapPin className="text-muted"/>
                         <span>
-                            {row.branch_id != null
+                            {row?.branch_id != null
                                 ? (branchesById.get(Number(row.branch_id))?.name || `Sucursal ${row.branch_id}`)
                                 : 'Todas las sucursales'}
                         </span>
@@ -707,31 +864,31 @@ const ConfiguracionPromociones = () => {
                     <div className="promo-detail-item">
                         <FiActivity className="text-muted"/>
                         <span>
-                            Usados: {formatKg(row.used_kg || 0)} kg
+                            Usados: {formatKg(row?.used_kg || 0)} kg
                         </span>
                     </div>
                     <div className="promo-detail-item">
                         <FiBox className="text-muted"/>
                         <span>
-                            Stock: {row.stock_mode === PROMO_STOCK_MODES.FIXED
-                                ? `Cupo de ${formatKg(row.stock_cap_kg_limit)} kg`
+                            Stock: {row?.stock_mode === PROMO_STOCK_MODES.FIXED
+                                ? `Cupo de ${formatKg(row?.stock_cap_kg_limit)} kg`
                                 : 'Ilimitado'}
                         </span>
                     </div>
                     <div className="promo-detail-item">
                         <FiClock className="text-muted"/>
                         <span>
-                            Fin: {endConditionLabel(row.end_condition)}
-                            {row.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row.sold_kg_limit
-                                ? ` (${formatKg(row.sold_kg_limit)} kg)`
+                            Fin: {endConditionLabel(row?.end_condition)}
+                            {row?.end_condition === PROMO_END_CONDITIONS.SOLD_KG && row?.sold_kg_limit
+                                ? ` (${formatKg(row?.sold_kg_limit)} kg)`
                                 : ''}
-                            {row.end_condition === PROMO_END_CONDITIONS.DATE && row.end_date
+                            {row?.end_condition === PROMO_END_CONDITIONS.DATE && row?.end_date
                                 ? ` (${new Date(row.end_date).toLocaleString('es-AR')})`
                                 : ''}
                         </span>
                     </div>
                 </div>
-                {row.notes && (
+                {row?.notes && (
                     <div className="promo-notes">
                         <FiInfo className="text-muted"/> <span>{row.notes}</span>
                     </div>
@@ -741,24 +898,25 @@ const ConfiguracionPromociones = () => {
                 <button type="button" className="btn-icon" title="Duplicar" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
                     <FiCopy /> <span className="hidden-mobile">Duplicar</span>
                 </button>
-                <button type="button" className="btn-icon" title="Editar" disabled={readOnly || saving} onClick={() => startEdit(row)}>
+                <button type="button" className="btn-icon" title="Editar" disabled={readOnly || saving} onClick={() => startEditRows(tiers)}>
                     <FiEdit2 /> <span className="hidden-mobile">Editar</span>
                 </button>
-                {row.active ? (
-                    <button type="button" className="btn-icon orange-text" title="Desactivar" disabled={readOnly || saving} onClick={() => togglePromoStatus(row)}>
+                {row?.active ? (
+                    <button type="button" className="btn-icon orange-text" title="Desactivar" disabled={readOnly || saving} onClick={() => togglePromoStatus(tiers)}>
                         <FiXCircle /> <span className="hidden-mobile">Desactivar</span>
                     </button>
                 ) : (
-                    <button type="button" className="btn-icon green-text" title="Activar" disabled={readOnly || saving} onClick={() => togglePromoStatus(row)}>
+                    <button type="button" className="btn-icon green-text" title="Activar" disabled={readOnly || saving} onClick={() => togglePromoStatus(tiers)}>
                         <FiCheckCircle /> <span className="hidden-mobile">Activar</span>
                     </button>
                 )}
-                <button type="button" className="btn-icon danger-text" title="Eliminar" disabled={readOnly || saving} onClick={() => deletePromotion(row)}>
+                <button type="button" className="btn-icon danger-text" title="Eliminar" disabled={readOnly || saving} onClick={() => deletePromotion(tiers)}>
                     <FiTrash2 /> <span className="hidden-mobile">Eliminar</span>
                 </button>
             </div>
-        </div>
-    );
+            </div>
+        );
+    };
 
     if (loading) {
         return (
@@ -1178,7 +1336,7 @@ const ConfiguracionPromociones = () => {
                             />
                         </div>
 
-                        {filteredRows.length === 0 ? (
+                        {promotionGroups.length === 0 ? (
                             <div className="empty-state">
                                 <FiBox className="empty-icon" />
                                 <p>{listBranchFilter ? 'No hay promociones para esta sucursal.' : 'No se han creado promociones todavía.'}</p>
@@ -1186,26 +1344,26 @@ const ConfiguracionPromociones = () => {
                         ) : (
                             <div className="promos-container">
                                 
-                                {activeRows.length > 0 && (
+                                {activeGroups.length > 0 && (
                                     <div className="promo-group">
                                         <div className="group-title green-glow">
                                             <h3><FiCheckCircle/> Activas</h3>
-                                            <span className="count-badge">{activeRows.length}</span>
+                                            <span className="count-badge">{activeGroups.length}</span>
                                         </div>
                                         <div className="promo-grid">
-                                            {activeRows.map(renderPromoCard)}
+                                            {activeGroups.map(renderPromoCard)}
                                         </div>
                                     </div>
                                 )}
 
-                                {inactiveRows.length > 0 && (
+                                {inactiveGroups.length > 0 && (
                                     <div className="promo-group">
                                         <div className="group-title gray-glow">
                                             <h3><FiXCircle/> Inactivas / Finalizadas</h3>
-                                            <span className="count-badge">{inactiveRows.length}</span>
+                                            <span className="count-badge">{inactiveGroups.length}</span>
                                         </div>
                                         <div className="promo-grid">
-                                            {inactiveRows.map(renderPromoCard)}
+                                            {inactiveGroups.map(renderPromoCard)}
                                         </div>
                                     </div>
                                 )}
