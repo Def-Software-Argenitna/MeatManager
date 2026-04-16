@@ -1,5 +1,6 @@
 const path = require('path');
 const fs = require('fs');
+const http = require('http');
 const { fork } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
 
@@ -83,9 +84,36 @@ function formatUpdateError(error) {
 
 async function fetchBridgeStatus() {
     try {
-        const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/health`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
+        const payload = await new Promise((resolve, reject) => {
+            const req = http.request(
+                {
+                    hostname: '127.0.0.1',
+                    port: BRIDGE_PORT,
+                    path: '/health',
+                    method: 'GET',
+                    timeout: 2500,
+                },
+                (res) => {
+                    let data = '';
+                    res.setEncoding('utf8');
+                    res.on('data', (chunk) => { data += chunk; });
+                    res.on('end', () => {
+                        if (res.statusCode !== 200) {
+                            reject(new Error(`HTTP ${res.statusCode}`));
+                            return;
+                        }
+                        try {
+                            resolve(JSON.parse(data));
+                        } catch {
+                            reject(new Error('invalid_json'));
+                        }
+                    });
+                }
+            );
+            req.on('error', reject);
+            req.on('timeout', () => req.destroy(new Error('timeout')));
+            req.end();
+        });
         lastStatus = {
             ...lastStatus,
             bridgeHttp: {
