@@ -7,8 +7,9 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
+import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
-import { buildCartPricing, normalizePromotions } from '../utils/promotions';
+import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { scaleService } from '../utils/SerialScaleService';
@@ -176,6 +177,7 @@ const Ventas = () => {
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
+    useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
     const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
@@ -556,10 +558,55 @@ const Ventas = () => {
         ];
     }, [products]);
 
+    const findPromotionByPromoPlu = React.useCallback((pluValue) => {
+        const normalizedPlu = normalizePluCode(pluValue);
+        if (!normalizedPlu) return null;
+        return (Array.isArray(promotions) ? promotions : []).find((promo) => (
+            normalizePluCode(promo?.promo_plu) === normalizedPlu
+            && (promo.active === true || Number(promo.active) === 1)
+        )) || null;
+    }, [promotions]);
+
+    const getCurrentStockQty = React.useCallback(({ productId, productName }) => {
+        const normalizedName = String(productName || '').trim().toUpperCase();
+        return (Array.isArray(stockItems) ? stockItems : []).reduce((sum, row) => {
+            const sameProductId = productId != null && Number(row?.product_id) === Number(productId);
+            const sameName = normalizedName && String(row?.name || '').trim().toUpperCase() === normalizedName;
+            if (!sameProductId && !sameName) return sum;
+            return sum + toNumber(row?.quantity);
+        }, 0);
+    }, [stockItems]);
+
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
-        const normalized = String(pluValue || '').trim();
+        const normalized = normalizePluCode(pluValue) || String(pluValue || '').trim();
         if (!normalized) return null;
         const normalizedNumber = String(parseInt(normalized, 10));
+        const promo = findPromotionByPromoPlu(normalized);
+        if (promo) {
+            const promoUnitPrice = toNumber(promo?.promo_unit_price);
+            const minQtyKg = toNumber(promo?.min_qty_kg, 3);
+            const fallbackUnitPrice = minQtyKg > 0 ? toNumber(promo?.promo_total_price) / minQtyKg : 0;
+            const resolvedPromoUnitPrice = promoUnitPrice > 0 ? promoUnitPrice : fallbackUnitPrice;
+            const promoStockQty = getCurrentStockQty({
+                productId: promo?.product_id,
+                productName: promo?.product_name,
+            });
+            if (resolvedPromoUnitPrice > 0) {
+                if (!(promoStockQty > 0)) {
+                    return null;
+                }
+                return {
+                    id: promo?.product_id || null,
+                    product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
+                    product_ref_id: promo?.product_id || null,
+                    price: resolvedPromoUnitPrice,
+                    plu: normalized,
+                    updated_at: new Date().toISOString(),
+                    isPromoPlu: true,
+                    promo,
+                };
+            }
+        }
         // Buscar por PLU en el catálogo de productos (fuente canónica)
         const product = productsCatalog.find((p) => {
             const plu = String(p?.plu || '').trim();
@@ -575,7 +622,7 @@ const Ventas = () => {
             plu: product.plu || '',
             updated_at: product.updated_at,
         };
-    }, [productsCatalog]);
+    }, [findPromotionByPromoPlu, getCurrentStockQty, productsCatalog]);
 
     const findStockItemByName = React.useCallback((name) => {
         const normalized = String(name || '').trim().toUpperCase();
@@ -593,6 +640,26 @@ const Ventas = () => {
             || normalizeProductKey(product.name) === normalizeProductKey(productId)
         )) || null;
     }, [products]);
+
+    const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
+        if (!product || !priceRecord) return product || null;
+        if (!priceRecord?.isPromoPlu || !priceRecord?.promo) {
+            return { ...product, price: priceRecord.price };
+        }
+
+        return {
+            ...product,
+            price: priceRecord.price,
+            promoLocked: true,
+            forcedPromo: {
+                id: priceRecord.promo.id,
+                promo_plu: normalizePluCode(priceRecord.plu),
+                min_qty_kg: priceRecord.promo.min_qty_kg,
+                promo_total_price: priceRecord.promo.promo_total_price,
+            },
+            linkedPromoPlu: normalizePluCode(priceRecord.plu),
+        };
+    }, []);
 
     const buildCatalogProductForVenta = React.useCallback((catalogProduct) => {
         if (!catalogProduct) return null;
@@ -669,16 +736,16 @@ const Ventas = () => {
     }, [findProductByPriceRecord, productsCatalog]);
 
     // Filter products
-    const filteredProducts = products.filter(p => {
+    const filteredProducts = React.useMemo(() => {
         const term = barcodeInputValue.trim().toLowerCase();
-        const matchesSearch =
-            term.length === 0 ||
-            p.name.toLowerCase().includes(term) ||
-            String(p.plu || '').toLowerCase().includes(term) ||
-            String(p.barcode || '').toLowerCase().includes(term) ||
-            String(p.id || '').toLowerCase().includes(term);
-        return matchesSearch;
-    });
+        return products.filter((p) => (
+            term.length === 0
+            || p.name.toLowerCase().includes(term)
+            || String(p.plu || '').toLowerCase().includes(term)
+            || String(p.barcode || '').toLowerCase().includes(term)
+            || String(p.id || '').toLowerCase().includes(term)
+        ));
+    }, [products, barcodeInputValue]);
 
     const groupedFilteredProducts = React.useMemo(() => {
         const groups = new Map();
@@ -707,8 +774,13 @@ const Ventas = () => {
         const nextIds = groupedFilteredProducts.map((group) => group.id);
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
-            if (hasSearch) return nextIds;
-            return prev.filter((id) => nextIds.includes(id));
+            const nextState = hasSearch
+                ? nextIds
+                : prev.filter((id) => nextIds.includes(id));
+            const isSame =
+                nextState.length === prev.length
+                && nextState.every((id, idx) => id === prev[idx]);
+            return isSame ? prev : nextState;
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
@@ -975,7 +1047,7 @@ const Ventas = () => {
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
-                    addToCart({ ...product, price: priceRecord.price }, weightToApply);
+                    addToCart(buildCartProductFromPriceRecord(product, priceRecord), weightToApply);
                     setScannerError('');
                 } else {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
@@ -991,7 +1063,7 @@ const Ventas = () => {
                             price: priceRecord.price,
                             plu: pluNumber,
                         };
-                        addToCart(fallbackProduct, weightToApply);
+                        addToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weightToApply);
                         setScannerError('');
                     } else {
                         setScannerError(buildPluResolutionError({
@@ -1095,7 +1167,7 @@ const Ventas = () => {
                     if (priceRecord) {
                         const product = findProductByPriceRecord(priceRecord);
                         if (product) {
-                            addToCart({ ...product, price: priceRecord.price }, qty);
+                            addToCart(buildCartProductFromPriceRecord(product, priceRecord), qty);
                             successCount++;
                         } else {
                             failedItems.push(plu.trim());
@@ -1136,7 +1208,7 @@ const Ventas = () => {
                     const product = findProductByPriceRecord(priceRecord);
                     if (product) {
                         const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
-                        addToCart({ ...product, price: priceRecord.price }, weight);
+                        addToCart(buildCartProductFromPriceRecord(product, priceRecord), weight);
                         successCount++;
                     } else {
                         failedItems.push(pluNumber);
@@ -1245,19 +1317,35 @@ const Ventas = () => {
         setWeightProduct(null);
     };
     const addToCart = async (product, externalWeight = null) => {
-        if (product.price <= 0) {
+        let resolvedProduct = product;
+        if (!product?.promoLocked) {
+            const catalogProduct = findProductByIdentity(productsCatalog, {
+                id: product?.productId || product?.id || null,
+                name: product?.name,
+            });
+            const basePrice = getProductCurrentPrice(catalogProduct);
+            resolvedProduct = {
+                ...product,
+                price: basePrice > 0 ? basePrice : product.price,
+                promoLocked: false,
+                forcedPromo: null,
+                linkedPromoPlu: null,
+            };
+        }
+
+        if (resolvedProduct.price <= 0) {
             showToast('⚠️ Este producto no tiene precio configurado. Configure el precio primero.', 'warning');
-            setEditingPriceId(product.id);
+            setEditingPriceId(resolvedProduct.id);
             setNewPrice('');
-            setNewPlu(product.plu || '');
+            setNewPlu(resolvedProduct.plu || '');
             return;
         }
 
         // weight management: prompt or automatic
         let weight = externalWeight;
         if (!weight) {
-            if (product.unit === 'kg') {
-                setWeightProduct(product);
+            if (resolvedProduct.unit === 'kg') {
+                setWeightProduct(resolvedProduct);
                 setWeightInput("1.000");
                 setShowWeightModal(true);
                 return;
@@ -1266,16 +1354,22 @@ const Ventas = () => {
             }
         }
 
+        const cartItemId = resolvedProduct?.promoLocked && resolvedProduct?.forcedPromo?.id
+            ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:promo:${resolvedProduct.forcedPromo.id}`
+            : (resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`);
+
+        const normalizedProduct = { ...resolvedProduct, id: cartItemId };
+
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
+            const existing = prev.find(item => item.id === cartItemId);
             if (existing) {
                 return prev.map(item =>
-                    item.id === product.id
+                    item.id === cartItemId
                         ? { ...item, quantity: (item.unit === 'kg' ? item.quantity + weight : item.quantity + (externalWeight || 1)) }
                         : item
                 );
             }
-            return [...prev, { ...product, quantity: weight }];
+            return [...prev, { ...normalizedProduct, quantity: weight }];
         });
 
         // Auto-open cart on mobile when adding first item or if explicitly wanted
@@ -3153,7 +3247,7 @@ const Ventas = () => {
                         <button
                             onClick={() => {
                                 const toAdd = ticketPreviewItems.filter(i => i.priceRecord && i.product);
-                                toAdd.forEach(i => addToCart({ ...i.product, price: i.priceRecord.price }, i.weight));
+                                toAdd.forEach(i => addToCart(buildCartProductFromPriceRecord(i.product, i.priceRecord), i.weight));
                                 setShowTicketPreview(false);
                                 if (toAdd.length < ticketPreviewItems.length) {
                                     setScannerError(`✅ ${toAdd.length} agregado(s). ${ticketPreviewItems.length - toAdd.length} no configurado(s) — revisá Stock.`);
@@ -3175,4 +3269,3 @@ const Ventas = () => {
 };
 
 export default Ventas;
-
