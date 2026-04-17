@@ -1310,19 +1310,35 @@ const Ventas = () => {
         setWeightProduct(null);
     };
     const addToCart = async (product, externalWeight = null) => {
-        if (product.price <= 0) {
+        let resolvedProduct = product;
+        if (!product?.promoLocked) {
+            const catalogProduct = findProductByIdentity(productsCatalog, {
+                id: product?.productId || product?.id || null,
+                name: product?.name,
+            });
+            const basePrice = getProductCurrentPrice(catalogProduct);
+            resolvedProduct = {
+                ...product,
+                price: basePrice > 0 ? basePrice : product.price,
+                promoLocked: false,
+                forcedPromo: null,
+                linkedPromoPlu: null,
+            };
+        }
+
+        if (resolvedProduct.price <= 0) {
             showToast('⚠️ Este producto no tiene precio configurado. Configure el precio primero.', 'warning');
-            setEditingPriceId(product.id);
+            setEditingPriceId(resolvedProduct.id);
             setNewPrice('');
-            setNewPlu(product.plu || '');
+            setNewPlu(resolvedProduct.plu || '');
             return;
         }
 
         // weight management: prompt or automatic
         let weight = externalWeight;
         if (!weight) {
-            if (product.unit === 'kg') {
-                setWeightProduct(product);
+            if (resolvedProduct.unit === 'kg') {
+                setWeightProduct(resolvedProduct);
                 setWeightInput("1.000");
                 setShowWeightModal(true);
                 return;
@@ -1331,11 +1347,11 @@ const Ventas = () => {
             }
         }
 
-        const cartItemId = product?.promoLocked && product?.forcedPromo?.id
-            ? `${product.id || `product:${product.productId || normalizeProductKey(product.name)}`}:promo:${product.forcedPromo.id}`
-            : (product.id || `product:${product.productId || normalizeProductKey(product.name)}`);
+        const cartItemId = resolvedProduct?.promoLocked && resolvedProduct?.forcedPromo?.id
+            ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:promo:${resolvedProduct.forcedPromo.id}`
+            : (resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`);
 
-        const normalizedProduct = { ...product, id: cartItemId };
+        const normalizedProduct = { ...resolvedProduct, id: cartItemId };
 
         setCart(prev => {
             const existing = prev.find(item => item.id === cartItemId);
