@@ -734,16 +734,16 @@ const Ventas = () => {
     }, [findProductByPriceRecord, productsCatalog]);
 
     // Filter products
-    const filteredProducts = products.filter(p => {
+    const filteredProducts = React.useMemo(() => {
         const term = barcodeInputValue.trim().toLowerCase();
-        const matchesSearch =
-            term.length === 0 ||
-            p.name.toLowerCase().includes(term) ||
-            String(p.plu || '').toLowerCase().includes(term) ||
-            String(p.barcode || '').toLowerCase().includes(term) ||
-            String(p.id || '').toLowerCase().includes(term);
-        return matchesSearch;
-    });
+        return products.filter((p) => (
+            term.length === 0
+            || p.name.toLowerCase().includes(term)
+            || String(p.plu || '').toLowerCase().includes(term)
+            || String(p.barcode || '').toLowerCase().includes(term)
+            || String(p.id || '').toLowerCase().includes(term)
+        ));
+    }, [products, barcodeInputValue]);
 
     const groupedFilteredProducts = React.useMemo(() => {
         const groups = new Map();
@@ -772,8 +772,13 @@ const Ventas = () => {
         const nextIds = groupedFilteredProducts.map((group) => group.id);
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
-            if (hasSearch) return nextIds;
-            return prev.filter((id) => nextIds.includes(id));
+            const nextState = hasSearch
+                ? nextIds
+                : prev.filter((id) => nextIds.includes(id));
+            const isSame =
+                nextState.length === prev.length
+                && nextState.every((id, idx) => id === prev[idx]);
+            return isSame ? prev : nextState;
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
