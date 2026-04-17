@@ -353,6 +353,20 @@ const ConfiguracionPromociones = () => {
         if (!form.product_id) return null;
         return productsById.get(Number(form.product_id)) || null;
     }, [form.product_id, productsById]);
+    const selectedProductBasePrice = useMemo(() => {
+        if (!selectedProduct) return 0;
+        const directPrice = Number(selectedProduct?.current_price);
+        if (Number.isFinite(directPrice) && directPrice > 0) return toNumber(directPrice, 2);
+        const fallbackPrice = Number(selectedProduct?.price);
+        if (Number.isFinite(fallbackPrice) && fallbackPrice > 0) return toNumber(fallbackPrice, 2);
+        return 0;
+    }, [selectedProduct]);
+    const selectedProductUnitLabel = useMemo(() => {
+        const unitRaw = String(selectedProduct?.unit || 'kg').trim().toLowerCase();
+        if (unitRaw === 'kg') return 'kg';
+        if (unitRaw === 'unidad' || unitRaw === 'unidades' || unitRaw === 'un') return 'unidad';
+        return unitRaw || 'kg';
+    }, [selectedProduct]);
 
     const promoSuggestion = useMemo(() => {
         if (!selectedProduct) return { nextPromoNumber: 1, suggestedName: '', suggestedPlu: '' };
@@ -1092,6 +1106,16 @@ const ConfiguracionPromociones = () => {
                                                     <option key={p.id} value={p.id}>{p.name}</option>
                                                 ))}
                                             </select>
+                                            {form.product_id ? (
+                                                <div style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
+                                                    Precio base sin promo:{' '}
+                                                    <strong style={{ color: 'var(--color-text-main)' }}>
+                                                        {selectedProductBasePrice > 0
+                                                            ? `$${formatMoney(selectedProductBasePrice)} por ${selectedProductUnitLabel}`
+                                                            : 'Sin precio configurado'}
+                                                    </strong>
+                                                </div>
+                                            ) : null}
                                         </div>
                                     </div>
                                 </div>
