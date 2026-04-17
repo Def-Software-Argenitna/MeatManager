@@ -109,6 +109,7 @@ const getRemainingKgByStockMode = ({ promo, currentStockQty }) => {
 
 export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() }) => {
     if (!promo?.active) return false;
+    if (!(Number(currentStockQty) > 0)) return false;
 
     if (promo.end_condition === PROMO_END_CONDITIONS.DATE) {
         const endDate = parseDate(promo.end_date);
