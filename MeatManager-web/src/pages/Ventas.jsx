@@ -7,6 +7,7 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
+import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
@@ -176,6 +177,7 @@ const Ventas = () => {
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
+    useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
     const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
