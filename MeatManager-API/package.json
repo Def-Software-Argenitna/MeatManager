@@ -11,7 +11,10 @@
     "dev": "nodemon server.js",
     "reconcile:firebase-users": "node _reconcile_client_users_firebase.js",
     "dedupe:prices": "node _dedupe_prices.js --apply",
-    "dedupe:prices:dry": "node _dedupe_prices.js"
+    "dedupe:prices:dry": "node _dedupe_prices.js",
+    "audit:branch-scope": "node _audit_branch_scope.js",
+    "audit:branch-scope:apply": "node _audit_branch_scope.js --apply-single-branch-backfill",
+    "remap:branch-scope": "node _remap_branch_scope.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",
