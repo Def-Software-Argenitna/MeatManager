@@ -648,12 +648,24 @@ const Ventas = () => {
 
     const findProductByPriceRecord = React.useCallback((priceRecord) => {
         if (!priceRecord) return null;
+
+        const toCatalogProduct = (p) => p ? ({
+            id: `product:${p.id}`,
+            productId: p.id || null,
+            name: p.name,
+            category: p.category,
+            totalQuantity: 0,
+            unit: p.unit || 'kg',
+            price: getProductCurrentPrice(p),
+            plu: p.plu || '',
+            barcode: null,
+        }) : null;
+
         if (priceRecord.product_ref_id != null) {
             const fromLegacy = products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
             if (fromLegacy) return fromLegacy;
-            // Fallback: buscar en catálogo y convertir al formato de Ventas
             const fromCatalog = productsCatalog.find((p) => Number(p?.id) === Number(priceRecord.product_ref_id)) || null;
-            return buildCatalogProductForVenta(fromCatalog);
+            return toCatalogProduct(fromCatalog);
         }
         const productId = String(priceRecord.product_id || '').trim();
         const fromLegacyByName = products.find((product) => (
@@ -661,12 +673,11 @@ const Ventas = () => {
             || normalizeProductKey(product.name) === normalizeProductKey(productId)
         )) || null;
         if (fromLegacyByName) return fromLegacyByName;
-        // Fallback por nombre normalizado en catálogo
         const fromCatalogByName = productsCatalog.find((p) => (
             normalizeProductKey(p?.name) === normalizeProductKey(productId)
         )) || null;
-        return buildCatalogProductForVenta(fromCatalogByName);
-    }, [products, productsCatalog, buildCatalogProductForVenta]);
+        return toCatalogProduct(fromCatalogByName);
+    }, [products, productsCatalog]);
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
