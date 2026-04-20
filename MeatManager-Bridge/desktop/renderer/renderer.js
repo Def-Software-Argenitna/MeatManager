@@ -36,6 +36,7 @@ const cfgDevicesEl = document.getElementById('cfg-devices');
 
 let onboardingRequired = false;
 let onboardingToken = '';
+let onboardingAuthMode = 'tenant-admin';
 let onboardingAdmin = null;
 let onboardingClients = [];
 let onboardingBranches = [];
@@ -325,10 +326,12 @@ obLogin.addEventListener('click', async () => {
             return;
         }
         onboardingToken = login.token;
+        onboardingAuthMode = String(login?.authMode || 'tenant-admin').trim().toLowerCase();
         onboardingAdmin = login.admin || null;
 
         const clients = await window.bridgeDesktop.onboardingClients({
             token: onboardingToken,
+            authMode: onboardingAuthMode,
         });
         if (!clients?.ok) {
             setOnboardingFeedback(clients?.error || 'No se pudieron leer clientes', 'error');
@@ -338,7 +341,8 @@ obLogin.addEventListener('click', async () => {
         onboardingClients = Array.isArray(clients.clients) ? clients.clients : [];
         fillClientSelect(onboardingClients);
         obAfterLogin.classList.remove('hidden');
-        setOnboardingFeedback(`Sesion iniciada como ${login?.admin?.email || 'admin'}.`, 'ok');
+        const modeLabel = onboardingAuthMode === 'internal-admin' ? 'SuperAdmin' : 'Admin tenant';
+        setOnboardingFeedback(`Sesion iniciada como ${login?.admin?.email || 'admin'} (${modeLabel}).`, 'ok');
     } catch (error) {
         setOnboardingFeedback(error?.message || 'No se pudo iniciar sesion', 'error');
     } finally {
@@ -356,6 +360,7 @@ obClient.addEventListener('change', async () => {
 
     const branches = await window.bridgeDesktop.onboardingBranches({
         token: onboardingToken,
+        authMode: onboardingAuthMode,
         clientId,
     });
     if (!branches?.ok) {
@@ -412,6 +417,7 @@ obSave.addEventListener('click', async () => {
 
     const save = await window.bridgeDesktop.onboardingSave({
         auth: {
+            mode: onboardingAuthMode,
             adminEmail: onboardingAdmin?.email || '',
             adminName: [onboardingAdmin?.name, onboardingAdmin?.lastname].filter(Boolean).join(' ').trim(),
         },

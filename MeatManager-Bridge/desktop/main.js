@@ -684,6 +684,35 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
     if (!identifier || !password) throw new Error('Completa email/usuario y contrasena');
     if (!FIREBASE_API_KEY) throw new Error('Falta FIREBASE API KEY en Bridge');
 
+    // Prioridad: si las credenciales corresponden a SuperAdmin interno, habilitamos modo multi-tenant.
+    try {
+        const internal = await httpJsonRequest(`${base}/api/internal-admin/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: {
+                email: String(identifier).trim(),
+                password: String(password),
+            },
+            timeout: 10000,
+        });
+        const internalToken = String(internal?.token || '').trim();
+        if (internal?.ok && internalToken) {
+            return {
+                ok: true,
+                token: internalToken,
+                authMode: 'internal-admin',
+                admin: {
+                    email: String(internal?.admin?.email || identifier).trim(),
+                    name: String(internal?.admin?.name || '').trim(),
+                    lastname: String(internal?.admin?.lastname || '').trim(),
+                    role: 'admin',
+                },
+            };
+        }
+    } catch {
+        // Fallback natural: login por Firebase (tenant-admin).
+    }
+
     let idToken = '';
     try {
         const firebaseLogin = await httpJsonRequest(
@@ -719,6 +748,7 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
     return {
         ok: true,
         token: idToken,
+        authMode: 'tenant-admin',
         admin: {
             email: user.email || String(identifier).trim(),
             name: user.username || '',
@@ -728,9 +758,22 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
     };
 }
 
-async function onboardingFetchClients({ apiBaseUrl, token, search = '' }) {
+async function onboardingFetchClients({ apiBaseUrl, token, authMode = 'tenant-admin', search = '' }) {
     const base = resolveApiBaseUrl(apiBaseUrl);
     if (!base || !token) throw new Error('Sesion admin invalida');
+    const normalizedMode = String(authMode || 'tenant-admin').trim().toLowerCase();
+
+    if (normalizedMode === 'internal-admin') {
+        const query = String(search || '').trim();
+        const querySuffix = query ? `?search=${encodeURIComponent(query)}` : '';
+        const payload = await httpJsonRequest(`${base}/api/internal-admin/clients${querySuffix}`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 10000,
+        });
+        const clients = Array.isArray(payload?.clients) ? payload.clients : [];
+        return { ok: true, clients };
+    }
+
     const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
@@ -750,12 +793,21 @@ async function onboardingFetchClients({ apiBaseUrl, token, search = '' }) {
     return { ok: true, clients };
 }
 
-async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
+async function onboardingFetchBranches({ apiBaseUrl, token, authMode = 'tenant-admin', clientId }) {
     const base = resolveApiBaseUrl(apiBaseUrl);
     const numericClientId = Number.parseInt(clientId, 10);
     if (!base || !token || !Number.isFinite(numericClientId) || numericClientId <= 0) {
         throw new Error('Datos invalidos para sucursales');
     }
+    const normalizedMode = String(authMode || 'tenant-admin').trim().toLowerCase();
+
+    if (normalizedMode === 'internal-admin') {
+        return httpJsonRequest(`${base}/api/internal-admin/clients/${numericClientId}/branches`, {
+            headers: { Authorization: `Bearer ${token}` },
+            timeout: 10000,
+        });
+    }
+
     const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
         headers: { Authorization: `Bearer ${token}` },
         timeout: 10000,
@@ -772,11 +824,12 @@ async function onboardingFetchBranches({ apiBaseUrl, token, clientId }) {
 }
 
 function saveInstallation(payload) {
+    const authMode = String(payload?.auth?.mode || 'tenant-admin').trim().toLowerCase();
     const next = sanitizeInstallation({
         ...payload,
         onboardingVersion: 1,
         auth: {
-            mode: 'tenant-admin',
+            mode: authMode === 'internal-admin' ? 'internal-admin' : 'tenant-admin',
             adminEmail: String(payload?.auth?.adminEmail || '').trim(),
             adminName: String(payload?.auth?.adminName || '').trim(),
             verifiedAt: new Date().toISOString(),
