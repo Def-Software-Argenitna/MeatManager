@@ -785,63 +785,44 @@ class ScaleBridge {
             [this.config.tenantId]
         );
 
-        let promotionRows = [];
-        try {
-            // Esquema actual (incluye promo_unit_price/promo_price_mode).
-            promotionRows = await mysqlQuery(
-                this.mysqlPool,
-                `SELECT id,
-                        product_id,
-                        promo_plu,
-                        promo_name,
-                        product_name,
-                        promo_total_price,
-                        promo_unit_price,
-                        promo_price_mode,
-                        min_qty_kg,
-                        active,
-                        updated_at
-                 FROM promotions
-                 WHERE tenant_id = ?
-                   AND COALESCE(active, 1) = 1
-                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
-                 ORDER BY updated_at ASC, id ASC`,
-                [this.config.tenantId]
-            );
-        } catch (error) {
-            this.logger.warn('Consulta moderna de promociones no disponible, usando fallback legacy', {
+        const promotionRows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT *
+             FROM promotions
+             WHERE tenant_id = ?
+               AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+             ORDER BY updated_at ASC, id ASC`,
+            [this.config.tenantId]
+        ).catch((error) => {
+            this.logger.warn('No se pudieron leer promociones para sincronizacion', {
                 error: error.message,
             });
-            promotionRows = await mysqlQuery(
-                this.mysqlPool,
-                `SELECT id,
-                        product_id,
-                        promo_plu,
-                        promo_name,
-                        product_name,
-                        promo_total_price,
-                        min_qty_kg,
-                        active,
-                        updated_at
-                 FROM promotions
-                 WHERE tenant_id = ?
-                   AND COALESCE(active, 1) = 1
-                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
-                 ORDER BY updated_at ASC, id ASC`,
-                [this.config.tenantId]
-            ).catch((fallbackError) => {
-                this.logger.warn('No se pudieron leer promociones para sincronizacion', {
-                    error: fallbackError.message,
-                });
-                return [];
-            });
-        }
+            return [];
+        });
 
         const productById = new Map(
             products.map((row) => [Number(row.id), row])
         );
 
         const promotions = promotionRows.map((row) => {
+            const activeRaw = row.active;
+            const isActive = activeRaw == null
+                || activeRaw === true
+                || Number(activeRaw) === 1
+                || String(activeRaw).trim().toLowerCase() === 'true';
+            if (!isActive) return null;
+
+            const rowBranchId = Number.parseInt(row.branch_id, 10);
+            const hasBranchFilter = Number.isFinite(Number.parseInt(this.config.branchId, 10));
+            if (
+                hasBranchFilter
+                && Number.isFinite(rowBranchId)
+                && rowBranchId > 0
+                && rowBranchId !== Number.parseInt(this.config.branchId, 10)
+            ) {
+                return null;
+            }
+
             const linkedProduct = productById.get(Number(row.product_id)) || null;
             const promoName = String(row.promo_name || '').trim();
             const productName = String(row.product_name || '').trim();
@@ -864,7 +845,7 @@ class ScaleBridge {
                 updated_at: row.updated_at,
                 effective_plu_code: String(row.promo_plu || '').trim(),
             };
-        }).filter((row) => (Number(row.current_price) || 0) > 0);
+        }).filter((row) => row && (Number(row.current_price) || 0) > 0);
 
         const productEntries = products.map((row) => ({
             ...row,
@@ -879,6 +860,12 @@ class ScaleBridge {
             sourceId: Number(row.id),
             mapProductId: this.toScaleMapProductId('promotion', row.id),
         })).filter((row) => Number.isFinite(row.mapProductId));
+
+        this.logger.info('Catalogo a sincronizar hacia balanza', {
+            products: productEntries.length,
+            promotions: promotionEntries.length,
+            promotionPluSample: promotionEntries.slice(0, 10).map((row) => String(row.effective_plu_code || row.plu || '')),
+        });
 
         return [...productEntries, ...promotionEntries];
     }

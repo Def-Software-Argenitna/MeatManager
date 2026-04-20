@@ -610,6 +610,17 @@ function configureAutoUpdate() {
         }
     });
 
+    autoUpdater.on('update-not-available', () => {
+        updateAvailable = false;
+        updateTrayMenu();
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-event', {
+                status: 'idle',
+                message: 'No hay actualizaciones nuevas disponibles.',
+            });
+        }
+    });
+
     autoUpdater.on('update-downloaded', () => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-event', {
