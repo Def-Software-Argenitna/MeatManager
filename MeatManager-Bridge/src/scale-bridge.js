@@ -761,6 +761,85 @@ class ScaleBridge {
         return String(parsed);
     }
 
+    toScaleMapProductId(sourceType, sourceId) {
+        const parsed = Number.parseInt(sourceId, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) return null;
+        return sourceType === 'promotion' ? -parsed : parsed;
+    }
+
+    async loadSyncCatalogEntries() {
+        const products = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT id,
+                    plu,
+                    name,
+                    category,
+                    unit,
+                    current_price,
+                    updated_at,
+                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
+             FROM products
+             WHERE tenant_id = ?
+               AND COALESCE(current_price, 0) > 0
+             ORDER BY updated_at ASC, id ASC`,
+            [this.config.tenantId]
+        );
+
+        const promotions = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT promotions.id,
+                    promotions.promo_plu AS plu,
+                    COALESCE(
+                        NULLIF(TRIM(CAST(promotions.promo_name AS CHAR)), ''),
+                        NULLIF(TRIM(CAST(promotions.product_name AS CHAR)), ''),
+                        CONCAT('PROMO ', CAST(promotions.id AS CHAR))
+                    ) AS name,
+                    COALESCE(NULLIF(TRIM(CAST(p.category AS CHAR)), ''), 'PROMOCIONES') AS category,
+                    COALESCE(NULLIF(TRIM(CAST(p.unit AS CHAR)), ''), 'kg') AS unit,
+                    COALESCE(
+                        NULLIF(promotions.promo_unit_price, 0),
+                        CASE
+                            WHEN COALESCE(promotions.min_qty_kg, 0) > 0 THEN promotions.promo_total_price / promotions.min_qty_kg
+                            ELSE promotions.promo_total_price
+                        END
+                    ) AS current_price,
+                    promotions.updated_at,
+                    TRIM(CAST(promotions.promo_plu AS CHAR)) AS effective_plu_code
+             FROM promotions
+             LEFT JOIN products p
+                ON p.id = promotions.product_id
+               AND p.tenant_id = promotions.tenant_id
+             WHERE promotions.tenant_id = ?
+               AND COALESCE(promotions.active, 1) = 1
+               AND TRIM(COALESCE(CAST(promotions.promo_plu AS CHAR), '')) <> ''
+               AND COALESCE(
+                    NULLIF(promotions.promo_unit_price, 0),
+                    CASE
+                        WHEN COALESCE(promotions.min_qty_kg, 0) > 0 THEN promotions.promo_total_price / promotions.min_qty_kg
+                        ELSE promotions.promo_total_price
+                    END
+               ) > 0
+             ORDER BY promotions.updated_at ASC, promotions.id ASC`,
+            [this.config.tenantId]
+        ).catch(() => []);
+
+        const productEntries = products.map((row) => ({
+            ...row,
+            sourceType: 'product',
+            sourceId: Number(row.id),
+            mapProductId: this.toScaleMapProductId('product', row.id),
+        })).filter((row) => Number.isFinite(row.mapProductId));
+
+        const promotionEntries = promotions.map((row) => ({
+            ...row,
+            sourceType: 'promotion',
+            sourceId: Number(row.id),
+            mapProductId: this.toScaleMapProductId('promotion', row.id),
+        })).filter((row) => Number.isFinite(row.mapProductId));
+
+        return [...productEntries, ...promotionEntries];
+    }
+
     async cleanupOrphanPluCodes(expectedProducts = []) {
         const nowMs = Date.now();
         const cooldownMs = 12 * 60 * 60 * 1000; // 12h
@@ -916,29 +995,58 @@ class ScaleBridge {
             this.mysqlPool,
             `SELECT m.product_id,
                     m.plu_code,
-                    COALESCE(
-                        NULLIF(
-                            TRIM(CAST(p.plu AS CHAR)),
-                            ''
-                        ),
-                        CAST(p.id AS CHAR)
-                    ) AS expected_plu_code
+                    CASE
+                        WHEN m.product_id < 0 THEN TRIM(CAST(pr.promo_plu AS CHAR))
+                        ELSE COALESCE(
+                            NULLIF(
+                                TRIM(CAST(p.plu AS CHAR)),
+                                ''
+                            ),
+                            CAST(p.id AS CHAR)
+                        )
+                    END AS expected_plu_code
              FROM scale_bridge_product_map m
              LEFT JOIN products p
-                ON p.id = m.product_id
+                ON m.product_id > 0
+               AND p.id = m.product_id
                AND p.tenant_id = m.tenant_id
+             LEFT JOIN promotions pr
+                ON m.product_id < 0
+               AND pr.id = ABS(m.product_id)
+               AND pr.tenant_id = m.tenant_id
              WHERE m.device_id = ?
                AND m.tenant_id = ?
                 AND (
-                    p.id IS NULL
-                    OR COALESCE(p.current_price, 0) <= 0
-                    OR COALESCE(
-                        NULLIF(
-                            TRIM(CAST(p.plu AS CHAR)),
-                            ''
-                        ),
-                        CAST(p.id AS CHAR)
-                    ) <> CAST(m.plu_code AS CHAR)
+                    (
+                        m.product_id > 0
+                        AND (
+                            p.id IS NULL
+                            OR COALESCE(p.current_price, 0) <= 0
+                            OR COALESCE(
+                                NULLIF(
+                                    TRIM(CAST(p.plu AS CHAR)),
+                                    ''
+                                ),
+                                CAST(p.id AS CHAR)
+                            ) <> CAST(m.plu_code AS CHAR)
+                        )
+                    )
+                    OR (
+                        m.product_id < 0
+                        AND (
+                            pr.id IS NULL
+                            OR COALESCE(pr.active, 1) <> 1
+                            OR TRIM(COALESCE(CAST(pr.promo_plu AS CHAR), '')) = ''
+                            OR COALESCE(
+                                NULLIF(pr.promo_unit_price, 0),
+                                CASE
+                                    WHEN COALESCE(pr.min_qty_kg, 0) > 0 THEN pr.promo_total_price / pr.min_qty_kg
+                                    ELSE pr.promo_total_price
+                                END
+                            ) <= 0
+                            OR TRIM(CAST(pr.promo_plu AS CHAR)) <> CAST(m.plu_code AS CHAR)
+                        )
+                    )
                 )`,
             [this.config.deviceId, this.config.tenantId]
         );
@@ -971,22 +1079,7 @@ class ScaleBridge {
             }
         }
 
-        const products = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT id,
-                    plu,
-                    name,
-                    category,
-                    unit,
-                    current_price,
-                    updated_at,
-                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
-             FROM products
-             WHERE tenant_id = ?
-               AND COALESCE(current_price, 0) > 0
-             ORDER BY updated_at ASC, id ASC`,
-            [this.config.tenantId]
-        );
+        const products = await this.loadSyncCatalogEntries();
 
         const orphanCleanup = await this.cleanupOrphanPluCodes(products);
         deleted += Number(orphanCleanup.deleted || 0);
@@ -995,6 +1088,8 @@ class ScaleBridge {
         for (const product of products) {
             const pluCode = String(product.effective_plu_code || product.plu || product.id);
             const fingerprint = hashObject({
+                sourceType: product.sourceType || 'product',
+                sourceId: product.sourceId || product.id,
                 pluCode,
                 name: product.name,
                 category: product.category,
@@ -1014,7 +1109,7 @@ class ScaleBridge {
                  FROM scale_bridge_product_map
                  WHERE device_id = ? AND tenant_id = ? AND product_id = ?
                  LIMIT 1`,
-                [this.config.deviceId, this.config.tenantId, product.id]
+                [this.config.deviceId, this.config.tenantId, product.mapProductId]
             );
             if (!forceProductRewrite && mapRows[0] && mapRows[0].fingerprint === fingerprint) {
                 skipped += 1;
@@ -1078,13 +1173,14 @@ class ScaleBridge {
                     plu_code = VALUES(plu_code),
                     fingerprint = VALUES(fingerprint),
                     synced_at = VALUES(synced_at)`,
-                    [this.config.deviceId, this.config.tenantId, product.id, pluCode, fingerprint]
+                    [this.config.deviceId, this.config.tenantId, product.mapProductId, pluCode, fingerprint]
                 );
                 written += 1;
             } catch (error) {
                 failed += 1;
                 this.logger.warn('No se pudo sincronizar un producto hacia balanza', {
                     productId: product.id,
+                    sourceType: product.sourceType || 'product',
                     plu: pluCode,
                     error: error.message,
                 });
@@ -1443,11 +1539,24 @@ class ScaleBridge {
                 FROM products
                 WHERE tenant_id = ?
                   AND COALESCE(current_price, 0) > 0
+                UNION ALL
+                SELECT TRIM(CAST(promo_plu AS CHAR)) AS effective_plu_code
+                FROM promotions
+                WHERE tenant_id = ?
+                  AND COALESCE(active, 1) = 1
+                  AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+                  AND COALESCE(
+                        NULLIF(promo_unit_price, 0),
+                        CASE
+                            WHEN COALESCE(min_qty_kg, 0) > 0 THEN promo_total_price / min_qty_kg
+                            ELSE promo_total_price
+                        END
+                  ) > 0
              ) x
              GROUP BY effective_plu_code
              HAVING COUNT(*) > 1
              ORDER BY effective_plu_code`,
-            [this.config.tenantId]
+            [this.config.tenantId, this.config.tenantId]
         );
 
         if (duplicatePluRows.length > 0) {
