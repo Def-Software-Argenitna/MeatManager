@@ -199,7 +199,7 @@ const Manual = () => {
                     subtitle: 'Operación multi-sucursal',
                     steps: [
                         'Verificá la sucursal activa del usuario antes de operar.',
-                        'Usá transferencias para mover stock entre sucursales.',
+                        'Emití remitos/facturas internas para transferir mercadería entre sucursales.',
                         'Asegurate de que ventas, caja y promos queden en la sucursal correcta.',
                         'Evitá cargar datos sin sucursal para no mezclar reportes.'
                     ]
@@ -420,8 +420,10 @@ const Manual = () => {
                 {
                     subtitle: 'Movimiento entre sucursales',
                     steps: [
-                        'Creá transferencia origen/destino con detalle de ítems.',
-                        'Confirmá recepción para impactar en ambos stocks.',
+                        'Elegí tipo de comprobante interno (Remito o Factura interna) antes de enviar.',
+                        'Creá transferencia origen/destino con detalle de ítems y documento interno.',
+                        'Cada tipo de comprobante maneja numeración independiente.',
+                        'Al confirmar recepción, el sistema descuenta stock en origen y acredita en destino.',
                         'Usá remitos y estados para trazabilidad.',
                         'No cierres transferencias sin validar cantidades.'
                     ]
