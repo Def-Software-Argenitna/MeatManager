@@ -812,17 +812,6 @@ class ScaleBridge {
                 || String(activeRaw).trim().toLowerCase() === 'true';
             if (!isActive) return null;
 
-            const rowBranchId = Number.parseInt(row.branch_id, 10);
-            const hasBranchFilter = Number.isFinite(Number.parseInt(this.config.branchId, 10));
-            if (
-                hasBranchFilter
-                && Number.isFinite(rowBranchId)
-                && rowBranchId > 0
-                && rowBranchId !== Number.parseInt(this.config.branchId, 10)
-            ) {
-                return null;
-            }
-
             const linkedProduct = productById.get(Number(row.product_id)) || null;
             const promoName = String(row.promo_name || '').trim();
             const productName = String(row.product_name || '').trim();
@@ -863,7 +852,9 @@ class ScaleBridge {
 
         this.logger.info('Catalogo a sincronizar hacia balanza', {
             products: productEntries.length,
+            promotionsRaw: promotionRows.length,
             promotions: promotionEntries.length,
+            promotionBranchSample: promotionRows.slice(0, 10).map((row) => String(row?.branch_id ?? 'null')),
             promotionPluSample: promotionEntries.slice(0, 10).map((row) => String(row.effective_plu_code || row.plu || '')),
         });
 

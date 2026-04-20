@@ -1,6 +1,6 @@
 {
   "name": "meatmanager-bridge",
-  "version": "0.3.15",
+  "version": "0.3.16",
   "private": true,
   "author": "Def-Software",
   "description": "Bridge local directo USB para balanzas Systel CUORA MAX + MySQL cloud",
