@@ -2756,6 +2756,12 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         return explicitBranchId;
     }
 
+    // Si el usuario está atado a una sucursal, priorizar ese alcance.
+    const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+    if (Number.isFinite(userBranchId) && userBranchId > 0) {
+        return userBranchId;
+    }
+
     const branchCodeFromRecord =
         record?.branch_code
         ?? record?.branchCode
@@ -2765,10 +2771,24 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         normalizeBranchCodeValue(branchCodeFromRecord)
         || await getTenantBranchCode(pool, tenantId);
 
-    return resolveClientBranchId(accessContext.client.id, {
+    const resolvedByCode = await resolveClientBranchId(accessContext.client.id, {
         branchCode: currentBranchCode,
         receiptCode: record?.receipt_code,
     });
+    if (Number.isFinite(resolvedByCode) && resolvedByCode > 0) {
+        return resolvedByCode;
+    }
+
+    // Fallback seguro: tenant con una sola sucursal activa.
+    const activeBranches = await listClientBranches(accessContext.client.id);
+    if (activeBranches.length === 1) {
+        const singleBranchId = Number(activeBranches[0]?.id);
+        if (Number.isFinite(singleBranchId) && singleBranchId > 0) {
+            return singleBranchId;
+        }
+    }
+
+    return null;
 }
 
 function tenantWhereClause(table, tenantId, prefix = '') {
@@ -5104,6 +5124,21 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 
         if (table === 'products' && validCols.includes('active') && !includeInactive) {
             extraWhere.push('COALESCE(active, 1) = 1');
+        }
+
+        if (BRANCH_SCOPED_TABLES.has(table) && validCols.includes('branch_id')) {
+            const accessContext = await getClientAccessContext({
+                uid: req.firebaseUser.uid,
+                email: req.firebaseUser.email,
+                _internalAdmin: req.firebaseUser?._internalAdmin || null,
+                _supportClientId: req.firebaseUser?._supportClientId || null,
+            });
+            const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+            if (Number.isFinite(userBranchId) && userBranchId > 0) {
+                // Empleado/sesión atada a sucursal: devuelve esa sucursal + filas globales.
+                extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+                extraParams.push(userBranchId);
+            }
         }
 
         const whereSql = extraWhere.length > 0
