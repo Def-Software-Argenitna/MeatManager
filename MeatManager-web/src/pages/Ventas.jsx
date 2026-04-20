@@ -641,14 +641,6 @@ const Ventas = () => {
         };
     }, [findPromotionByPromoPlu, getCurrentStockQty, productsCatalog]);
 
-    const tryAddToCart = React.useCallback((product, weight, priceRecord) => {
-        if (priceRecord?.noStockWarning) {
-            setPendingNoStockItem({ product, weight });
-            return;
-        }
-        addToCart(product, weight);
-    }, [addToCart]);
-
     const findStockItemByName = React.useCallback((name) => {
         const normalized = String(name || '').trim().toUpperCase();
         return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
@@ -1402,6 +1394,14 @@ const Ventas = () => {
             setShowCartMobile(true);
         }
     };
+
+    const tryAddToCart = React.useCallback((product, weight, priceRecord) => {
+        if (priceRecord?.noStockWarning) {
+            setPendingNoStockItem({ product, weight });
+            return;
+        }
+        addToCart(product, weight);
+    }, [addToCart]);
 
     const removeFromCart = (id) => {
         setCart(prev => prev.filter(item => item.id !== id));
