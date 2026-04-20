@@ -257,6 +257,7 @@ const Stock = () => {
         const rows = filteredStock.map(item => ({
             'Código': item.id,
             'Nombre': item.name,
+            'PLU': item.plu || '',
             'Categoría': item.type,
             'Cantidad': item.quantity,
             'Unidad': item.unit,
@@ -591,6 +592,9 @@ const Stock = () => {
                                                 <div className="item-info">
                                                     <div className="item-name">{item.name}</div>
                                                     <div className="item-meta">
+                                                        <span className="item-plu">
+                                                            PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
+                                                        </span>
                                                         <span className="item-price">
                                                             Precio: {editingPriceId === item.id ? (
                                                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>

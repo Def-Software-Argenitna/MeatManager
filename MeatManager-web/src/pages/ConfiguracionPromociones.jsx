@@ -11,7 +11,9 @@ import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_PRICE
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
-    const parsed = Number(value);
+    const normalizedRaw = String(value ?? '').trim();
+    const normalized = normalizedRaw.replace(',', '.');
+    const parsed = Number(normalized);
     if (!Number.isFinite(parsed)) return 0;
     const factor = 10 ** decimals;
     return Math.round(parsed * factor) / factor;
@@ -508,15 +510,6 @@ const ConfiguracionPromociones = () => {
         window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
-    useEffect(() => {
-        const minQty = toNumber(form.min_qty_kg, 3);
-        const unitPrice = toNumber(form.promo_unit_price, 2);
-        if (!(minQty > 0) || !(unitPrice > 0)) return;
-        const computedTotal = toNumber(minQty * unitPrice, 2);
-        const currentTotal = toNumber(form.promo_total_price, 2);
-        if (Math.abs(computedTotal - currentTotal) <= 0.009) return;
-        setForm((prev) => ({ ...prev, promo_total_price: String(computedTotal) }));
-    }, [form.min_qty_kg, form.promo_total_price, form.promo_unit_price]);
     const addExtraTier = () => {
         setExtraPromoTiers((prev) => ([
             ...prev,

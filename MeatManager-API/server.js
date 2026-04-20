@@ -1819,6 +1819,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'promotions', 'sold_kg_limit', '`sold_kg_limit` DECIMAL(12,3) NULL AFTER `end_condition`');
             await ensureColumn(conn, 'promotions', 'end_date', '`end_date` DATETIME NULL AFTER `sold_kg_limit`');
             await ensureColumn(conn, 'promotions', 'used_kg', '`used_kg` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `end_date`');
+            await ensureColumn(conn, 'branch_transfers', 'document_type', '`document_type` VARCHAR(30) NOT NULL DEFAULT \'remito\' AFTER `status`');
+            await ensureColumn(conn, 'branch_transfers', 'document_code', '`document_code` VARCHAR(40) NULL AFTER `remito_code`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
@@ -1844,6 +1846,18 @@ async function ensureOperationalTenantIsolation() {
                  SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
                  WHERE branch_id IS NULL
                    AND receipt_code REGEXP '^[0-9]{4}-'`
+            );
+            await conn.query(
+                `UPDATE branch_transfers
+                 SET document_type = 'remito'
+                 WHERE document_type IS NULL OR TRIM(document_type) = ''`
+            );
+            await conn.query(
+                `UPDATE branch_transfers
+                 SET document_code = CONCAT('R-', remito_code)
+                 WHERE (document_code IS NULL OR TRIM(document_code) = '')
+                   AND remito_code IS NOT NULL
+                   AND TRIM(remito_code) <> ''`
             );
 
             for (const tableName of TENANT_ID_TABLES) {
@@ -2756,6 +2770,12 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         return explicitBranchId;
     }
 
+    // Si el usuario está atado a una sucursal, priorizar ese alcance.
+    const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+    if (Number.isFinite(userBranchId) && userBranchId > 0) {
+        return userBranchId;
+    }
+
     const branchCodeFromRecord =
         record?.branch_code
         ?? record?.branchCode
@@ -2765,10 +2785,24 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         normalizeBranchCodeValue(branchCodeFromRecord)
         || await getTenantBranchCode(pool, tenantId);
 
-    return resolveClientBranchId(accessContext.client.id, {
+    const resolvedByCode = await resolveClientBranchId(accessContext.client.id, {
         branchCode: currentBranchCode,
         receiptCode: record?.receipt_code,
     });
+    if (Number.isFinite(resolvedByCode) && resolvedByCode > 0) {
+        return resolvedByCode;
+    }
+
+    // Fallback seguro: tenant con una sola sucursal activa.
+    const activeBranches = await listClientBranches(accessContext.client.id);
+    if (activeBranches.length === 1) {
+        const singleBranchId = Number(activeBranches[0]?.id);
+        if (Number.isFinite(singleBranchId) && singleBranchId > 0) {
+            return singleBranchId;
+        }
+    }
+
+    return null;
 }
 
 function tenantWhereClause(table, tenantId, prefix = '') {
@@ -3408,8 +3442,10 @@ function getSchemaTables() {
             from_branch_id  INT NOT NULL,
             to_branch_id    INT NOT NULL,
             status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            document_type   VARCHAR(30) NOT NULL DEFAULT 'remito',
             remito_number   INT,
             remito_code     VARCHAR(32),
+            document_code   VARCHAR(40),
             note            TEXT,
             created_by_user_id BIGINT,
             created_by_username VARCHAR(150),
@@ -5104,6 +5140,21 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
 
         if (table === 'products' && validCols.includes('active') && !includeInactive) {
             extraWhere.push('COALESCE(active, 1) = 1');
+        }
+
+        if (BRANCH_SCOPED_TABLES.has(table) && validCols.includes('branch_id')) {
+            const accessContext = await getClientAccessContext({
+                uid: req.firebaseUser.uid,
+                email: req.firebaseUser.email,
+                _internalAdmin: req.firebaseUser?._internalAdmin || null,
+                _supportClientId: req.firebaseUser?._supportClientId || null,
+            });
+            const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+            if (Number.isFinite(userBranchId) && userBranchId > 0) {
+                // Empleado/sesión atada a sucursal: devuelve esa sucursal + filas globales.
+                extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+                extraParams.push(userBranchId);
+            }
         }
 
         const whereSql = extraWhere.length > 0
@@ -7111,6 +7162,44 @@ async function getNextSequenceData({ tenantConn, tenantId, counterKey, branchKey
     return { nextValue, receiptCode, branchCode };
 }
 
+const BRANCH_TRANSFER_DOCUMENT_TYPES = Object.freeze({
+    REMITO: 'remito',
+    INTERNAL_INVOICE: 'factura_interna',
+});
+
+const BRANCH_TRANSFER_DOCUMENT_META = Object.freeze({
+    [BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO]: {
+        label: 'Remito',
+        counterKey: 'remito',
+        codePrefix: 'R',
+    },
+    [BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE]: {
+        label: 'Factura interna',
+        counterKey: 'factura_interna',
+        codePrefix: 'FI',
+    },
+});
+
+function normalizeBranchTransferDocumentType(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE) {
+        return BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE;
+    }
+    return BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO;
+}
+
+function getBranchTransferDocumentMeta(documentType) {
+    const normalizedType = normalizeBranchTransferDocumentType(documentType);
+    return BRANCH_TRANSFER_DOCUMENT_META[normalizedType] || BRANCH_TRANSFER_DOCUMENT_META[BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO];
+}
+
+function buildBranchTransferDocumentCode(documentType, baseCode) {
+    const normalizedCode = String(baseCode || '').trim();
+    if (!normalizedCode) return null;
+    const meta = getBranchTransferDocumentMeta(documentType);
+    return `${meta.codePrefix}-${normalizedCode}`;
+}
+
 // ── RUTA: POST /api/sequences/next ─────────────────────────────────────────
 // Incrementa un contador en settings y devuelve correlativo + código.
 app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
@@ -7227,12 +7316,22 @@ app.get('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const branches = await listClientBranches(accessContext.client.id);
             const branchesById = new Map(branches.map((branch) => [Number(branch.id), branch]));
 
-            const payload = rows.map((row) => ({
-                ...row,
-                items: itemsByTransfer.get(row.id) || [],
-                from_branch: branchesById.get(Number(row.from_branch_id)) || null,
-                to_branch: branchesById.get(Number(row.to_branch_id)) || null,
-            }));
+            const payload = rows.map((row) => {
+                const documentType = normalizeBranchTransferDocumentType(row.document_type);
+                const documentMeta = getBranchTransferDocumentMeta(documentType);
+                const computedDocumentCode = buildBranchTransferDocumentCode(documentType, row.remito_code);
+                const documentCode = String(row.document_code || '').trim() || computedDocumentCode;
+                return {
+                    ...row,
+                    document_type: documentType,
+                    document_label: documentMeta.label,
+                    document_number: Number(row.remito_number || 0) || null,
+                    document_code: documentCode || null,
+                    items: itemsByTransfer.get(row.id) || [],
+                    from_branch: branchesById.get(Number(row.from_branch_id)) || null,
+                    to_branch: branchesById.get(Number(row.to_branch_id)) || null,
+                };
+            });
 
             return res.json({ ok: true, count: payload.length, transfers: payload });
         } finally {
@@ -7264,6 +7363,8 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const userBranchId = Number(accessContext.user?.branchRecordId ?? accessContext.user?.branchId ?? 0);
             const fromBranchId = Number(req.body?.from_branch_id || req.body?.fromBranchId || userBranchId);
             const toBranchId = Number(req.body?.to_branch_id || req.body?.toBranchId || 0);
+            const documentType = normalizeBranchTransferDocumentType(req.body?.document_type || req.body?.documentType);
+            const documentMeta = getBranchTransferDocumentMeta(documentType);
 
             if (!Number.isFinite(fromBranchId) || fromBranchId <= 0) {
                 throw new Error('Sucursal remitente inválida');
@@ -7291,25 +7392,28 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const { nextValue, receiptCode, branchCode } = await getNextSequenceData({
                 tenantConn: conn,
                 tenantId,
-                counterKey: 'remito',
+                counterKey: documentMeta.counterKey,
                 branchKey: 'branch_code',
                 branchCodeOverride,
             });
+            const documentCode = buildBranchTransferDocumentCode(documentType, receiptCode);
 
             const note = String(req.body?.note || '').trim() || null;
             const createdBy = getAccessDisplayName(accessContext.user);
 
             const [result] = await conn.query(
                 `INSERT INTO branch_transfers
-                 (tenant_id, from_branch_id, to_branch_id, status, remito_number, remito_code, note,
+                 (tenant_id, from_branch_id, to_branch_id, status, document_type, remito_number, remito_code, document_code, note,
                   created_by_user_id, created_by_username)
-                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     fromBranchId,
                     toBranchId,
+                    documentType,
                     nextValue,
                     receiptCode,
+                    documentCode,
                     note,
                     accessContext.user?.id || null,
                     createdBy,
@@ -7351,6 +7455,10 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             return res.json({
                 ok: true,
                 transferId,
+                document_type: documentType,
+                document_label: documentMeta.label,
+                document_number: nextValue,
+                document_code: documentCode,
                 remito_number: nextValue,
                 remito_code: receiptCode,
                 branch_code: branchCode,
@@ -7363,7 +7471,7 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
         }
     } catch (err) {
         console.error('[BRANCH TRANSFER CREATE ERROR]', err.message);
-        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el remito' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el comprobante interno' });
     }
 });
 
