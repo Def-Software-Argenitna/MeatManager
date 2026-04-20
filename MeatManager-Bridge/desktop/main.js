@@ -533,13 +533,14 @@ function quitApp() {
 }
 
 function createMainWindow() {
+    const shouldStartHidden = process.argv.some((arg) => String(arg || '').trim().toLowerCase() === '--hidden');
     const windowIcon = getIconPath('app.ico');
     mainWindow = new BrowserWindow({
         width: 940,
         height: 680,
         minWidth: 820,
         minHeight: 560,
-        show: !process.argv.includes('--hidden'),
+        show: false,
         title: APP_NAME,
         icon: windowIcon,
         autoHideMenuBar: true,
@@ -551,6 +552,11 @@ function createMainWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
+    mainWindow.once('ready-to-show', () => {
+        if (!shouldStartHidden) {
+            showMainWindow();
+        }
+    });
     mainWindow.on('close', (event) => {
         if (!isQuitting) {
             event.preventDefault();

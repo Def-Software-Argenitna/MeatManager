@@ -785,43 +785,86 @@ class ScaleBridge {
             [this.config.tenantId]
         );
 
-        const promotions = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT promotions.id,
-                    promotions.promo_plu AS plu,
-                    COALESCE(
-                        NULLIF(TRIM(CAST(promotions.promo_name AS CHAR)), ''),
-                        NULLIF(TRIM(CAST(promotions.product_name AS CHAR)), ''),
-                        CONCAT('PROMO ', CAST(promotions.id AS CHAR))
-                    ) AS name,
-                    COALESCE(NULLIF(TRIM(CAST(p.category AS CHAR)), ''), 'PROMOCIONES') AS category,
-                    COALESCE(NULLIF(TRIM(CAST(p.unit AS CHAR)), ''), 'kg') AS unit,
-                    COALESCE(
-                        NULLIF(promotions.promo_unit_price, 0),
-                        CASE
-                            WHEN COALESCE(promotions.min_qty_kg, 0) > 0 THEN promotions.promo_total_price / promotions.min_qty_kg
-                            ELSE promotions.promo_total_price
-                        END
-                    ) AS current_price,
-                    promotions.updated_at,
-                    TRIM(CAST(promotions.promo_plu AS CHAR)) AS effective_plu_code
-             FROM promotions
-             LEFT JOIN products p
-                ON p.id = promotions.product_id
-               AND p.tenant_id = promotions.tenant_id
-             WHERE promotions.tenant_id = ?
-               AND COALESCE(promotions.active, 1) = 1
-               AND TRIM(COALESCE(CAST(promotions.promo_plu AS CHAR), '')) <> ''
-               AND COALESCE(
-                    NULLIF(promotions.promo_unit_price, 0),
-                    CASE
-                        WHEN COALESCE(promotions.min_qty_kg, 0) > 0 THEN promotions.promo_total_price / promotions.min_qty_kg
-                        ELSE promotions.promo_total_price
-                    END
-               ) > 0
-             ORDER BY promotions.updated_at ASC, promotions.id ASC`,
-            [this.config.tenantId]
-        ).catch(() => []);
+        let promotionRows = [];
+        try {
+            // Esquema actual (incluye promo_unit_price/promo_price_mode).
+            promotionRows = await mysqlQuery(
+                this.mysqlPool,
+                `SELECT id,
+                        product_id,
+                        promo_plu,
+                        promo_name,
+                        product_name,
+                        promo_total_price,
+                        promo_unit_price,
+                        promo_price_mode,
+                        min_qty_kg,
+                        active,
+                        updated_at
+                 FROM promotions
+                 WHERE tenant_id = ?
+                   AND COALESCE(active, 1) = 1
+                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+                 ORDER BY updated_at ASC, id ASC`,
+                [this.config.tenantId]
+            );
+        } catch (error) {
+            this.logger.warn('Consulta moderna de promociones no disponible, usando fallback legacy', {
+                error: error.message,
+            });
+            promotionRows = await mysqlQuery(
+                this.mysqlPool,
+                `SELECT id,
+                        product_id,
+                        promo_plu,
+                        promo_name,
+                        product_name,
+                        promo_total_price,
+                        min_qty_kg,
+                        active,
+                        updated_at
+                 FROM promotions
+                 WHERE tenant_id = ?
+                   AND COALESCE(active, 1) = 1
+                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+                 ORDER BY updated_at ASC, id ASC`,
+                [this.config.tenantId]
+            ).catch((fallbackError) => {
+                this.logger.warn('No se pudieron leer promociones para sincronizacion', {
+                    error: fallbackError.message,
+                });
+                return [];
+            });
+        }
+
+        const productById = new Map(
+            products.map((row) => [Number(row.id), row])
+        );
+
+        const promotions = promotionRows.map((row) => {
+            const linkedProduct = productById.get(Number(row.product_id)) || null;
+            const promoName = String(row.promo_name || '').trim();
+            const productName = String(row.product_name || '').trim();
+            const priceMode = String(row.promo_price_mode || 'total_kg').trim().toLowerCase();
+            const minQty = Number(row.min_qty_kg) || 0;
+            const totalPrice = Number(row.promo_total_price) || 0;
+            const unitPriceRaw = Number(row.promo_unit_price);
+            const effectiveUnitPrice = Number.isFinite(unitPriceRaw) && unitPriceRaw > 0
+                ? unitPriceRaw
+                : (priceMode === 'per_kg'
+                    ? totalPrice
+                    : (minQty > 0 ? (totalPrice / minQty) : totalPrice));
+            return {
+                id: row.id,
+                plu: row.promo_plu,
+                name: promoName || productName || `PROMO ${row.id}`,
+                category: linkedProduct?.category || 'PROMOCIONES',
+                unit: linkedProduct?.unit || 'kg',
+                current_price: effectiveUnitPrice,
+                updated_at: row.updated_at,
+                effective_plu_code: String(row.promo_plu || '').trim(),
+            };
+        }).filter((row) => (Number(row.current_price) || 0) > 0);
 
         const productEntries = products.map((row) => ({
             ...row,
@@ -1037,13 +1080,6 @@ class ScaleBridge {
                             pr.id IS NULL
                             OR COALESCE(pr.active, 1) <> 1
                             OR TRIM(COALESCE(CAST(pr.promo_plu AS CHAR), '')) = ''
-                            OR COALESCE(
-                                NULLIF(pr.promo_unit_price, 0),
-                                CASE
-                                    WHEN COALESCE(pr.min_qty_kg, 0) > 0 THEN pr.promo_total_price / pr.min_qty_kg
-                                    ELSE pr.promo_total_price
-                                END
-                            ) <= 0
                             OR TRIM(CAST(pr.promo_plu AS CHAR)) <> CAST(m.plu_code AS CHAR)
                         )
                     )
@@ -1545,13 +1581,6 @@ class ScaleBridge {
                 WHERE tenant_id = ?
                   AND COALESCE(active, 1) = 1
                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
-                  AND COALESCE(
-                        NULLIF(promo_unit_price, 0),
-                        CASE
-                            WHEN COALESCE(min_qty_kg, 0) > 0 THEN promo_total_price / min_qty_kg
-                            ELSE promo_total_price
-                        END
-                  ) > 0
              ) x
              GROUP BY effective_plu_code
              HAVING COUNT(*) > 1

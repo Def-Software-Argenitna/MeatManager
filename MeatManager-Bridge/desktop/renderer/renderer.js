@@ -29,6 +29,7 @@ const obAddScale = document.getElementById('ob-add-scale');
 const obDevices = document.getElementById('ob-devices');
 const obSave = document.getElementById('ob-save');
 const cfgDetectPorts = document.getElementById('cfg-detect-ports');
+const cfgAddScale = document.getElementById('cfg-add-scale');
 const cfgSave = document.getElementById('cfg-save');
 const cfgFeedbackEl = document.getElementById('cfg-feedback');
 const cfgDevicesEl = document.getElementById('cfg-devices');
@@ -450,6 +451,7 @@ function renderConfigDevices() {
         row.innerHTML = `
             <div class="device-head">
               <strong>${device.name || `Balanza ${index + 1}`}</strong>
+              <button data-cfg-remove="${index}" class="danger">Quitar</button>
             </div>
             <div class="device-grid">
               <div class="field"><label>Nombre</label><input data-cfg-field="name" data-cfg-index="${index}" value="${device.name || ''}" /></div>
@@ -459,6 +461,14 @@ function renderConfigDevices() {
             </div>
         `;
         cfgDevicesEl.appendChild(row);
+    });
+
+    cfgDevicesEl.querySelectorAll('button[data-cfg-remove]').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            const idx = Number(btn.getAttribute('data-cfg-remove'));
+            configDevices = configDevices.filter((_, i) => i !== idx);
+            renderConfigDevices();
+        });
     });
 
     cfgDevicesEl.querySelectorAll('[data-cfg-field]').forEach((input) => {
@@ -502,6 +512,19 @@ async function loadRuntimeConfig() {
 }
 
 cfgDetectPorts?.addEventListener('click', detectConfigPorts);
+cfgAddScale?.addEventListener('click', () => {
+    const used = configDevices.map((d) => String(d.port || '').trim()).filter(Boolean);
+    configDevices.push({
+        id: `scale-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        name: `Balanza ${configDevices.length + 1}`,
+        model: 'Systel Cuora Max',
+        port: pickNextAvailablePort(configPorts, used) || '',
+        address: '20',
+        baudRate: '115200',
+        enabled: true,
+    });
+    renderConfigDevices();
+});
 
 cfgSave?.addEventListener('click', async () => {
     if (!configDevices.length) {
