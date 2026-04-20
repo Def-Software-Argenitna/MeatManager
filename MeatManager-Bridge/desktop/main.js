@@ -690,7 +690,7 @@ async function onboardingLogin({ apiBaseUrl, identifier, password }) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: {
-                email: String(identifier).trim(),
+                identifier: String(identifier).trim(),
                 password: String(password),
             },
             timeout: 10000,
