@@ -154,6 +154,19 @@ const Dashboard = () => {
         String(item.unit || '').toLowerCase() === 'kg' ? acc + toNumber(item.quantity) : acc
     ), 0);
     const lowStockCount = stockItems.filter((item) => toNumber(item.quantity) < 10).length;
+
+    // Productos con stock negativo (agrupado por nombre, como en Stock.jsx)
+    const negativeStockCount = React.useMemo(() => {
+        const grouped = {};
+        stockItems.forEach((item) => {
+            const key = item.product_id != null
+                ? `product:${item.product_id}`
+                : String(item.name || '').trim().toLowerCase();
+            if (!key) return;
+            grouped[key] = (grouped[key] || 0) + toNumber(item.quantity);
+        });
+        return Object.values(grouped).filter((qty) => qty < -0.0001).length;
+    }, [stockItems]);
     const totalDeudaCalle = clients.reduce((acc, client) => {
         const balance = toNumber(client.balance);
         return balance < 0 ? acc + Math.abs(balance) : acc;
@@ -230,6 +243,18 @@ const Dashboard = () => {
                     delay={0.26}
                     from="left"
                 />
+                {negativeStockCount > 0 && (
+                    <StatCard
+                        title="Stock Negativo"
+                        value={`${negativeStockCount} ${negativeStockCount === 1 ? 'producto' : 'productos'}`}
+                        icon={AlertTriangle}
+                        isNegative
+                        trend="Vendido sin stock — pend. compra"
+                        onClick={() => navigate('/stock')}
+                        delay={0.3}
+                        from="right"
+                    />
+                )}
                 {hasModule('informes-pro') && (
                     <StatCard
                         title="Rendimiento Avg"

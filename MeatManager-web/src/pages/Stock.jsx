@@ -635,7 +635,24 @@ const Stock = () => {
                                                     </div>
                                                 </div>
                                                 <div className="item-quantity">
-                                                    <span className="quantity-value">{Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}</span>
+                                                    {Number(item.quantity || 0) < 0 && (
+                                                        <span style={{
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: '700',
+                                                            color: '#ef4444',
+                                                            background: 'rgba(239,68,68,0.12)',
+                                                            border: '1px solid rgba(239,68,68,0.35)',
+                                                            borderRadius: '4px',
+                                                            padding: '1px 5px',
+                                                            marginBottom: '2px',
+                                                            display: 'block',
+                                                        }}>
+                                                            ⚠️ Stock negativo
+                                                        </span>
+                                                    )}
+                                                    <span className="quantity-value" style={Number(item.quantity || 0) < 0 ? { color: '#ef4444' } : {}}>
+                                                        {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}
+                                                    </span>
                                                     <span className="quantity-unit">{item.unit === 'kg' ? 'kg' : 'un'}</span>
                                                 </div>
                                             </div>
