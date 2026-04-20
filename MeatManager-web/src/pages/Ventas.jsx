@@ -646,7 +646,7 @@ const Ventas = () => {
         return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
     }, [stockItems]);
 
-    const findProductByPriceRecord = React.useCallback((priceRecord) => {
+    const findProductByPriceRecord = (priceRecord) => {
         if (!priceRecord) return null;
 
         const toCatalogProduct = (p) => p ? ({
@@ -677,7 +677,7 @@ const Ventas = () => {
             normalizeProductKey(p?.name) === normalizeProductKey(productId)
         )) || null;
         return toCatalogProduct(fromCatalogByName);
-    }, [products, productsCatalog]);
+    };
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
@@ -771,7 +771,7 @@ const Ventas = () => {
         }
 
         return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
-    }, [findProductByPriceRecord, productsCatalog]);
+    }, [productsCatalog]);
 
     // Filter products
     const filteredProducts = React.useMemo(() => {
@@ -1416,13 +1416,13 @@ const Ventas = () => {
         }
     };
 
-    const tryAddToCart = React.useCallback((product, weight, priceRecord) => {
+    const tryAddToCart = (product, weight, priceRecord) => {
         if (priceRecord?.noStockWarning) {
             setPendingNoStockItem({ product, weight });
             return;
         }
         addToCart(product, weight);
-    }, [addToCart]);
+    };
 
     const removeFromCart = (id) => {
         setCart(prev => prev.filter(item => item.id !== id));
