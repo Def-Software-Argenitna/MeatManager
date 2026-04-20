@@ -3,11 +3,24 @@ import {
     HelpCircle,
     Printer,
     ChevronRight,
+    LayoutDashboard,
+    ShoppingCart,
+    PackageSearch,
+    Users,
+    ShoppingBag,
     Scale,
     Banknote,
     Smartphone,
+    UtensilsCrossed,
+    Grid,
     Beef,
+    BarChart3,
     Truck,
+    CreditCard,
+    FolderOpen,
+    Package,
+    Tag,
+    MessageCircle,
     ShieldCheck,
     Calculator,
     DownloadCloud,
@@ -20,159 +33,432 @@ const Manual = () => {
     const sections = [
         {
             id: 'inicio',
-            title: 'Inicio Rápido: Cargar el Negocio',
+            title: 'Inicio Rápido del Sistema',
             icon: <DownloadCloud size={24} />,
             color: '#3498db',
             content: [
                 {
-                    subtitle: 'Sincronizar Balanza (Systel Cuora)',
+                    subtitle: 'Checklist de puesta en marcha',
                     steps: [
-                        'Conectá la balanza a la PC mediante el cable USB.',
-                        'Entrá en el menú "Stock e Inventario".',
-                        'Tocá el botón azul "Importar de Balanza".',
-                        'Seleccioná el puerto (ej: COM3) y aceptá.',
-                        '¡Listo! Se cargan Nombres, PLUs y Precios automáticamente.'
+                        'Ingresá con un usuario administrador y verificá la sucursal activa.',
+                        'Revisá que estén cargados productos, precios y medios de pago.',
+                        'Si usás balanza, importá artículos antes de empezar a vender.',
+                        'Configurá seguridad (usuarios, permisos y código maestro de borrado).',
+                        'Hacé una venta de prueba y validá ticket, stock y caja.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'dashboard',
+            title: 'Módulo Dashboard',
+            icon: <LayoutDashboard size={24} />,
+            color: '#2f80ed',
+            content: [
+                {
+                    subtitle: 'Qué controlás en un vistazo',
+                    steps: [
+                        'Vas a ver métricas de ventas, stock y movimientos del día.',
+                        'Usalo como tablero de control para detectar desvíos rápido.',
+                        'Si una métrica no carga, revisá conexión o permisos del usuario.',
+                        'Tomá decisiones operativas desde este resumen antes de abrir cada módulo.'
                     ]
                 }
             ]
         },
         {
             id: 'ventas',
-            title: 'Módulo de Ventas y Cobro',
+            title: 'Módulo Ventas',
             icon: <Banknote size={24} />,
             color: '#2ecc71',
             content: [
                 {
-                    subtitle: 'Realizar una Venta Directa',
+                    subtitle: 'Flujo de venta en mostrador',
                     steps: [
-                        'Buscá el producto por nombre o usá el escáner.',
-                        'Ingresá el peso (o se carga solo si la balanza está conectada).',
-                        'Si la venta es para un cliente habitual, seleccioná el cliente antes de cobrar.',
-                        'Tocá "Cobrar TICKET" (botón verde).',
-                        'Elegí el medio de pago correspondiente: Efectivo, Tarjeta, Mercado Pago, Cuenta DNI u otros medios configurados.',
-                        'Si el cliente paga después, podés registrar la operación en cuenta corriente.',
-                        'Confirmá y escuchá la campana 🔔.'
-                    ]
-                }
-            ]
-        },
-        {
-            id: 'balanza',
-            title: 'Balanza y Escáner',
-            icon: <Scale size={24} />,
-            color: '#f1c40f',
-            content: [
-                {
-                    subtitle: 'Uso de Etiquetas Systel',
-                    steps: [
-                        'Si la balanza imprime etiquetas, no hace falta buscar el producto.',
-                        'Simplemente escaneá el código de barras en la caja.',
-                        'El sistema detecta automáticamente qué es y cuánto pesa.',
-                        'Escucharás un "Beep" de confirmación.'
+                        'Buscá producto por nombre, PLU o código de barras.',
+                        'Cargá kilos/unidades y verificá precio por línea.',
+                        'Asigná cliente cuando corresponda (ej: cuenta corriente).',
+                        'Aplicá promociones por kg o total de kg según configuración.',
+                        'Cobrá ticket con el medio de pago elegido.',
+                        'Usá “Eliminar ticket” con código maestro si necesitás anular.'
                     ]
                 }
             ]
         },
         {
             id: 'caja',
-            title: 'Caja, Apertura y Cierre',
+            title: 'Módulo Caja',
             icon: <Calculator size={24} />,
             color: '#e67e22',
             content: [
                 {
-                    subtitle: 'Cuadrar el día',
+                    subtitle: 'Apertura, movimientos y cierre',
                     steps: [
                         'En "Caja", registrá la apertura del día por cada medio de pago.',
-                        'Cargá retiros, gastos, ingresos manuales y movimientos extraordinarios para que el saldo quede conciliado.',
-                        'El sistema te muestra el saldo acumulado por cada medio de pago.',
-                        'Revisá ventas y cobros antes de cerrar para detectar diferencias.',
-                        'Hacé el arqueo físico y compará con el total del sistema antes de confirmar el cierre.'
+                        'Cargá ingresos, egresos y retiros durante la jornada.',
+                        'Controlá diferencias entre lo físico y el sistema.',
+                        'Cerrá caja solo cuando todos los movimientos estén conciliados.',
+                        'Usá los reportes de cierre para auditoría interna.'
                     ]
                 }
             ]
         },
         {
-            id: 'despostada',
-            title: 'Despostada y Rinde',
-            icon: <Beef size={24} />,
-            color: '#e74c3c',
+            id: 'compras',
+            title: 'Módulo Compras',
+            icon: <ShoppingCart size={24} />,
+            color: '#16a085',
             content: [
                 {
-                    subtitle: 'De la media res al mostrador',
+                    subtitle: 'Ingreso de mercadería',
                     steps: [
-                        'Cargá el peso total de la carne que entró.',
-                        'Pesá cada corte (asado, vacío, etc.) y tcalo en el mapa de la vaca.',
-                        'El sistema calcula automáticamente basura, hueso y grasa.',
-                        'Al terminar, el stock se actualiza solo.'
+                        'Registrá proveedor, comprobante, forma de pago y detalle de compra.',
+                        'Validá cantidades y costos antes de confirmar.',
+                        'Al guardar, el stock se actualiza según los ítems cargados.',
+                        'Usá el historial para comparar costos por proveedor.'
                     ]
                 }
             ]
         },
         {
-            id: 'menu',
-            title: 'Menú Digital y WhatsApp',
-            icon: <Smartphone size={24} />,
-            color: '#9b59b6',
+            id: 'stock',
+            title: 'Módulo Stock',
+            icon: <PackageSearch size={24} />,
+            color: '#f39c12',
             content: [
                 {
-                    subtitle: 'Vender mientras dormís',
+                    subtitle: 'Inventario y precios',
                     steps: [
-                        'Configurá tu Local y tu WhatsApp.',
-                        'Completá el mensaje del Bot y copiá el texto sugerido en tu respuesta automática de WhatsApp.',
-                        'Compartí el link del Portal de Clientes para que vean precios, stock y ofertas.',
-                        'Cuando el cliente hace un pedido desde WhatsApp o el portal, podés importarlo directamente en Pedidos.',
-                        'La vista previa del celular te muestra cómo verá el cliente el menú antes de publicarlo.'
+                        'Visualizá stock consolidado por producto y categoría.',
+                        'Confirmá cantidad disponible, precio y PLU por artículo.',
+                        'Importá productos desde balanza cuando sea necesario.',
+                        'Hacé ajustes manuales de stock con motivo de operación.',
+                        'Exportá el listado para control externo o auditorías.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'clientes',
+            title: 'Módulo Clientes',
+            icon: <Users size={24} />,
+            color: '#8e44ad',
+            content: [
+                {
+                    subtitle: 'Gestión comercial de clientes',
+                    steps: [
+                        'Creá y editá fichas con datos de contacto.',
+                        'Gestioná cuenta corriente según política del negocio.',
+                        'Revisá historial de compras para seguimiento.',
+                        'Mantené los datos actualizados para pedidos y cobranza.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'pedidos',
+            title: 'Módulo Pedidos',
+            icon: <ShoppingBag size={24} />,
+            color: '#27ae60',
+            content: [
+                {
+                    subtitle: 'Pedidos internos y de canal digital',
+                    steps: [
+                        'Registrá pedidos manuales o importados desde canal digital.',
+                        'Actualizá estado del pedido (pendiente, en preparación, entregado).',
+                        'Asigná cliente, dirección y forma de cobro.',
+                        'Coordiná la salida con logística cuando aplique.'
                     ]
                 }
             ]
         },
         {
             id: 'logistica',
-            title: 'Logística y Reparto (PRO)',
+            title: 'Módulo Logística (PRO)',
             icon: <Truck size={24} />,
             color: '#34495e',
             content: [
                 {
-                    subtitle: 'Control total de envíos',
+                    subtitle: 'Distribución y reparto',
                     steps: [
-                        'Asigná cada pedido a un repartidor.',
-                        'Mirá en el mapa por dónde anda tu flota en tiempo real y seleccioná repartidores para centrar la vista.',
-                        'Abrí un pedido para ver dirección, items, estado y datos del cliente.',
-                        'Desde el detalle podés confirmar la entrega, llamar al repartidor e imprimir el ticket del pedido.'
+                        'Asigná pedidos a repartidores y unidades de entrega.',
+                        'Seguí recorridos y estado de entregas.',
+                        'Confirmá entregas y resolvé incidencias desde el detalle.',
+                        'Usá esta vista para optimizar tiempos de reparto.'
                     ]
                 }
             ]
         },
         {
             id: 'sucursales',
-            title: 'Sucursales',
+            title: 'Módulo Sucursales',
             icon: <ArrowLeftRight size={24} />,
             color: '#3498db',
             content: [
                 {
-                    subtitle: 'Consulta de sucursal asignada',
+                    subtitle: 'Operación multi-sucursal',
                     steps: [
-                        'La gestión de sucursales se realiza desde la administración central.',
-                        'En MeatManager solo se visualiza la sucursal asignada al usuario o al tenant.',
-                        'Si necesitás cambiar nombre, dirección, código interno o estado de una sucursal, hacelo desde el panel de administración correspondiente.',
-                        'Los datos visibles en esta pantalla se actualizan según la configuración central definida para tu cuenta.'
+                        'Verificá la sucursal activa del usuario antes de operar.',
+                        'Usá transferencias para mover stock entre sucursales.',
+                        'Asegurate de que ventas, caja y promos queden en la sucursal correcta.',
+                        'Evitá cargar datos sin sucursal para no mezclar reportes.'
                     ]
                 }
             ]
         },
         {
-            id: 'mantenimiento',
-            title: 'Mantenimiento y Seguridad',
-            icon: <Database size={24} />,
+            id: 'menu-digital',
+            title: 'Módulo Menú Digital',
+            icon: <Smartphone size={24} />,
+            color: '#9b59b6',
+            content: [
+                {
+                    subtitle: 'Publicación para clientes',
+                    steps: [
+                        'Configurá nombre comercial, datos del local y contacto.',
+                        'Publicá catálogo con precios y disponibilidad.',
+                        'Compartí enlace con clientes para pedidos y consultas.',
+                        'Revisá vista previa móvil antes de habilitar cambios.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'preelaborados',
+            title: 'Módulo Pre-elaborados',
+            icon: <UtensilsCrossed size={24} />,
+            color: '#d35400',
+            content: [
+                {
+                    subtitle: 'Producción y control',
+                    steps: [
+                        'Registrá elaboraciones con cantidad y costo.',
+                        'Asociá insumos y salida de stock de materias primas.',
+                        'Actualizá precios finales según costo de producción.',
+                        'Controlá margen y rotación del producto terminado.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'otros-items',
+            title: 'Módulo Otros Ítems',
+            icon: <Grid size={24} />,
             color: '#7f8c8d',
             content: [
                 {
-                    subtitle: 'Buenas prácticas operativas',
+                    subtitle: 'Productos complementarios',
                     steps: [
-                        'Verificá siempre que estés trabajando con conexión y sesión iniciada correctamente.',
-                        'Antes de cerrar el día, revisá ventas, caja, pedidos y movimientos pendientes.',
-                        'Si necesitás soporte, usá el acceso de ayuda o contactá al equipo técnico.',
-                        'Las configuraciones sensibles y datos operativos deben mantenerse actualizados en el servidor y no depender de una PC puntual.'
+                        'Cargá productos que no entran en despostada/pre-elaborado.',
+                        'Definí unidad, precio y categoría comercial.',
+                        'Incluilos en stock y ventas como cualquier otro artículo.',
+                        'Mantené consistencia de nombres y PLU para evitar duplicados.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'despostada',
+            title: 'Módulo Despostada (Vaca/Cerdo/Pollo/Pescado)',
+            icon: <Beef size={24} />,
+            color: '#c0392b',
+            content: [
+                {
+                    subtitle: 'Rendimiento por especie',
+                    steps: [
+                        'Ingresá peso inicial del lote/canal.',
+                        'Distribuí kilos en cortes resultantes.',
+                        'Controlá merma y rendimiento final por especie.',
+                        'El sistema impacta automáticamente en stock disponible.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'rendimiento-pro',
+            title: 'Módulo Rendimiento PRO',
+            icon: <BarChart3 size={24} />,
+            color: '#2c3e50',
+            content: [
+                {
+                    subtitle: 'Análisis avanzado',
+                    steps: [
+                        'Compará rendimiento por lote, fecha y categoría.',
+                        'Detectá pérdidas, desvíos y oportunidades de mejora.',
+                        'Usá reportes para ajustar compra y producción.',
+                        'Tomá decisiones con datos reales del negocio.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-pagos',
+            title: 'Configuración · Medios de Pago',
+            icon: <CreditCard size={24} />,
+            color: '#1abc9c',
+            content: [
+                {
+                    subtitle: 'Parámetros de cobro',
+                    steps: [
+                        'Activá/desactivá medios disponibles en caja.',
+                        'Definí recargos/comisiones por medio de pago.',
+                        'Validá comportamiento en venta de prueba.',
+                        'Alineá estos valores con cierre de caja.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-categorias',
+            title: 'Configuración · Categorías',
+            icon: <FolderOpen size={24} />,
+            color: '#2980b9',
+            content: [
+                {
+                    subtitle: 'Orden del catálogo',
+                    steps: [
+                        'Creá categorías por línea de producto.',
+                        'Asigná nombres claros para venta y stock.',
+                        'Evitá duplicar categorías con diferencias menores.',
+                        'Mantené estructura simple para operación diaria.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-articulos',
+            title: 'Configuración · Artículos',
+            icon: <Package size={24} />,
+            color: '#f39c12',
+            content: [
+                {
+                    subtitle: 'Alta y mantenimiento de productos',
+                    steps: [
+                        'Definí nombre, categoría, unidad y PLU.',
+                        'Verificá que cada PLU sea único por tenant.',
+                        'Evitá crear duplicados por diferencia de escritura.',
+                        'Revisá precio base antes de habilitar venta.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-promociones',
+            title: 'Configuración · Promociones',
+            icon: <Tag size={24} />,
+            color: '#e67e22',
+            content: [
+                {
+                    subtitle: 'Promos por niveles (P1, P2, P3...)',
+                    steps: [
+                        'Seleccioná artículo y definí tipo de promo (por kg o por total de kg).',
+                        'Configurá escalas mínimas con precio para cada nivel.',
+                        'Validá que cada nivel tenga PLU promo único.',
+                        'Al guardar, confirmá resumen de códigos generados.',
+                        'En edición verificá sucursal de aplicación antes de activar.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-whatsapp',
+            title: 'Configuración · Marketing WhatsApp',
+            icon: <MessageCircle size={24} />,
+            color: '#27ae60',
+            content: [
+                {
+                    subtitle: 'Difusión comercial',
+                    steps: [
+                        'Configurá canal y datos de envío.',
+                        'Definí mensaje de difusión para promociones activas.',
+                        'Revisá vista previa del texto antes de publicar.',
+                        'Usá envíos con criterio para no saturar clientes.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-proveedores',
+            title: 'Configuración · Proveedores',
+            icon: <Truck size={24} />,
+            color: '#8e44ad',
+            content: [
+                {
+                    subtitle: 'Base de abastecimiento',
+                    steps: [
+                        'Cargá datos fiscales y contacto de cada proveedor.',
+                        'Asociá artículos de compra para acelerar ingreso.',
+                        'Mantené historial de costos y condiciones.',
+                        'Actualizá estado de proveedores inactivos.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-precio',
+            title: 'Configuración · Formato de Precio',
+            icon: <Calculator size={24} />,
+            color: '#d35400',
+            content: [
+                {
+                    subtitle: 'Visualización y redondeo',
+                    steps: [
+                        'Definí formato de visualización en toda la app.',
+                        'Alineá el criterio con balanza y ticket de venta.',
+                        'Evitá mezclar reglas distintas entre sucursales.',
+                        'Probá una venta real luego de cada cambio.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-transferencias',
+            title: 'Configuración · Transferencias de Sucursales',
+            icon: <ArrowLeftRight size={24} />,
+            color: '#3498db',
+            content: [
+                {
+                    subtitle: 'Movimiento entre sucursales',
+                    steps: [
+                        'Creá transferencia origen/destino con detalle de ítems.',
+                        'Confirmá recepción para impactar en ambos stocks.',
+                        'Usá remitos y estados para trazabilidad.',
+                        'No cierres transferencias sin validar cantidades.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'config-balanza',
+            title: 'Configuración · Balanza',
+            icon: <Scale size={24} />,
+            color: '#f1c40f',
+            content: [
+                {
+                    subtitle: 'Integración Systel',
+                    steps: [
+                        'Conectá por USB y seleccioná puerto correcto.',
+                        'Importá PLU/descripcion/precio desde balanza.',
+                        'Validá lectura de etiquetas en Ventas.',
+                        'Si falla conexión, revisá puerto, driver y cable.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'seguridad',
+            title: 'Configuración · Usuarios, Licencias y Seguridad',
+            icon: <ShieldCheck size={24} />,
+            color: '#7f8c8d',
+            content: [
+                {
+                    subtitle: 'Control de acceso y operación segura',
+                    steps: [
+                        'Creá usuarios por rol (admin/operador) y permisos.',
+                        'Asigná licencias y alcance por sucursal.',
+                        'Configurá código maestro para borrado de tickets.',
+                        'Revisá actividad y estado de sincronización periódicamente.',
+                        'Mantené políticas de contraseña y acceso administrativo.'
                     ]
                 }
             ]
@@ -254,21 +540,21 @@ const Manual = () => {
                                         <div className="mockup-search">🔍 Buscar...</div>
                                     </div>
                                 )}
-                                {section.id === 'balanza' && (
+                                {section.id === 'config-balanza' && (
                                     <div className="ui-mockup balance-mockup">
                                         <div className="mockup-label">SYSTEL CUORA MAX</div>
                                         <div className="mockup-display">0.525 kg</div>
                                         <div className="mockup-btn blue">Importar PLUs</div>
                                     </div>
                                 )}
-                                {section.id === 'menu' && (
+                                {section.id === 'menu-digital' && (
                                     <div className="ui-mockup phone-mockup-mini">
                                         <div className="mockup-phone-header">🥩 Carnicería PRO</div>
                                         <div className="mockup-whatsapp-bubble">"Hola! Quiero 2kg de Asado..."</div>
                                         <div className="mockup-btn primary">Importar Pedido</div>
                                     </div>
                                 )}
-                                {section.id === 'mantenimiento' && (
+                                {section.id === 'seguridad' && (
                                     <div className="ui-mockup backup-mockup">
                                         <div className="mockup-label">SEGURIDAD DE DATOS</div>
                                         <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
