@@ -166,6 +166,7 @@ const Ventas = () => {
     const [recentSalesItems, setRecentSalesItems] = useState({});
     const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = React.useRef(null);
+    const [pendingNoStockItem, setPendingNoStockItem] = useState(null);
     const showToast = React.useCallback((text, type = 'error') => {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         setToastMsg({ text, type });
@@ -600,10 +601,7 @@ const Ventas = () => {
                 productId: promo?.product_id,
                 productName: promo?.product_name,
             });
-            if (resolvedPromoUnitPrice > 0) {
-                if (!(promoStockQty > 0)) {
-                    return null;
-                }
+            if (resolvedPromoUnitPrice > 0 && promoStockQty > 0) {
                 return {
                     id: promo?.product_id || null,
                     product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
@@ -615,6 +613,23 @@ const Ventas = () => {
                     promo,
                 };
             }
+            // Promo encontrada pero sin stock: buscar el producto BASE (no por promo_plu)
+            const baseProduct = promo?.product_id != null
+                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
+                : productsCatalog.find((p) => (
+                    String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
+                ));
+            if (baseProduct) {
+                return {
+                    id: baseProduct.id,
+                    product_id: normalizeProductKey(baseProduct.name),
+                    product_ref_id: baseProduct.id,
+                    price: baseProduct.current_price || 0,
+                    plu: baseProduct.plu || '',
+                    updated_at: baseProduct.updated_at,
+                    noStockWarning: true,
+                };
+            }
         }
         // Buscar por PLU en el catálogo de productos (fuente canónica)
         const product = productsCatalog.find((p) => {
@@ -623,6 +638,7 @@ const Ventas = () => {
         });
         if (!product) return null;
         // Retornar en formato compatible con findProductByPriceRecord
+        const productStockQty = getCurrentStockQty({ productId: product.id, productName: product.name });
         return {
             id: product.id,
             product_id: normalizeProductKey(product.name),
@@ -630,6 +646,7 @@ const Ventas = () => {
             price: product.current_price || 0,
             plu: product.plu || '',
             updated_at: product.updated_at,
+            noStockWarning: !(productStockQty > 0),
         };
     }, [findPromotionByPromoPlu, getCurrentStockQty, productsCatalog]);
 
@@ -638,17 +655,38 @@ const Ventas = () => {
         return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
     }, [stockItems]);
 
-    const findProductByPriceRecord = React.useCallback((priceRecord) => {
+    const findProductByPriceRecord = (priceRecord) => {
         if (!priceRecord) return null;
+
+        const toCatalogProduct = (p) => p ? ({
+            id: `product:${p.id}`,
+            productId: p.id || null,
+            name: p.name,
+            category: p.category,
+            totalQuantity: 0,
+            unit: p.unit || 'kg',
+            price: getProductCurrentPrice(p),
+            plu: p.plu || '',
+            barcode: null,
+        }) : null;
+
         if (priceRecord.product_ref_id != null) {
-            return products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
+            const fromLegacy = products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
+            if (fromLegacy) return fromLegacy;
+            const fromCatalog = productsCatalog.find((p) => Number(p?.id) === Number(priceRecord.product_ref_id)) || null;
+            return toCatalogProduct(fromCatalog);
         }
         const productId = String(priceRecord.product_id || '').trim();
-        return products.find((product) => (
+        const fromLegacyByName = products.find((product) => (
             buildLegacyPriceProductId(product.name, product.category) === productId
             || normalizeProductKey(product.name) === normalizeProductKey(productId)
         )) || null;
-    }, [products]);
+        if (fromLegacyByName) return fromLegacyByName;
+        const fromCatalogByName = productsCatalog.find((p) => (
+            normalizeProductKey(p?.name) === normalizeProductKey(productId)
+        )) || null;
+        return toCatalogProduct(fromCatalogByName);
+    };
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
@@ -742,7 +780,7 @@ const Ventas = () => {
         }
 
         return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
-    }, [findProductByPriceRecord, productsCatalog]);
+    }, [productsCatalog]);
 
     // Filter products
     const filteredProducts = React.useMemo(() => {
@@ -1056,7 +1094,7 @@ const Ventas = () => {
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
-                    addToCart(buildCartProductFromPriceRecord(product, priceRecord), weightToApply);
+                    tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), weightToApply, priceRecord);
                     setScannerError('');
                 } else {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
@@ -1072,7 +1110,7 @@ const Ventas = () => {
                             price: priceRecord.price,
                             plu: pluNumber,
                         };
-                        addToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weightToApply);
+                        tryAddToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weightToApply, priceRecord);
                         setScannerError('');
                     } else {
                         setScannerError(buildPluResolutionError({
@@ -1176,7 +1214,7 @@ const Ventas = () => {
                     if (priceRecord) {
                         const product = findProductByPriceRecord(priceRecord);
                         if (product) {
-                            addToCart(buildCartProductFromPriceRecord(product, priceRecord), qty);
+                            tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), qty, priceRecord);
                             successCount++;
                         } else {
                             failedItems.push(plu.trim());
@@ -1217,7 +1255,7 @@ const Ventas = () => {
                     const product = findProductByPriceRecord(priceRecord);
                     if (product) {
                         const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
-                        addToCart(buildCartProductFromPriceRecord(product, priceRecord), weight);
+                        tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), weight, priceRecord);
                         successCount++;
                     } else {
                         failedItems.push(pluNumber);
@@ -1385,6 +1423,14 @@ const Ventas = () => {
         if (window.innerWidth < 1024 && cart.length === 0) {
             setShowCartMobile(true);
         }
+    };
+
+    const tryAddToCart = (product, weight, priceRecord) => {
+        if (priceRecord?.noStockWarning) {
+            setPendingNoStockItem({ product, weight });
+            return;
+        }
+        addToCart(product, weight);
     };
 
     const removeFromCart = (id) => {
@@ -2699,6 +2745,60 @@ const Ventas = () => {
                                 disabled={isProcessing || (!isSplitPayment && !activeMethod)}
                             >
                                 {isProcessing ? 'Procesando...' : 'Confirmar Pago'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL SIN STOCK – CONFIRMAR VENTA IGUAL */}
+            {pendingNoStockItem && (
+                <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+                    <div className="modal-content neo-card" style={{ maxWidth: '380px', width: '90%', textAlign: 'center', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⚠️</div>
+                        <h2 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '0.5rem' }}>Sin stock disponible</h2>
+                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
+                            <strong>{pendingNoStockItem.product?.name}</strong> no tiene stock registrado.
+                        </p>
+                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                            Si vendés igualmente, el stock quedará en negativo y se compensará con la próxima compra.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <button
+                                autoFocus
+                                onClick={() => setPendingNoStockItem(null)}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.75rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--color-border)',
+                                    background: 'transparent',
+                                    color: 'var(--color-text-main)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.95rem',
+                                }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const { product, weight } = pendingNoStockItem;
+                                    setPendingNoStockItem(null);
+                                    addToCart(product, weight);
+                                }}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.75rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: 'none',
+                                    background: 'var(--color-warning, #f59e0b)',
+                                    color: '#fff',
+                                    fontWeight: '700',
+                                    cursor: 'pointer',
+                                    fontSize: '0.95rem',
+                                }}
+                            >
+                                Vender igual
                             </button>
                         </div>
                     </div>
