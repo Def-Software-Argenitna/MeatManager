@@ -18,6 +18,7 @@ const bridge = new ScaleBridge({ config, logger, state, stateStore, mysqlPool })
 
 let running = false;
 let timer = null;
+let salesPulseTimer = null;
 let server = null;
 let schedulerActive = false;
 
@@ -69,7 +70,10 @@ async function runCycle(reason = 'scheduled') {
     running = true;
     logger.info('Iniciando ciclo de sincronizacion', { reason });
     try {
-        const result = await bridge.runOnce();
+        const result = await bridge.runOnce({
+            reason,
+            skipSales: config.salesPulseEnabled && reason === 'interval',
+        });
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
         return { ok: true, result };
     } catch (error) {
@@ -79,6 +83,52 @@ async function runCycle(reason = 'scheduled') {
         state.lastError = error.message;
         stateStore.save(state);
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
+        return { ok: false, error: error.message };
+    } finally {
+        running = false;
+    }
+}
+
+async function runSalesPulse(reason = 'sales-pulse', options = {}) {
+    if (running) return { ok: false, skipped: true, busy: true };
+    running = true;
+    try {
+        const now = options.toDate ? new Date(options.toDate) : new Date();
+        const from = options.fromDate ? new Date(options.fromDate) : (() => {
+            const initial = new Date(now);
+            const skewMs = Math.max(0, Number(config.salesResyncSkewMinutes || 0)) * 60 * 1000;
+            if (state.lastTicketSyncAt) {
+                const last = new Date(state.lastTicketSyncAt);
+                if (!Number.isNaN(last.getTime())) {
+                    initial.setTime(last.getTime() - skewMs);
+                    return initial;
+                }
+            }
+            initial.setDate(initial.getDate() - config.salesLookbackDays);
+            return initial;
+        })();
+
+        const result = await bridge.pullSales({
+            fromDate: from,
+            toDate: now,
+            closeAfter: options.closeAfter === true,
+        });
+
+        if (result.ok && Number(result.fetched || 0) > 0) {
+            state.lastTicketSyncAt = result.latestSaleAt || new Date().toISOString();
+            stateStore.save(state);
+            logger.info('Pulso de ventas: registros detectados y sincronizados', {
+                reason,
+                fetched: result.fetched,
+                tickets: result.tickets,
+            });
+        }
+
+        return { ok: true, result };
+    } catch (error) {
+        if (reason !== 'sales-pulse') {
+            logger.warn('Error en pull de ventas', { reason, error: error.message });
+        }
         return { ok: false, error: error.message };
     } finally {
         running = false;
@@ -141,8 +191,13 @@ function startHttpServer() {
                 const from = body.fromDate ? new Date(body.fromDate) : new Date(Date.now() - (config.salesLookbackDays * 24 * 60 * 60 * 1000));
                 const to = body.toDate ? new Date(body.toDate) : now;
                 const closeAfter = body.closeAfter === true;
-                const result = await bridge.pullSales({ fromDate: from, toDate: to, closeAfter });
-                return sendJson(res, 200, { ok: true, result });
+                const pull = await runSalesPulse('http-pull', {
+                    fromDate: from,
+                    toDate: to,
+                    closeAfter,
+                });
+                const status = pull.ok ? 200 : (pull.skipped ? 202 : 500);
+                return sendJson(res, status, pull);
             } catch (error) {
                 return sendJson(res, 500, { ok: false, error: error.message });
             }
@@ -179,12 +234,26 @@ async function main() {
         }, nextDelay);
     };
     scheduleNext(config.syncIntervalMs);
+
+    if (config.salesPulseEnabled) {
+        const scheduleSalesPulse = (delayMs = config.salesPulseIntervalMs) => {
+            if (!schedulerActive) return;
+            const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+            salesPulseTimer = setTimeout(async () => {
+                salesPulseTimer = null;
+                await runSalesPulse('sales-pulse');
+                scheduleSalesPulse(config.salesPulseIntervalMs);
+            }, nextDelay);
+        };
+        scheduleSalesPulse(config.salesPulseIntervalMs);
+    }
 }
 
 async function shutdown(signal) {
     logger.info(`Cerrando bridge por ${signal}`);
     schedulerActive = false;
     if (timer) clearTimeout(timer);
+    if (salesPulseTimer) clearTimeout(salesPulseTimer);
     if (server) await new Promise((resolve) => server.close(resolve));
     await bridge.scale.close().catch(() => {});
     await mysqlPool.end().catch(() => {});

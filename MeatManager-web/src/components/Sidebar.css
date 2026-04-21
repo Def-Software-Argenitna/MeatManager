@@ -5,12 +5,13 @@
     backdrop-filter: blur(15px);
     border-right: 1px solid var(--glass-border);
     display: flex;
+    position: relative;
     flex-direction: column;
     padding: 1.5rem 1rem;
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
     flex-shrink: 0;
     overflow-x: hidden;
-    z-index: 100;
+    z-index: 20000;
 }
 
 .sidebar.collapsed {

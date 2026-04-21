@@ -7,6 +7,46 @@ import { createBranchTransfer, fetchBranchTransfers, fetchClientBranches, fetchT
 import { COVERAGE_SETTINGS_KEY, DEFAULT_COVERAGE_RULES, normalizeCoverageRules, resolveCoverageThresholds } from '../utils/branchTransferCoverage';
 import './Sucursales.css';
 
+const TRANSFER_DOCUMENT_OPTIONS = [
+    {
+        value: 'remito',
+        label: 'Remito interno',
+        shortLabel: 'Remito',
+        description: 'Movimiento logístico entre sucursales.',
+        codePrefix: 'R',
+    },
+    {
+        value: 'factura_interna',
+        label: 'Factura interna',
+        shortLabel: 'Factura interna',
+        description: 'Transferencia interna valorizada.',
+        codePrefix: 'FI',
+    },
+];
+
+const normalizeTransferDocumentType = (value) => {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === 'factura_interna' ? 'factura_interna' : 'remito';
+};
+
+const getTransferDocumentOption = (value) => {
+    const normalized = normalizeTransferDocumentType(value);
+    return TRANSFER_DOCUMENT_OPTIONS.find((item) => item.value === normalized) || TRANSFER_DOCUMENT_OPTIONS[0];
+};
+
+const getTransferDocumentDisplay = (transfer) => {
+    const documentType = normalizeTransferDocumentType(transfer?.document_type);
+    const option = getTransferDocumentOption(documentType);
+    const apiLabel = String(transfer?.document_label || '').trim();
+    const apiCode = String(transfer?.document_code || '').trim();
+    const legacyCode = String(transfer?.remito_code || transfer?.remito_number || '').trim();
+    return {
+        type: documentType,
+        label: apiLabel || option.shortLabel,
+        code: apiCode || (legacyCode ? `${option.codePrefix}-${legacyCode}` : 'Sin código'),
+    };
+};
+
 const Sucursales = () => {
     const { tenant } = useTenant();
     const { accessProfile, currentUser } = useUser();
@@ -18,6 +58,7 @@ const Sucursales = () => {
     const [sourceBranchId, setSourceBranchId] = useState('');
     const [destinationBranchId, setDestinationBranchId] = useState('');
     const [transferItems, setTransferItems] = useState([]);
+    const [transferDocumentType, setTransferDocumentType] = useState('remito');
     const [transferNote, setTransferNote] = useState('');
     const [pendingTransfers, setPendingTransfers] = useState([]);
     const [outgoingTransfers, setOutgoingTransfers] = useState([]);
@@ -186,6 +227,10 @@ const Sucursales = () => {
         const branchData = branches.find((item) => Number(item.id) === destinationId);
         return branchData?.name || `Sucursal ${destinationId}`;
     }, [branches, destinationBranchId]);
+    const selectedDocumentOption = useMemo(
+        () => getTransferDocumentOption(transferDocumentType),
+        [transferDocumentType]
+    );
 
     const getDestinationCoverage = (item, destinationQty) => {
         if (!destinationBranchId) {
@@ -247,7 +292,7 @@ const Sucursales = () => {
             return;
         }
         if (!transferItems.length) {
-            setTransferError('Agregá al menos un producto al remito');
+            setTransferError('Agregá al menos un producto al comprobante');
             return;
         }
 
@@ -257,6 +302,7 @@ const Sucursales = () => {
             const payload = {
                 from_branch_id: Number(effectiveSourceBranchId),
                 to_branch_id: Number(destinationBranchId),
+                document_type: normalizeTransferDocumentType(transferDocumentType),
                 note: transferNote,
                 items: transferItems.map((item) => ({
                     product_id: item.product_id || null,
@@ -266,12 +312,15 @@ const Sucursales = () => {
                 })),
             };
             const result = await createBranchTransfer(payload);
-            setTransferStatus(`Remito ${result.remito_code || result.remito_number} creado`);
+            const createdOption = getTransferDocumentOption(result?.document_type || transferDocumentType);
+            const createdLabel = String(result?.document_label || createdOption.shortLabel).trim();
+            const createdCode = String(result?.document_code || result?.remito_code || result?.remito_number || '').trim() || 'sin código';
+            setTransferStatus(`${createdLabel} ${createdCode} generado`);
             setTransferItems([]);
             setTransferNote('');
             await refreshTransfers();
         } catch (error) {
-            setTransferError(error.message || 'No se pudo crear el remito');
+            setTransferError(error.message || 'No se pudo crear el comprobante interno');
         } finally {
             setTransferLoading(false);
         }
@@ -293,7 +342,13 @@ const Sucursales = () => {
         <div className="sucursales-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header sucursales-readonly-header">
-                
+                <div className="header-info">
+                    <h1>Sucursales y transferencias internas</h1>
+                    <p>
+                        Este módulo gestiona remitos/facturas internas para traspaso de mercadería entre sucursales.
+                        El stock impacta en ambas sucursales al confirmar la recepción.
+                    </p>
+                </div>
             </header>
             </DirectionalReveal>
 
@@ -397,11 +452,30 @@ const Sucursales = () => {
                         </div>
                         <div>
                             <h2>Enviar mercadería</h2>
-                            <p>Generá un remito y notificá a la sucursal destino.</p>
+                            <p>Generá un comprobante interno y notificá a la sucursal destino.</p>
                         </div>
                     </div>
 
                     <div className="destination-config">
+                        <label>Comprobante interno</label>
+                        <div className="document-type-grid">
+                            {TRANSFER_DOCUMENT_OPTIONS.map((option) => {
+                                const active = option.value === transferDocumentType;
+                                return (
+                                    <button
+                                        key={option.value}
+                                        type="button"
+                                        className={`document-type-card ${active ? 'active' : ''}`}
+                                        onClick={() => setTransferDocumentType(option.value)}
+                                    >
+                                        <strong>{option.label}</strong>
+                                        <span>{option.description}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="document-type-note">La numeración es independiente por tipo de comprobante.</div>
+
                         {isAdmin && (
                             <>
                                 <label>Sucursal origen</label>
@@ -459,6 +533,7 @@ const Sucursales = () => {
                         }}>
                             <span><strong style={{ color: 'var(--color-text-main)' }}>Origen:</strong> {sourceBranchLabel}</span>
                             <span><strong style={{ color: 'var(--color-text-main)' }}>Destino:</strong> {destinationBranchLabel}</span>
+                            <span><strong style={{ color: 'var(--color-text-main)' }}>Comprobante:</strong> {selectedDocumentOption.shortLabel}</span>
                         </div>
                         <div className="search-box">
                             <input
@@ -504,7 +579,7 @@ const Sucursales = () => {
                         <div className="bucket-list">
                             {transferItems.length === 0 ? (
                                 <div style={{ color: 'var(--color-text-muted)' }}>
-                                    Arrastrá o clickeá productos para armar el remito.
+                                    Arrastrá o clickeá productos para armar el comprobante.
                                 </div>
                             ) : (
                                 transferItems.map((item) => (
@@ -536,7 +611,7 @@ const Sucursales = () => {
                             value={transferNote}
                             onChange={(e) => setTransferNote(e.target.value)}
                             style={{ minHeight: '70px', marginBottom: '1rem', background: 'var(--color-bg-main)', border: '1px solid var(--color-border)', color: '#fff', borderRadius: '8px', padding: '0.6rem' }}
-                            placeholder="Observaciones del remito..."
+                            placeholder="Observaciones del comprobante..."
                         />
 
                         {transferError ? (
@@ -551,7 +626,7 @@ const Sucursales = () => {
                             disabled={transferLoading || !destinationBranchId || transferItems.length === 0}
                             onClick={handleCreateTransfer}
                         >
-                            {transferLoading ? 'Generando...' : 'Generar remito y enviar'}
+                            {transferLoading ? 'Generando...' : `Generar ${selectedDocumentOption.shortLabel.toLowerCase()} y enviar`}
                         </button>
                     </div>
                 </DirectionalReveal>
@@ -563,19 +638,22 @@ const Sucursales = () => {
                         </div>
                         <div>
                             <h2>Recibir mercadería</h2>
-                            <p>Confirmá los remitos pendientes para actualizar tu stock.</p>
+                            <p>Confirmá los comprobantes pendientes para acreditar destino y descontar origen.</p>
                         </div>
                     </div>
 
                     {pendingTransfers.length === 0 ? (
                         <div style={{ color: 'var(--color-text-muted)' }}>
-                            No hay remitos pendientes para tu sucursal.
+                            No hay comprobantes pendientes para tu sucursal.
                         </div>
                     ) : (
                         pendingTransfers.map((transfer) => (
                             <div key={transfer.id} className="branch-file-row" style={{ alignItems: 'flex-start' }}>
                                 <div>
-                                    <strong>Remito {transfer.remito_code || transfer.remito_number}</strong>
+                                    {(() => {
+                                        const doc = getTransferDocumentDisplay(transfer);
+                                        return <strong>{doc.label} {doc.code}</strong>;
+                                    })()}
                                     <span>Desde: {transfer.from_branch?.name || transfer.from_branch_id}</span>
                                     <span>Creado: {transfer.created_at ? new Date(transfer.created_at).toLocaleString('es-AR') : '-'}</span>
                                     {transfer.note ? <span>Nota: {transfer.note}</span> : null}
@@ -606,7 +684,10 @@ const Sucursales = () => {
                             <h3 style={{ margin: '0 0 0.6rem', color: 'var(--color-text-main)' }}>Enviados recientes</h3>
                             {outgoingTransfers.slice(0, 5).map((transfer) => (
                                 <div key={`out-${transfer.id}`} style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>
-                                    {transfer.remito_code || transfer.remito_number} — {transfer.to_branch?.name || transfer.to_branch_id} ({transfer.status})
+                                    {(() => {
+                                        const doc = getTransferDocumentDisplay(transfer);
+                                        return `${doc.label} ${doc.code} — ${transfer.to_branch?.name || transfer.to_branch_id} (${transfer.status})`;
+                                    })()}
                                 </div>
                             ))}
                         </div>

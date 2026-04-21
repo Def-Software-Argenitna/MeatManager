@@ -144,6 +144,7 @@ const Stock = () => {
 
         return Object.values(grouped)
             .filter((item) => Math.abs(item.quantity) > 0.0001)
+            .filter((item) => !/_p\d+$/i.test(String(item.name || '').trim()))
             .map((item) => {
                 const matchedProduct = findProductByIdentity(products, {
                     id: item.product_ref_id,
@@ -257,6 +258,7 @@ const Stock = () => {
         const rows = filteredStock.map(item => ({
             'Código': item.id,
             'Nombre': item.name,
+            'PLU': item.plu || '',
             'Categoría': item.type,
             'Cantidad': item.quantity,
             'Unidad': item.unit,
@@ -633,6 +635,9 @@ const Stock = () => {
                                                 <div className="item-info">
                                                     <div className="item-name">{item.name}</div>
                                                     <div className="item-meta">
+                                                        <span className="item-plu">
+                                                            PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
+                                                        </span>
                                                         <span className="item-price">
                                                             Precio: {editingPriceId === item.id ? (
                                                                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
@@ -673,7 +678,24 @@ const Stock = () => {
                                                     </div>
                                                 </div>
                                                 <div className="item-quantity">
-                                                    <span className="quantity-value">{Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}</span>
+                                                    {Number(item.quantity || 0) < 0 && (
+                                                        <span style={{
+                                                            fontSize: '0.7rem',
+                                                            fontWeight: '700',
+                                                            color: '#ef4444',
+                                                            background: 'rgba(239,68,68,0.12)',
+                                                            border: '1px solid rgba(239,68,68,0.35)',
+                                                            borderRadius: '4px',
+                                                            padding: '1px 5px',
+                                                            marginBottom: '2px',
+                                                            display: 'block',
+                                                        }}>
+                                                            ⚠️ Stock negativo
+                                                        </span>
+                                                    )}
+                                                    <span className="quantity-value" style={Number(item.quantity || 0) < 0 ? { color: '#ef4444' } : {}}>
+                                                        {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}
+                                                    </span>
                                                     <span className="quantity-unit">{item.unit === 'kg' ? 'kg' : 'un'}</span>
                                                 </div>
                                             </div>

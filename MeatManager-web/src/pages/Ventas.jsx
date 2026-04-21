@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, Beef, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -7,10 +7,12 @@ import { useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
-import { buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
-import { buildCartPricing, normalizePromotions } from '../utils/promotions';
+import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
+import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
+import { scaleService } from '../utils/SerialScaleService';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -45,6 +47,14 @@ const getClientDisplayName = (client) => {
     const firstName = String(client?.first_name || '').trim();
     const lastName = String(client?.last_name || '').trim();
     return [firstName, lastName].filter(Boolean).join(' ') || String(client?.name || '').trim();
+};
+const getClientEmployeeDiscountPct = (client) => {
+    if (!client) return 0;
+    const enabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+    if (!enabled) return 0;
+    const pct = Number(client?.employee_discount_pct);
+    if (!Number.isFinite(pct) || pct <= 0) return 0;
+    return Math.max(0, Math.min(100, pct));
 };
 
 const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
@@ -133,6 +143,7 @@ const Ventas = () => {
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
     const [quickProductPlu, setQuickProductPlu] = useState('');
     const [scannerError, setScannerError] = useState('');
+    const [isScaleSyncing, setIsScaleSyncing] = useState(false);
     const [barcodeInputValue, setBarcodeInputValue] = useState('');
     const barcodeInputRef = React.useRef(null);
     const [showDeleteTicketModal, setShowDeleteTicketModal] = useState(false);
@@ -155,6 +166,7 @@ const Ventas = () => {
     const [recentSalesItems, setRecentSalesItems] = useState({});
     const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = React.useRef(null);
+    const [pendingNoStockItem, setPendingNoStockItem] = useState(null);
     const showToast = React.useCallback((text, type = 'error') => {
         if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
         setToastMsg({ text, type });
@@ -174,9 +186,10 @@ const Ventas = () => {
     const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
+    useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['all']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -285,49 +298,44 @@ const Ventas = () => {
         return () => { clearTimeout(t1); clearTimeout(t2); };
     }, [editingPriceId]);
 
-    // ── FOCO PERMANENTE - POS WATCHDOG ────────────────────────────────────────
+    // Foco puntual al scanner cuando la pantalla queda libre de modales.
+    // Evitamos un watchdog con setInterval porque termina robando foco a la navegacion.
     React.useEffect(() => {
-        // Enfoque inicial rápido
-        setTimeout(() => {
-            if (!isEditingPriceRef.current && !showPaymentModal && !showQuickCreateModal && !showDeleteTicketModal && !showPrintConfirmModal) {
-                barcodeInputRef.current?.focus();
-            }
-        }, 100);
+        if (
+            isEditingPriceRef.current
+            || showPaymentModal
+            || showQuickCreateModal
+            || showDeleteTicketModal
+            || showTicketPreview
+            || showPrintConfirmModal
+            || isScaleSyncing
+        ) {
+            return undefined;
+        }
 
-        const watchdog = setInterval(() => {
-            // Si hay un modal abierto, pausamos el watchdog
-            if (
-                isEditingPriceRef.current || 
-                showPaymentModal || 
-                showQuickCreateModal || 
-                showDeleteTicketModal || 
-                showTicketPreview || 
-                showPrintConfirmModal
-            ) {
-                return;
-            }
-
+        const focusScanner = () => {
             const active = document.activeElement;
-            const isInput = active?.tagName === 'INPUT' || active?.tagName === 'TEXTAREA';
-
-            // Si el foco se perdió y está en el "body" u otro elemento no interactivo
-            // forzamos el foco de nuevo al scanner.
-            // Si ya está en algún INPUT (buscador, manual, etc), respetamos y no tocamos nada.
-            if (!isInput) {
+            const tagName = String(active?.tagName || '').toUpperCase();
+            const isTypingElsewhere = tagName === 'INPUT' || tagName === 'TEXTAREA' || active?.isContentEditable;
+            if (!isTypingElsewhere) {
                 barcodeInputRef.current?.focus();
             }
-        }, 500); // Revisa cada medio segundo
+        };
 
-        return () => clearInterval(watchdog);
+        const timer = setTimeout(focusScanner, 100);
+
+        return () => {
+            clearTimeout(timer);
+        };
     }, [
-        showPaymentModal, 
-        showQuickCreateModal, 
-        showDeleteTicketModal, 
-        showTicketPreview, 
+        showPaymentModal,
+        showQuickCreateModal,
+        showDeleteTicketModal,
+        showTicketPreview,
         editingPriceId,
-        showPrintConfirmModal
+        showPrintConfirmModal,
+        isScaleSyncing,
     ]);
-    // ────────────────────────────────────────────────────────────────────────
 
     React.useEffect(() => {
         let cancelled = false;
@@ -475,6 +483,7 @@ const Ventas = () => {
                 </div>
                 <div class="total-area">
                     <div class="item"><span>SUBTOTAL</span><span>$${formatNumericLocale(saleData.subtotal)}</span></div>
+                    ${toNumber(saleData.employee_discount_amount) > 0 ? `<div class="item"><span>DESC. EMPLEADO${toNumber(saleData.employee_discount_pct) > 0 ? ` (${formatNumericLocale(saleData.employee_discount_pct)}%)` : ''}</span><span>-$${formatNumericLocale(saleData.employee_discount_amount)}</span></div>` : ''}
                     ${toNumber(saleData.adjustment) !== 0 ? `<div class="item"><span>ADJ.</span><span>$${formatNumericLocale(saleData.adjustment)}</span></div>` : ''}
                     <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${formatNumericLocale(saleData.total)}</span></div>
                 </div>
@@ -559,10 +568,69 @@ const Ventas = () => {
         ];
     }, [products]);
 
+    const findPromotionByPromoPlu = React.useCallback((pluValue) => {
+        const normalizedPlu = normalizePluCode(pluValue);
+        if (!normalizedPlu) return null;
+        return (Array.isArray(promotions) ? promotions : []).find((promo) => (
+            normalizePluCode(promo?.promo_plu) === normalizedPlu
+            && (promo.active === true || Number(promo.active) === 1)
+        )) || null;
+    }, [promotions]);
+
+    const getCurrentStockQty = React.useCallback(({ productId, productName }) => {
+        const normalizedName = String(productName || '').trim().toUpperCase();
+        return (Array.isArray(stockItems) ? stockItems : []).reduce((sum, row) => {
+            const sameProductId = productId != null && Number(row?.product_id) === Number(productId);
+            const sameName = normalizedName && String(row?.name || '').trim().toUpperCase() === normalizedName;
+            if (!sameProductId && !sameName) return sum;
+            return sum + toNumber(row?.quantity);
+        }, 0);
+    }, [stockItems]);
+
     const findPriceRecordByPlu = React.useCallback((pluValue) => {
-        const normalized = String(pluValue || '').trim();
+        const normalized = normalizePluCode(pluValue) || String(pluValue || '').trim();
         if (!normalized) return null;
         const normalizedNumber = String(parseInt(normalized, 10));
+        const promo = findPromotionByPromoPlu(normalized);
+        if (promo) {
+            const promoUnitPrice = toNumber(promo?.promo_unit_price);
+            const minQtyKg = toNumber(promo?.min_qty_kg, 3);
+            const fallbackUnitPrice = minQtyKg > 0 ? toNumber(promo?.promo_total_price) / minQtyKg : 0;
+            const resolvedPromoUnitPrice = promoUnitPrice > 0 ? promoUnitPrice : fallbackUnitPrice;
+            const promoStockQty = getCurrentStockQty({
+                productId: promo?.product_id,
+                productName: promo?.product_name,
+            });
+            if (resolvedPromoUnitPrice > 0 && promoStockQty > 0) {
+                return {
+                    id: promo?.product_id || null,
+                    product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
+                    product_ref_id: promo?.product_id || null,
+                    price: resolvedPromoUnitPrice,
+                    plu: normalized,
+                    updated_at: new Date().toISOString(),
+                    isPromoPlu: true,
+                    promo,
+                };
+            }
+            // Promo encontrada pero sin stock: buscar el producto BASE (no por promo_plu)
+            const baseProduct = promo?.product_id != null
+                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
+                : productsCatalog.find((p) => (
+                    String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
+                ));
+            if (baseProduct) {
+                return {
+                    id: baseProduct.id,
+                    product_id: normalizeProductKey(baseProduct.name),
+                    product_ref_id: baseProduct.id,
+                    price: baseProduct.current_price || 0,
+                    plu: baseProduct.plu || '',
+                    updated_at: baseProduct.updated_at,
+                    noStockWarning: true,
+                };
+            }
+        }
         // Buscar por PLU en el catálogo de productos (fuente canónica)
         const product = productsCatalog.find((p) => {
             const plu = String(p?.plu || '').trim();
@@ -570,6 +638,7 @@ const Ventas = () => {
         });
         if (!product) return null;
         // Retornar en formato compatible con findProductByPriceRecord
+        const productStockQty = getCurrentStockQty({ productId: product.id, productName: product.name });
         return {
             id: product.id,
             product_id: normalizeProductKey(product.name),
@@ -577,25 +646,67 @@ const Ventas = () => {
             price: product.current_price || 0,
             plu: product.plu || '',
             updated_at: product.updated_at,
+            noStockWarning: !(productStockQty > 0),
         };
-    }, [productsCatalog]);
+    }, [findPromotionByPromoPlu, getCurrentStockQty, productsCatalog]);
 
     const findStockItemByName = React.useCallback((name) => {
         const normalized = String(name || '').trim().toUpperCase();
         return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
     }, [stockItems]);
 
-    const findProductByPriceRecord = React.useCallback((priceRecord) => {
+    const findProductByPriceRecord = (priceRecord) => {
         if (!priceRecord) return null;
+
+        const toCatalogProduct = (p) => p ? ({
+            id: `product:${p.id}`,
+            productId: p.id || null,
+            name: p.name,
+            category: p.category,
+            totalQuantity: 0,
+            unit: p.unit || 'kg',
+            price: getProductCurrentPrice(p),
+            plu: p.plu || '',
+            barcode: null,
+        }) : null;
+
         if (priceRecord.product_ref_id != null) {
-            return products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
+            const fromLegacy = products.find((product) => Number(product.productId) === Number(priceRecord.product_ref_id)) || null;
+            if (fromLegacy) return fromLegacy;
+            const fromCatalog = productsCatalog.find((p) => Number(p?.id) === Number(priceRecord.product_ref_id)) || null;
+            return toCatalogProduct(fromCatalog);
         }
         const productId = String(priceRecord.product_id || '').trim();
-        return products.find((product) => (
+        const fromLegacyByName = products.find((product) => (
             buildLegacyPriceProductId(product.name, product.category) === productId
             || normalizeProductKey(product.name) === normalizeProductKey(productId)
         )) || null;
-    }, [products]);
+        if (fromLegacyByName) return fromLegacyByName;
+        const fromCatalogByName = productsCatalog.find((p) => (
+            normalizeProductKey(p?.name) === normalizeProductKey(productId)
+        )) || null;
+        return toCatalogProduct(fromCatalogByName);
+    };
+
+    const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
+        if (!product || !priceRecord) return product || null;
+        if (!priceRecord?.isPromoPlu || !priceRecord?.promo) {
+            return { ...product, price: priceRecord.price };
+        }
+
+        return {
+            ...product,
+            price: priceRecord.price,
+            promoLocked: true,
+            forcedPromo: {
+                id: priceRecord.promo.id,
+                promo_plu: normalizePluCode(priceRecord.plu),
+                min_qty_kg: priceRecord.promo.min_qty_kg,
+                promo_total_price: priceRecord.promo.promo_total_price,
+            },
+            linkedPromoPlu: normalizePluCode(priceRecord.plu),
+        };
+    }, []);
 
     const buildCatalogProductForVenta = React.useCallback((catalogProduct) => {
         if (!catalogProduct) return null;
@@ -669,19 +780,19 @@ const Ventas = () => {
         }
 
         return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
-    }, [findProductByPriceRecord, productsCatalog]);
+    }, [productsCatalog]);
 
     // Filter products
-    const filteredProducts = products.filter(p => {
+    const filteredProducts = React.useMemo(() => {
         const term = barcodeInputValue.trim().toLowerCase();
-        const matchesSearch =
-            term.length === 0 ||
-            p.name.toLowerCase().includes(term) ||
-            String(p.plu || '').toLowerCase().includes(term) ||
-            String(p.barcode || '').toLowerCase().includes(term) ||
-            String(p.id || '').toLowerCase().includes(term);
-        return matchesSearch;
-    });
+        return products.filter((p) => (
+            term.length === 0
+            || p.name.toLowerCase().includes(term)
+            || String(p.plu || '').toLowerCase().includes(term)
+            || String(p.barcode || '').toLowerCase().includes(term)
+            || String(p.id || '').toLowerCase().includes(term)
+        ));
+    }, [products, barcodeInputValue]);
 
     const groupedFilteredProducts = React.useMemo(() => {
         const groups = new Map();
@@ -710,9 +821,13 @@ const Ventas = () => {
         const nextIds = groupedFilteredProducts.map((group) => group.id);
         const hasSearch = barcodeInputValue.trim().length > 0;
         setExpandedCategoryIds((prev) => {
-            if (hasSearch) return nextIds;
-            const filteredPrev = prev.filter((id) => nextIds.includes(id));
-            return filteredPrev.length > 0 ? filteredPrev : nextIds.slice(0, 1);
+            const nextState = hasSearch
+                ? nextIds
+                : prev.filter((id) => nextIds.includes(id));
+            const isSame =
+                nextState.length === prev.length
+                && nextState.every((id, idx) => id === prev[idx]);
+            return isSame ? prev : nextState;
         });
     }, [groupedFilteredProducts, barcodeInputValue]);
 
@@ -733,17 +848,23 @@ const Ventas = () => {
         const plu = pluVal;
         const product = products.find((item) => item.id === productId);
         if (product) {
-            await ensureUnifiedProduct({
-                products: productsCatalog,
-                prices: [],
-                preferredProductId: product.productId,
-                name: product.name,
-                category: product.category,
-                unit: product.unit,
-                price,
-                plu,
-                source: 'ventas_manual',
-            });
+            try {
+                assertUniqueProductPluLocal(productsCatalog, plu, product.productId);
+                await ensureUnifiedProduct({
+                    products: productsCatalog,
+                    prices: [],
+                    preferredProductId: product.productId,
+                    name: product.name,
+                    category: product.category,
+                    unit: product.unit,
+                    price,
+                    plu,
+                    source: 'ventas_manual',
+                });
+            } catch (error) {
+                showToast(`⚠️ ${error.message}`, 'warning');
+                return;
+            }
         }
         await refreshVentasData();
         setEditingPriceId(null);
@@ -762,15 +883,29 @@ const Ventas = () => {
         console.log("📦 Escaneando código RAW:", cleanData, `(${cleanData.length} chars)`);
 
         const loadBridgeTicketFromBarcode = async (barcodeValue) => {
-            const payload = await fetchScaleTicketByBarcode(barcodeValue);
-            const rows = Array.isArray(payload?.items) ? payload.items : [];
-            if (!rows.length) {
-                setScannerError('⚠️ El ticket existe pero no tiene items para cargar.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+            setIsScaleSyncing(true);
+            try {
+                let payload = await fetchScaleTicketByBarcode(barcodeValue);
+                let rows = Array.isArray(payload?.items) ? payload.items : [];
 
-            const previewItems = rows.map((row) => {
+                // Espera activa corta: el ticket puede existir antes de que sus items queden persistidos.
+                if (!rows.length) {
+                    const retryUntil = Date.now() + 12000;
+                    while (!rows.length && Date.now() < retryUntil) {
+                        await new Promise((resolve) => setTimeout(resolve, 700));
+                        payload = await fetchScaleTicketByBarcode(barcodeValue);
+                        rows = Array.isArray(payload?.items) ? payload.items : [];
+                    }
+                }
+
+                if (!rows.length) {
+                    setScannerError('');
+                    showToast('El ticket todavía se está sincronizando. Reintentá en unos segundos.', 'warning');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
+
+                const previewItems = rows.map((row) => {
                 const pluRawFromItem = String(row?.plu || '').trim();
                 const pluRawFromProduct = String(row?.product?.plu || '').trim();
                 const pluRaw = pluRawFromItem || pluRawFromProduct;
@@ -840,24 +975,21 @@ const Ventas = () => {
                 };
             });
 
-            if (!previewItems.length) {
-                setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
-                setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
-                return true;
-            }
+                if (!previewItems.length) {
+                    setScannerError('⚠️ No se pudieron resolver productos para ese ticket.');
+                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                    return true;
+                }
 
-            setTicketPreviewItems(previewItems);
-            setShowTicketPreview(true);
-            setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
-            const vendor = String(payload?.ticket?.vendorCode || '').trim();
-            if (vendor) {
-                setScannerError(`Ticket #${payload.ticket.ticketId} · vendedor ${vendor}`);
-                setTimeout(() => setScannerError(''), 3000);
-            } else {
+                setTicketPreviewItems(previewItems);
+                setShowTicketPreview(true);
+                setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
                 setScannerError('');
+                playBeep();
+                return true;
+            } finally {
+                setIsScaleSyncing(false);
             }
-            playBeep();
-            return true;
         };
 
         // ============ FORMATO TICKET BRIDGE (MM...) ============
@@ -905,9 +1037,14 @@ const Ventas = () => {
             playBeep();
             const header      = eanDigits.substring(0, 2);   // "20", "21" o "22"
             const pluRaw      = eanDigits.substring(2, 6);   // 4-dígitos PLU
-            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos importe en centavos
+            const importeRaw  = eanDigits.substring(6, 12);  // 6-dígitos peso en gramos o importe
             const pluNumber   = parseInt(pluRaw, 10).toString();
-            const importePesos = parseFloat(importeRaw) / 100;
+            
+            // Si el header es 20 (Por peso), la balanza estándar exporta el peso en GRAMOS.
+            // Si el header es 21 (Por unidad) o 22 (Ticket total), podría ser importe en pesos.
+            const isWeight = header === '20';
+            const parsedWeight = isWeight ? parseFloat(importeRaw) / 1000 : 1;
+            const importePesos = !isWeight ? parseFloat(importeRaw) / 100 : 0; // Solo referencial si era precio
 
             // BCHeader 22 = BARCODESP: código resumen total del ticket, no artículo individual
             if (header === '22') {
@@ -915,6 +1052,29 @@ const Ventas = () => {
                     const loaded = await loadBridgeTicketFromBarcode(cleanData);
                     if (loaded) return;
                 } catch {
+                    // Fallback para balanzas offline ("no conectadas a red"):
+                    // el código de barra contiene el TOTAL exacto de la compra.
+                    // Formato: 22(pref) + XXXX(id) + TTTTTT(total en pesos) + C(check)
+                    // Generalmente, "120727" = $120.727
+                    const parsedTotal = parseFloat(importeRaw); // Pesos enteros
+                    if (parsedTotal > 0) {
+                        const ticketFallbackProduct = {
+                            id: `ticket-balanza-offline`,
+                            name: `Ticket de Balanza Offline (#${pluRaw})`,
+                            category: 'Balanza',
+                            unit: 'un',
+                            price: parsedTotal,
+                            plu: '',
+                        };
+                        addToCart(ticketFallbackProduct, 1);
+                        setScannerError(
+                            `⚠️ Ticket agregado desde el código de barras porque la balanza está offline.`
+                        );
+                        // Limpiar advertencia automáticamente
+                        setTimeout(() => setScannerError(''), 5000);
+                        return;
+                    }
+
                     setScannerError(
                         `⚠️ No pude vincular ese código de ticket con una venta en MySQL.\n\n` +
                         `Si querés, reimprimimos el ticket con código único MM y queda 1 a 1.`
@@ -924,17 +1084,17 @@ const Ventas = () => {
                 }
             }
 
-            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Importe $${importePesos}`);
+            console.log(`✅ EAN-13 individual: header=${header}, PLU ${pluNumber}, Raw Data=${importeRaw}`);
 
             let priceRecord = findPriceRecordByPlu(pluNumber) || findPriceRecordByPlu(pluRaw);
 
             if (priceRecord) {
-                const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
+                const weightToApply = isWeight ? parsedWeight : (priceRecord.price > 0 ? importePesos / priceRecord.price : 1);
                 let product = findProductByPriceRecord(priceRecord);
                 // Fallback: buscar por plu en caso de que el id no matchee
                 if (!product) product = products?.find(p => p.plu === pluNumber || p.plu === pluRaw);
                 if (product) {
-                    addToCart({ ...product, price: priceRecord.price }, weight);
+                    tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), weightToApply, priceRecord);
                     setScannerError('');
                 } else {
                     // product_id viejo formato: "bife_angosto" → buscar "BIFE ANGOSTO" en stock
@@ -950,7 +1110,7 @@ const Ventas = () => {
                             price: priceRecord.price,
                             plu: pluNumber,
                         };
-                        addToCart(fallbackProduct, weight);
+                        tryAddToCart(buildCartProductFromPriceRecord(fallbackProduct, priceRecord), weightToApply, priceRecord);
                         setScannerError('');
                     } else {
                         setScannerError(buildPluResolutionError({
@@ -1054,7 +1214,7 @@ const Ventas = () => {
                     if (priceRecord) {
                         const product = findProductByPriceRecord(priceRecord);
                         if (product) {
-                            addToCart({ ...product, price: priceRecord.price }, qty);
+                            tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), qty, priceRecord);
                             successCount++;
                         } else {
                             failedItems.push(plu.trim());
@@ -1095,7 +1255,7 @@ const Ventas = () => {
                     const product = findProductByPriceRecord(priceRecord);
                     if (product) {
                         const weight = priceRecord.price > 0 ? importePesos / priceRecord.price : 1;
-                        addToCart({ ...product, price: priceRecord.price }, weight);
+                        tryAddToCart(buildCartProductFromPriceRecord(product, priceRecord), weight, priceRecord);
                         successCount++;
                     } else {
                         failedItems.push(pluNumber);
@@ -1204,19 +1364,35 @@ const Ventas = () => {
         setWeightProduct(null);
     };
     const addToCart = async (product, externalWeight = null) => {
-        if (product.price <= 0) {
+        let resolvedProduct = product;
+        if (!product?.promoLocked) {
+            const catalogProduct = findProductByIdentity(productsCatalog, {
+                id: product?.productId || product?.id || null,
+                name: product?.name,
+            });
+            const basePrice = getProductCurrentPrice(catalogProduct);
+            resolvedProduct = {
+                ...product,
+                price: basePrice > 0 ? basePrice : product.price,
+                promoLocked: false,
+                forcedPromo: null,
+                linkedPromoPlu: null,
+            };
+        }
+
+        if (resolvedProduct.price <= 0) {
             showToast('⚠️ Este producto no tiene precio configurado. Configure el precio primero.', 'warning');
-            setEditingPriceId(product.id);
+            setEditingPriceId(resolvedProduct.id);
             setNewPrice('');
-            setNewPlu(product.plu || '');
+            setNewPlu(resolvedProduct.plu || '');
             return;
         }
 
         // weight management: prompt or automatic
         let weight = externalWeight;
         if (!weight) {
-            if (product.unit === 'kg') {
-                setWeightProduct(product);
+            if (resolvedProduct.unit === 'kg') {
+                setWeightProduct(resolvedProduct);
                 setWeightInput("1.000");
                 setShowWeightModal(true);
                 return;
@@ -1225,22 +1401,36 @@ const Ventas = () => {
             }
         }
 
+        const cartItemId = resolvedProduct?.promoLocked && resolvedProduct?.forcedPromo?.id
+            ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:promo:${resolvedProduct.forcedPromo.id}`
+            : (resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`);
+
+        const normalizedProduct = { ...resolvedProduct, id: cartItemId };
+
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
+            const existing = prev.find(item => item.id === cartItemId);
             if (existing) {
                 return prev.map(item =>
-                    item.id === product.id
+                    item.id === cartItemId
                         ? { ...item, quantity: (item.unit === 'kg' ? item.quantity + weight : item.quantity + (externalWeight || 1)) }
                         : item
                 );
             }
-            return [...prev, { ...product, quantity: weight }];
+            return [...prev, { ...normalizedProduct, quantity: weight }];
         });
 
         // Auto-open cart on mobile when adding first item or if explicitly wanted
         if (window.innerWidth < 1024 && cart.length === 0) {
             setShowCartMobile(true);
         }
+    };
+
+    const tryAddToCart = (product, weight, priceRecord) => {
+        if (priceRecord?.noStockWarning) {
+            setPendingNoStockItem({ product, weight });
+            return;
+        }
+        addToCart(product, weight);
     };
 
     const removeFromCart = (id) => {
@@ -1294,11 +1484,22 @@ const Ventas = () => {
 
     // El subtotal del carrito se calcula con promociones activas por kg.
     const cartPricing = React.useMemo(
-        () => buildCartPricing({ cart, promotions, stockQtyByItem, now: new Date() }),
-        [cart, promotions, stockQtyByItem]
+        () => buildCartPricing({
+            cart,
+            promotions,
+            stockQtyByItem,
+            now: new Date(),
+            roundLineToInteger: priceFormat === '6d',
+        }),
+        [cart, promotions, stockQtyByItem, priceFormat]
     );
     const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
+    const selectedClientEmployeeDiscountPct = getClientEmployeeDiscountPct(selectedClient);
+    const employeeDiscountAmount = selectedClientEmployeeDiscountPct > 0
+        ? (cartTotal * selectedClientEmployeeDiscountPct) / 100
+        : 0;
+    const payableSubtotal = Math.max(0, cartTotal - employeeDiscountAmount);
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
     const availableSplitMethods = React.useMemo(() => (dbPaymentMethods || []), [dbPaymentMethods]);
@@ -1308,8 +1509,8 @@ const Ventas = () => {
     }, [dbPaymentMethods]);
 
     const activeMethod = getMethodById(selectedPaymentMethod);
-    const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
-    const finalTotal = cartTotal + cartAdjustment;
+    const cartAdjustment = activeMethod ? (payableSubtotal * (activeMethod.percentage || 0)) / 100 : 0;
+    const finalTotal = payableSubtotal + cartAdjustment;
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -1331,7 +1532,7 @@ const Ventas = () => {
         const coveredSubtotal = rows.reduce((sum, row) => sum + row.baseAmount, 0);
         const chargedTotal = rows.reduce((sum, row) => sum + row.chargedAmount, 0);
         const totalAdjustment = rows.reduce((sum, row) => sum + row.adjustment, 0);
-        const pendingSubtotal = Math.max(0, cartTotal - coveredSubtotal);
+        const pendingSubtotal = Math.max(0, payableSubtotal - coveredSubtotal);
         const cashRow = rows.find(row => row.method?.type === 'cash');
         const cashCharged = cashRow?.chargedAmount || 0;
         const cashReceivedValue = parseFloat(cashReceived) || 0;
@@ -1349,9 +1550,9 @@ const Ventas = () => {
             isValid:
                 rows.length > 0 &&
                 rows.every(row => row.method && row.chargedAmount > 0) &&
-                Math.abs(coveredSubtotal - cartTotal) < 0.01,
+                Math.abs(coveredSubtotal - payableSubtotal) < 0.01,
         };
-    }, [splitPayments, cashReceived, cartTotal, getMethodById]);
+    }, [splitPayments, cashReceived, payableSubtotal, getMethodById]);
 
     const resetPaymentState = () => {
         setSelectedPaymentMethod(null);
@@ -1368,7 +1569,7 @@ const Ventas = () => {
             return;
         }
         const percentage = defaultMethod.percentage || 0;
-        const total = cartTotal * (1 + (percentage / 100));
+        const total = payableSubtotal * (1 + (percentage / 100));
         setSplitPayments([{ methodId: defaultMethod.id, amount: total.toFixed(2) }]);
     };
 
@@ -1482,8 +1683,9 @@ const Ventas = () => {
 
             console.log("Iniciando checkout con:", { methodObj, cartTotal, cart, paymentBreakdown });
 
-            const adjustment = isMixedSale ? splitSummary.totalAdjustment : (cartTotal * (methodObj.percentage || 0)) / 100;
-            const finalTotal = isMixedSale ? splitSummary.chargedTotal : cartTotal + adjustment;
+            const paymentAdjustment = isMixedSale ? splitSummary.totalAdjustment : (payableSubtotal * (methodObj.percentage || 0)) / 100;
+            const adjustment = paymentAdjustment;
+            const finalTotal = isMixedSale ? splitSummary.chargedTotal : payableSubtotal + paymentAdjustment;
             const numericClientId = selectedClientId ? Number(selectedClientId) : null;
             const shouldLinkClientToCurrentAccount = methodObj.type === 'cuenta_corriente'
                 || (
@@ -1504,6 +1706,9 @@ const Ventas = () => {
                 payment_method_id: methodObj.id || null,
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
+                discount_client_id: numericClientId || null,
+                client_discount_pct: selectedClientEmployeeDiscountPct,
+                client_discount_amount: employeeDiscountAmount,
                 ...(activeScaleTicketBarcode
                     ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
                     : {}),
@@ -1551,7 +1756,16 @@ const Ventas = () => {
                 };
             });
             setPendingPrintData({
-                saleData: { id: saleId, receipt_number: saleReceiptNumber, receipt_code: saleReceiptCode, subtotal: cartTotal, adjustment: adjustment, total: finalTotal },
+                saleData: {
+                    id: saleId,
+                    receipt_number: saleReceiptNumber,
+                    receipt_code: saleReceiptCode,
+                    subtotal: cartTotal,
+                    adjustment: adjustment,
+                    total: finalTotal,
+                    employee_discount_pct: selectedClientEmployeeDiscountPct,
+                    employee_discount_amount: employeeDiscountAmount,
+                },
                 items: cartSnapshotWithTotals
             });
 
@@ -1583,7 +1797,7 @@ const Ventas = () => {
     const confirmPayment = () => {
         if (isSplitPayment) {
             if (!splitPaymentSummary.isValid) {
-                showToast('⚠️ El pago mixto no cubre exactamente el subtotal de la venta.', 'warning');
+                showToast('⚠️ El pago mixto no cubre exactamente el subtotal neto de la venta.', 'warning');
                 return;
             }
             const usesCurrentAccount = splitPaymentSummary.rows.some((row) => row.method?.type === 'cuenta_corriente');
@@ -1640,9 +1854,14 @@ const Ventas = () => {
             throw new Error('La venta ya no existe.');
         }
 
+        const currentUserId = Number(currentUser?.id);
+        const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
+            ? currentUserId
+            : null;
+
         // Anular de forma atómica en el servidor: stock + balance + historial + delete
         await deleteVenta(id, {
-            deleted_by_user_id: currentUser?.id || null,
+            deleted_by_user_id: deletedByUserId,
             deleted_by_username: currentUser?.username || 'Usuario desconocido',
         });
 
@@ -1723,37 +1942,37 @@ const Ventas = () => {
                 ⚠ {queueLength} venta{queueLength > 1 ? 's' : ''} sin sincronizar
             </div>
         )}
-        {/* TOP BAR - Premium TPV Style */}
-        <div style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '0.75rem 1.5rem', background: 'rgba(10, 10, 10, 0.8)',
-            backdropFilter: 'blur(10px)', borderBottom: '1px solid rgba(255,255,255,0.05)',
-            color: 'var(--color-text-main)', zIndex: 100
-        }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                    <div style={{ width: '32px', height: '32px', background: 'var(--color-primary)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Beef size={20} color="#000" />
+        {isScaleSyncing && (
+            <div
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    zIndex: 99990,
+                    backgroundColor: 'rgba(0,0,0,0.72)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                }}
+            >
+                <div
+                    style={{
+                        width: 'min(420px, 92vw)',
+                        borderRadius: '14px',
+                        border: '1px solid rgba(245, 158, 11, 0.45)',
+                        background: 'rgba(13, 18, 24, 0.96)',
+                        boxShadow: '0 12px 40px rgba(0,0,0,0.45)',
+                        padding: '1rem 1.1rem',
+                    }}
+                >
+                    <div style={{ fontWeight: 700, fontSize: '1rem', color: '#fbbf24' }}>
+                        Sincronizando ventas de la balanza...
                     </div>
-                    <span style={{ fontWeight: '800', fontSize: '1.1rem', letterSpacing: '0.02em' }}>CENTRO DE <span style={{ color: 'var(--color-primary)' }}>VENTAS</span></span>
-                </div>
-                <div style={{ width: '1px', height: '20px', background: 'rgba(255,255,255,0.1)' }}></div>
-                <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', fontWeight: '500' }}>
-                    {new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div style={{ marginTop: '0.35rem', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                        Esperá un momento, estamos buscando el ticket y sus artículos.
+                    </div>
                 </div>
             </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '1.5rem', justifyContent: 'flex-end' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', fontSize: '0.85rem' }}>
-                    <div style={{ width: '24px', height: '24px', borderRadius: '50%', background: 'rgba(255,255,255,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <User size={14} />
-                    </div>
-                    <span style={{ color: 'var(--color-text-muted)' }}>Cajero:</span>
-                    <span style={{ fontWeight: '600' }}>{currentUser?.username || currentUser?.email || '—'}</span>
-                </div>
-            </div>
-        </div>
-
+        )}
         <div className={`pos-container animate-fade-in ${showCartMobile ? 'show-cart-mobile' : ''}`}>
             {/* Mobile Cart FAB */}
             <button
@@ -1903,7 +2122,9 @@ const Ventas = () => {
                                 </div>
                                 {line?.promo ? (
                                     <div style={{ marginTop: '0.25rem', fontSize: '0.72rem', color: '#22c55e', fontWeight: 700 }}>
-                                        Promo: {toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por ${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        Promo: {line.promo.promo_price_mode === 'per_kg'
+                                            ? `desde ${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg, cada kg a $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                            : `${toNumber(line.promo.min_qty_kg, 3).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })}kg por $${toNumber(line.promo.promo_total_price, 2).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} total`}
                                     </div>
                                 ) : null}
                                 <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', marginTop: '0.45rem', flexWrap: 'wrap' }}>
@@ -1978,9 +2199,19 @@ const Ventas = () => {
                                 </span>
                             </div>
                         ) : null}
+                        {employeeDiscountAmount > 0 ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#86efac' }}>
+                                    DESCUENTO EMPLEADO ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%)
+                                </span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#86efac' }}>
+                                    -${formatPrice(employeeDiscountAmount, priceFormat)}
+                                </span>
+                            </div>
+                        ) : null}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>TOTAL</span>
-                            <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(cartTotal, priceFormat)}</span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>{employeeDiscountAmount > 0 ? 'TOTAL NETO' : 'TOTAL'}</span>
+                            <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(payableSubtotal, priceFormat)}</span>
                         </div>
                     </div>
 
@@ -2000,7 +2231,9 @@ const Ventas = () => {
                                 <div>
                                     <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#bfdbfe' }}>{getClientDisplayName(selectedClient)}</div>
                                     <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                                        {selectedClientHasCurrentAccount ? 'Cuenta corriente habilitada' : 'Solo venta normal'}
+                                        {selectedClientEmployeeDiscountPct > 0
+                                            ? `Descuento empleado ${formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`
+                                            : (selectedClientHasCurrentAccount ? 'Cuenta corriente habilitada' : 'Solo venta normal')}
                                     </div>
                                 </div>
                                 <button
@@ -2163,6 +2396,7 @@ const Ventas = () => {
                     <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.55rem', paddingRight: '0.25rem' }}>
                         {filteredClients?.length ? filteredClients.map((client) => {
                             const isActiveClient = Number(selectedClientId) === Number(client.id);
+                            const clientDiscountPct = getClientEmployeeDiscountPct(client);
                             return (
                                 <button
                                     key={client.id}
@@ -2186,7 +2420,9 @@ const Ventas = () => {
                                     <div style={{ marginTop: '0.2rem', fontSize: '0.76rem', color: 'var(--color-text-muted)' }}>
                                         {String(client.phone || client.phone1 || 'Sin teléfono')}
                                         {' · '}
-                                        {client.has_current_account !== false ? 'Cuenta corriente disponible' : 'Sin cuenta corriente'}
+                                        {clientDiscountPct > 0
+                                            ? `Desc. empleado ${formatNumericLocale(clientDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`
+                                            : (client.has_current_account !== false ? 'Cuenta corriente disponible' : 'Sin cuenta corriente')}
                                     </div>
                                 </button>
                             );
@@ -2210,6 +2446,20 @@ const Ventas = () => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>Subtotal:</span>
                                 <span>${formatNumericLocale(cartTotal)}</span>
+                            </div>
+                            {employeeDiscountAmount > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                                    <span style={{ color: 'var(--color-text-muted)' }}>
+                                        Desc. empleado ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%):
+                                    </span>
+                                    <span style={{ color: '#22c55e' }}>
+                                        -${formatNumericLocale(employeeDiscountAmount)}
+                                    </span>
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                                <span style={{ color: 'var(--color-text-muted)' }}>Subtotal neto:</span>
+                                <span>${formatNumericLocale(payableSubtotal)}</span>
                             </div>
 
                             {!isSplitPayment && cartAdjustment !== 0 && (
@@ -2406,8 +2656,8 @@ const Ventas = () => {
                                         fontWeight: '600',
                                     }}>
                                         {splitPaymentSummary.isValid
-                                            ? 'Distribución válida. El subtotal quedó cubierto.'
-                                            : 'La suma de medios todavía no cubre exactamente el subtotal de la venta.'}
+                                            ? 'Distribución válida. El subtotal neto quedó cubierto.'
+                                            : 'La suma de medios todavía no cubre exactamente el subtotal neto de la venta.'}
                                     </div>
                                 </div>
                             )}
@@ -2495,6 +2745,60 @@ const Ventas = () => {
                                 disabled={isProcessing || (!isSplitPayment && !activeMethod)}
                             >
                                 {isProcessing ? 'Procesando...' : 'Confirmar Pago'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* MODAL SIN STOCK – CONFIRMAR VENTA IGUAL */}
+            {pendingNoStockItem && (
+                <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
+                    <div className="modal-content neo-card" style={{ maxWidth: '380px', width: '90%', textAlign: 'center', padding: '2rem' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>⚠️</div>
+                        <h2 style={{ fontSize: '1.15rem', fontWeight: '800', marginBottom: '0.5rem' }}>Sin stock disponible</h2>
+                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '0.4rem', fontSize: '0.9rem' }}>
+                            <strong>{pendingNoStockItem.product?.name}</strong> no tiene stock registrado.
+                        </p>
+                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.85rem' }}>
+                            Si vendés igualmente, el stock quedará en negativo y se compensará con la próxima compra.
+                        </p>
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <button
+                                autoFocus
+                                onClick={() => setPendingNoStockItem(null)}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.75rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: '1px solid var(--color-border)',
+                                    background: 'transparent',
+                                    color: 'var(--color-text-main)',
+                                    cursor: 'pointer',
+                                    fontSize: '0.95rem',
+                                }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                onClick={() => {
+                                    const { product, weight } = pendingNoStockItem;
+                                    setPendingNoStockItem(null);
+                                    addToCart(product, weight);
+                                }}
+                                style={{
+                                    flex: 1,
+                                    padding: '0.75rem',
+                                    borderRadius: 'var(--radius-md)',
+                                    border: 'none',
+                                    background: 'var(--color-warning, #f59e0b)',
+                                    color: '#fff',
+                                    fontWeight: '700',
+                                    cursor: 'pointer',
+                                    fontSize: '0.95rem',
+                                }}
+                            >
+                                Vender igual
                             </button>
                         </div>
                     </div>
@@ -2852,11 +3156,18 @@ const Ventas = () => {
 
                     {/* Buscador */}
                     <input
-                        type="text"
+                        type="search"
+                        id="delete-ticket-search"
+                        name="delete-ticket-search"
                         placeholder="Buscar por comprobante, total o medio de pago..."
                         value={deleteTicketSearch}
                         onChange={e => { setDeleteTicketSearch(e.target.value); setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                         autoFocus
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="none"
+                        spellCheck={false}
+                        data-form-type="other"
                         style={{
                             padding: '0.6rem 0.9rem',
                             borderRadius: 'var(--radius-md)',
@@ -2917,13 +3228,23 @@ const Ventas = () => {
                                     ${toNumber(s.total).toLocaleString('es-AR')}
                                 </span>
                                 {confirmDeleteTicketId === s.id ? (
-                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                                    <form
+                                        onSubmit={(e) => {
+                                            e.preventDefault();
+                                            handleDeleteTicket(s.id);
+                                        }}
+                                        autoComplete="off"
+                                        style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
+                                    >
                                         <input
                                             type="password"
+                                            id={`ticket-delete-authorization-code-${s.id}`}
+                                            name="ticket-delete-authorization-code"
                                             inputMode="numeric"
                                             value={deleteAuthorizationCode}
                                             onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Código maestro"
+                                            autoComplete="one-time-code"
                                             style={{
                                                 width: '150px',
                                                 padding: '0.45rem 0.65rem',
@@ -2934,15 +3255,18 @@ const Ventas = () => {
                                                 fontSize: '0.82rem'
                                             }}
                                         />
-                                        <button onClick={() => handleDeleteTicket(s.id)}
+                                        <button
+                                            type="submit"
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
                                             Confirmar
                                         </button>
-                                        <button onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
+                                        <button
+                                            type="button"
+                                            onClick={() => { setConfirmDeleteTicketId(null); setDeleteAuthorizationCode(''); }}
                                             style={{ background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.35rem 0.6rem', cursor: 'pointer', fontSize: '0.82rem' }}>
                                             Cancelar
                                         </button>
-                                    </div>
+                                    </form>
                                 ) : (
                                     <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
                                         style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
@@ -3079,7 +3403,7 @@ const Ventas = () => {
                         <button
                             onClick={() => {
                                 const toAdd = ticketPreviewItems.filter(i => i.priceRecord && i.product);
-                                toAdd.forEach(i => addToCart({ ...i.product, price: i.priceRecord.price }, i.weight));
+                                toAdd.forEach(i => addToCart(buildCartProductFromPriceRecord(i.product, i.priceRecord), i.weight));
                                 setShowTicketPreview(false);
                                 if (toAdd.length < ticketPreviewItems.length) {
                                     setScannerError(`✅ ${toAdd.length} agregado(s). ${ticketPreviewItems.length - toAdd.length} no configurado(s) — revisá Stock.`);

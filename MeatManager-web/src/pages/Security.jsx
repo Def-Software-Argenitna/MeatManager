@@ -23,6 +23,8 @@ const EMPTY_FORM = {
     assignedClientLicenseIds: [],
 };
 
+const generateTicketDeleteCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
 const hasLogisticsCapability = (license) => Boolean(
     license?.hasLogisticsCapability
     || license?.license?.hasLogisticsCapability
@@ -674,6 +676,12 @@ const Security = () => {
         }
     };
 
+    const handleGenerateDeleteCode = () => {
+        const generatedCode = generateTicketDeleteCode();
+        setDeleteCode(generatedCode);
+        setConfirmDeleteCode(generatedCode);
+    };
+
     const handleToggleActive = async (user) => {
         const activeAdmins = users.filter(u => u.role === 'admin' && u.active === 1);
         if (user.active === 1 && user.role === 'admin' && activeAdmins.length <= 1) {
@@ -757,16 +765,46 @@ const Security = () => {
                         <form className="security-form" onSubmit={handleUpdatePin}>
                             <div className="form-group">
                                 <label>PIN Actual:</label>
-                                <input type="password" value={currentPin} onChange={e => setCurrentPin(e.target.value)} placeholder="****" maxLength={8} />
+                                <input
+                                    type="password"
+                                    id="master-pin-current"
+                                    name="master-pin-current"
+                                    value={currentPin}
+                                    onChange={e => setCurrentPin(e.target.value)}
+                                    placeholder="****"
+                                    maxLength={8}
+                                    autoComplete="current-password"
+                                    inputMode="numeric"
+                                />
                             </div>
                             <div className="form-row">
                                 <div className="form-group">
                                     <label>Nuevo PIN:</label>
-                                    <input type="password" value={newPin} onChange={e => setNewPin(e.target.value)} placeholder="Nuevo" maxLength={8} />
+                                    <input
+                                        type="password"
+                                        id="master-pin-new"
+                                        name="master-pin-new"
+                                        value={newPin}
+                                        onChange={e => setNewPin(e.target.value)}
+                                        placeholder="Nuevo"
+                                        maxLength={8}
+                                        autoComplete="new-password"
+                                        inputMode="numeric"
+                                    />
                                 </div>
                                 <div className="form-group">
                                     <label>Confirmar Nuevo PIN:</label>
-                                    <input type="password" value={confirmPin} onChange={e => setConfirmPin(e.target.value)} placeholder="Repetir" maxLength={8} />
+                                    <input
+                                        type="password"
+                                        id="master-pin-confirm"
+                                        name="master-pin-confirm"
+                                        value={confirmPin}
+                                        onChange={e => setConfirmPin(e.target.value)}
+                                        placeholder="Repetir"
+                                        maxLength={8}
+                                        autoComplete="new-password"
+                                        inputMode="numeric"
+                                    />
                                 </div>
                             </div>
                             <button type="submit" className="btn-security primary" disabled={loading || !newPin}>
@@ -787,27 +825,53 @@ const Security = () => {
                             <form className="security-form" onSubmit={handleUpdateDeleteCode}>
                                 <div className="form-group">
                                     <label>Código actual configurado:</label>
-                                    <input type="text" value={storedDeleteCode ? 'Configurado' : 'Sin configurar'} disabled />
+                                    <div
+                                        className="security-input"
+                                        aria-live="polite"
+                                        style={{ opacity: 0.75, cursor: 'default' }}
+                                    >
+                                        {storedDeleteCode ? 'Configurado' : 'Sin configurar'}
+                                    </div>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button
+                                        type="button"
+                                        className="btn-security secondary"
+                                        onClick={handleGenerateDeleteCode}
+                                        disabled={!isAdmin}
+                                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}
+                                    >
+                                        <RefreshCw size={16} />
+                                        Generar código
+                                    </button>
                                 </div>
                                 <div className="form-row">
                                     <div className="form-group">
                                         <label>Nuevo código:</label>
                                         <input
                                             type="password"
+                                            id="ticket-delete-code"
+                                            name="ticket-delete-code"
                                             value={deleteCode}
                                             onChange={e => setDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Mínimo 4 dígitos"
                                             maxLength={12}
+                                            autoComplete="new-password"
+                                            inputMode="numeric"
                                         />
                                     </div>
                                     <div className="form-group">
                                         <label>Confirmar código:</label>
                                         <input
                                             type="password"
+                                            id="ticket-delete-code-confirm"
+                                            name="ticket-delete-code-confirm"
                                             value={confirmDeleteCode}
                                             onChange={e => setConfirmDeleteCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
                                             placeholder="Repetir código"
                                             maxLength={12}
+                                            autoComplete="new-password"
+                                            inputMode="numeric"
                                         />
                                     </div>
                                 </div>

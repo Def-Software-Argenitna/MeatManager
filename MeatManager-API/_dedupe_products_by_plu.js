@@ -6,6 +6,10 @@ const DB_NAME = process.env.OPERATIONAL_DB_NAME || process.env.MEATMANAGER_DB_NA
 const APPLY = process.argv.includes('--apply');
 const tenantArg = process.argv.find((arg) => arg.startsWith('--tenant='));
 const TARGET_TENANT_ID = tenantArg ? Number(tenantArg.split('=')[1]) : null;
+const pluArg = process.argv.find((arg) => arg.startsWith('--plu='));
+const TARGET_PLU = pluArg ? String(pluArg.split('=')[1]).trim() : null;
+const keepIdArg = process.argv.find((arg) => arg.startsWith('--keep-id='));
+const FORCED_KEEP_ID = keepIdArg ? Number(keepIdArg.split('=')[1]) : null;
 
 const getConnection = async () => mysql.createConnection({
     host: process.env.DB_HOST,
@@ -31,12 +35,16 @@ const getReferencingTables = async (conn) => {
     }));
 };
 
-const getDuplicateGroups = async (conn, tenantId) => {
+const getDuplicateGroups = async (conn, tenantId, plu) => {
     const params = [];
-    let tenantSql = '';
+    let extraSql = '';
     if (Number.isFinite(tenantId)) {
-        tenantSql = 'AND tenant_id = ?';
+        extraSql += ' AND tenant_id = ?';
         params.push(tenantId);
+    }
+    if (plu) {
+        extraSql += ' AND CAST(plu AS CHAR) = ?';
+        params.push(plu);
     }
 
     const [groups] = await conn.query(
@@ -44,7 +52,7 @@ const getDuplicateGroups = async (conn, tenantId) => {
          FROM products
          WHERE plu IS NOT NULL
            AND TRIM(CAST(plu AS CHAR)) <> ''
-           ${tenantSql}
+           ${extraSql}
          GROUP BY tenant_id, plu
          HAVING COUNT(*) > 1
          ORDER BY tenant_id, CAST(plu AS UNSIGNED), plu`,
@@ -75,7 +83,12 @@ const getReferenceCount = async (conn, tableName, columnName, tenantId, productI
     return Number(rows[0]?.qty || 0);
 };
 
-const chooseCanonicalProduct = (products, referenceCounts) => {
+const chooseCanonicalProduct = (products, referenceCounts, forcedKeepId) => {
+    if (Number.isFinite(forcedKeepId)) {
+        const forced = products.find((product) => product.id === forcedKeepId);
+        if (forced) return forced;
+    }
+
     return [...products].sort((a, b) => {
         const countDiff = (referenceCounts[b.id] || 0) - (referenceCounts[a.id] || 0);
         if (countDiff !== 0) return countDiff;
@@ -134,10 +147,12 @@ const main = async () => {
     const conn = await getConnection();
     try {
         const refs = await getReferencingTables(conn);
-        const groups = await getDuplicateGroups(conn, TARGET_TENANT_ID);
+        const groups = await getDuplicateGroups(conn, TARGET_TENANT_ID, TARGET_PLU);
 
         console.log(`DB objetivo: ${DB_NAME}`);
         console.log(`Tenant objetivo: ${Number.isFinite(TARGET_TENANT_ID) ? TARGET_TENANT_ID : 'todos'}`);
+        console.log(`PLU objetivo: ${TARGET_PLU || 'todos'}`);
+        console.log(`Keep-id forzado: ${Number.isFinite(FORCED_KEEP_ID) ? FORCED_KEEP_ID : 'auto'}`);
         console.log(`Modo: ${APPLY ? 'APPLY' : 'DRY-RUN'}`);
         console.log(`Tablas referenciando products.id: ${refs.map((r) => `${r.tableName}.${r.columnName}`).join(', ')}`);
 
@@ -160,7 +175,7 @@ const main = async () => {
                 referenceCounts[product.id] = totalRefs;
             }
 
-            const canonical = chooseCanonicalProduct(products, referenceCounts);
+            const canonical = chooseCanonicalProduct(products, referenceCounts, FORCED_KEEP_ID);
             const duplicates = products.filter((product) => product.id !== canonical.id);
 
             plan.push({
@@ -182,7 +197,7 @@ const main = async () => {
 
         if (!APPLY) {
             console.log('\nDry-run finalizado. Para aplicar:');
-            console.log(`node _dedupe_products_by_plu.js --tenant=${Number.isFinite(TARGET_TENANT_ID) ? TARGET_TENANT_ID : 4} --apply`);
+            console.log(`node _dedupe_products_by_plu.js --tenant=${Number.isFinite(TARGET_TENANT_ID) ? TARGET_TENANT_ID : 4}${TARGET_PLU ? ` --plu=${TARGET_PLU}` : ''}${Number.isFinite(FORCED_KEEP_ID) ? ` --keep-id=${FORCED_KEEP_ID}` : ''} --apply`);
             return;
         }
 
@@ -193,7 +208,26 @@ const main = async () => {
 
         for (const item of plan) {
             for (const duplicate of item.duplicates) {
+                const [[canonicalPrice]] = await conn.query(
+                    `SELECT id
+                     FROM prices
+                     WHERE tenant_id = ? AND product_ref_id = ?
+                     LIMIT 1`,
+                    [item.tenantId, item.canonical.id]
+                );
+
+                if (canonicalPrice?.id) {
+                    const [deleteLegacyPrice] = await conn.query(
+                        `DELETE FROM prices
+                         WHERE tenant_id = ? AND product_ref_id = ?`,
+                        [item.tenantId, duplicate.id]
+                    );
+                    movedReferences += Number(deleteLegacyPrice.affectedRows || 0);
+                }
+
                 for (const ref of refs) {
+                    if (ref.tableName === 'prices' && ref.columnName === 'product_ref_id') continue;
+
                     const [result] = await conn.query(
                         `UPDATE \`${ref.tableName}\`
                          SET \`${ref.columnName}\` = ?
@@ -202,6 +236,14 @@ const main = async () => {
                     );
                     movedReferences += Number(result.affectedRows || 0);
                 }
+
+                const [renameStockRows] = await conn.query(
+                    `UPDATE stock
+                     SET name = ?
+                     WHERE tenant_id = ? AND product_id = ?`,
+                    [item.canonical.name, item.tenantId, item.canonical.id]
+                );
+                movedReferences += Number(renameStockRows.affectedRows || 0);
 
                 const [deleteResult] = await conn.query(
                     `DELETE FROM products WHERE tenant_id = ? AND id = ?`,

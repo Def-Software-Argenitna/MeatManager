@@ -150,6 +150,11 @@ const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
 const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
+const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
+    .trim()
+    .replace(/\/+$/, '');
+const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
+const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.env.SCALE_BRIDGE_PULL_LOOKBACK_MINUTES || '45', 10) || 45);
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
@@ -1622,7 +1627,41 @@ async function ensureTenantScopedForeignKeys(conn) {
             indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.product_prices
                 ADD INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at)`,
         },
+        {
+            table: 'promotions',
+            constraint: 'promotions_product_fk',
+            addSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                ADD CONSTRAINT promotions_product_fk
+                FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES \`${OPERATIONAL_DB_NAME}\`.products (\`${TENANT_COLUMN}\`, id)
+                ON DELETE CASCADE`,
+            indexName: 'idx_promotions_tenant_product',
+            indexSql: `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                ADD INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id)`,
+        },
     ];
+
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET plu = NULL
+         WHERE plu IS NOT NULL
+           AND TRIM(CAST(plu AS CHAR)) = ''`
+    );
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_plu'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                 ADD UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)`
+            );
+        } catch (error) {
+            if (error?.code === 'ER_DUP_ENTRY') {
+                console.warn('[DB] No se pudo crear uniq_products_tenant_plu porque existen PLU duplicados. Limpialos y reiniciá la API.');
+            } else if (error?.code !== 'ER_DUP_KEYNAME') {
+                throw error;
+            }
+        }
+    }
 
     for (const definition of fkDefinitions) {
         if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, definition.table, definition.indexName))) {
@@ -1641,6 +1680,19 @@ async function ensureTenantScopedForeignKeys(conn) {
                 if (!['ER_CANT_CREATE_TABLE', 'ER_DUP_KEYNAME', 'ER_CANNOT_ADD_FOREIGN'].includes(error?.code)) {
                     throw error;
                 }
+            }
+        }
+    }
+
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'promotions', 'uniq_promotions_tenant_promo_plu'))) {
+        try {
+            await conn.query(
+                `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
+                 ADD UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu)`
+            );
+        } catch (error) {
+            if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_CANT_CREATE_TABLE'].includes(error?.code)) {
+                throw error;
             }
         }
     }
@@ -1667,6 +1719,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
+            await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
@@ -1733,6 +1787,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
             await ensureColumn(conn, 'clients', 'contact_last_name', '`contact_last_name` VARCHAR(120) NULL');
             await ensureColumn(conn, 'clients', 'dni_cuit', '`dni_cuit` VARCHAR(32) NULL');
+            await ensureColumn(conn, 'clients', 'employee_discount_enabled', '`employee_discount_enabled` TINYINT(1) NOT NULL DEFAULT 0 AFTER `has_current_account`');
+            await ensureColumn(conn, 'clients', 'employee_discount_pct', '`employee_discount_pct` DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER `employee_discount_enabled`');
             await ensureColumn(conn, 'clients', 'latitude', '`latitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'longitude', '`longitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'geocoded_at', '`geocoded_at` DATETIME NULL');
@@ -1751,16 +1807,25 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'ventas', 'subtotal', '`subtotal` DECIMAL(12,2) NULL AFTER `total`');
             await ensureColumn(conn, 'ventas', 'adjustment', '`adjustment` DECIMAL(12,2) NULL DEFAULT 0 AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas', 'discount_client_id', '`discount_client_id` INT NULL AFTER `clientId`');
+            await ensureColumn(conn, 'ventas', 'client_discount_pct', '`client_discount_pct` DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER `discount_client_id`');
+            await ensureColumn(conn, 'ventas', 'client_discount_amount', '`client_discount_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `client_discount_pct`');
             await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
             await ensureColumn(conn, 'promotions', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'promotions', 'promo_name', '`promo_name` VARCHAR(191) NULL AFTER `product_name`');
+            await ensureColumn(conn, 'promotions', 'promo_plu', '`promo_plu` VARCHAR(32) NULL AFTER `promo_name`');
+            await ensureColumn(conn, 'promotions', 'promo_unit_price', '`promo_unit_price` DECIMAL(12,2) NULL AFTER `promo_total_price`');
+            await ensureColumn(conn, 'promotions', 'promo_price_mode', '`promo_price_mode` VARCHAR(20) NOT NULL DEFAULT \'total_kg\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_mode', '`stock_mode` VARCHAR(20) NOT NULL DEFAULT \'all_stock\' AFTER `promo_total_price`');
             await ensureColumn(conn, 'promotions', 'stock_cap_kg_limit', '`stock_cap_kg_limit` DECIMAL(12,3) NULL AFTER `stock_mode`');
             await ensureColumn(conn, 'promotions', 'end_condition', '`end_condition` VARCHAR(20) NOT NULL DEFAULT \'none\' AFTER `stock_cap_kg_limit`');
             await ensureColumn(conn, 'promotions', 'sold_kg_limit', '`sold_kg_limit` DECIMAL(12,3) NULL AFTER `end_condition`');
             await ensureColumn(conn, 'promotions', 'end_date', '`end_date` DATETIME NULL AFTER `sold_kg_limit`');
             await ensureColumn(conn, 'promotions', 'used_kg', '`used_kg` DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER `end_date`');
+            await ensureColumn(conn, 'branch_transfers', 'document_type', '`document_type` VARCHAR(30) NOT NULL DEFAULT \'remito\' AFTER `status`');
+            await ensureColumn(conn, 'branch_transfers', 'document_code', '`document_code` VARCHAR(40) NULL AFTER `remito_code`');
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
@@ -1786,6 +1851,18 @@ async function ensureOperationalTenantIsolation() {
                  SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
                  WHERE branch_id IS NULL
                    AND receipt_code REGEXP '^[0-9]{4}-'`
+            );
+            await conn.query(
+                `UPDATE branch_transfers
+                 SET document_type = 'remito'
+                 WHERE document_type IS NULL OR TRIM(document_type) = ''`
+            );
+            await conn.query(
+                `UPDATE branch_transfers
+                 SET document_code = CONCAT('R-', remito_code)
+                 WHERE (document_code IS NULL OR TRIM(document_code) = '')
+                   AND remito_code IS NOT NULL
+                   AND TRIM(remito_code) <> ''`
             );
 
             for (const tableName of TENANT_ID_TABLES) {
@@ -2698,6 +2775,12 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         return explicitBranchId;
     }
 
+    // Si el usuario está atado a una sucursal, priorizar ese alcance.
+    const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+    if (Number.isFinite(userBranchId) && userBranchId > 0) {
+        return userBranchId;
+    }
+
     const branchCodeFromRecord =
         record?.branch_code
         ?? record?.branchCode
@@ -2707,10 +2790,24 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         normalizeBranchCodeValue(branchCodeFromRecord)
         || await getTenantBranchCode(pool, tenantId);
 
-    return resolveClientBranchId(accessContext.client.id, {
+    const resolvedByCode = await resolveClientBranchId(accessContext.client.id, {
         branchCode: currentBranchCode,
         receiptCode: record?.receipt_code,
     });
+    if (Number.isFinite(resolvedByCode) && resolvedByCode > 0) {
+        return resolvedByCode;
+    }
+
+    // Fallback seguro: tenant con una sola sucursal activa.
+    const activeBranches = await listClientBranches(accessContext.client.id);
+    if (activeBranches.length === 1) {
+        const singleBranchId = Number(activeBranches[0]?.id);
+        if (Number.isFinite(singleBranchId) && singleBranchId > 0) {
+            return singleBranchId;
+        }
+    }
+
+    return null;
 }
 
 function tenantWhereClause(table, tenantId, prefix = '') {
@@ -3067,15 +3164,17 @@ function getSchemaTables() {
             unit            VARCHAR(20),
             current_price   DECIMAL(12,2) DEFAULT 0,
             plu             VARCHAR(20),
+            active          TINYINT(1) NOT NULL DEFAULT 1,
+            deleted_at      DATETIME NULL,
             source          VARCHAR(50),
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
             UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
+            UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
-            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id),
-            INDEX idx_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)
+            INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -3137,6 +3236,8 @@ function getSchemaTables() {
             cuit            VARCHAR(20),
             balance         DECIMAL(12,2) DEFAULT 0,
             has_current_account TINYINT(1) DEFAULT 1,
+            employee_discount_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            employee_discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
             has_initial_balance TINYINT(1) DEFAULT 0,
             last_updated    DATETIME,
             synced          TINYINT(1) DEFAULT 0,
@@ -3153,6 +3254,9 @@ function getSchemaTables() {
             payment_method_id   INT,
             client_id           INT,
             clientId            INT,
+            discount_client_id  INT,
+            client_discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+            client_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
             branch_id           INT,
             payment_breakdown   JSON,
             receipt_number      INT,
@@ -3317,8 +3421,12 @@ function getSchemaTables() {
             branch_id           INT NULL,
             product_id          INT NULL,
             product_name        VARCHAR(150) NOT NULL,
+            promo_name          VARCHAR(191) NULL,
+            promo_plu           VARCHAR(32) NULL,
             min_qty_kg          DECIMAL(12,3) NOT NULL,
             promo_total_price   DECIMAL(12,2) NOT NULL,
+            promo_unit_price    DECIMAL(12,2) NULL,
+            promo_price_mode    VARCHAR(20) NOT NULL DEFAULT 'total_kg',
             stock_mode          VARCHAR(20) NOT NULL DEFAULT 'all_stock',
             stock_cap_kg_limit  DECIMAL(12,3) NULL,
             end_condition       VARCHAR(20) NOT NULL DEFAULT 'none',
@@ -3333,7 +3441,10 @@ function getSchemaTables() {
             INDEX idx_promotions_tenant (\`${TENANT_COLUMN}\`),
             INDEX idx_promotions_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
-            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name)
+            INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name),
+            UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu),
+            CONSTRAINT promotions_product_fk FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
+                REFERENCES products(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS branch_transfers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -3341,8 +3452,10 @@ function getSchemaTables() {
             from_branch_id  INT NOT NULL,
             to_branch_id    INT NOT NULL,
             status          VARCHAR(20) NOT NULL DEFAULT 'pending',
+            document_type   VARCHAR(30) NOT NULL DEFAULT 'remito',
             remito_number   INT,
             remito_code     VARCHAR(32),
+            document_code   VARCHAR(40),
             note            TEXT,
             created_by_user_id BIGINT,
             created_by_username VARCHAR(150),
@@ -4248,6 +4361,55 @@ function normalizeColumnValue(value, columnType) {
     return value;
 }
 
+function normalizePluValue(value) {
+    const raw = String(value ?? '').trim();
+    if (!raw) return null;
+    if (!/^\d+$/.test(raw)) {
+        const error = new Error('El PLU debe contener solo numeros');
+        error.statusCode = 400;
+        throw error;
+    }
+    const numeric = Number.parseInt(raw, 10);
+    if (!Number.isFinite(numeric) || numeric <= 0) {
+        const error = new Error('El PLU debe ser un numero mayor a 0');
+        error.statusCode = 400;
+        throw error;
+    }
+    return String(numeric);
+}
+
+async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
+    const normalizedPlu = normalizePluValue(plu);
+    if (!normalizedPlu) return null;
+
+    const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+    let sql = `SELECT id, name, plu
+               FROM products
+               WHERE tenant_id = ?
+                 AND (
+                    plu = ?
+                    OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                 )`;
+    if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
+        sql += ' AND id <> ?';
+        params.push(Number(excludeProductId));
+    }
+    sql += ' ORDER BY id ASC LIMIT 1';
+
+    const [rows] = await pool.query(sql, params);
+    return rows?.[0] || null;
+}
+
+async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null) {
+    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId);
+    if (!conflict) return;
+
+    const normalizedPlu = normalizePluValue(plu);
+    const error = new Error(`El PLU ${normalizedPlu} ya esta asignado a "${conflict.name}" (producto ${conflict.id})`);
+    error.statusCode = 409;
+    throw error;
+}
+
 async function resolveProductRecordCategory(pool, tenantId, record) {
     if (!record || typeof record !== 'object') return record;
 
@@ -4356,13 +4518,17 @@ function formatPromoBroadcastMessage({ businessName, promo }) {
     const safeBusiness = String(businessName || '').trim();
     const safeProduct = String(promo?.product_name || 'Producto').trim();
     const minKg = Number(promo?.min_qty_kg || 0).toLocaleString('es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
-    const total = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPrice = Number(promo?.promo_total_price || 0).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const promoPriceMode = String(promo?.promo_price_mode || 'total_kg').trim().toLowerCase();
+    const promoText = promoPriceMode === 'per_kg'
+        ? `${safeProduct}: desde *${minKg} kg*, cada kg a *$${promoPrice}*`
+        : `${safeProduct}: llevando *${minKg} kg* pagás *$${promoPrice}* en total`;
     const header = safeBusiness ? `🥩 *${safeBusiness}*` : '🥩 *Nueva promo*';
     return [
         header,
         '',
         '🔥 *PROMOCIÓN NUEVA*',
-        `${safeProduct}: llevando *${minKg} kg* pagás *$${total}*`,
+        promoText,
         '',
         'Te esperamos en el local.',
     ].join('\n');
@@ -4378,7 +4544,7 @@ async function getTenantSettingValue(pool, tenantId, key) {
 
 async function getActivePromotions(pool, tenantId, limit = 25) {
     const [rows] = await pool.query(
-        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, active
+        `SELECT id, product_id, product_name, min_qty_kg, promo_total_price, promo_price_mode, active
          FROM promotions
          WHERE \`${TENANT_COLUMN}\` = ? AND active = 1
          ORDER BY id DESC
@@ -4594,6 +4760,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
+            if (table === 'products') {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu);
+            }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
                 if (table === 'promotions') {
@@ -4602,6 +4772,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                         product_name: filtered.product_name || null,
                         min_qty_kg: filtered.min_qty_kg || 0,
                         promo_total_price: filtered.promo_total_price || 0,
+                        promo_price_mode: filtered.promo_price_mode || 'total_kg',
                         active: Number(filtered.active ?? 1) === 1,
                     };
                     if (promoToBroadcast.active) {
@@ -4633,6 +4804,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
             }
+            if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
+                filtered.plu = normalizePluValue(filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId);
+            }
             const scope = tenantWhereClause(table, tenantId);
             await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
             return res.json({ ok: true });
@@ -4642,6 +4817,17 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para delete' });
             const scope = tenantWhereClause(table, tenantId);
+            if (table === 'products') {
+                const [result] = await pool.query(
+                    `UPDATE \`${table}\`
+                     SET active = 0,
+                         deleted_at = NOW(),
+                         updated_at = NOW()
+                     WHERE id = ? AND ${scope.sql}`,
+                    [numId, ...scope.params]
+                );
+                return res.json({ ok: true, archived: Number(result?.affectedRows || 0) > 0 });
+            }
             await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}`, [numId, ...scope.params]);
             return res.json({ ok: true });
         }
@@ -4682,7 +4868,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
     } catch (err) {
         console.error('[DATA ERROR]', err.message);
-        res.status(500).json({ error: 'Error de datos: ' + err.message });
+        res.status(err.statusCode || 500).json({ error: 'Error de datos: ' + err.message });
     }
 });
 
@@ -4908,7 +5094,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         if (!Number.isFinite(price) || price < 0) {
             return res.status(400).json({ error: 'price inválido' });
         }
-        const plu = String(req.body?.plu || '').trim() || null;
+        const plu = normalizePluValue(req.body?.plu);
         const source = String(req.body?.source || 'manual').trim().slice(0, 50);
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -4919,6 +5105,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             [tenantId, productId]
         );
         if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        await assertUniqueProductPlu(pool, tenantId, plu, productId);
 
         const now = new Date();
         const [result] = await pool.query(
@@ -4934,7 +5121,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         return res.json({ ok: true, id: result.insertId });
     } catch (err) {
         console.error('[PRODUCT PRICES WRITE ERROR]', err.message);
-        res.status(500).json({ error: err.message });
+        res.status(err.statusCode || 500).json({ error: err.message });
     }
 });
 
@@ -4951,16 +5138,42 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
         const orderBy = String(req.query.orderBy || 'id').trim();
         const direction = String(req.query.direction || 'DESC').toUpperCase() === 'ASC' ? 'ASC' : 'DESC';
+        const includeInactive = String(req.query.include_inactive || '').trim() === '1';
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
         const validCols = await getTableColumns(pool, dbName, table);
         const safeOrderBy = validCols.includes(orderBy) ? orderBy : (validCols.includes('id') ? 'id' : validCols[0]);
         const scope = tenantWhereClause(table, tenantId);
+        const extraWhere = [];
+        const extraParams = [];
+
+        if (table === 'products' && validCols.includes('active') && !includeInactive) {
+            extraWhere.push('COALESCE(active, 1) = 1');
+        }
+
+        if (BRANCH_SCOPED_TABLES.has(table) && validCols.includes('branch_id')) {
+            const accessContext = await getClientAccessContext({
+                uid: req.firebaseUser.uid,
+                email: req.firebaseUser.email,
+                _internalAdmin: req.firebaseUser?._internalAdmin || null,
+                _supportClientId: req.firebaseUser?._supportClientId || null,
+            });
+            const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+            if (Number.isFinite(userBranchId) && userBranchId > 0) {
+                // Empleado/sesión atada a sucursal: devuelve esa sucursal + filas globales.
+                extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+                extraParams.push(userBranchId);
+            }
+        }
+
+        const whereSql = extraWhere.length > 0
+            ? `${scope.sql} AND ${extraWhere.join(' AND ')}`
+            : scope.sql;
 
         let [rows] = await pool.query(
-            `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-            [...scope.params, limit, offset]
+            `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+            [...scope.params, ...extraParams, limit, offset]
         );
 
         // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
@@ -4977,8 +5190,8 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
             }
             [rows] = await pool.query(
-                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-                [...scope.params, limit, offset]
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
             );
         }
 
@@ -5003,8 +5216,8 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 );
             }
             [rows] = await pool.query(
-                `SELECT * FROM \`${table}\` WHERE ${scope.sql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-                [...scope.params, limit, offset]
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
             );
         }
 
@@ -5195,11 +5408,56 @@ function buildScaleTicketItemSelect(schema) {
     ].join(', ');
 }
 
+async function triggerScaleBridgePullSales({
+    reason = 'barcode_lookup',
+    barcode = '',
+    lookbackMinutes = SCALE_BRIDGE_PULL_LOOKBACK_MINUTES,
+} = {}) {
+    const now = new Date();
+    const fromDate = new Date(now.getTime() - (Math.max(1, Number(lookbackMinutes) || 1) * 60 * 1000));
+    const controller = new AbortController();
+    const timeoutHandle = setTimeout(() => controller.abort(), SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS);
+    try {
+        const response = await fetch(`${SCALE_BRIDGE_DIRECT_BASE_URL}/api/scale/pull-sales`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                fromDate: fromDate.toISOString(),
+                toDate: now.toISOString(),
+                closeAfter: false,
+            }),
+            signal: controller.signal,
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload?.ok === false) {
+            console.warn('[SCALE LOOKUP] pull-sales devolvio error', {
+                reason,
+                barcode,
+                status: response.status,
+                message: payload?.error || null,
+            });
+            return false;
+        }
+        return true;
+    } catch (error) {
+        console.warn('[SCALE LOOKUP] pull-sales no disponible', {
+            reason,
+            barcode,
+            baseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+            error: error?.name === 'AbortError' ? 'timeout' : (error?.message || String(error)),
+        });
+        return false;
+    } finally {
+        clearTimeout(timeoutHandle);
+    }
+}
+
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
     try {
         const barcode = String(req.params.barcode || '').trim();
         if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
         const barcodeDigits = barcode.replace(/\D/g, '');
+        const isScaleSummaryBarcode = barcodeDigits.length >= 12 && barcodeDigits.startsWith('22');
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
@@ -5226,6 +5484,52 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             );
         }
 
+        // Lectura resiliente: cuando el usuario escanea inmediatamente después de imprimir,
+        // damos una ventana corta para que el bridge termine de persistir el ticket.
+        if (!ticketRows.length && isScaleSummaryBarcode) {
+            const pullPromise = triggerScaleBridgePullSales({
+                reason: 'lookup_summary_barcode',
+                barcode,
+            });
+            const retryUntil = Date.now() + 7500;
+            while (!ticketRows.length && Date.now() < retryUntil) {
+                await new Promise((resolve) => setTimeout(resolve, 500));
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+            if (!ticketRows.length) {
+                await pullPromise.catch(() => false);
+                [ticketRows] = await pool.query(
+                    `SELECT ${ticketSelect}
+                     FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ?
+                       AND (
+                            UPPER(ticket_barcode) = UPPER(?)
+                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                       )
+                       ${openTicketFilter}
+                     ORDER BY sale_at DESC
+                     LIMIT 1`,
+                    scaleSchema.ticketPrintedBarcode
+                        ? [tenantId, barcode, barcode]
+                        : [tenantId, barcode]
+                );
+            }
+        }
+
         if (!ticketRows.length && scaleSchema.ticketStatus) {
             const statusConditions = ['UPPER(ticket_barcode) = UPPER(?)'];
             const statusParams = [tenantId, barcode];
@@ -5248,7 +5552,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
         }
 
-        if (!ticketRows.length && barcodeDigits.length >= 12 && barcodeDigits.startsWith('22')) {
+        if (!ticketRows.length && isScaleSummaryBarcode) {
             const totalRaw = Number.parseInt(barcodeDigits.substring(6, 12), 10);
             const totalCandidates = Array.from(new Set([
                 Number.isFinite(totalRaw) ? totalRaw : 0,
@@ -5368,21 +5672,70 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         }
 
         const ticket = ticketRows[0];
-        const [itemRows] = await pool.query(
-                        `SELECT ${itemSelect}
+        const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
               AND (
-                                     CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                                     OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                   CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                   OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
               )
-             WHERE s.tenant_id = ?
+             WHERE s.tenant_id = ?`;
+
+        let [itemRows] = await pool.query(
+            `${itemBaseSql}
                AND s.device_id = ?
                AND s.ticket_id = ?
              ORDER BY s.line_no ASC`,
             [tenantId, ticket.device_id, ticket.ticket_id]
         );
+
+        // Fallback defensivo:
+        // algunos firmwares/lectores pueden desalinear el identificador interno,
+        // pero los barcodes del ticket siguen siendo estables.
+        if (!itemRows.length) {
+            const barcodeConditions = ['UPPER(s.ticket_barcode) = UPPER(?)'];
+            const barcodeParams = [tenantId, ticket.ticket_barcode];
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                barcodeConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                barcodeParams.push(ticket.printed_ticket_barcode);
+            }
+            [itemRows] = await pool.query(
+                `${itemBaseSql}
+                   AND (${barcodeConditions.join(' OR ')})
+                 ORDER BY s.line_no ASC`,
+                barcodeParams
+            );
+        }
+
+        // Fallback extra de resiliencia: si por cualquier motivo el mapeo por
+        // device/ticket no matchea (cambio de device_id, recaptura parcial, etc),
+        // buscamos por cualquier identificador estable del ticket dentro del tenant.
+        if (!itemRows.length) {
+            const anyIdConditions = [];
+            const anyIdParams = [tenantId];
+            if (ticket.ticket_id) {
+                anyIdConditions.push('s.ticket_id = ?');
+                anyIdParams.push(ticket.ticket_id);
+            }
+            if (ticket.ticket_barcode) {
+                anyIdConditions.push('UPPER(s.ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.ticket_barcode);
+            }
+            if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
+                anyIdConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
+                anyIdParams.push(ticket.printed_ticket_barcode);
+            }
+
+            if (anyIdConditions.length > 0) {
+                [itemRows] = await pool.query(
+                    `${itemBaseSql}
+                       AND (${anyIdConditions.join(' OR ')})
+                     ORDER BY s.sale_at DESC, s.line_no ASC`,
+                    anyIdParams
+                );
+            }
+        }
 
         const items = itemRows.map((row) => {
             const grams = Number(row.grams || 0);
@@ -5708,7 +6061,8 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
 //   receipt_number, receipt_code,
 //   payment_method, payment_method_id,
 //   payment_breakdown?,    // array para pago mixto
-//   clientId?,
+//   clientId?,             // cliente para cuenta corriente
+//   discount_client_id?, client_discount_pct?, client_discount_amount?,
 //   qendra_ticket_id?, ticket_barcode?, source?,
 //   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
 // }
@@ -5734,6 +6088,9 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             payment_method, payment_method_id,
             payment_breakdown,
             clientId,
+            discount_client_id,
+            client_discount_pct,
+            client_discount_amount,
             qendra_ticket_id, ticket_barcode, source,
             items,
         } = req.body;
@@ -5747,6 +6104,52 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const safeTotal = parseFloat(total) || 0;
         const safeSubtotal = parseFloat(subtotal) || 0;
         const safeAdj = parseFloat(adjustment) || 0;
+        const parsedClientId = Number.parseInt(clientId, 10);
+        const safeClientId = Number.isFinite(parsedClientId) && parsedClientId > 0 ? parsedClientId : null;
+        const parsedDiscountClientId = Number.parseInt(
+            discount_client_id != null ? discount_client_id : clientId,
+            10
+        );
+        const requestedDiscountClientId = Number.isFinite(parsedDiscountClientId) && parsedDiscountClientId > 0
+            ? parsedDiscountClientId
+            : null;
+
+        const clampDiscountPct = (value) => {
+            const n = parseFloat(value);
+            if (!Number.isFinite(n) || n <= 0) return 0;
+            if (n >= 100) return 100;
+            return n;
+        };
+        let safeDiscountClientId = null;
+        let safeClientDiscountPct = 0;
+        let safeClientDiscountAmount = 0;
+
+        if (requestedDiscountClientId) {
+            const [[discountClient]] = await conn.query(
+                `SELECT id, employee_discount_enabled, employee_discount_pct
+                 FROM clients
+                 WHERE tenant_id = ? AND id = ?
+                 LIMIT 1`,
+                [tenantId, requestedDiscountClientId]
+            );
+            const discountEnabled = Number(discountClient?.employee_discount_enabled) === 1
+                || discountClient?.employee_discount_enabled === true;
+            const discountPct = clampDiscountPct(discountClient?.employee_discount_pct);
+            if (discountClient && discountEnabled && discountPct > 0) {
+                safeDiscountClientId = Number(discountClient.id);
+                safeClientDiscountPct = discountPct;
+                safeClientDiscountAmount = Math.round(((safeSubtotal * discountPct) / 100) * 100) / 100;
+            }
+        }
+
+        const requestedDiscountPct = clampDiscountPct(client_discount_pct);
+        const requestedDiscountAmount = parseFloat(client_discount_amount);
+        if (safeDiscountClientId && safeClientDiscountPct === 0 && requestedDiscountPct > 0) {
+            safeClientDiscountPct = requestedDiscountPct;
+        }
+        if (safeDiscountClientId && safeClientDiscountAmount === 0 && Number.isFinite(requestedDiscountAmount) && requestedDiscountAmount > 0) {
+            safeClientDiscountAmount = Math.round(requestedDiscountAmount * 100) / 100;
+        }
         const now = date ? new Date(date) : new Date();
         const ticketBarcode = String(ticket_barcode || '').trim() || null;
 
@@ -5786,14 +6189,18 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
              (tenant_id, branch_id, date, subtotal, adjustment, total,
                receipt_number, receipt_code,
                payment_method, payment_method_id, payment_breakdown,
-               clientId, qendra_ticket_id, ticket_barcode, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               clientId, discount_client_id, client_discount_pct, client_discount_amount,
+               qendra_ticket_id, ticket_barcode, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
-                clientId || null,
+                safeClientId,
+                safeDiscountClientId,
+                safeClientDiscountPct,
+                safeClientDiscountAmount,
                 qendra_ticket_id || null, ticketBarcode, source || 'manual',
             ]
         );
@@ -5883,7 +6290,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Actualizar balance del cliente (solo cuenta corriente)
-        if (clientId) {
+        if (safeClientId) {
             const isCurrentAccount = payment_method === 'Cuenta Corriente'
                 || (Array.isArray(payment_breakdown) && payment_breakdown.some(
                     (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
@@ -5892,7 +6299,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 await conn.query(
                     `UPDATE clients SET balance = balance - ?, last_updated = NOW()
                      WHERE tenant_id = ? AND id = ?`,
-                    [safeTotal, tenantId, clientId]
+                    [safeTotal, tenantId, safeClientId]
                 );
             }
         }
@@ -5918,7 +6325,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         part.methodName,
                         part.methodType || inferPaymentTypeByName(part.methodName),
                         now,
-                        clientId || null,
+                        safeClientId,
                         resolvedBranchId || null,
                         receipt_number || null,
                         receipt_code || null,
@@ -6080,7 +6487,11 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Registrar en historial de eliminaciones
-        const deletedBy = req.body?.deleted_by_user_id || null;
+        const deletedByRaw = req.body?.deleted_by_user_id;
+        const deletedByParsed = Number.parseInt(deletedByRaw, 10);
+        const deletedBy = Number.isFinite(deletedByParsed) && deletedByParsed > 0
+            ? deletedByParsed
+            : null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
         await conn.query(
             `INSERT INTO deleted_sales_history
@@ -6780,6 +7191,44 @@ async function getNextSequenceData({ tenantConn, tenantId, counterKey, branchKey
     return { nextValue, receiptCode, branchCode };
 }
 
+const BRANCH_TRANSFER_DOCUMENT_TYPES = Object.freeze({
+    REMITO: 'remito',
+    INTERNAL_INVOICE: 'factura_interna',
+});
+
+const BRANCH_TRANSFER_DOCUMENT_META = Object.freeze({
+    [BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO]: {
+        label: 'Remito',
+        counterKey: 'remito',
+        codePrefix: 'R',
+    },
+    [BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE]: {
+        label: 'Factura interna',
+        counterKey: 'factura_interna',
+        codePrefix: 'FI',
+    },
+});
+
+function normalizeBranchTransferDocumentType(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    if (normalized === BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE) {
+        return BRANCH_TRANSFER_DOCUMENT_TYPES.INTERNAL_INVOICE;
+    }
+    return BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO;
+}
+
+function getBranchTransferDocumentMeta(documentType) {
+    const normalizedType = normalizeBranchTransferDocumentType(documentType);
+    return BRANCH_TRANSFER_DOCUMENT_META[normalizedType] || BRANCH_TRANSFER_DOCUMENT_META[BRANCH_TRANSFER_DOCUMENT_TYPES.REMITO];
+}
+
+function buildBranchTransferDocumentCode(documentType, baseCode) {
+    const normalizedCode = String(baseCode || '').trim();
+    if (!normalizedCode) return null;
+    const meta = getBranchTransferDocumentMeta(documentType);
+    return `${meta.codePrefix}-${normalizedCode}`;
+}
+
 // ── RUTA: POST /api/sequences/next ─────────────────────────────────────────
 // Incrementa un contador en settings y devuelve correlativo + código.
 app.post('/api/sequences/next', verifyFirebaseToken, async (req, res) => {
@@ -6896,12 +7345,22 @@ app.get('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const branches = await listClientBranches(accessContext.client.id);
             const branchesById = new Map(branches.map((branch) => [Number(branch.id), branch]));
 
-            const payload = rows.map((row) => ({
-                ...row,
-                items: itemsByTransfer.get(row.id) || [],
-                from_branch: branchesById.get(Number(row.from_branch_id)) || null,
-                to_branch: branchesById.get(Number(row.to_branch_id)) || null,
-            }));
+            const payload = rows.map((row) => {
+                const documentType = normalizeBranchTransferDocumentType(row.document_type);
+                const documentMeta = getBranchTransferDocumentMeta(documentType);
+                const computedDocumentCode = buildBranchTransferDocumentCode(documentType, row.remito_code);
+                const documentCode = String(row.document_code || '').trim() || computedDocumentCode;
+                return {
+                    ...row,
+                    document_type: documentType,
+                    document_label: documentMeta.label,
+                    document_number: Number(row.remito_number || 0) || null,
+                    document_code: documentCode || null,
+                    items: itemsByTransfer.get(row.id) || [],
+                    from_branch: branchesById.get(Number(row.from_branch_id)) || null,
+                    to_branch: branchesById.get(Number(row.to_branch_id)) || null,
+                };
+            });
 
             return res.json({ ok: true, count: payload.length, transfers: payload });
         } finally {
@@ -6933,6 +7392,8 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const userBranchId = Number(accessContext.user?.branchRecordId ?? accessContext.user?.branchId ?? 0);
             const fromBranchId = Number(req.body?.from_branch_id || req.body?.fromBranchId || userBranchId);
             const toBranchId = Number(req.body?.to_branch_id || req.body?.toBranchId || 0);
+            const documentType = normalizeBranchTransferDocumentType(req.body?.document_type || req.body?.documentType);
+            const documentMeta = getBranchTransferDocumentMeta(documentType);
 
             if (!Number.isFinite(fromBranchId) || fromBranchId <= 0) {
                 throw new Error('Sucursal remitente inválida');
@@ -6960,25 +7421,28 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             const { nextValue, receiptCode, branchCode } = await getNextSequenceData({
                 tenantConn: conn,
                 tenantId,
-                counterKey: 'remito',
+                counterKey: documentMeta.counterKey,
                 branchKey: 'branch_code',
                 branchCodeOverride,
             });
+            const documentCode = buildBranchTransferDocumentCode(documentType, receiptCode);
 
             const note = String(req.body?.note || '').trim() || null;
             const createdBy = getAccessDisplayName(accessContext.user);
 
             const [result] = await conn.query(
                 `INSERT INTO branch_transfers
-                 (tenant_id, from_branch_id, to_branch_id, status, remito_number, remito_code, note,
+                 (tenant_id, from_branch_id, to_branch_id, status, document_type, remito_number, remito_code, document_code, note,
                   created_by_user_id, created_by_username)
-                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId,
                     fromBranchId,
                     toBranchId,
+                    documentType,
                     nextValue,
                     receiptCode,
+                    documentCode,
                     note,
                     accessContext.user?.id || null,
                     createdBy,
@@ -7020,6 +7484,10 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
             return res.json({
                 ok: true,
                 transferId,
+                document_type: documentType,
+                document_label: documentMeta.label,
+                document_number: nextValue,
+                document_code: documentCode,
                 remito_number: nextValue,
                 remito_code: receiptCode,
                 branch_code: branchCode,
@@ -7032,7 +7500,7 @@ app.post('/api/branch-transfers', verifyFirebaseToken, async (req, res) => {
         }
     } catch (err) {
         console.error('[BRANCH TRANSFER CREATE ERROR]', err.message);
-        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el remito' });
+        return res.status(err.statusCode || 500).json({ error: err.message || 'No se pudo crear el comprobante interno' });
     }
 });
 

@@ -2,21 +2,64 @@
   "name": "meatmanager-bridge",
   "version": "0.1.0",
   "private": true,
+  "author": "Def-Software",
   "description": "Bridge local directo USB para balanzas Systel CUORA MAX + MySQL cloud",
-  "main": "src/index.js",
+  "main": "desktop/main.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Def-Software-Argenitna/MeatManager.git"
+  },
   "scripts": {
     "start": "node src/index.js",
+    "start:bridge": "node src/index.js",
+    "start:desktop": "electron .",
     "dev": "node --watch src/index.js",
+    "dev:desktop": "electron . --hidden",
     "once": "node src/index.js --once",
-    "lint": "echo \"No lint configured yet\""
+    "lint": "echo \"No lint configured yet\"",
+    "pack:desktop": "electron-builder --dir",
+    "dist:desktop": "electron-builder --win nsis"
   },
   "dependencies": {
     "@serialport/parser-inter-byte-timeout": "^13.0.0",
     "dotenv": "^16.4.5",
+    "electron-updater": "^6.6.2",
     "mysql2": "^3.9.1",
     "serialport": "^13.0.0"
   },
+  "devDependencies": {
+    "electron": "^37.2.5",
+    "electron-builder": "^25.1.8"
+  },
   "engines": {
     "node": ">=22.0.0"
+  },
+  "build": {
+    "appId": "com.defsoftware.meatmanager.bridge",
+    "productName": "MeatManager Bridge",
+    "asar": true,
+    "files": [
+      "desktop/**/*",
+      "src/**/*",
+      "public/**/*",
+      "sql/**/*",
+      "package.json"
+    ],
+    "directories": {
+      "buildResources": "public"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "artifactName": "MeatManager-Bridge-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   }
 }

@@ -51,11 +51,30 @@ const Sidebar = ({ isCollapsed }) => {
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
-    operacion: false,
+    operacion: true,
     comercial: false,
     produccion: false,
     configuracion: false,
   });
+
+  // Mantener abierto el grupo que contiene la ruta activa
+  React.useEffect(() => {
+    const p = location.pathname;
+    const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inComercial = ['/clientes', '/pedidos', '/logistica', '/sucursales', '/menu-digital'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inProduccion = ['/alimentos', '/otros', '/informes-pro', '/despostada'].some(
+      (path) => p === path || p.startsWith(path + '/')
+    );
+    const inConfiguracion = p.startsWith('/config') || p === '/manual';
+    if (inOperacion) setOpenGroups(prev => ({ ...prev, operacion: true }));
+    if (inComercial) setOpenGroups(prev => ({ ...prev, comercial: true }));
+    if (inProduccion) setOpenGroups(prev => ({ ...prev, produccion: true }));
+    if (inConfiguracion) setOpenGroups(prev => ({ ...prev, configuracion: true }));
+  }, [location.pathname]);
 
   React.useEffect(() => {
     const checkMaster = async () => {
@@ -150,7 +169,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Marketing WhatsApp', path: '/config/whatsapp-marketing', icon: MessageCircle },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
-    { title: 'Transferencias Sucursales', path: '/config/sucursales-transfer', icon: ArrowLeftRight },
+    { title: 'Reglas Transferencias', path: '/config/sucursales-transfer', icon: ArrowLeftRight },
     { title: 'Balanza', path: '/config/balanza', icon: Cpu },
     { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }
@@ -171,6 +190,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <button
         key={item.path}
+        type="button"
         className={`nav-item ${isActive(item.path) ? 'active' : ''} ${isLocked ? 'locked' : ''} ${options.compact ? 'compact' : ''}`}
         onClick={() => {
           if (isLocked) {
@@ -216,6 +236,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <div className="nav-group">
         <button
+          type="button"
           className={`nav-item nav-group-trigger ${location.pathname.includes('/despostada') ? 'active' : ''}`}
           onClick={() => {
             if (isCollapsed) return;
@@ -256,6 +277,7 @@ const Sidebar = ({ isCollapsed }) => {
     return (
       <div className="nav-group" key={groupKey}>
         <button
+          type="button"
           className={`nav-item nav-group-trigger ${isGroupActive ? 'active' : ''}`}
           onClick={() => toggleGroup(groupKey)}
         >
@@ -336,6 +358,7 @@ const Sidebar = ({ isCollapsed }) => {
             </div>
           )}
           <button
+            type="button"
             style={{ marginLeft: isCollapsed ? '0' : 'auto', flexShrink: 0, padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
             onClick={handleLogout}
             title="Cerrar Sesion"

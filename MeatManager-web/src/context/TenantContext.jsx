@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
-import { clearTokenCache, fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
+import { SUPPORT_SESSION_EXPIRED_EVENT, clearTokenCache, fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
 
 const SESSION_KEY = 'mm_tenant';
 const TOKEN_KEY = 'mm_auth_token';
@@ -91,6 +91,26 @@ export const TenantProvider = ({ children }) => {
 
         return unsubscribe;
     }, [tenant]);
+
+    useEffect(() => {
+        const handleSupportSessionExpired = () => {
+            clearTokenCache();
+            setTenant(null);
+            setAuthToken('');
+            sessionStorage.removeItem(SESSION_KEY);
+            sessionStorage.removeItem(TOKEN_KEY);
+            sessionStorage.removeItem('mm_user');
+            sessionStorage.removeItem('mm_perms');
+            sessionStorage.removeItem('mm_access_profile');
+
+            if (window.location.hash !== '#/login') {
+                window.location.hash = '#/login';
+            }
+        };
+
+        window.addEventListener(SUPPORT_SESSION_EXPIRED_EVENT, handleSupportSessionExpired);
+        return () => window.removeEventListener(SUPPORT_SESSION_EXPIRED_EVENT, handleSupportSessionExpired);
+    }, []);
 
     const login = async (email, password) => {
         try {
