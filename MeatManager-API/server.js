@@ -1787,6 +1787,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
             await ensureColumn(conn, 'clients', 'contact_last_name', '`contact_last_name` VARCHAR(120) NULL');
             await ensureColumn(conn, 'clients', 'dni_cuit', '`dni_cuit` VARCHAR(32) NULL');
+            await ensureColumn(conn, 'clients', 'employee_discount_enabled', '`employee_discount_enabled` TINYINT(1) NOT NULL DEFAULT 0 AFTER `has_current_account`');
+            await ensureColumn(conn, 'clients', 'employee_discount_pct', '`employee_discount_pct` DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER `employee_discount_enabled`');
             await ensureColumn(conn, 'clients', 'latitude', '`latitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'longitude', '`longitude` DECIMAL(10,7) NULL');
             await ensureColumn(conn, 'clients', 'geocoded_at', '`geocoded_at` DATETIME NULL');
@@ -1805,6 +1807,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'branch_id', '`branch_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'ventas', 'subtotal', '`subtotal` DECIMAL(12,2) NULL AFTER `total`');
             await ensureColumn(conn, 'ventas', 'adjustment', '`adjustment` DECIMAL(12,2) NULL DEFAULT 0 AFTER `subtotal`');
+            await ensureColumn(conn, 'ventas', 'discount_client_id', '`discount_client_id` INT NULL AFTER `clientId`');
+            await ensureColumn(conn, 'ventas', 'client_discount_pct', '`client_discount_pct` DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER `discount_client_id`');
+            await ensureColumn(conn, 'ventas', 'client_discount_amount', '`client_discount_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `client_discount_pct`');
             await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
@@ -3231,6 +3236,8 @@ function getSchemaTables() {
             cuit            VARCHAR(20),
             balance         DECIMAL(12,2) DEFAULT 0,
             has_current_account TINYINT(1) DEFAULT 1,
+            employee_discount_enabled TINYINT(1) NOT NULL DEFAULT 0,
+            employee_discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
             has_initial_balance TINYINT(1) DEFAULT 0,
             last_updated    DATETIME,
             synced          TINYINT(1) DEFAULT 0,
@@ -3247,6 +3254,9 @@ function getSchemaTables() {
             payment_method_id   INT,
             client_id           INT,
             clientId            INT,
+            discount_client_id  INT,
+            client_discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
+            client_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
             branch_id           INT,
             payment_breakdown   JSON,
             receipt_number      INT,
@@ -6051,7 +6061,8 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
 //   receipt_number, receipt_code,
 //   payment_method, payment_method_id,
 //   payment_breakdown?,    // array para pago mixto
-//   clientId?,
+//   clientId?,             // cliente para cuenta corriente
+//   discount_client_id?, client_discount_pct?, client_discount_amount?,
 //   qendra_ticket_id?, ticket_barcode?, source?,
 //   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
 // }
@@ -6077,6 +6088,9 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             payment_method, payment_method_id,
             payment_breakdown,
             clientId,
+            discount_client_id,
+            client_discount_pct,
+            client_discount_amount,
             qendra_ticket_id, ticket_barcode, source,
             items,
         } = req.body;
@@ -6090,6 +6104,52 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const safeTotal = parseFloat(total) || 0;
         const safeSubtotal = parseFloat(subtotal) || 0;
         const safeAdj = parseFloat(adjustment) || 0;
+        const parsedClientId = Number.parseInt(clientId, 10);
+        const safeClientId = Number.isFinite(parsedClientId) && parsedClientId > 0 ? parsedClientId : null;
+        const parsedDiscountClientId = Number.parseInt(
+            discount_client_id != null ? discount_client_id : clientId,
+            10
+        );
+        const requestedDiscountClientId = Number.isFinite(parsedDiscountClientId) && parsedDiscountClientId > 0
+            ? parsedDiscountClientId
+            : null;
+
+        const clampDiscountPct = (value) => {
+            const n = parseFloat(value);
+            if (!Number.isFinite(n) || n <= 0) return 0;
+            if (n >= 100) return 100;
+            return n;
+        };
+        let safeDiscountClientId = null;
+        let safeClientDiscountPct = 0;
+        let safeClientDiscountAmount = 0;
+
+        if (requestedDiscountClientId) {
+            const [[discountClient]] = await conn.query(
+                `SELECT id, employee_discount_enabled, employee_discount_pct
+                 FROM clients
+                 WHERE tenant_id = ? AND id = ?
+                 LIMIT 1`,
+                [tenantId, requestedDiscountClientId]
+            );
+            const discountEnabled = Number(discountClient?.employee_discount_enabled) === 1
+                || discountClient?.employee_discount_enabled === true;
+            const discountPct = clampDiscountPct(discountClient?.employee_discount_pct);
+            if (discountClient && discountEnabled && discountPct > 0) {
+                safeDiscountClientId = Number(discountClient.id);
+                safeClientDiscountPct = discountPct;
+                safeClientDiscountAmount = Math.round(((safeSubtotal * discountPct) / 100) * 100) / 100;
+            }
+        }
+
+        const requestedDiscountPct = clampDiscountPct(client_discount_pct);
+        const requestedDiscountAmount = parseFloat(client_discount_amount);
+        if (safeDiscountClientId && safeClientDiscountPct === 0 && requestedDiscountPct > 0) {
+            safeClientDiscountPct = requestedDiscountPct;
+        }
+        if (safeDiscountClientId && safeClientDiscountAmount === 0 && Number.isFinite(requestedDiscountAmount) && requestedDiscountAmount > 0) {
+            safeClientDiscountAmount = Math.round(requestedDiscountAmount * 100) / 100;
+        }
         const now = date ? new Date(date) : new Date();
         const ticketBarcode = String(ticket_barcode || '').trim() || null;
 
@@ -6129,14 +6189,18 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
              (tenant_id, branch_id, date, subtotal, adjustment, total,
                receipt_number, receipt_code,
                payment_method, payment_method_id, payment_breakdown,
-               clientId, qendra_ticket_id, ticket_barcode, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+               clientId, discount_client_id, client_discount_pct, client_discount_amount,
+               qendra_ticket_id, ticket_barcode, source)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
-                clientId || null,
+                safeClientId,
+                safeDiscountClientId,
+                safeClientDiscountPct,
+                safeClientDiscountAmount,
                 qendra_ticket_id || null, ticketBarcode, source || 'manual',
             ]
         );
@@ -6226,7 +6290,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         }
 
         // 4. Actualizar balance del cliente (solo cuenta corriente)
-        if (clientId) {
+        if (safeClientId) {
             const isCurrentAccount = payment_method === 'Cuenta Corriente'
                 || (Array.isArray(payment_breakdown) && payment_breakdown.some(
                     (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
@@ -6235,7 +6299,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 await conn.query(
                     `UPDATE clients SET balance = balance - ?, last_updated = NOW()
                      WHERE tenant_id = ? AND id = ?`,
-                    [safeTotal, tenantId, clientId]
+                    [safeTotal, tenantId, safeClientId]
                 );
             }
         }
@@ -6261,7 +6325,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         part.methodName,
                         part.methodType || inferPaymentTypeByName(part.methodName),
                         now,
-                        clientId || null,
+                        safeClientId,
                         resolvedBranchId || null,
                         receipt_number || null,
                         receipt_code || null,

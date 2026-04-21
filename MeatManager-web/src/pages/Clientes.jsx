@@ -22,11 +22,19 @@ const emptyClientForm = {
     email1: '',
     email2: '',
     hasCurrentAccount: true,
+    employeeDiscountEnabled: false,
+    employeeDiscountPct: '0',
     hasInitialBalance: false,
     balance: ''
 };
 
 const cleanValue = (value) => String(value || '').trim();
+const normalizeDiscountPctInput = (value) => {
+    const normalized = String(value || '').replace(',', '.').trim();
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) return '';
+    return String(Math.max(0, Math.min(100, parsed)));
+};
 
 const getClientPhones = (client) => {
     const phones = [
@@ -297,6 +305,19 @@ const Clientes = () => {
                     balance: value ? prev.balance : ''
                 };
             }
+            if (field === 'employeeDiscountEnabled') {
+                return {
+                    ...prev,
+                    employeeDiscountEnabled: value,
+                    employeeDiscountPct: value ? (prev.employeeDiscountPct || '10') : '0',
+                };
+            }
+            if (field === 'employeeDiscountPct') {
+                return {
+                    ...prev,
+                    employeeDiscountPct: normalizeDiscountPctInput(value),
+                };
+            }
             return { ...prev, [field]: value };
         });
     };
@@ -318,6 +339,10 @@ const Clientes = () => {
         const balance = newClient.hasCurrentAccount && newClient.hasInitialBalance
             ? (parseFloat(newClient.balance) || 0)
             : 0;
+        const employeeDiscountEnabled = Boolean(newClient.employeeDiscountEnabled);
+        const employeeDiscountPct = employeeDiscountEnabled
+            ? Math.max(0, Math.min(100, parseFloat(newClient.employeeDiscountPct) || 0))
+            : 0;
 
         await saveTableRecord('clients', 'insert', {
             name: fullName,
@@ -336,6 +361,8 @@ const Clientes = () => {
             zip_code: cleanValue(newClient.zip_code),
             city: cleanValue(newClient.city),
             has_current_account: newClient.hasCurrentAccount,
+            employee_discount_enabled: employeeDiscountEnabled,
+            employee_discount_pct: employeeDiscountPct,
             has_initial_balance: newClient.hasCurrentAccount && newClient.hasInitialBalance,
             balance,
             last_updated: new Date().toISOString(),
@@ -449,6 +476,8 @@ const Clientes = () => {
                     const accountEnabled = hasCurrentAccount(client);
                     const clientAddress = formatAddress(client);
                     const clientBalance = getBalanceValue(client);
+                    const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+                    const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
                     return (
                         <DirectionalReveal
                             key={client.id}
@@ -469,6 +498,25 @@ const Clientes = () => {
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
                                     </div>
+                                    {employeeDiscountEnabled && employeeDiscountPct > 0 ? (
+                                        <div
+                                            style={{
+                                                marginTop: '0.35rem',
+                                                fontSize: '0.72rem',
+                                                fontWeight: '800',
+                                                color: '#86efac',
+                                                background: 'rgba(34,197,94,0.12)',
+                                                border: '1px solid rgba(34,197,94,0.3)',
+                                                borderRadius: '999px',
+                                                padding: '0.18rem 0.5rem',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
+                                        >
+                                            Descuento empleado {employeeDiscountPct.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%
+                                        </div>
+                                    ) : null}
                                 </div>
                                 <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--color-bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <Users size={20} />
@@ -587,6 +635,15 @@ const Clientes = () => {
                                     <span>Tiene cuenta corriente</span>
                                 </label>
 
+                                <label className="clients-checkbox-row">
+                                    <input
+                                        type="checkbox"
+                                        checked={newClient.employeeDiscountEnabled}
+                                        onChange={(e) => updateNewClient('employeeDiscountEnabled', e.target.checked)}
+                                    />
+                                    <span>Aplicar descuento de empleado</span>
+                                </label>
+
                                 <label className={`clients-checkbox-row ${!newClient.hasCurrentAccount ? 'disabled' : ''}`}>
                                     <input
                                         type="checkbox"
@@ -597,6 +654,23 @@ const Clientes = () => {
                                     <span>Tiene saldo inicial</span>
                                 </label>
                             </div>
+
+                            {newClient.employeeDiscountEnabled && (
+                                <div className="clients-form-group clients-form-group-last">
+                                    <label className="clients-form-label">Descuento empleado (%)</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        className="neo-input"
+                                        placeholder="Ej: 10"
+                                        value={newClient.employeeDiscountPct}
+                                        onChange={(e) => updateNewClient('employeeDiscountPct', e.target.value)}
+                                    />
+                                    <small className="clients-form-hint">Se aplicará automáticamente en Ventas al seleccionar este cliente.</small>
+                                </div>
+                            )}
 
                             {newClient.hasCurrentAccount && newClient.hasInitialBalance && (
                                 <div className="clients-form-group clients-form-group-last">
