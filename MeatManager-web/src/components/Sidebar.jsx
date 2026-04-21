@@ -169,7 +169,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Marketing WhatsApp', path: '/config/whatsapp-marketing', icon: MessageCircle },
     { title: 'Proveedores', path: '/config/proveedores', icon: Truck },
     { title: 'Formato de Precio', path: '/config/precio', icon: Calculator },
-    { title: 'Transferencias Sucursales', path: '/config/sucursales-transfer', icon: ArrowLeftRight },
+    { title: 'Reglas Transferencias', path: '/config/sucursales-transfer', icon: ArrowLeftRight },
     { title: 'Balanza', path: '/config/balanza', icon: Cpu },
     { title: 'Usuarios y Licencias', path: '/config/seguridad', icon: ShieldCheck },
     { title: 'Manual de Usuario', path: '/manual', icon: HelpCircle }

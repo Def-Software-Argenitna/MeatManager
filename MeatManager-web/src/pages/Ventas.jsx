@@ -48,6 +48,14 @@ const getClientDisplayName = (client) => {
     const lastName = String(client?.last_name || '').trim();
     return [firstName, lastName].filter(Boolean).join(' ') || String(client?.name || '').trim();
 };
+const getClientEmployeeDiscountPct = (client) => {
+    if (!client) return 0;
+    const enabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+    if (!enabled) return 0;
+    const pct = Number(client?.employee_discount_pct);
+    if (!Number.isFinite(pct) || pct <= 0) return 0;
+    return Math.max(0, Math.min(100, pct));
+};
 
 const formatDocumentNumber = (value, digits = 4) => String(Number(value) || 0).padStart(digits, '0');
 const formatReceiptCode = (branchCode, value) => `${formatDocumentNumber(branchCode, 4)}-${formatDocumentNumber(value, 6)}`;
@@ -475,6 +483,7 @@ const Ventas = () => {
                 </div>
                 <div class="total-area">
                     <div class="item"><span>SUBTOTAL</span><span>$${formatNumericLocale(saleData.subtotal)}</span></div>
+                    ${toNumber(saleData.employee_discount_amount) > 0 ? `<div class="item"><span>DESC. EMPLEADO${toNumber(saleData.employee_discount_pct) > 0 ? ` (${formatNumericLocale(saleData.employee_discount_pct)}%)` : ''}</span><span>-$${formatNumericLocale(saleData.employee_discount_amount)}</span></div>` : ''}
                     ${toNumber(saleData.adjustment) !== 0 ? `<div class="item"><span>ADJ.</span><span>$${formatNumericLocale(saleData.adjustment)}</span></div>` : ''}
                     <div class="item" style="font-size: 14px; margin-top: 1mm;"><span>TOTAL</span><span>$${formatNumericLocale(saleData.total)}</span></div>
                 </div>
@@ -646,7 +655,7 @@ const Ventas = () => {
         return stockItems.find((item) => String(item?.name || '').trim().toUpperCase() === normalized) || null;
     }, [stockItems]);
 
-    const findProductByPriceRecord = React.useCallback((priceRecord) => {
+    const findProductByPriceRecord = (priceRecord) => {
         if (!priceRecord) return null;
 
         const toCatalogProduct = (p) => p ? ({
@@ -677,7 +686,7 @@ const Ventas = () => {
             normalizeProductKey(p?.name) === normalizeProductKey(productId)
         )) || null;
         return toCatalogProduct(fromCatalogByName);
-    }, [products, productsCatalog]);
+    };
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
@@ -771,7 +780,7 @@ const Ventas = () => {
         }
 
         return `⚠️ No pude resolver el código escaneado.\n\n${detailLines.join('\n')}`;
-    }, [findProductByPriceRecord, productsCatalog]);
+    }, [productsCatalog]);
 
     // Filter products
     const filteredProducts = React.useMemo(() => {
@@ -1416,13 +1425,13 @@ const Ventas = () => {
         }
     };
 
-    const tryAddToCart = React.useCallback((product, weight, priceRecord) => {
+    const tryAddToCart = (product, weight, priceRecord) => {
         if (priceRecord?.noStockWarning) {
             setPendingNoStockItem({ product, weight });
             return;
         }
         addToCart(product, weight);
-    }, [addToCart]);
+    };
 
     const removeFromCart = (id) => {
         setCart(prev => prev.filter(item => item.id !== id));
@@ -1486,6 +1495,11 @@ const Ventas = () => {
     );
     const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
+    const selectedClientEmployeeDiscountPct = getClientEmployeeDiscountPct(selectedClient);
+    const employeeDiscountAmount = selectedClientEmployeeDiscountPct > 0
+        ? (cartTotal * selectedClientEmployeeDiscountPct) / 100
+        : 0;
+    const payableSubtotal = Math.max(0, cartTotal - employeeDiscountAmount);
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
     const availableSplitMethods = React.useMemo(() => (dbPaymentMethods || []), [dbPaymentMethods]);
@@ -1495,8 +1509,8 @@ const Ventas = () => {
     }, [dbPaymentMethods]);
 
     const activeMethod = getMethodById(selectedPaymentMethod);
-    const cartAdjustment = activeMethod ? (cartTotal * (activeMethod.percentage || 0)) / 100 : 0;
-    const finalTotal = cartTotal + cartAdjustment;
+    const cartAdjustment = activeMethod ? (payableSubtotal * (activeMethod.percentage || 0)) / 100 : 0;
+    const finalTotal = payableSubtotal + cartAdjustment;
 
     const splitPaymentSummary = React.useMemo(() => {
         const rows = splitPayments.map((row, index) => {
@@ -1518,7 +1532,7 @@ const Ventas = () => {
         const coveredSubtotal = rows.reduce((sum, row) => sum + row.baseAmount, 0);
         const chargedTotal = rows.reduce((sum, row) => sum + row.chargedAmount, 0);
         const totalAdjustment = rows.reduce((sum, row) => sum + row.adjustment, 0);
-        const pendingSubtotal = Math.max(0, cartTotal - coveredSubtotal);
+        const pendingSubtotal = Math.max(0, payableSubtotal - coveredSubtotal);
         const cashRow = rows.find(row => row.method?.type === 'cash');
         const cashCharged = cashRow?.chargedAmount || 0;
         const cashReceivedValue = parseFloat(cashReceived) || 0;
@@ -1536,9 +1550,9 @@ const Ventas = () => {
             isValid:
                 rows.length > 0 &&
                 rows.every(row => row.method && row.chargedAmount > 0) &&
-                Math.abs(coveredSubtotal - cartTotal) < 0.01,
+                Math.abs(coveredSubtotal - payableSubtotal) < 0.01,
         };
-    }, [splitPayments, cashReceived, cartTotal, getMethodById]);
+    }, [splitPayments, cashReceived, payableSubtotal, getMethodById]);
 
     const resetPaymentState = () => {
         setSelectedPaymentMethod(null);
@@ -1555,7 +1569,7 @@ const Ventas = () => {
             return;
         }
         const percentage = defaultMethod.percentage || 0;
-        const total = cartTotal * (1 + (percentage / 100));
+        const total = payableSubtotal * (1 + (percentage / 100));
         setSplitPayments([{ methodId: defaultMethod.id, amount: total.toFixed(2) }]);
     };
 
@@ -1669,8 +1683,9 @@ const Ventas = () => {
 
             console.log("Iniciando checkout con:", { methodObj, cartTotal, cart, paymentBreakdown });
 
-            const adjustment = isMixedSale ? splitSummary.totalAdjustment : (cartTotal * (methodObj.percentage || 0)) / 100;
-            const finalTotal = isMixedSale ? splitSummary.chargedTotal : cartTotal + adjustment;
+            const paymentAdjustment = isMixedSale ? splitSummary.totalAdjustment : (payableSubtotal * (methodObj.percentage || 0)) / 100;
+            const adjustment = paymentAdjustment;
+            const finalTotal = isMixedSale ? splitSummary.chargedTotal : payableSubtotal + paymentAdjustment;
             const numericClientId = selectedClientId ? Number(selectedClientId) : null;
             const shouldLinkClientToCurrentAccount = methodObj.type === 'cuenta_corriente'
                 || (
@@ -1691,6 +1706,9 @@ const Ventas = () => {
                 payment_method_id: methodObj.id || null,
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
+                discount_client_id: numericClientId || null,
+                client_discount_pct: selectedClientEmployeeDiscountPct,
+                client_discount_amount: employeeDiscountAmount,
                 ...(activeScaleTicketBarcode
                     ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
                     : {}),
@@ -1738,7 +1756,16 @@ const Ventas = () => {
                 };
             });
             setPendingPrintData({
-                saleData: { id: saleId, receipt_number: saleReceiptNumber, receipt_code: saleReceiptCode, subtotal: cartTotal, adjustment: adjustment, total: finalTotal },
+                saleData: {
+                    id: saleId,
+                    receipt_number: saleReceiptNumber,
+                    receipt_code: saleReceiptCode,
+                    subtotal: cartTotal,
+                    adjustment: adjustment,
+                    total: finalTotal,
+                    employee_discount_pct: selectedClientEmployeeDiscountPct,
+                    employee_discount_amount: employeeDiscountAmount,
+                },
                 items: cartSnapshotWithTotals
             });
 
@@ -1770,7 +1797,7 @@ const Ventas = () => {
     const confirmPayment = () => {
         if (isSplitPayment) {
             if (!splitPaymentSummary.isValid) {
-                showToast('⚠️ El pago mixto no cubre exactamente el subtotal de la venta.', 'warning');
+                showToast('⚠️ El pago mixto no cubre exactamente el subtotal neto de la venta.', 'warning');
                 return;
             }
             const usesCurrentAccount = splitPaymentSummary.rows.some((row) => row.method?.type === 'cuenta_corriente');
@@ -2172,9 +2199,19 @@ const Ventas = () => {
                                 </span>
                             </div>
                         ) : null}
+                        {employeeDiscountAmount > 0 ? (
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                                <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#86efac' }}>
+                                    DESCUENTO EMPLEADO ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%)
+                                </span>
+                                <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#86efac' }}>
+                                    -${formatPrice(employeeDiscountAmount, priceFormat)}
+                                </span>
+                            </div>
+                        ) : null}
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                            <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>TOTAL</span>
-                            <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(cartTotal, priceFormat)}</span>
+                            <span style={{ fontSize: '0.75rem', fontWeight: '900', opacity: 0.6 }}>{employeeDiscountAmount > 0 ? 'TOTAL NETO' : 'TOTAL'}</span>
+                            <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(payableSubtotal, priceFormat)}</span>
                         </div>
                     </div>
 
@@ -2194,7 +2231,9 @@ const Ventas = () => {
                                 <div>
                                     <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#bfdbfe' }}>{getClientDisplayName(selectedClient)}</div>
                                     <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
-                                        {selectedClientHasCurrentAccount ? 'Cuenta corriente habilitada' : 'Solo venta normal'}
+                                        {selectedClientEmployeeDiscountPct > 0
+                                            ? `Descuento empleado ${formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`
+                                            : (selectedClientHasCurrentAccount ? 'Cuenta corriente habilitada' : 'Solo venta normal')}
                                     </div>
                                 </div>
                                 <button
@@ -2357,6 +2396,7 @@ const Ventas = () => {
                     <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.55rem', paddingRight: '0.25rem' }}>
                         {filteredClients?.length ? filteredClients.map((client) => {
                             const isActiveClient = Number(selectedClientId) === Number(client.id);
+                            const clientDiscountPct = getClientEmployeeDiscountPct(client);
                             return (
                                 <button
                                     key={client.id}
@@ -2380,7 +2420,9 @@ const Ventas = () => {
                                     <div style={{ marginTop: '0.2rem', fontSize: '0.76rem', color: 'var(--color-text-muted)' }}>
                                         {String(client.phone || client.phone1 || 'Sin teléfono')}
                                         {' · '}
-                                        {client.has_current_account !== false ? 'Cuenta corriente disponible' : 'Sin cuenta corriente'}
+                                        {clientDiscountPct > 0
+                                            ? `Desc. empleado ${formatNumericLocale(clientDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%`
+                                            : (client.has_current_account !== false ? 'Cuenta corriente disponible' : 'Sin cuenta corriente')}
                                     </div>
                                 </button>
                             );
@@ -2404,6 +2446,20 @@ const Ventas = () => {
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                 <span style={{ color: 'var(--color-text-muted)' }}>Subtotal:</span>
                                 <span>${formatNumericLocale(cartTotal)}</span>
+                            </div>
+                            {employeeDiscountAmount > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                                    <span style={{ color: 'var(--color-text-muted)' }}>
+                                        Desc. empleado ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%):
+                                    </span>
+                                    <span style={{ color: '#22c55e' }}>
+                                        -${formatNumericLocale(employeeDiscountAmount)}
+                                    </span>
+                                </div>
+                            )}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
+                                <span style={{ color: 'var(--color-text-muted)' }}>Subtotal neto:</span>
+                                <span>${formatNumericLocale(payableSubtotal)}</span>
                             </div>
 
                             {!isSplitPayment && cartAdjustment !== 0 && (
@@ -2600,8 +2656,8 @@ const Ventas = () => {
                                         fontWeight: '600',
                                     }}>
                                         {splitPaymentSummary.isValid
-                                            ? 'Distribución válida. El subtotal quedó cubierto.'
-                                            : 'La suma de medios todavía no cubre exactamente el subtotal de la venta.'}
+                                            ? 'Distribución válida. El subtotal neto quedó cubierto.'
+                                            : 'La suma de medios todavía no cubre exactamente el subtotal neto de la venta.'}
                                     </div>
                                 </div>
                             )}
