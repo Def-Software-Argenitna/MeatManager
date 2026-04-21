@@ -220,6 +220,7 @@ const Stock = () => {
     };
 
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [adjustmentSearchTerm, setAdjustmentSearchTerm] = useState('');
     const [adjustment, setAdjustment] = useState({
         productId: '',
         quantity: '',
@@ -371,14 +372,56 @@ const Stock = () => {
     };
 
     const productsForAdjustment = React.useMemo(() => {
-        return consolidatedStock.map((item) => ({
-            id: item.id,
-            productId: item.product_id,
-            name: item.name,
-            category: item.type,
-            unit: item.unit
-        }));
-    }, [consolidatedStock]);
+        const byKey = new Map();
+
+        // Base principal: catálogo de productos (incluye items con stock 0).
+        (Array.isArray(products) ? products : []).forEach((product) => {
+            const productId = Number(product?.id);
+            if (!Number.isFinite(productId) || productId <= 0) return;
+
+            const key = `product:${productId}`;
+            byKey.set(key, {
+                id: key,
+                productId,
+                name: String(product?.name || '').trim(),
+                category: normalizeStockType(product?.category),
+                unit: String(product?.unit || 'kg').trim() || 'kg',
+            });
+        });
+
+        // Fallback para registros legacy sin producto canónico.
+        (Array.isArray(consolidatedStock) ? consolidatedStock : []).forEach((item) => {
+            if (item?.product_id) return;
+            const legacyKey = `legacy:${normalizeProductKey(item?.name)}__${item?.unit || 'kg'}`;
+            if (byKey.has(legacyKey)) return;
+
+            byKey.set(legacyKey, {
+                id: legacyKey,
+                productId: null,
+                name: String(item?.name || '').trim(),
+                category: normalizeStockType(item?.type),
+                unit: String(item?.unit || 'kg').trim() || 'kg',
+            });
+        });
+
+        return Array.from(byKey.values())
+            .filter((item) => item.name)
+            .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+    }, [products, consolidatedStock]);
+
+    const filteredProductsForAdjustment = React.useMemo(() => {
+        const term = String(adjustmentSearchTerm || '').trim().toLowerCase();
+        if (!term) return productsForAdjustment;
+
+        return productsForAdjustment.filter((item) => {
+            if (item.id === adjustment.productId) return true;
+            return (
+                String(item.name || '').toLowerCase().includes(term)
+                || String(item.category || '').toLowerCase().includes(term)
+                || String(item.unit || '').toLowerCase().includes(term)
+            );
+        });
+    }, [productsForAdjustment, adjustmentSearchTerm, adjustment.productId]);
 
     const startPriceEdit = (item) => {
         setEditingPriceId(item.id);
@@ -493,7 +536,7 @@ const Stock = () => {
                         <DownloadCloud size={20} />
                         {isImporting ? 'Importando...' : 'Importar de Balanza'}
                     </button>
-                    <button className="neo-button" onClick={() => setIsModalOpen(true)}>
+                    <button className="neo-button" onClick={() => { setIsModalOpen(true); setAdjustmentSearchTerm(''); }}>
                         <Scale size={20} />
                         Ajuste Manual
                     </button>
@@ -656,6 +699,17 @@ const Stock = () => {
 
                         <form onSubmit={handleAdjustment}>
                             <div style={{ marginBottom: '1rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Buscar producto</label>
+                                <input
+                                    type="text"
+                                    className="neo-input"
+                                    placeholder="Ej: asado, nalga, chori..."
+                                    value={adjustmentSearchTerm}
+                                    onChange={(e) => setAdjustmentSearchTerm(e.target.value)}
+                                />
+                            </div>
+
+                            <div style={{ marginBottom: '1rem' }}>
                                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Producto</label>
                                 <select
                                     className="neo-input"
@@ -664,10 +718,15 @@ const Stock = () => {
                                     onChange={e => setAdjustment({ ...adjustment, productId: e.target.value })}
                                 >
                                     <option value="">Seleccionar producto...</option>
-                                    {productsForAdjustment.map(p => (
+                                    {filteredProductsForAdjustment.map(p => (
                                         <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
                                     ))}
                                 </select>
+                                {filteredProductsForAdjustment.length === 0 && (
+                                    <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                                        No hay coincidencias para la búsqueda.
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
