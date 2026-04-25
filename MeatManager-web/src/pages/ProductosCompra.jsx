@@ -168,9 +168,10 @@ const ProductosCompra = () => {
         const selectedCategoryKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
         const selectedSaleCategory = saleCategoryOptions.find((option) => String(option.value || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
         const selectedSaleCategoryRow = saleCategories.find((row) => String(row.code || '').trim().toLowerCase().replace(/-/g, '_') === selectedCategoryKey) || null;
+        const priceRows = await fetchTable('prices', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }).catch(() => []);
         const unifiedProduct = await ensureUnifiedProduct({
             products,
-            prices: [],
+            prices: Array.isArray(priceRows) ? priceRows : [],
             name: nameTrimmed,
             category: formData.sale_category,
             categoryId: selectedSaleCategoryRow?.id || null,
@@ -178,6 +179,7 @@ const ProductosCompra = () => {
             price: salePrice,
             plu: formData.sale_plu.trim(),
             source: 'catalogo_compra',
+            preferredProductId: editingItem?.product_id || null,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
