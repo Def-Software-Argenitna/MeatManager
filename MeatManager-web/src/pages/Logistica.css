@@ -130,6 +130,7 @@
     overflow: hidden;
     height: 100%;
     min-height: 0;
+    max-height: calc(100vh - 160px);
 }
 
 .sidebar-search {
@@ -195,7 +196,8 @@
 
 .orders-list {
     flex: 1;
-    min-height: 0;
+    min-height: 300px;
+    max-height: calc(100vh - 400px);
     overflow-y: scroll !important;
     overflow-x: hidden;
     padding: 1rem;
@@ -205,23 +207,24 @@
 }
 
 .orders-list::-webkit-scrollbar {
-    width: 10px;
+    width: 12px;
 }
 
 .orders-list::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.15);
     border-radius: 10px;
     margin: 8px 0;
 }
 
 .orders-list::-webkit-scrollbar-thumb {
-    background: rgba(249, 115, 22, 0.7);
+    background: #f97316;
     border-radius: 10px;
-    border: 2px solid rgba(0, 0, 0, 0.2);
+    border: 2px solid rgba(0, 0, 0, 0.3);
 }
 
 .orders-list::-webkit-scrollbar-thumb:hover {
-    background: rgba(249, 115, 22, 0.95);
+    background: #fb923c;
+    cursor: pointer;
 }
 
 .delivery-item {
@@ -504,20 +507,20 @@
 /* OVERLAY FOR SELECTED */
 .order-map-overlay {
     position: fixed;
-    top: 60px;
+    top: 20px;
     left: 50%;
     transform: translateX(-50%);
-    width: 90%;
-    max-width: 650px;
-    max-height: calc(100vh - 100px);
+    width: 92%;
+    max-width: 700px;
+    max-height: calc(100vh - 40px);
     overflow-y: auto;
     background: var(--glass-bg);
     backdrop-filter: var(--glass-blur);
     border-radius: 16px;
-    padding: 1.25rem;
-    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
-    z-index: 10000;
-    border: 1px solid var(--glass-border);
+    padding: 1.5rem;
+    box-shadow: 0 25px 60px rgba(0, 0, 0, 0.6);
+    z-index: 99999;
+    border: 2px solid var(--glass-border);
 }
 
 .order-map-overlay::-webkit-scrollbar {
