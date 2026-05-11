@@ -51,7 +51,6 @@ const Sidebar = ({ isCollapsed }) => {
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
-    operacion: true,
     comercial: false,
     produccion: false,
     configuracion: false,
@@ -71,7 +70,6 @@ const Sidebar = ({ isCollapsed }) => {
     );
     const inConfiguracion = p.startsWith('/config') || p === '/manual';
     setOpenGroups({
-      operacion: inOperacion,
       comercial: inComercial,
       produccion: inProduccion,
       configuracion: inConfiguracion,
@@ -126,7 +124,6 @@ const Sidebar = ({ isCollapsed }) => {
     setOpenGroups((prev) => {
       const nextState = !prev[groupKey];
       return {
-        operacion: false,
         comercial: false,
         produccion: false,
         configuracion: false,
@@ -244,7 +241,6 @@ const Sidebar = ({ isCollapsed }) => {
           onClick={() => {
             if (isCollapsed) return;
             setOpenGroups({
-              operacion: false,
               comercial: false,
               produccion: true,
               configuracion: false,
@@ -276,20 +272,25 @@ const Sidebar = ({ isCollapsed }) => {
 
     const isGroupActive = visibleItems.some((item) => isActive(item.path)) ||
       (groupKey === 'produccion' && location.pathname.includes('/despostada'));
+    const isStaticGroup = groupKey === 'operacion';
+    const isGroupOpen = isStaticGroup ? true : openGroups[groupKey];
 
     return (
       <div className="nav-group" key={groupKey}>
         <button
           type="button"
           className={`nav-item nav-group-trigger ${isGroupActive ? 'active' : ''}`}
-          onClick={() => toggleGroup(groupKey)}
+          onClick={() => {
+            if (isStaticGroup) return;
+            toggleGroup(groupKey);
+          }}
         >
           <GroupIcon className="nav-icon" title={title} />
           {!isCollapsed && <span style={{ flex: 1 }}>{title}</span>}
-          {!isCollapsed && (openGroups[groupKey] ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+          {!isCollapsed && !isStaticGroup && (isGroupOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
         </button>
 
-        <div className={`nav-group-wrapper ${(!isCollapsed ? openGroups[groupKey] : true) ? 'open' : ''}`}>
+        <div className={`nav-group-wrapper ${(!isCollapsed ? isGroupOpen : true) ? 'open' : ''}`}>
           <div className="nav-group-content">
             {visibleItems.map((item) => renderNavItem(item))}
             {extraContent}
