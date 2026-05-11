@@ -46,7 +46,8 @@ jobs:
             ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:sha-${{ github.sha }}
           build-args: |
             VITE_API_URL=/api
-            VITE_GOOGLE_MAPS_API_KEY=${{ secrets.WEB_GOOGLE_MAPS_API_KEY }}
+          secrets: |
+            web_google_maps_api_key=${{ secrets.WEB_GOOGLE_MAPS_API_KEY }}
 
       - uses: docker/build-push-action@v6
         with:

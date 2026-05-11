@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Users, Plus, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer } from 'lucide-react';
+import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
@@ -22,11 +22,56 @@ const emptyClientForm = {
     email1: '',
     email2: '',
     hasCurrentAccount: true,
+    employeeDiscountEnabled: false,
+    employeeDiscountPct: '0',
     hasInitialBalance: false,
     balance: ''
 };
 
 const cleanValue = (value) => String(value || '').trim();
+const normalizeDiscountPctInput = (value) => {
+    const normalized = String(value || '').replace(',', '.').trim();
+    const parsed = Number(normalized);
+    if (!Number.isFinite(parsed)) return '';
+    return String(Math.max(0, Math.min(100, parsed)));
+};
+const splitStoredList = (value) => String(value || '')
+    .split('\n')
+    .map(cleanValue)
+    .filter(Boolean);
+const toClientForm = (client) => {
+    const nameParts = cleanValue(client?.name).split(/\s+/).filter(Boolean);
+    const fallbackFirstName = nameParts[0] || '';
+    const fallbackLastName = nameParts.slice(1).join(' ');
+    const phoneCandidates = [
+        cleanValue(client?.phone1),
+        cleanValue(client?.phone),
+        ...splitStoredList(client?.phones),
+    ].filter(Boolean);
+    const emailCandidates = [
+        cleanValue(client?.email1),
+        ...splitStoredList(client?.emails),
+    ].filter(Boolean);
+    const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+    const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
+    return {
+        first_name: cleanValue(client?.first_name) || fallbackFirstName,
+        last_name: cleanValue(client?.last_name) || fallbackLastName,
+        street: cleanValue(client?.street),
+        street_number: cleanValue(client?.street_number),
+        zip_code: cleanValue(client?.zip_code),
+        city: cleanValue(client?.city),
+        phone1: phoneCandidates[0] || '',
+        phone2: cleanValue(client?.phone2) || phoneCandidates[1] || '',
+        email1: emailCandidates[0] || '',
+        email2: cleanValue(client?.email2) || emailCandidates[1] || '',
+        hasCurrentAccount: hasCurrentAccount(client),
+        employeeDiscountEnabled,
+        employeeDiscountPct: employeeDiscountEnabled ? String(employeeDiscountPct) : '0',
+        hasInitialBalance: Boolean(client?.has_initial_balance),
+        balance: String(getBalanceValue(client) || ''),
+    };
+};
 
 const getClientPhones = (client) => {
     const phones = [
@@ -83,6 +128,7 @@ const getClientLedgerPaymentMethod = (row) => {
 
 const Clientes = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
+    const [editingClientId, setEditingClientId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
     const [historyClient, setHistoryClient] = useState(null);
     const [historyMonth, setHistoryMonth] = useState(currentMonth);
@@ -96,6 +142,7 @@ const Clientes = () => {
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
     const paymentInputRef = useRef(null);
+    const isEditingClient = Boolean(editingClientId);
 
     const loadCoreData = async () => {
         const [clientsRows, paymentMethodRows] = await Promise.all([
@@ -280,6 +327,24 @@ const Clientes = () => {
         return () => clearTimeout(timer);
     }, [historyClient, paymentQuickMode]);
 
+    const closeClientModal = () => {
+        setIsModalOpen(false);
+        setEditingClientId(null);
+        setNewClient(emptyClientForm);
+    };
+
+    const openCreateClientModal = () => {
+        setEditingClientId(null);
+        setNewClient(emptyClientForm);
+        setIsModalOpen(true);
+    };
+
+    const openEditClientModal = (client) => {
+        setEditingClientId(Number(client.id));
+        setNewClient(toClientForm(client));
+        setIsModalOpen(true);
+    };
+
     const updateNewClient = (field, value) => {
         setNewClient((prev) => {
             if (field === 'hasCurrentAccount') {
@@ -297,11 +362,24 @@ const Clientes = () => {
                     balance: value ? prev.balance : ''
                 };
             }
+            if (field === 'employeeDiscountEnabled') {
+                return {
+                    ...prev,
+                    employeeDiscountEnabled: value,
+                    employeeDiscountPct: value ? (prev.employeeDiscountPct || '10') : '0',
+                };
+            }
+            if (field === 'employeeDiscountPct') {
+                return {
+                    ...prev,
+                    employeeDiscountPct: normalizeDiscountPctInput(value),
+                };
+            }
             return { ...prev, [field]: value };
         });
     };
 
-    const handleAddClient = async (e) => {
+    const handleSaveClient = async (e) => {
         e.preventDefault();
         const firstName = cleanValue(newClient.first_name);
         const lastName = cleanValue(newClient.last_name);
@@ -318,8 +396,11 @@ const Clientes = () => {
         const balance = newClient.hasCurrentAccount && newClient.hasInitialBalance
             ? (parseFloat(newClient.balance) || 0)
             : 0;
-
-        await saveTableRecord('clients', 'insert', {
+        const employeeDiscountEnabled = Boolean(newClient.employeeDiscountEnabled);
+        const employeeDiscountPct = employeeDiscountEnabled
+            ? Math.max(0, Math.min(100, parseFloat(newClient.employeeDiscountPct) || 0))
+            : 0;
+        const basePayload = {
             name: fullName,
             first_name: firstName,
             last_name: lastName,
@@ -336,15 +417,28 @@ const Clientes = () => {
             zip_code: cleanValue(newClient.zip_code),
             city: cleanValue(newClient.city),
             has_current_account: newClient.hasCurrentAccount,
-            has_initial_balance: newClient.hasCurrentAccount && newClient.hasInitialBalance,
-            balance,
+            employee_discount_enabled: employeeDiscountEnabled,
+            employee_discount_pct: employeeDiscountPct,
             last_updated: new Date().toISOString(),
             synced: 0
-        });
+        };
 
-        setIsModalOpen(false);
-        setNewClient(emptyClientForm);
-        await loadCoreData();
+        if (isEditingClient) {
+            await saveTableRecord('clients', 'update', basePayload, editingClientId);
+        } else {
+            await saveTableRecord('clients', 'insert', {
+                ...basePayload,
+                has_initial_balance: newClient.hasCurrentAccount && newClient.hasInitialBalance,
+                balance,
+            });
+        }
+
+        closeClientModal();
+        if (historyClient) {
+            await refreshHistoryClient();
+        } else {
+            await loadCoreData();
+        }
     };
 
     const handlePayment = async () => {
@@ -423,7 +517,7 @@ const Clientes = () => {
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 
-                <button className="neo-button" onClick={() => setIsModalOpen(true)}>
+                <button className="neo-button" onClick={openCreateClientModal}>
                     <UserPlus size={20} />
                     Nuevo Cliente
                 </button>
@@ -449,6 +543,8 @@ const Clientes = () => {
                     const accountEnabled = hasCurrentAccount(client);
                     const clientAddress = formatAddress(client);
                     const clientBalance = getBalanceValue(client);
+                    const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+                    const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
                     return (
                         <DirectionalReveal
                             key={client.id}
@@ -469,6 +565,25 @@ const Clientes = () => {
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
                                     </div>
+                                    {employeeDiscountEnabled && employeeDiscountPct > 0 ? (
+                                        <div
+                                            style={{
+                                                marginTop: '0.35rem',
+                                                fontSize: '0.72rem',
+                                                fontWeight: '800',
+                                                color: '#86efac',
+                                                background: 'rgba(34,197,94,0.12)',
+                                                border: '1px solid rgba(34,197,94,0.3)',
+                                                borderRadius: '999px',
+                                                padding: '0.18rem 0.5rem',
+                                                display: 'inline-flex',
+                                                alignItems: 'center',
+                                                gap: '0.3rem'
+                                            }}
+                                        >
+                                            Descuento empleado {employeeDiscountPct.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%
+                                        </div>
+                                    ) : null}
                                 </div>
                                 <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--color-bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                     <Users size={20} />
@@ -485,16 +600,22 @@ const Clientes = () => {
                                 </div>
                             </div>
 
-                            {accountEnabled ? (
-                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                                    <button type="button" onClick={() => openHistory(client)} className="action-btn adjust">
-                                        <History size={16} /> Ver movimientos
-                                    </button>
-                                    <button type="button" onClick={() => openHistory(client, { openPayment: true })} className="action-btn pay">
-                                        <Check size={16} /> Registrar pago
-                                    </button>
-                                </div>
-                            ) : (
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
+                                <button type="button" onClick={() => openEditClientModal(client)} className="action-btn edit">
+                                    <Pencil size={16} /> Editar
+                                </button>
+                                {accountEnabled ? (
+                                    <>
+                                        <button type="button" onClick={() => openHistory(client)} className="action-btn adjust">
+                                            <History size={16} /> Ver movimientos
+                                        </button>
+                                        <button type="button" onClick={() => openHistory(client, { openPayment: true })} className="action-btn pay">
+                                            <Check size={16} /> Registrar pago
+                                        </button>
+                                    </>
+                                ) : null}
+                            </div>
+                            {!accountEnabled && (
                                 <div className="client-disabled-note">Este cliente queda guardado sin cuenta corriente.</div>
                             )}
                         </DirectionalReveal>
@@ -503,14 +624,14 @@ const Clientes = () => {
             </div>
 
             {isModalOpen && (
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
+                <div className="modal-overlay" onClick={closeClientModal}>
                     <div className="modal-content neo-card clients-modal-content" onClick={(e) => e.stopPropagation()}>
                         <div className="clients-modal-header">
-                            <h2 className="clients-modal-title">Nuevo Cliente</h2>
-                            <button onClick={() => setIsModalOpen(false)} className="clients-modal-close"><X size={24} /></button>
+                            <h2 className="clients-modal-title">{isEditingClient ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
+                            <button onClick={closeClientModal} className="clients-modal-close"><X size={24} /></button>
                         </div>
 
-                        <form onSubmit={handleAddClient}>
+                        <form onSubmit={handleSaveClient}>
                             <div className="clients-form-group">
                                 <div className="clients-form-grid">
                                     <div className="clients-form-group">
@@ -587,18 +708,46 @@ const Clientes = () => {
                                     <span>Tiene cuenta corriente</span>
                                 </label>
 
-                                <label className={`clients-checkbox-row ${!newClient.hasCurrentAccount ? 'disabled' : ''}`}>
+                                <label className="clients-checkbox-row">
                                     <input
                                         type="checkbox"
-                                        checked={newClient.hasInitialBalance}
-                                        disabled={!newClient.hasCurrentAccount}
-                                        onChange={(e) => updateNewClient('hasInitialBalance', e.target.checked)}
+                                        checked={newClient.employeeDiscountEnabled}
+                                        onChange={(e) => updateNewClient('employeeDiscountEnabled', e.target.checked)}
                                     />
-                                    <span>Tiene saldo inicial</span>
+                                    <span>Aplicar descuento de empleado</span>
                                 </label>
+
+                                {!isEditingClient && (
+                                    <label className={`clients-checkbox-row ${!newClient.hasCurrentAccount ? 'disabled' : ''}`}>
+                                        <input
+                                            type="checkbox"
+                                            checked={newClient.hasInitialBalance}
+                                            disabled={!newClient.hasCurrentAccount}
+                                            onChange={(e) => updateNewClient('hasInitialBalance', e.target.checked)}
+                                        />
+                                        <span>Tiene saldo inicial</span>
+                                    </label>
+                                )}
                             </div>
 
-                            {newClient.hasCurrentAccount && newClient.hasInitialBalance && (
+                            {newClient.employeeDiscountEnabled && (
+                                <div className="clients-form-group clients-form-group-last">
+                                    <label className="clients-form-label">Descuento empleado (%)</label>
+                                    <input
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        step="0.01"
+                                        className="neo-input"
+                                        placeholder="Ej: 10"
+                                        value={newClient.employeeDiscountPct}
+                                        onChange={(e) => updateNewClient('employeeDiscountPct', e.target.value)}
+                                    />
+                                    <small className="clients-form-hint">Se aplicará automáticamente en Ventas al seleccionar este cliente.</small>
+                                </div>
+                            )}
+
+                            {!isEditingClient && newClient.hasCurrentAccount && newClient.hasInitialBalance && (
                                 <div className="clients-form-group clients-form-group-last">
                                     <label className="clients-form-label">Saldo Inicial ($)</label>
                                     <input
@@ -612,15 +761,23 @@ const Clientes = () => {
                                 </div>
                             )}
 
+                            {isEditingClient && (
+                                <div className="clients-form-group clients-form-group-last">
+                                    <small className="clients-form-hint">El saldo de cuenta corriente se gestiona desde Historial Cta. Cte.</small>
+                                </div>
+                            )}
+
                             <div className="clients-form-actions">
                                 <button
                                     type="button"
                                     className="clients-action-button clients-secondary-button"
-                                    onClick={() => setIsModalOpen(false)}
+                                    onClick={closeClientModal}
                                 >
                                     Cerrar
                                 </button>
-                                <button type="submit" className="clients-action-button clients-submit-button">Crear Cliente</button>
+                                <button type="submit" className="clients-action-button clients-submit-button">
+                                    {isEditingClient ? 'Guardar Cambios' : 'Crear Cliente'}
+                                </button>
                             </div>
                         </form>
                     </div>

@@ -12,6 +12,29 @@
     font-size: 1.35rem;
 }
 
+.config-sucursales-header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.7rem;
+    margin-bottom: 0.35rem;
+}
+
+.open-sucursales-btn {
+    background: rgba(59, 130, 246, 0.2);
+    border: 1px solid rgba(59, 130, 246, 0.45);
+    color: #bfdbfe;
+    border-radius: 8px;
+    padding: 0.45rem 0.72rem;
+    font-size: 0.78rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.open-sucursales-btn:hover {
+    background: rgba(59, 130, 246, 0.3);
+}
+
 .config-sucursales-header p {
     margin: 0;
     color: var(--color-text-muted);
@@ -172,4 +195,11 @@
     align-items: center;
     justify-content: center;
     color: var(--color-text-muted);
+}
+
+@media (max-width: 768px) {
+    .config-sucursales-header-top {
+        flex-direction: column;
+        align-items: flex-start;
+    }
 }

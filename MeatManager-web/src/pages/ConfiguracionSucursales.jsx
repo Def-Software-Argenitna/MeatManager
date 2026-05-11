@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
@@ -30,6 +31,7 @@ const mapRulesToDraft = (rules, categoryKeys) => {
 };
 
 const ConfiguracionSucursales = () => {
+    const navigate = useNavigate();
     const { currentUser, accessProfile } = useUser();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
@@ -187,10 +189,19 @@ const ConfiguracionSucursales = () => {
         <div className="config-sucursales-page animate-fade-in">
             <DirectionalReveal className="neo-card config-sucursales-card" from="left" delay={0.06}>
                 <header className="config-sucursales-header">
-                    <h1>Configuración de Transferencias entre Sucursales</h1>
+                    <div className="config-sucursales-header-top">
+                        <h1>Reglas de Transferencias entre Sucursales</h1>
+                        <button
+                            type="button"
+                            className="open-sucursales-btn"
+                            onClick={() => navigate('/sucursales')}
+                        >
+                            Ir al módulo Sucursales
+                        </button>
+                    </div>
                     <p>
                         Definí los umbrales del semáforo que se usa al comparar stock origen vs destino.
-                        Esta configuración impacta la pantalla de Sucursales.
+                        Esta pantalla es solo de reglas visuales. Los remitos/facturas internas se generan en Comercial → Sucursales.
                     </p>
                     {!isAdmin ? (
                         <div className="config-sucursales-readonly">
