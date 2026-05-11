@@ -51,31 +51,11 @@ const Sidebar = ({ isCollapsed }) => {
   const [isMasterNode, setIsMasterNode] = useState(false);
   const [isDespostadaOpen, setDespostadaOpen] = useState(false);
   const [openGroups, setOpenGroups] = useState({
+    operacion: false,
     comercial: false,
     produccion: false,
     configuracion: false,
   });
-
-  // Mantener abierto el grupo que contiene la ruta activa
-  React.useEffect(() => {
-    const p = location.pathname;
-    const inOperacion = ['/', '/ventas', '/caja', '/compras', '/stock'].some(
-      (path) => p === path || p.startsWith(path + '/')
-    );
-    const inComercial = ['/clientes', '/pedidos', '/logistica', '/sucursales', '/menu-digital'].some(
-      (path) => p === path || p.startsWith(path + '/')
-    );
-    const inProduccion = ['/alimentos', '/otros', '/informes-pro', '/despostada'].some(
-      (path) => p === path || p.startsWith(path + '/')
-    );
-    const inConfiguracion = p.startsWith('/config') || p === '/manual';
-    setOpenGroups({
-      comercial: inComercial,
-      produccion: inProduccion,
-      configuracion: inConfiguracion,
-    });
-    setDespostadaOpen(p.includes('/despostada'));
-  }, [location.pathname]);
 
   React.useEffect(() => {
     const checkMaster = async () => {
@@ -124,6 +104,7 @@ const Sidebar = ({ isCollapsed }) => {
     setOpenGroups((prev) => {
       const nextState = !prev[groupKey];
       return {
+        operacion: false,
         comercial: false,
         produccion: false,
         configuracion: false,
@@ -241,6 +222,7 @@ const Sidebar = ({ isCollapsed }) => {
           onClick={() => {
             if (isCollapsed) return;
             setOpenGroups({
+              operacion: false,
               comercial: false,
               produccion: true,
               configuracion: false,
@@ -272,22 +254,18 @@ const Sidebar = ({ isCollapsed }) => {
 
     const isGroupActive = visibleItems.some((item) => isActive(item.path)) ||
       (groupKey === 'produccion' && location.pathname.includes('/despostada'));
-    const isStaticGroup = groupKey === 'operacion';
-    const isGroupOpen = isStaticGroup ? true : openGroups[groupKey];
+    const isGroupOpen = openGroups[groupKey];
 
     return (
       <div className="nav-group" key={groupKey}>
         <button
           type="button"
           className={`nav-item nav-group-trigger ${isGroupActive ? 'active' : ''}`}
-          onClick={() => {
-            if (isStaticGroup) return;
-            toggleGroup(groupKey);
-          }}
+          onClick={() => toggleGroup(groupKey)}
         >
           <GroupIcon className="nav-icon" title={title} />
           {!isCollapsed && <span style={{ flex: 1 }}>{title}</span>}
-          {!isCollapsed && !isStaticGroup && (isGroupOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
+          {!isCollapsed && (isGroupOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />)}
         </button>
 
         <div className={`nav-group-wrapper ${(!isCollapsed ? isGroupOpen : true) ? 'open' : ''}`}>
