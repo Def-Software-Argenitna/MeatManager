@@ -70,10 +70,13 @@ const Sidebar = ({ isCollapsed }) => {
       (path) => p === path || p.startsWith(path + '/')
     );
     const inConfiguracion = p.startsWith('/config') || p === '/manual';
-    if (inOperacion) setOpenGroups(prev => ({ ...prev, operacion: true }));
-    if (inComercial) setOpenGroups(prev => ({ ...prev, comercial: true }));
-    if (inProduccion) setOpenGroups(prev => ({ ...prev, produccion: true }));
-    if (inConfiguracion) setOpenGroups(prev => ({ ...prev, configuracion: true }));
+    setOpenGroups({
+      operacion: inOperacion,
+      comercial: inComercial,
+      produccion: inProduccion,
+      configuracion: inConfiguracion,
+    });
+    setDespostadaOpen(p.includes('/despostada'));
   }, [location.pathname]);
 
   React.useEffect(() => {
