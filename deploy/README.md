@@ -125,9 +125,25 @@ Ver la guía completa en [SSL_SETUP.md](SSL_SETUP.md) con:
 - Instrucciones detalladas paso a paso
 - Troubleshooting de errores comunes
 - Configuración de seguridad adicional
-- Comandos útiles de Caddyerrores comunes
-- Configuración de seguridad adicional
-- Monitoreo y alertas
+- Comandos útiles de Caddy
+
+### Diagnóstico de problemas SSL
+
+Si ves errores como `ERR_SSL_PROTOCOL_ERROR` en el navegador:
+
+```bash
+# En el servidor, ejecutar diagnóstico
+chmod +x /opt/meatmanager/deploy/diagnose-ssl.sh
+./deploy/diagnose-ssl.sh
+```
+
+Este script verifica:
+- ✓ Caddy instalado y corriendo
+- ✓ Configuraciones aplicadas
+- ✓ Certificados SSL obtenidos
+- ✓ Contenedores Docker activos
+- ✓ DNS configurado correctamente
+- ✓ Puertos abiertos
 
 ## Secrets necesarios en GitHub
 
