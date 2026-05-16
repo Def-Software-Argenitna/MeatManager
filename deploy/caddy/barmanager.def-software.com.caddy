@@ -1,0 +1,6 @@
+barmanager.def-software.com {
+    encode gzip zstd
+
+    # Forward all traffic to the BarManager web container published on host.
+    reverse_proxy 127.0.0.1:4300
+}

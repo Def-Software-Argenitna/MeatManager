@@ -1,0 +1,21 @@
+meatmanager.demo.def-software.com {
+    encode gzip zstd
+
+    # Security headers
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Frame-Options "SAMEORIGIN"
+        X-Content-Type-Options "nosniff"
+        X-XSS-Protection "1; mode=block"
+    }
+
+    # API endpoint
+    handle /api/* {
+        reverse_proxy 127.0.0.1:4201
+    }
+
+    # Web frontend
+    handle {
+        reverse_proxy 127.0.0.1:4200
+    }
+}
