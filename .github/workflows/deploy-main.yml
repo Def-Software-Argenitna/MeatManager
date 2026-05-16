@@ -14,7 +14,7 @@ jobs:
     runs-on: self-hosted
     env:
       REGISTRY: ghcr.io
-      IMAGE_OWNER: ${{ github.repository_owner }}
+      GHCR_NAMESPACE: ghcr.io/def-software-argentina
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
@@ -25,10 +25,6 @@ jobs:
             echo "WEB_GOOGLE_MAPS_API_KEY is empty or missing"
             exit 1
           fi
-
-      - name: Lowercase owner
-        id: owner
-        run: echo "value=${IMAGE_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/login-action@v3
         with:
@@ -42,8 +38,8 @@ jobs:
           file: ./MeatManager-web/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:main
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:sha-${{ github.sha }}
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-web:main
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-web:sha-${{ github.sha }}
           build-args: |
             VITE_API_URL=/api
           secrets: |
@@ -55,12 +51,12 @@ jobs:
           file: ./MeatManager-API/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:main
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:sha-${{ github.sha }}
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-api:main
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-api:sha-${{ github.sha }}
 
       - name: Deploy main stack on self-hosted runner
         env:
-          GHCR_NAMESPACE: ghcr.io/${{ steps.owner.outputs.value }}
+          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           MAIN_DOMAIN: meatmanager.def-software.com
           DEMO_DOMAIN: meatmanager.demo.def-software.com
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
