@@ -10,7 +10,7 @@ Este esquema publica dos stacks en el mismo servidor:
 - Docker y Docker Compose plugin en el servidor
 - DNS apuntando ambos dominios al servidor
 - acceso del servidor a `ghcr.io`
-- `nginx` del host ya funcionando como reverse proxy principal
+- **Caddy** del host ya funcionando como reverse proxy principal
 - runner `self-hosted` de GitHub Actions ya instalado y funcionando en el servidor
 
 ## Archivos necesarios en el servidor
@@ -64,7 +64,7 @@ chmod +x deploy/bootstrap-server.sh
 ./deploy/bootstrap-server.sh /opt/meatmanager
 ```
 
-## Nginx del host
+## Caddy del host
 
 Como el servidor ya tiene otra web en `80/443`, este deploy no publica esos puertos desde Docker.
 
@@ -74,6 +74,8 @@ Los servicios quedan asi:
 - main api: `127.0.0.1:4101`
 - dev web: `127.0.0.1:4200`
 - dev api: `127.0.0.1:4201`
+
+Caddy del host hace reverse proxy a estos puertos locales.
 
 ## Estrategia de deploy
 
@@ -92,12 +94,56 @@ Esto reduce dos problemas comunes:
 Importante:
 
 - el frontend sigue pudiendo tener usuarios con una pestaña vieja abierta; por eso conviene mantener el manejo de recarga de chunks en la app
-- si necesitás rollback, podés volver a poner en `.env` el tag `sha-<commit>` anterior y correr `docker compose ... up -d --force-recreate --wait`
+- si necesitás rollback, podés volvCaddy del host:
 
-Usá estas configs de referencia en el nginx del host:
+- [meatmanager.def-software.com.caddy](caddy/meatmanager.def-software.com.caddy)
+- [meatmanager.demo.def-software.com.caddy](caddy/meatmanager.demo.def-software.com.caddy)
 
-- [meatmanager.def-software.com.conf](/Users/rodrigocortes/Documents/GitHub/MeatManager/deploy/nginx/meatmanager.def-software.com.conf)
-- [meatmanager.demo.def-software.com.conf](/Users/rodrigocortes/Documents/GitHub/MeatManager/deploy/nginx/meatmanager.demo.def-software.com.conf)
+## Configuración SSL/HTTPS
+
+⚠️ **IMPORTANTE**: Los dominios deben estar configurados con certificados SSL válidos para funcionar en producción.
+
+Caddy obtiene y renueva certificados SSL automáticamente de Let's Encrypt.
+
+### Setup rápido
+
+```bash
+# En el servidor, ejecutar como root
+sudo ./deploy/setup-ssl.sh
+```
+
+Este script automáticamente:
+- Instala Caddy si no está instalado
+- Configura el email para notificaciones de Let's Encrypt
+- Copia las configuraciones de sitios
+- Obtiene certificados SSL automáticamente
+- Configura renovación automática (sin necesidad de cron)
+
+### Configuración manual
+
+Ver la guía completa en [SSL_SETUP.md](SSL_SETUP.md) con:
+- Instrucciones detalladas paso a paso
+- Troubleshooting de errores comunes
+- Configuración de seguridad adicional
+- Comandos útiles de Caddy
+
+### Diagnóstico de problemas SSL
+
+Si ves errores como `ERR_SSL_PROTOCOL_ERROR` en el navegador:
+
+```bash
+# En el servidor, ejecutar diagnóstico
+chmod +x /opt/meatmanager/deploy/diagnose-ssl.sh
+./deploy/diagnose-ssl.sh
+```
+
+Este script verifica:
+- ✓ Caddy instalado y corriendo
+- ✓ Configuraciones aplicadas
+- ✓ Certificados SSL obtenidos
+- ✓ Contenedores Docker activos
+- ✓ DNS configurado correctamente
+- ✓ Puertos abiertos
 
 ## Secrets necesarios en GitHub
 

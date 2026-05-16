@@ -1,96 +1,56 @@
-# MeatManager
+# 🥩 MeatManager
 
-Suite de gestion para carnicerias con:
+Suite de gestión especializada para carnicerías desarrollada por **DEF Software Argentina**.
 
-- `MeatManager-web`: panel web principal
-- `MeatManager-API`: API Node/Firebase/MySQL/Redis
-- `MeatManager-mobile`: app movil de reparto con React Native + Expo
-- `deploy/`: despliegue cloud para `main` y `dev`
+## 🚀 Módulos Principales
 
-## Estructura
+El proyecto se divide en módulos interconectados, cada uno con su propio documento README detallado.
 
-```text
-MeatManager/
-├── MeatManager-web/
-├── MeatManager-API/
-├── MeatManager-mobile/
-└── deploy/
-```
+- 🌐 **MeatManager-web:** Panel web principal Frontend desarrollado en React + Vite. [Ver README](./MeatManager-web/README.md)
+- ⚙️ **MeatManager-API:** Backend Node.js. Administra la autenticación, multi-tenant, permisos y tracking usando Firebase, MySQL y Redis. [Ver README](./MeatManager-API/README.md)
+- 📱 **MeatManager-mobile:** App móvil nativa de repartidores/operarios en React Native + Expo para asignación de pedidos y tracking. [Ver README](./MeatManager-mobile/README.md)
+- ☁️ **deploy:** Scripts y configuración cloud para ambientes productivos y demos. [Ver README](./deploy/README.md)
 
-## Modulos
+## 🔄 Flujo General del Sistema
 
-### Web
+1. **Autenticación Unificada:** La plataforma web y la app móvil autentican a los usuarios a través de Firebase Auth.
+2. **Validación:** La API procesa y valida los tokens de Firebase para resolver el acceso por tenant, los permisos y las licencias correspondientes.
+3. **Logística Online:** La ubicación en tiempo real de los repartidores es reportada desde la app móvil hacia la API.
+4. **Almacenamiento de Estados:** La API hace uso de Redis para persistir la presencia y la última ubicación conocida.
+5. **Despliegue Continuo (CI/CD):** Las ramas `dev` y `main` se despliegan automáticamente a través de *GitHub Actions* en un entorno productivo autoalojado.
 
-Frontend principal hecho con React + Vite.
+## 🛠️ Arranque Rápido por Módulo
 
-- README: [MeatManager-web/README.md](/Users/rodrigocortes/Documents/GitHub/MeatManager/MeatManager-web/README.md)
-- comando dev:
-
+### 1. Panel Web
 ```bash
 cd MeatManager-web
 npm install
 npm run dev
 ```
 
-### API
-
-Backend Node para autenticacion, multi-tenant, permisos y tracking.
-
-- Firebase Auth para login
-- MySQL para datos operativos y control de clientes
-- Redis para ubicacion online de repartidores
-
-- README: [MeatManager-API/README.md](/Users/rodrigocortes/Documents/GitHub/MeatManager/MeatManager-API/README.md)
-- comando dev:
-
+### 2. Backend (API)
 ```bash
 cd MeatManager-API
 npm install
-cp .env.example .env
+cp .env.example .env # Completar variables
 npm run dev
 ```
 
-### Mobile
-
-App de entregas hecha con React Native + Expo para Android e iOS.
-
-- login con Firebase Auth
-- pedidos asignados desde Firestore
-- tracking de ubicacion hacia la API
-
-- README: [MeatManager-mobile/README.md](/Users/rodrigocortes/Documents/GitHub/MeatManager/MeatManager-mobile/README.md)
-- comando dev:
-
+### 3. App Móvil (Repartidores)
 ```bash
 cd MeatManager-mobile
 npm install
 npx expo start --lan --clear
 ```
 
-### Deploy
+## 🌍 Entornos
+- `dev`: Ambiente demo y pruebas (`meatmanager.demo.def-software.com`)
+- `main`: Ambiente productivo (`meatmanager.def-software.com`)
 
-Configuracion para publicar:
+> [!WARNING]
+> **Notas Importantes:**
+> - Jamás comitear archivos `.env` ni credenciales sensibles de Firebase Admin al repositorio público.
+> - La raíz contiene este README general. Por favor, visita las subcarpetas de cada módulo para conocer las especificaciones técnicas profundas.
 
-- `main` -> `meatmanager.def-software.com`
-- `dev` -> `meatmanager.demo.def-software.com`
-
-- README: [deploy/README.md](/Users/rodrigocortes/Documents/GitHub/MeatManager/deploy/README.md)
-
-## Flujo general
-
-1. La web y la app movil autentican con Firebase.
-2. La API valida tokens Firebase y resuelve tenant, permisos y licencias.
-3. La ubicacion de repartidores se reporta desde mobile a la API.
-4. La API persiste presencia y ultima ubicacion en Redis.
-5. `dev` y `main` se despliegan por GitHub Actions en un runner self-hosted.
-
-## Entornos
-
-- `dev`: ambiente demo y pruebas
-- `main`: ambiente productivo
-
-## Notas importantes
-
-- No subir `.env` ni credenciales de Firebase Admin.
-- La raiz del repo ahora tiene este README para que GitHub muestre una portada clara del proyecto.
-- Cada modulo mantiene su propio README con detalles operativos.
+---
+© **DEF Software Argentina.** Todos los derechos reservados.
