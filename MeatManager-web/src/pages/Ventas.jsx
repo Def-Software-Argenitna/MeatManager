@@ -155,8 +155,6 @@ const Ventas = () => {
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
-    const [showPrintConfirmModal, setShowPrintConfirmModal] = useState(false);
-    const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
     const [promotions, setPromotions] = useState([]);
@@ -309,7 +307,6 @@ const Ventas = () => {
             || showQuickCreateModal
             || showDeleteTicketModal
             || showTicketPreview
-            || showPrintConfirmModal
             || isScaleSyncing
         ) {
             return undefined;
@@ -335,7 +332,6 @@ const Ventas = () => {
         showDeleteTicketModal,
         showTicketPreview,
         editingPriceId,
-        showPrintConfirmModal,
         isScaleSyncing,
     ]);
 
@@ -1747,36 +1743,12 @@ const Ventas = () => {
             playCashRegister();
             setActiveScaleTicketBarcode(null);
 
-            // Guardar snapshot del carrito antes de resetear (para imprimir después)
-            const cartSnapshot = [...cart];
-            const cartSnapshotWithTotals = cartSnapshot.map((item) => {
-                const line = cartPricing.lineMap.get(item.id);
-                return {
-                    ...item,
-                    subtotal: line?.subtotal ?? (item.price * item.quantity),
-                    promo: line?.promo || null,
-                };
-            });
-            setPendingPrintData({
-                saleData: {
-                    id: saleId,
-                    receipt_number: saleReceiptNumber,
-                    receipt_code: saleReceiptCode,
-                    subtotal: cartTotal,
-                    adjustment: adjustment,
-                    total: finalTotal,
-                    employee_discount_pct: selectedClientEmployeeDiscountPct,
-                    employee_discount_amount: employeeDiscountAmount,
-                },
-                items: cartSnapshotWithTotals
-            });
-
-            // Resetear todo ANTES de mostrar el modal (sin confirm() nativo que roba el foco)
+            // Resetear todo y devolver el foco al scanner sin abrir la confirmacion de impresion
             setCart([]);
             setSelectedClientId(null);
             setClientSearch('');
             resetPaymentState();
-            setShowPrintConfirmModal(true);
+            setTimeout(() => barcodeInputRef.current?.focus(), 100);
         } catch (error) {
             console.error('Error crítico al guardar la venta:', error);
             showToast('❌ Hubo un fallo al guardar la venta en la base de datos: ' + error.message, 'error');
@@ -1784,16 +1756,6 @@ const Ventas = () => {
             processingRef.current = false;
             setIsProcessing(false);
         }
-    };
-
-    const handlePrintConfirm = (shouldPrint) => {
-        if (shouldPrint && pendingPrintData) {
-            printTicket(pendingPrintData.saleData, pendingPrintData.items);
-        }
-        setShowPrintConfirmModal(false);
-        setPendingPrintData(null);
-        // Devolver el foco al scanner sin pasar por ningún diálogo nativo
-        setTimeout(() => barcodeInputRef.current?.focus(), 100);
     };
 
     const confirmPayment = () => {
@@ -2801,44 +2763,6 @@ const Ventas = () => {
                                 }}
                             >
                                 Vender igual
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL CONFIRMAR IMPRESIÓN (reemplaza confirm() nativo para no perder foco en Electron) */}
-            {showPrintConfirmModal && (
-                <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '360px', width: '90%', textAlign: 'center', padding: '2rem' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🧾</div>
-                        <h2 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '0.5rem' }}>¡Venta registrada!</h2>
-                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                            ¿Desea imprimir el ticket?
-                        </p>
-                        <div style={{ display: 'flex', gap: '0.75rem' }}>
-                            <button
-                                autoFocus
-                                onClick={() => handlePrintConfirm(false)}
-                                style={{
-                                    flex: 1,
-                                    padding: '0.75rem',
-                                    borderRadius: 'var(--radius-md)',
-                                    border: '1px solid var(--color-border)',
-                                    background: 'transparent',
-                                    color: 'var(--color-text-main)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.95rem'
-                                }}
-                            >
-                                No, gracias
-                            </button>
-                            <button
-                                onClick={() => handlePrintConfirm(true)}
-                                className="neo-button"
-                                style={{ flex: 1 }}
-                            >
-                                Imprimir 🖨️
                             </button>
                         </div>
                     </div>
