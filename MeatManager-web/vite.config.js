@@ -20,7 +20,7 @@ export default defineConfig({
     VitePWA({
       injectRegister: null,
       registerType: 'autoUpdate',
-      includeAssets: ['def-software-favicon.png', 'def-software-apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: ['meatmanager-icon.svg', 'def-software-apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
         name: 'MeatManager',
         short_name: 'MeatManager',
