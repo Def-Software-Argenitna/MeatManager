@@ -66,12 +66,13 @@ const toNumber = (value) => {
 const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
 const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
 const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
-const PAYMENT_METHOD_ORDER = ['Efectivo', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
+const PAYMENT_METHOD_ORDER = ['Efectivo', 'Transferencia', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
 
 const canonicalizePaymentMethodName = (name) => {
     const normalized = String(name || '').trim().toLowerCase();
     if (!normalized) return '';
     if (normalized.includes('efectivo')) return 'Efectivo';
+    if (normalized.includes('transferencia')) return 'Transferencia';
     if (normalized.includes('cuenta corriente')) return 'Cuenta Corriente';
     if (normalized.includes('mercado pago')) return 'Mercado Pago';
     if (normalized.includes('cuenta dni')) return 'Cuenta DNI';
@@ -84,6 +85,7 @@ const normalizePaymentMethodType = (rawType, canonicalName) => {
     const normalizedType = String(rawType || '').trim().toLowerCase();
     const normalizedName = String(canonicalName || '').trim().toLowerCase();
     if (normalizedType === 'mixto' || normalizedType === 'mixed' || normalizedName === 'mixto') return 'mixed';
+    if (normalizedType === 'transfer' || normalizedName === 'transferencia') return 'transfer';
     if (normalizedType === 'cuenta_corriente' || normalizedName === 'cuenta corriente') return 'cuenta_corriente';
     if (normalizedType === 'cash' || normalizedName === 'efectivo') return 'cash';
     if (normalizedType === 'card' || normalizedName === 'postnet') return 'card';

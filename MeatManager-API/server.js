@@ -5176,23 +5176,43 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
             [...scope.params, ...extraParams, limit, offset]
         );
 
-        // Si la tabla de medios de pago está vacía para este tenant, sembrar los predeterminados
-        if (table === 'payment_methods' && rows.length === 0) {
+        // Si faltan medios de pago predeterminados para este tenant, agregarlos sin pisar datos existentes
+        if (table === 'payment_methods') {
             const PAYMENT_DEFAULTS = [
                 { name: 'Postnet',          type: 'card',             percentage: 0, enabled: 1 },
                 { name: 'Mercado Pago',     type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Cuenta DNI',       type: 'wallet',           percentage: 0, enabled: 1 },
                 { name: 'Efectivo',         type: 'cash',             percentage: 0, enabled: 1 },
+                { name: 'Transferencia',    type: 'transfer',         percentage: 0, enabled: 1 },
                 { name: 'Cuenta Corriente', type: 'cuenta_corriente', percentage: 0, enabled: 1 },
                 { name: 'Mixto',            type: 'mixed',            percentage: 0, enabled: 1 },
             ];
-            for (const pm of PAYMENT_DEFAULTS) {
+
+            const normalizePaymentMethodKey = (value) => {
+                const raw = String(value || '').trim().toLowerCase();
+                if (raw.includes('postnet') || raw.includes('posnet')) return 'postnet';
+                if (raw.includes('mercado pago')) return 'mercado pago';
+                if (raw.includes('cuenta dni')) return 'cuenta dni';
+                if (raw.includes('efectivo')) return 'efectivo';
+                if (raw.includes('transferencia')) return 'transferencia';
+                if (raw.includes('cuenta corriente')) return 'cuenta corriente';
+                if (raw.includes('mixto') || raw.includes('mixed')) return 'mixto';
+                return raw;
+            };
+
+            const existingNames = new Set(rows.map((row) => normalizePaymentMethodKey(row?.name)));
+            const missingDefaults = PAYMENT_DEFAULTS.filter((pm) => !existingNames.has(normalizePaymentMethodKey(pm.name)));
+
+            for (const pm of missingDefaults) {
                 await pool.query('INSERT INTO `payment_methods` SET ?', [{ [TENANT_COLUMN]: tenantId, ...pm }]);
             }
-            [rows] = await pool.query(
-                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-                [...scope.params, ...extraParams, limit, offset]
-            );
+
+            if (missingDefaults.length > 0) {
+                [rows] = await pool.query(
+                    `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                    [...scope.params, ...extraParams, limit, offset]
+                );
+            }
         }
 
         if (table === 'product_categories' && rows.length === 0) {

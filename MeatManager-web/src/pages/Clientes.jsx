@@ -149,7 +149,7 @@ const Clientes = () => {
             fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
             fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' })
         ]);
-        const allowedNames = ['Posnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
+        const allowedNames = ['Posnet', 'Postnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
         setClients(clientsRows);
         setPaymentMethods(paymentMethodRows.filter((method) => method.enabled && allowedNames.includes(method.name)));
         return clientsRows;

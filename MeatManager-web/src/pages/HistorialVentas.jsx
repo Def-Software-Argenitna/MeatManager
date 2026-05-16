@@ -20,6 +20,7 @@ const normalizePaymentMethodLabel = (value) => {
     if (lower.includes('postnet') || lower.includes('posnet')) return 'Postnet';
     if (lower.includes('mercado pago')) return 'Mercado Pago';
     if (lower.includes('cuenta dni')) return 'Cuenta DNI';
+    if (lower.includes('transferencia')) return 'Transferencia';
     if (lower.includes('cuenta corriente')) return 'Cuenta Corriente';
     if (lower.includes('mixto') || lower.includes('mixed')) return 'Pago Mixto';
     if (lower.includes('efectivo')) return 'Efectivo';
