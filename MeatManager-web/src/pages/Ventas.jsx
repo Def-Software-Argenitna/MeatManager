@@ -688,6 +688,16 @@ const Ventas = () => {
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
+        if (priceRecord?.priceLocked) {
+            return {
+                ...product,
+                price: priceRecord.price,
+                priceLocked: true,
+                lockedSource: priceRecord.lockedSource || 'scale_ticket',
+                lockedTicketAmount: toNumber(priceRecord.ticketAmount),
+                linkedPromoPlu: normalizePluCode(priceRecord.plu),
+            };
+        }
         if (!priceRecord?.isPromoPlu || !priceRecord?.promo) {
             return { ...product, price: priceRecord.price };
         }
@@ -965,9 +975,29 @@ const Ventas = () => {
                 }
 
                 const quantity = Number(row?.quantity || 0);
+                const lineAmount = Number(row?.amount || 0);
+                if (quantity > 0 && lineAmount > 0) {
+                    const effectiveUnitPrice = Number((lineAmount / quantity).toFixed(2));
+                    const currentResolvedPrice = Number(priceRecord?.price || product?.price || 0);
+                    if (effectiveUnitPrice > 0 && Math.abs((currentResolvedPrice * quantity) - lineAmount) > 0.01) {
+                        priceRecord = {
+                            ...(priceRecord || {}),
+                            id: priceRecord?.id || row?.product?.id || product?.productId || null,
+                            product_id: priceRecord?.product_id || normalizeProductKey(product?.name || row?.product?.name || `PLU ${pluNormalized}`),
+                            product_ref_id: priceRecord?.product_ref_id || row?.product?.id || product?.productId || null,
+                            price: effectiveUnitPrice,
+                            plu: pluRaw || pluNormalized,
+                            updated_at: row?.saleAt || new Date().toISOString(),
+                            priceLocked: true,
+                            lockedSource: 'scale_ticket',
+                            ticketAmount: lineAmount,
+                        };
+                    }
+                }
                 return {
                     plu: pluRaw || pluNormalized,
                     weight: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+                    amount: lineAmount,
                     priceRecord,
                     product,
                 };
@@ -1401,6 +1431,8 @@ const Ventas = () => {
 
         const cartItemId = resolvedProduct?.promoLocked && resolvedProduct?.forcedPromo?.id
             ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:promo:${resolvedProduct.forcedPromo.id}`
+            : resolvedProduct?.priceLocked
+                ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:locked:${Number(resolvedProduct.price || 0).toFixed(2)}`
             : (resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`);
 
         const normalizedProduct = { ...resolvedProduct, id: cartItemId };

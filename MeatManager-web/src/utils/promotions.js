@@ -163,6 +163,17 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
     const baseSubtotal = round2(unitPrice * quantity);
     const forcedPromoId = Number(item?.forcedPromo?.id);
 
+    if (item?.priceLocked && quantity > 0 && unitPrice > 0) {
+        return {
+            quantity,
+            unitPrice,
+            subtotal: baseSubtotal,
+            baseSubtotal,
+            discount: 0,
+            promo: null,
+        };
+    }
+
     if (item?.promoLocked && quantity > 0 && unitPrice > 0) {
         return {
             quantity,
