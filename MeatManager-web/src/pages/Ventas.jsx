@@ -591,32 +591,34 @@ const Ventas = () => {
         const normalizedNumber = String(parseInt(normalized, 10));
         const promo = findPromotionByPromoPlu(normalized);
         if (promo) {
+            const baseProductById = promo?.product_id != null
+                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
+                : null;
+            const baseProductByName = productsCatalog.find((p) => (
+                String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
+            ));
+            const baseProduct = baseProductById || baseProductByName;
             const promoUnitPrice = toNumber(promo?.promo_unit_price);
             const minQtyKg = toNumber(promo?.min_qty_kg, 3);
             const fallbackUnitPrice = minQtyKg > 0 ? toNumber(promo?.promo_total_price) / minQtyKg : 0;
             const resolvedPromoUnitPrice = promoUnitPrice > 0 ? promoUnitPrice : fallbackUnitPrice;
             const promoStockQty = getCurrentStockQty({
-                productId: promo?.product_id,
-                productName: promo?.product_name,
+                productId: baseProduct?.id || promo?.product_id,
+                productName: baseProduct?.name || promo?.product_name,
             });
-            if (resolvedPromoUnitPrice > 0 && promoStockQty > 0) {
+            if (resolvedPromoUnitPrice > 0) {
                 return {
-                    id: promo?.product_id || null,
-                    product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
-                    product_ref_id: promo?.product_id || null,
+                    id: baseProduct?.id || promo?.product_id || null,
+                    product_id: normalizeProductKey(baseProduct?.name || promo?.product_name || `PLU ${normalized}`),
+                    product_ref_id: baseProduct?.id || promo?.product_id || null,
                     price: resolvedPromoUnitPrice,
                     plu: normalized,
-                    updated_at: new Date().toISOString(),
+                    updated_at: promo?.updated_at || baseProduct?.updated_at || new Date().toISOString(),
                     isPromoPlu: true,
                     promo,
+                    noStockWarning: !(promoStockQty > 0),
                 };
             }
-            // Promo encontrada pero sin stock: buscar el producto BASE (no por promo_plu)
-            const baseProduct = promo?.product_id != null
-                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
-                : productsCatalog.find((p) => (
-                    String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
-                ));
             if (baseProduct) {
                 return {
                     id: baseProduct.id,
