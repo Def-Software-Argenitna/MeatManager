@@ -5694,11 +5694,18 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         const ticket = ticketRows[0];
         const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
+             LEFT JOIN scale_bridge_product_map m
+               ON m.device_id = s.device_id
+              AND m.tenant_id = s.tenant_id
+              AND CAST(m.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
              LEFT JOIN products p
                ON p.tenant_id = s.tenant_id
               AND (
-                   CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                   OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                   (m.product_id IS NOT NULL AND p.id = m.product_id)
+                   OR (m.product_id IS NULL AND (
+                        CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                        OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                   ))
               )
              WHERE s.tenant_id = ?`;
 
