@@ -1393,7 +1393,7 @@ const Ventas = () => {
     };
     const addToCart = async (product, externalWeight = null) => {
         let resolvedProduct = product;
-        if (!product?.promoLocked) {
+        if (!product?.promoLocked && !product?.priceLocked) {
             const catalogProduct = findProductByIdentity(productsCatalog, {
                 id: product?.productId || product?.id || null,
                 name: product?.name,
