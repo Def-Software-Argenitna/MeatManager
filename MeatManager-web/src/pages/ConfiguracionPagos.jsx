@@ -188,6 +188,77 @@ const ConfiguracionPagos = () => {
                 </div>
             </DirectionalReveal>
 
+            {showNewForm && (
+                <DirectionalReveal from="up" delay={0.12}>
+                    <form className="payment-new-form" onSubmit={handleAddNew}>
+                        <div className="payment-new-form-header">
+                            <h2>Agregar método de pago</h2>
+                            <span>Creá un nuevo medio y dejalo disponible en ventas, compras y módulos relacionados.</span>
+                        </div>
+
+                        <div className="payment-new-form-grid">
+                            <label className="payment-new-field">
+                                <span>Nombre</span>
+                                <input
+                                    type="text"
+                                    value={newMethod.name}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, name: e.target.value }))}
+                                    placeholder="Ej: Transferencia Banco Nación"
+                                    maxLength={100}
+                                    autoFocus
+                                />
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Tipo</span>
+                                <select
+                                    value={newMethod.type}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, type: e.target.value }))}
+                                >
+                                    {Object.entries(TYPE_LABELS)
+                                        .filter(([type]) => type !== 'mixto')
+                                        .map(([type, meta]) => (
+                                            <option key={type} value={type}>{meta.name}</option>
+                                        ))}
+                                </select>
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Ajuste (%)</span>
+                                <input
+                                    type="number"
+                                    value={newMethod.percentage}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, percentage: e.target.value }))}
+                                    step="0.1"
+                                    placeholder="0"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="payment-new-form-actions">
+                            <button
+                                type="button"
+                                className="neo-button"
+                                onClick={() => {
+                                    setNewMethod(EMPTY_NEW);
+                                    setShowNewForm(false);
+                                }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                className="neo-button payment-new-submit"
+                                disabled={isSaving || !newMethod.name.trim()}
+                            >
+                                <Plus size={16} />
+                                {isSaving ? 'Guardando...' : 'Agregar método'}
+                            </button>
+                        </div>
+                    </form>
+                </DirectionalReveal>
+            )}
+
             <div className="payment-groups">
                 {Object.entries(groupedMethods).map(([type, methods]) => {
                     const typeInfo = typeLabels[type] || { name: type, icon: '💰', color: '#6b7280' };
