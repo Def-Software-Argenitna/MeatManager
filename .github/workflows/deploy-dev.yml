@@ -76,6 +76,7 @@ jobs:
           API_MAIN_ENV: ${{ secrets.API_MAIN_ENV }}
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: |
           if [ -z "${GHCR_USERNAME}" ]; then
             echo "GHCR_USERNAME is empty or missing"
@@ -115,6 +116,10 @@ jobs:
             "sha-${{ github.sha }}" > "${DEPLOY_PATH}/.env"
           printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
           printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
+          if [ -n "${FIREBASE_WEB_API_KEY}" ]; then
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-dev.env"
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-main.env"
+          fi
           printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           cd "${DEPLOY_PATH}"
