@@ -6,7 +6,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = 
 const { autoUpdater } = require('electron-updater');
 
 const APP_NAME = 'MeatManager Bridge';
-const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4045', 10);
+const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4046', 10);
 const STATUS_POLL_MS = 4000;
 const UPDATE_POLL_MS = 6 * 60 * 60 * 1000; // 6h
 const DEFAULT_API_BASE_URL = process.env.BRIDGE_API_BASE_URL || 'https://meatmanager.demo.def-software.com/api';
