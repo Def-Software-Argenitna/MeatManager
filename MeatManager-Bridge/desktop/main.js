@@ -368,6 +368,15 @@ function configureAutoUpdate() {
             });
         }
     });
+
+    autoUpdater.on('update-not-available', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-event', {
+                status: 'not-available',
+                message: 'Bridge actualizado a la ultima version disponible.',
+            });
+        }
+    });
 }
 
 function checkForUpdatesNow(manual = false) {
@@ -382,12 +391,17 @@ function checkForUpdatesNow(manual = false) {
         return;
     }
     autoUpdater.checkForUpdates().catch((error) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-event', {
-                status: 'error',
-                message: `No se pudo buscar actualización: ${error.message}`,
-            });
-        }
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const message = String(error?.message || '');
+        // "No published versions on GitHub" no es realmente un error — pasa
+        // cuando estamos en una version prerelease y no hay stable mas nueva.
+        const benign = /no published versions/i.test(message);
+        mainWindow.webContents.send('update-event', {
+            status: benign ? 'not-available' : 'error',
+            message: benign
+                ? 'No hay actualizaciones disponibles en este momento.'
+                : `No se pudo buscar actualización: ${message}`,
+        });
     });
 }
 
