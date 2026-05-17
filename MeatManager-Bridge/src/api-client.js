@@ -124,7 +124,7 @@ class ApiClient {
     login(email, password) {
         return this.request({
             method: 'POST',
-            path: '/api/bridge/auth/login',
+            path: '/bridge/auth/login',
             body: { email, password },
             authRequired: false,
         });
@@ -133,7 +133,7 @@ class ApiClient {
     completeOnboarding({ sessionToken, branchId, hostname }) {
         return this.request({
             method: 'POST',
-            path: '/api/bridge/onboarding/complete',
+            path: '/bridge/onboarding/complete',
             body: { sessionToken, branchId, hostname },
             authRequired: false,
         });
@@ -141,23 +141,23 @@ class ApiClient {
 
     // ── Runtime (con deviceToken) ──────────────────────────────────────────
     getSettings() {
-        return this.request({ method: 'GET', path: '/api/bridge/settings' });
+        return this.request({ method: 'GET', path: '/bridge/settings' });
     }
 
     getVendors() {
-        return this.request({ method: 'GET', path: '/api/bridge/vendors' });
+        return this.request({ method: 'GET', path: '/bridge/vendors' });
     }
 
     getCatalog() {
-        return this.request({ method: 'GET', path: '/api/bridge/catalog' });
+        return this.request({ method: 'GET', path: '/bridge/catalog' });
     }
 
     getCatalogRemoved(scaleId) {
-        return this.request({ method: 'GET', path: '/api/bridge/catalog/removed', query: { scaleId } });
+        return this.request({ method: 'GET', path: '/bridge/catalog/removed', query: { scaleId } });
     }
 
     getObservedPlus(scaleId) {
-        return this.request({ method: 'GET', path: '/api/bridge/catalog/observed-plu', query: { scaleId } });
+        return this.request({ method: 'GET', path: '/bridge/catalog/observed-plu', query: { scaleId } });
     }
 
     getSyncState(scaleId, productIds = null) {
@@ -165,13 +165,13 @@ class ApiClient {
         if (Array.isArray(productIds) && productIds.length > 0) {
             query.productIds = productIds.join(',');
         }
-        return this.request({ method: 'GET', path: '/api/bridge/sync-state/product-map', query });
+        return this.request({ method: 'GET', path: '/bridge/sync-state/product-map', query });
     }
 
     putSyncState(scaleId, entries) {
         return this.request({
             method: 'PUT',
-            path: '/api/bridge/sync-state/product-map',
+            path: '/bridge/sync-state/product-map',
             body: { scaleId, entries },
         });
     }
@@ -179,7 +179,7 @@ class ApiClient {
     deleteSyncState(scaleId, { productIds = null, pluCodes = null, resetAll = false } = {}) {
         return this.request({
             method: 'DELETE',
-            path: '/api/bridge/sync-state/product-map',
+            path: '/bridge/sync-state/product-map',
             body: { scaleId, productIds, pluCodes, resetAll },
         });
     }
@@ -187,7 +187,7 @@ class ApiClient {
     postSales({ scaleId, scaleAddress, tickets }) {
         return this.request({
             method: 'POST',
-            path: '/api/bridge/sales',
+            path: '/bridge/sales',
             body: { scaleId, scaleAddress, tickets },
             timeoutMs: 60000,
         });
@@ -196,7 +196,7 @@ class ApiClient {
     postHeartbeat({ scales = [] } = {}) {
         return this.request({
             method: 'POST',
-            path: '/api/bridge/heartbeat',
+            path: '/bridge/heartbeat',
             body: { scales },
         });
     }
