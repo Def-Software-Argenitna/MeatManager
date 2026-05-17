@@ -19,7 +19,11 @@ if (fs.existsSync(envFile)) {
 let overrides = {};
 if (fs.existsSync(overridesFile)) {
     try {
-        overrides = JSON.parse(fs.readFileSync(overridesFile, 'utf8'));
+        let raw = fs.readFileSync(overridesFile, 'utf8');
+        // Strip BOM UTF-8: PowerShell Out-File/Set-Content escribe con BOM por
+        // default y JSON.parse falla en silencio sobre el u+FEFF inicial.
+        if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+        overrides = JSON.parse(raw);
     } catch {
         overrides = {};
     }
