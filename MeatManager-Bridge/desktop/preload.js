@@ -16,4 +16,10 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
         ipcRenderer.on('update-event', listener);
         return () => ipcRenderer.removeListener('update-event', listener);
     },
+    onboarding: {
+        status: () => ipcRenderer.invoke('onboarding:status'),
+        login: (payload) => ipcRenderer.invoke('onboarding:login', payload),
+        complete: (payload) => ipcRenderer.invoke('onboarding:complete', payload),
+        reset: () => ipcRenderer.invoke('onboarding:reset'),
+    },
 });

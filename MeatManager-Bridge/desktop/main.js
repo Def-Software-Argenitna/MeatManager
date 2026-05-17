@@ -1,4 +1,6 @@
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
 const { fork } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
 const { autoUpdater } = require('electron-updater');
@@ -7,6 +9,7 @@ const APP_NAME = 'MeatManager Bridge';
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4045', 10);
 const STATUS_POLL_MS = 4000;
 const UPDATE_POLL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_API_BASE_URL = process.env.BRIDGE_API_BASE_URL || 'https://meatmanager.demo.def-software.com/api';
 
 let mainWindow = null;
 let tray = null;
@@ -15,11 +18,40 @@ let statusTimer = null;
 let updateTimer = null;
 let isQuitting = false;
 let updateAvailable = false;
+let onboardingActive = false;
 let lastStatus = {
     bridgeProcess: { running: false, pid: null, restarts: 0 },
     bridgeHttp: { reachable: false, running: false, lastRunStatus: null, lastError: null, lastRunAt: null },
     updatedAt: new Date().toISOString(),
 };
+
+function runtimeDir() {
+    return path.join(app.getPath('userData'), 'runtime');
+}
+
+function installationFilePath() {
+    return path.join(runtimeDir(), 'data', 'installation.json');
+}
+
+function readInstallation() {
+    const file = installationFilePath();
+    if (!fs.existsSync(file)) return null;
+    try {
+        let raw = fs.readFileSync(file, 'utf8');
+        if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+        const parsed = JSON.parse(raw);
+        if (!parsed?.apiBaseUrl || !parsed?.deviceToken) return null;
+        return parsed;
+    } catch {
+        return null;
+    }
+}
+
+function writeInstallation(payload) {
+    const file = installationFilePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+}
 
 function resolveGithubPublishTarget() {
     const envOwner = String(process.env.BRIDGE_UPDATE_OWNER || '').trim();
@@ -63,6 +95,7 @@ function sendStatusToRenderer() {
 }
 
 async function fetchBridgeStatus() {
+    if (onboardingActive) return;
     try {
         const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/health`);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -117,10 +150,6 @@ function bridgeScriptPath() {
     return path.join(app.getAppPath(), 'src', 'index.js');
 }
 
-function runtimeDir() {
-    return path.join(app.getPath('userData'), 'runtime');
-}
-
 function startBridgeProcess() {
     if (bridgeProc && !bridgeProc.killed) return;
     const scriptPath = bridgeScriptPath();
@@ -145,7 +174,7 @@ function startBridgeProcess() {
             pid: null,
         };
         sendStatusToRenderer();
-        if (!isQuitting) {
+        if (!isQuitting && !onboardingActive) {
             setTimeout(() => {
                 lastStatus.bridgeProcess = {
                     ...lastStatus.bridgeProcess,
@@ -196,7 +225,7 @@ function createMainWindow() {
         height: 620,
         minWidth: 760,
         minHeight: 500,
-        show: !process.argv.includes('--hidden'),
+        show: !process.argv.includes('--hidden') || onboardingActive,
         title: APP_NAME,
         autoHideMenuBar: true,
         webPreferences: {
@@ -281,12 +310,77 @@ function checkForUpdatesNow(manual = false) {
 
 function startStatusPolling() {
     fetchBridgeStatus();
+    if (statusTimer) clearInterval(statusTimer);
     statusTimer = setInterval(fetchBridgeStatus, STATUS_POLL_MS);
 }
 
 function startUpdatePolling() {
     checkForUpdatesNow(false);
+    if (updateTimer) clearInterval(updateTimer);
     updateTimer = setInterval(() => checkForUpdatesNow(false), UPDATE_POLL_MS);
+}
+
+// ── Onboarding HTTP helpers ────────────────────────────────────────────────
+function normalizeBaseUrl(value) {
+    return String(value || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, '');
+}
+
+async function apiCall(baseUrl, path, { method = 'GET', body = null, headers = {} } = {}) {
+    const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+    const init = {
+        method,
+        headers: { 'Content-Type': 'application/json', ...headers },
+    };
+    if (body != null) init.body = JSON.stringify(body);
+    const response = await fetch(url, init);
+    const text = await response.text();
+    let parsed = null;
+    if (text) { try { parsed = JSON.parse(text); } catch { parsed = text; } }
+    if (!response.ok) {
+        const message = parsed?.error || `HTTP ${response.status}`;
+        const err = new Error(message);
+        err.status = response.status;
+        err.body = parsed;
+        throw err;
+    }
+    return parsed;
+}
+
+async function handleOnboardingLogin({ baseUrl, email, password }) {
+    if (!email || !password) {
+        throw new Error('Email y contraseña son requeridos');
+    }
+    return apiCall(baseUrl, '/bridge/auth/login', {
+        method: 'POST',
+        body: { email, password },
+    });
+}
+
+async function handleOnboardingComplete({ baseUrl, sessionToken, branchId }) {
+    const hostname = os.hostname() || 'desktop';
+    const result = await apiCall(baseUrl, '/bridge/onboarding/complete', {
+        method: 'POST',
+        body: { sessionToken, branchId, hostname },
+    });
+    const installation = {
+        apiBaseUrl: normalizeBaseUrl(baseUrl),
+        deviceToken: result.deviceToken,
+        deviceId: result.deviceId,
+        tenantId: result.tenantId,
+        clientId: result.clientId,
+        clientName: result.clientName,
+        taxId: result.taxId,
+        branchId: result.branchId,
+        branchName: result.branchName,
+        branchInternalCode: result.branchInternalCode,
+        hostname,
+        onboardedAt: new Date().toISOString(),
+    };
+    writeInstallation(installation);
+    onboardingActive = false;
+    startBridgeProcess();
+    startStatusPolling();
+    return { ok: true, ...installation, deviceToken: undefined };
 }
 
 function setupIpc() {
@@ -308,6 +402,44 @@ function setupIpc() {
         await shell.openPath(target);
         return { ok: true };
     });
+
+    ipcMain.handle('onboarding:status', async () => {
+        const installation = readInstallation();
+        return {
+            onboarded: Boolean(installation),
+            installation: installation
+                ? { ...installation, deviceToken: undefined }
+                : null,
+            defaultBaseUrl: DEFAULT_API_BASE_URL,
+        };
+    });
+    ipcMain.handle('onboarding:login', async (_event, payload = {}) => {
+        try {
+            const result = await handleOnboardingLogin(payload || {});
+            return { ok: true, ...result };
+        } catch (error) {
+            return { ok: false, error: error.message, status: error.status || null };
+        }
+    });
+    ipcMain.handle('onboarding:complete', async (_event, payload = {}) => {
+        try {
+            const result = await handleOnboardingComplete(payload || {});
+            return result;
+        } catch (error) {
+            return { ok: false, error: error.message, status: error.status || null };
+        }
+    });
+    ipcMain.handle('onboarding:reset', async () => {
+        stopBridgeProcess();
+        try {
+            const file = installationFilePath();
+            if (fs.existsSync(file)) fs.unlinkSync(file);
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
+        onboardingActive = true;
+        return { ok: true };
+    });
 }
 
 async function bootstrap() {
@@ -323,11 +455,21 @@ async function bootstrap() {
     await app.whenReady();
     configureAutoLaunch();
     configureAutoUpdate();
+
+    onboardingActive = !readInstallation();
+
     createMainWindow();
     createTray();
     setupIpc();
-    startBridgeProcess();
-    startStatusPolling();
+
+    if (onboardingActive) {
+        // No arrancamos el bridge ni el polling hasta que se complete el wizard.
+        // El renderer detecta onboardingActive via IPC y muestra el flow.
+        showMainWindow();
+    } else {
+        startBridgeProcess();
+        startStatusPolling();
+    }
     startUpdatePolling();
 
     app.on('activate', () => {
