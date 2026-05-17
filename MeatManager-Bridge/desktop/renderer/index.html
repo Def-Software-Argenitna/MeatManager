@@ -460,7 +460,7 @@
     </section>
 
     <section id="view-status-grid" class="card hidden">
-      <div class="status-grid">
+      <div class="status-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr))">
         <div id="tile-process" class="status-tile">
           <div class="icon">⚙️</div>
           <div class="body">
@@ -472,9 +472,17 @@
         <div id="tile-api" class="status-tile">
           <div class="icon">📡</div>
           <div class="body">
-            <div class="label">API local del bridge</div>
+            <div class="label">API local</div>
             <div class="value" id="bridge-http">-</div>
             <div class="tiny" id="bridge-http-tiny"></div>
+          </div>
+        </div>
+        <div id="tile-scale" class="status-tile">
+          <div class="icon">⚖️</div>
+          <div class="body">
+            <div class="label">Balanza</div>
+            <div class="value" id="scale-status">-</div>
+            <div class="tiny" id="scale-status-tiny"></div>
           </div>
         </div>
         <div id="tile-error" class="status-tile">

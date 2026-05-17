@@ -84,8 +84,10 @@ function runtimeSnapshot() {
         productSyncIntervalMs: config.productSyncIntervalMs,
         salesResyncSkewMinutes: config.salesResyncSkewMinutes,
         lastRunStatus: state.lastRunStatus,
+        lastRunMessage: state.lastRunMessage,
         lastRunAt: state.lastRunAt,
         lastError: state.lastError,
+        scaleReachable: state.scaleReachable !== false,
         logFile: config.logFile,
     };
 }

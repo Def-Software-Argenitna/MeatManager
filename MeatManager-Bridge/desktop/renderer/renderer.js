@@ -351,6 +351,9 @@ function setTile(id, level, valueText, tinyText = '') {
     } else if (id === 'api') {
         setText('bridge-http', valueText);
         setText('bridge-http-tiny', tinyText);
+    } else if (id === 'scale') {
+        setText('scale-status', valueText);
+        setText('scale-status-tiny', tinyText);
     } else if (id === 'error') {
         setText('last-error', valueText);
         setText('last-run-at', tinyText);
@@ -388,11 +391,24 @@ function renderStatus(status) {
         apiReachable ? 'Conectada' : 'Sin conexión',
         apiReachable ? '' : 'El proceso del bridge no responde en el puerto local.');
 
+    const scaleReachable = status?.bridgeHttp?.scaleReachable !== false;
+    if (!apiReachable) {
+        setTile('scale', 'warn', 'Pendiente', 'Esperando bridge');
+    } else if (scaleReachable) {
+        setTile('scale', 'ok', 'Conectada', 'Respondiendo al protocolo CUORA');
+    } else {
+        setTile('scale', 'warn', 'No responde', 'Verificá que esté encendida y conectada por USB');
+    }
+
     const lastError = status?.bridgeHttp?.lastError;
     const lastRunStatus = status?.bridgeHttp?.lastRunStatus;
+    const lastRunMessage = status?.bridgeHttp?.lastRunMessage;
     const lastRunAt = status?.bridgeHttp?.lastRunAt;
     if (lastError && lastError !== 'Bridge HTTP no disponible') {
         setTile('error', 'bad', lastError, formatDateTime(lastRunAt));
+    } else if (lastRunStatus === 'ok' && lastRunMessage) {
+        const level = scaleReachable ? 'ok' : 'warn';
+        setTile('error', level, lastRunMessage, formatRelative(lastRunAt) || formatDateTime(lastRunAt));
     } else if (lastRunStatus === 'ok') {
         setTile('error', 'ok', 'Sincronizando OK', formatRelative(lastRunAt) || formatDateTime(lastRunAt));
     } else {
@@ -402,6 +418,7 @@ function renderStatus(status) {
     if (!procRunning) setHealthBadge('bad', 'Bridge detenido');
     else if (!apiReachable) setHealthBadge('warn', 'Bridge arrancando');
     else if (lastError && lastError !== 'Bridge HTTP no disponible') setHealthBadge('warn', 'Sincronización con incidencias');
+    else if (!scaleReachable) setHealthBadge('warn', 'Balanza desconectada');
     else if (lastRunStatus === 'ok') setHealthBadge('ok', 'Todo en orden');
     else setHealthBadge('warn', 'Verificando...');
 
