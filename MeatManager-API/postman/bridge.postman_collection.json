@@ -23,15 +23,19 @@
           "script": {
             "type": "text/javascript",
             "exec": [
+              "let data = {};",
+              "try { data = pm.response.json() || {}; } catch (_) { data = {}; }",
+              "if (pm.response.code !== 200) {",
+              "    console.error('Login fallo:', pm.response.code, JSON.stringify(data));",
+              "}",
               "pm.test('status 200', () => pm.response.to.have.status(200));",
-              "const data = pm.response.json();",
               "pm.test('returns sessionToken', () => pm.expect(data.sessionToken).to.be.a('string').and.not.empty);",
               "pm.test('returns branches[]', () => pm.expect(data.branches).to.be.an('array').and.not.empty);",
-              "pm.collectionVariables.set('sessionToken', data.sessionToken);",
-              "if (data.branches && data.branches[0]) {",
+              "if (data.sessionToken) pm.collectionVariables.set('sessionToken', data.sessionToken);",
+              "if (Array.isArray(data.branches) && data.branches[0]) {",
               "    pm.collectionVariables.set('branchId', String(data.branches[0].id));",
-              "}",
-              "console.log('clientId:', data.clientId, '| branches:', data.branches.map(b => `${b.id}:${b.name}`).join(', '));"
+              "    console.log('clientId:', data.clientId, '| branches:', data.branches.map(b => `${b.id}:${b.name}`).join(', '));",
+              "}"
             ]
           }
         }
