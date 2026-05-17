@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Informes PRO</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .info {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        tr:hover { background: #f9f9f9; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📈 Informes PRO</h1>
+            <p>Generar reportes detallados de ventas, clientes y rentabilidad</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué son los Informes PRO?</h2>
+            <p>Son reportes avanzados que analizan la operación del negocio. Permiten:</p>
+            <ul>
+                <li>Analizar ventas por período, producto, cliente</li>
+                <li>Comparar rentabilidad de productos</li>
+                <li>Ver tendencias de negocio</li>
+                <li>Identificar productos estrella o con baja venta</li>
+                <li>Monitorear márgenes de ganancias</li>
+                <li>Detectar oportunidades de mejora</li>
+                <li>Exportar datos para análisis externo</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Informes PRO</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca <span class="highlight">Informes PRO</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá la interfaz</strong> con variedad de filtros y gráficos
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Tipos de Reportes Disponibles</h2>
+            <table>
+                <tr>
+                    <th>Reporte</th>
+                    <th>Muestra</th>
+                    <th>Útil Para</th>
+                </tr>
+                <tr>
+                    <td><strong>Ventas por Período</strong></td>
+                    <td>Totales diarios/semanales/mensuales</td>
+                    <td>Tendencias generales del negocio</td>
+                </tr>
+                <tr>
+                    <td><strong>Ventas por Producto</strong></td>
+                    <td>Cantidad y dinero por producto</td>
+                    <td>Qué productos son más rentables</td>
+                </tr>
+                <tr>
+                    <td><strong>Ventas por Cliente</strong></td>
+                    <td>Compras de cada cliente</td>
+                    <td>Identificar mejores clientes</td>
+                </tr>
+                <tr>
+                    <td><strong>Ventas por Categoría</strong></td>
+                    <td>Análisis por tipo de carne/producto</td>
+                    <td>Diversificación de ventas</td>
+                </tr>
+                <tr>
+                    <td><strong>Margen de Ganancia</strong></td>
+                    <td>Diferencia entre costo y precio</td>
+                    <td>Rentabilidad por producto</td>
+                </tr>
+                <tr>
+                    <td><strong>Movimientos de Stock</strong></td>
+                    <td>Entradas y salidas de productos</td>
+                    <td>Control de inventario</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Cómo Usar Filtros</h2>
+            <p>La mayoría de reportes permiten filtrar por:</p>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Rango de Fechas:</strong> Desde - Hasta (Hoy, semana, mes, personalizado)
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Producto:</strong> Selecciona uno o varios
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Categoría:</strong> Filtra por tipo
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Cliente:</strong> Reporte de un cliente específico
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>Medio de Pago:</strong> Efectivo, tarjeta, transferencia, etc.
+            </div>
+            <div class="step">
+                <span class="step-number">6</span>
+                <strong>Haz clic en</strong> <span class="highlight">Aplicar Filtros</span>
+            </div>
+            <div class="success">✓ El reporte se actualizará automáticamente</div>
+        </div>
+        
+        <div class="section">
+            <h2>Interpretando los Resultados</h2>
+            <h3>Ejemplo: Reporte de Ventas por Producto</h3>
+            <table>
+                <tr>
+                    <th>Producto</th>
+                    <th>Cantidad Vendida</th>
+                    <th>Total Ventas</th>
+                    <th>Costo Total</th>
+                    <th>Ganancia</th>
+                    <th>% Margen</th>
+                </tr>
+                <tr>
+                    <td>Carne Vaca - Asado</td>
+                    <td>50 kg</td>
+                    <td>$12.500</td>
+                    <td>$10.000</td>
+                    <td>$2.500</td>
+                    <td>20%</td>
+                </tr>
+                <tr>
+                    <td>Pollo Entero</td>
+                    <td>100 kg</td>
+                    <td>$12.000</td>
+                    <td>$10.000</td>
+                    <td>$2.000</td>
+                    <td>17%</td>
+                </tr>
+                <tr>
+                    <td>Cerdo - Milanesa</td>
+                    <td>75 kg</td>
+                    <td>$15.000</td>
+                    <td>$10.500</td>
+                    <td>$4.500</td>
+                    <td>30%</td>
+                </tr>
+            </table>
+            <p><strong>Análisis:</strong> Cerdo es más rentable (30%), aunque Asado vende más dinero en total</p>
+        </div>
+        
+        <div class="section">
+            <h2>Gráficos y Visualizaciones</h2>
+            <p>Los informes incluyen gráficos que muestran:</p>
+            <ul>
+                <li>📊 <strong>Gráficos de Barras:</strong> Comparación entre productos/períodos</li>
+                <li>📈 <strong>Gráficos de Líneas:</strong> Tendencias en el tiempo</li>
+                <li>🥧 <strong>Gráficos de Pastel:</strong> Distribución de ventas</li>
+                <li>📋 <strong>Tablas Detalladas:</strong> Números precisos</li>
+            </ul>
+            <div class="success">✓ Usa los gráficos para presentar a inversores o analizar tendencias</div>
+        </div>
+        
+        <div class="section">
+            <h2>Exportar Reportes</h2>
+            <p>Puedes exportar datos a Excel/CSV para análisis posterior:</p>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Aplica los filtros</strong> que desees
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en</strong> "Descargar" o "Exportar Excel"
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Se descargará un archivo</strong> con los datos
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Abre en Excel</strong> para análisis más profundos
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Clientes VIP (Más Rentables)</h2>
+            <p>Desde Informes PRO, puedes identificar:</p>
+            <ol>
+                <li><strong>Top 10 Clientes</strong> por monto gastado</li>
+                <li><strong>Clientes Frecuentes</strong> (muchas compras)</li>
+                <li><strong>Clientes Inactivos</strong> (hace mucho no compran)</li>
+                <li><strong>Clientes Nuevos</strong> (primeras compras)</li>
+            </ol>
+            <p>Use esta información para:</p>
+            <ul>
+                <li>Enviar promociones a inactivos</li>
+                <li>Mantener contentos a VIP</li>
+                <li>Incentivar primeras compras de nuevos</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Análisis de Costos</h2>
+            <p>El sistema calcula automáticamente:</p>
+            <table>
+                <tr>
+                    <th>Métrica</th>
+                    <th>Fórmula</th>
+                    <th>Significado</th>
+                </tr>
+                <tr>
+                    <td><strong>Margen Bruto</strong></td>
+                    <td>(Venta - Costo) / Venta × 100</td>
+                    <td>% de ganancia</td>
+                </tr>
+                <tr>
+                    <td><strong>Ticket Promedio</strong></td>
+                    <td>Total Ventas / Cantidad Transacciones</td>
+                    <td>Venta promedio por transacción</td>
+                </tr>
+                <tr>
+                    <td><strong>Producto Promedio</strong></td>
+                    <td>Total Ventas / Cantidad Productos</td>
+                    <td>Venta promedio por producto</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Reportes Recomendados Diarios</h2>
+            <div class="info">
+                ℹ️ <strong>Rutina Recomendada:</strong>
+            </div>
+            <ul>
+                <li>✓ <strong>Cada Mañana:</strong> Ventas del día anterior</li>
+                <li>✓ <strong>Cada Semana:</strong> Ventas por producto de la semana</li>
+                <li>✓ <strong>Cada Mes:</strong> Análisis completo de ventas, márgenes, clientes</li>
+                <li>✓ <strong>Trimestral:</strong> Tendencias y cambios de estrategia</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Interpretando Anomalías</h2>
+            <table>
+                <tr>
+                    <th>Situación</th>
+                    <th>Qué Investigar</th>
+                </tr>
+                <tr>
+                    <td>Producto con venta muy baja</td>
+                    <td>¿Hay stock? ¿Está vencido? ¿Precio muy alto?</td>
+                </tr>
+                <tr>
+                    <td>Margen por debajo de lo esperado</td>
+                    <td>¿Hubo descuento excesivo? ¿Costo subió?</td>
+                </tr>
+                <tr>
+                    <td>Caída de ventas vs período anterior</td>
+                    <td>¿Día especial/feriado? ¿Hizo falta promoción?</td>
+                </tr>
+                <tr>
+                    <td>Cliente con compras irregulares</td>
+                    <td>¿Satisfecho con producto/servicio?</td>
+                </tr>
+            </table>
+        </div>
+    </div>
+</body>
+</html>

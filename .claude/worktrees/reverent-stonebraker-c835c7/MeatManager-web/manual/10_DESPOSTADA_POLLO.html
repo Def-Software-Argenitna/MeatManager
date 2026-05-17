@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Despostada de Pollo</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #f6d365 0%, #fda085 100%);
+            color: #3b2c1a;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #b45309; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #b45309;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #f59e0b;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #fff7ed;
+            border-left: 4px solid #f59e0b;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #f59e0b;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fff7ed;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #fffbeb;
+            color: #b45309;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+        .info {
+            background: #f0f9ff;
+            border-left: 4px solid #0ea5e9;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🐔 Despostada de Pollo</h1>
+            <p>Separar pollo entero en cortes comerciales</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Indice</a>
+        </div>
+
+        <div class="section">
+            <h2>Objetivo</h2>
+            <p>Registrar la despostada para controlar rendimiento y costos reales por corte.</p>
+            <ul>
+                <li>Calcular perdida por hueso y piel</li>
+                <li>Registrar cortes y pesos netos</li>
+                <li>Actualizar stock de cortes resultantes</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>Acceder a Despostada de Pollo</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                En el menu lateral, entra a <span class="highlight">Despostada Pollo</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Se abrira la pantalla con historial de despostadas
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Registrar una Despostada</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                Haz clic en <strong>+ Nueva Despostada</strong>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Selecciona el producto base (ej: Pollo Entero)
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Ingresa el peso inicial en kg
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Agrega los cortes y sus pesos netos
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                Guarda la despostada para registrar el rendimiento
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Cortes Sugeridos</h2>
+            <table>
+                <tr>
+                    <th>Corte</th>
+                    <th>Descripcion</th>
+                </tr>
+                <tr>
+                    <td>Pechuga</td>
+                    <td>Corte magro para venta directa</td>
+                </tr>
+                <tr>
+                    <td>Muslo</td>
+                    <td>Corte con hueso, muy demandado</td>
+                </tr>
+                <tr>
+                    <td>Contramuslo</td>
+                    <td>Corte de buen rendimiento</td>
+                </tr>
+                <tr>
+                    <td>Alitas</td>
+                    <td>Ideal para promociones o venta por unidad</td>
+                </tr>
+                <tr>
+                    <td>Carcasa</td>
+                    <td>Para caldo o subproductos</td>
+                </tr>
+            </table>
+        </div>
+
+        <div class="section">
+            <h2>Rendimiento Esperado</h2>
+            <div class="info">
+                Rendimiento promedio de pollo: 85% a 90%. La perdida suele ser piel, hueso y humedad.
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Consejos</h2>
+            <ul>
+                <li>Pesa el pollo entero antes de cortar</li>
+                <li>Registra todos los cortes para no perder control de stock</li>
+                <li>Si el rendimiento baja, revisa el proceso</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

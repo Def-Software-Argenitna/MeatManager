@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Realizar Ventas</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .info {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        tr:hover { background: #f9f9f9; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>💰 Realizar Ventas</h1>
+            <p>Procesar ventas con búsqueda manual o código de barras Systel</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué es la Pantalla de Ventas?</h2>
+            <p>Es la interfaz principal para procesar transacciones con clientes. Permite:</p>
+            <ul>
+                <li>Buscar productos manualmente o escanear códigos</li>
+                <li>Agregar múltiples items a una venta</li>
+                <li>Calcular automáticamente el total</li>
+                <li>Procesar pagos</li>
+                <li>Generar recibos y comprobantes</li>
+                <li>Descontar stock automáticamente</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Ventas</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca la opción <span class="highlight">Ventas</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá la interfaz</strong> de venta con carrito vacío
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Método 1: Búsqueda Manual de Productos</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>En el campo de búsqueda,</strong> escribe el nombre del producto
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Aparecerá una lista</strong> de productos coincidentes
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Haz clic en el producto</strong> que deseas vender
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Ingresa la cantidad</strong> a vender (en kg, unidades, etc.)
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>Presiona Enter o haz clic en</strong> "Agregar"
+            </div>
+            <div class="success">✓ El producto aparecerá en el carrito de ventas</div>
+        </div>
+        
+        <div class="section">
+            <h2>Método 2: Código de Barras Systel</h2>
+            <p>Para usar la lectora de códigos de barras Systel:</p>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en el botón</strong> 📦 "Scanner" en la interfaz
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se activará la lectora</strong> USB (ahora está en modo escucha)
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>En la balanza Systel/Cuora Max,</strong> escanea el producto
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>El sistema detectará automáticamente:</strong>
+                <ul>
+                    <li>El código PLU del producto</li>
+                    <li>El peso o cantidad</li>
+                    <li>Se agregará al carrito automáticamente</li>
+                </ul>
+            </div>
+            <div class="success">✓ El sistema soporta múltiples códigos por ticket</div>
+        </div>
+        
+        <div class="section">
+            <h2>Formato de Código de Barras Systel</h2>
+            <div class="info">
+                ℹ️ <strong>Formato EAN-13:</strong> 2 + PLU(5) + PESO(5) + DÍGITO DE CONTROL(1)
+            </div>
+            <p><strong>Ejemplo:</strong> Si escaneas 2 códigos en la balanza:</p>
+            <ul>
+                <li><strong>Código 1:</strong> 213000100002710 (Carne Vaca PLU 10001, peso 2.71 kg)</li>
+                <li><strong>Código 2:</strong> 220001050001420 (Pollo PLU 00105, peso 1.42 kg)</li>
+                <li>El sistema detectará ambos productos automáticamente</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Gestionar el Carrito</h2>
+            <h3>Ver Items del Carrito</h3>
+            <p>En el lado derecho ves una tabla con todos los items:</p>
+            <table>
+                <tr>
+                    <th>Columna</th>
+                    <th>Significado</th>
+                </tr>
+                <tr>
+                    <td><strong>Producto</strong></td>
+                    <td>Nombre del artículo</td>
+                </tr>
+                <tr>
+                    <td><strong>Cantidad</strong></td>
+                    <td>Peso o unidades</td>
+                </tr>
+                <tr>
+                    <td><strong>Precio Unit.</strong></td>
+                    <td>Precio por kg o unidad</td>
+                </tr>
+                <tr>
+                    <td><strong>Subtotal</strong></td>
+                    <td>Cantidad × Precio</td>
+                </tr>
+            </table>
+            
+            <h3>Modificar Cantidad</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en el item</strong> del carrito
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Modifica la cantidad</strong> en el campo
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Presiona Enter</strong> para confirmar
+            </div>
+            
+            <h3>Eliminar Item</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en el item</strong> que deseas quitar
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en el botón</strong> "Eliminar" o X
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Completar la Venta</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Verifica todos los items</strong> en el carrito
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Revisa el TOTAL</strong> mostrado en grande
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Selecciona forma de pago:</strong>
+                <ul>
+                    <li>Contado / Efectivo</li>
+                    <li>Tarjeta (Débito/Crédito)</li>
+                    <li>Transferencia</li>
+                    <li>Otra</li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Si aplica,</strong> ingresa cantidad pagada e información adicional
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>Haz clic en</strong> <span class="highlight">Confirmar Venta</span>
+            </div>
+            <div class="success">✓ Se procesará la venta, se imprimirá recibo y se actualizará stock</div>
+        </div>
+        
+        <div class="section">
+            <h2>Automáticamente After la Venta</h2>
+            <p>El sistema realiza automáticamente:</p>
+            <table>
+                <tr>
+                    <th>Acción</th>
+                    <th>Descripción</th>
+                </tr>
+                <tr>
+                    <td><strong>Descuenta Stock</strong></td>
+                    <td>Reduce la cantidad vendida del inventario</td>
+                </tr>
+                <tr>
+                    <td><strong>Genera Comprobante</strong></td>
+                    <td>Crea un recibo con número único</td>
+                </tr>
+                <tr>
+                    <td><strong>Registra Historial</strong></td>
+                    <td>Guarda la transacción para reportes</td>
+                </tr>
+                <tr>
+                    <td><strong>Calcula Totales</strong></td>
+                    <td>Suma ventas del día para cierre de caja</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Errores Comunes y Soluciones</h2>
+            <table>
+                <tr>
+                    <th>Problema</th>
+                    <th>Solución</th>
+                </tr>
+                <tr>
+                    <td>"Producto no encontrado"</td>
+                    <td>Verifica que exista en Productos de Compra y que tenga stock</td>
+                </tr>
+                <tr>
+                    <td>"Stock insuficiente"</td>
+                    <td>No puedes vender más de lo disponible. Registra compra o ajusta stock</td>
+                </tr>
+                <tr>
+                    <td>Scanner no lee</td>
+                    <td>Verifica que esté prendido, conectado USB, y haz clic en botón 📦</td>
+                </tr>
+                <tr>
+                    <td>Precio no aparece</td>
+                    <td>Confirma que el producto tiene precio configurado en Productos de Compra</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Ejemplo Práctico de Venta Completa</h2>
+            <h3>Cliente compra 2 Kg de Asado y 1 Kg de Pollo</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                Busca "Asado" → Cantidad: 2 kg → Agregar
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Busca "Pollo" → Cantidad: 1 kg → Agregar
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                En carrito verás:
+                <ul>
+                    <li>Asado: 2 kg × $250 = $500</li>
+                    <li>Pollo: 1 kg × $120 = $120</li>
+                    <li><strong>TOTAL: $620</strong></li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Selecciona "Contado" → Confirmar Venta
+            </div>
+            <div class="success">✓ Venta registrada, stock actualizado, recibo generado</div>
+        </div>
+        
+        <div class="section">
+            <h2>Consejos Prácticos</h2>
+            <ul>
+                <li>✓ Para ventas rápidas, usa siempre el scanner Systel</li>
+                <li>✓ Verifica el stock antes de vender para evitar problemas</li>
+                <li>✓ Guarda los números de comprobante para auditoría</li>
+                <li>✓ Si hay error, puedes cancelar vente antes de confirmar</li>
+                <li>✓ Usa búsqueda por PLU si conoces el código</li>
+                <li>✓ En caja al final del día, usa "Cierre de Caja" para cerrar</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>
