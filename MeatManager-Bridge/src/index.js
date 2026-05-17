@@ -16,7 +16,8 @@ const stateStore = { save: (nextState) => saveState(config.stateFile, nextState)
 const mysqlPool = buildMySqlPool(config.mysql);
 const bridge = new ScaleBridge({ config, logger, state, stateStore, mysqlPool });
 
-let running = false;
+let cycleRunning = false;
+let pulseRunning = false;
 let timer = null;
 let salesPulseTimer = null;
 let server = null;
@@ -47,7 +48,9 @@ function readBody(req) {
 function runtimeSnapshot() {
     return {
         ok: true,
-        running,
+        running: cycleRunning || pulseRunning,
+        cycleRunning,
+        pulseRunning,
         mode: 'direct-usb',
         deviceId: config.deviceId,
         bridgeName: config.bridgeName,
@@ -66,8 +69,8 @@ function runtimeSnapshot() {
 }
 
 async function runCycle(reason = 'scheduled') {
-    if (running) return { ok: false, skipped: true };
-    running = true;
+    if (cycleRunning) return { ok: false, skipped: true };
+    cycleRunning = true;
     logger.info('Iniciando ciclo de sincronizacion', { reason });
     try {
         const result = await bridge.runOnce({
@@ -85,13 +88,13 @@ async function runCycle(reason = 'scheduled') {
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
         return { ok: false, error: error.message };
     } finally {
-        running = false;
+        cycleRunning = false;
     }
 }
 
 async function runSalesPulse(reason = 'sales-pulse', options = {}) {
-    if (running) return { ok: false, skipped: true, busy: true };
-    running = true;
+    if (pulseRunning) return { ok: false, skipped: true, busy: true };
+    pulseRunning = true;
     try {
         const now = options.toDate ? new Date(options.toDate) : new Date();
         const from = options.fromDate ? new Date(options.fromDate) : (() => {
@@ -131,7 +134,7 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
         }
         return { ok: false, error: error.message };
     } finally {
-        running = false;
+        pulseRunning = false;
     }
 }
 
