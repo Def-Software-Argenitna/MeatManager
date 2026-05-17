@@ -1110,6 +1110,53 @@ class ScaleBridge {
         };
     }
 
+    async readVendorsWatermark() {
+        // Mismo patron que productos: una query barata para saltar el sync de
+        // vendedores cuando no hubo altas, bajas ni renombres recientes.
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT
+                COALESCE(MAX(updated_at), '1970-01-01 00:00:00') AS max_updated_at,
+                COUNT(*) AS total
+             FROM scale_users
+             WHERE tenant_id = ?
+               AND COALESCE(active, 1) = 1`,
+            [this.config.tenantId]
+        );
+        const row = rows[0] || {};
+        const maxUpdatedAt = row.max_updated_at instanceof Date
+            ? row.max_updated_at.toISOString()
+            : (row.max_updated_at ? String(row.max_updated_at) : null);
+        return {
+            maxUpdatedAt,
+            total: Number(row.total || 0),
+        };
+    }
+
+    async readProductsWatermark() {
+        // Chequeo barato para saltar el sync pesado cuando nada cambio en el catalogo.
+        // Si MAX(updated_at) y COUNT(*) coinciden con la marca anterior, no hay altas,
+        // bajas ni modificaciones que justifiquen el round trip serial por producto.
+        const rows = await mysqlQuery(
+            this.mysqlPool,
+            `SELECT
+                COALESCE(MAX(updated_at), '1970-01-01 00:00:00') AS max_updated_at,
+                COUNT(*) AS total
+             FROM products
+             WHERE tenant_id = ?
+               AND COALESCE(current_price, 0) > 0`,
+            [this.config.tenantId]
+        );
+        const row = rows[0] || {};
+        const maxUpdatedAt = row.max_updated_at instanceof Date
+            ? row.max_updated_at.toISOString()
+            : (row.max_updated_at ? String(row.max_updated_at) : null);
+        return {
+            maxUpdatedAt,
+            total: Number(row.total || 0),
+        };
+    }
+
     async pullSales({ fromDate, toDate, closeAfter = false }) {
         const vendorRows = await mysqlQuery(
             this.mysqlPool,
@@ -1487,8 +1534,26 @@ class ScaleBridge {
             startupPluConsolidation = await this.consolidatePluCatalogOnStartup();
         }
         try {
-            // Vendedores: verificar en cada ciclo para reflejar cambios en MM casi en tiempo real.
-            await this.syncVendors();
+            let vendorsWatermark = null;
+            let vendorsChanged = false;
+            try {
+                vendorsWatermark = await this.readVendorsWatermark();
+                const previous = this.state.vendorsWatermark || null;
+                vendorsChanged = !previous
+                    || previous.maxUpdatedAt !== vendorsWatermark.maxUpdatedAt
+                    || Number(previous.total) !== Number(vendorsWatermark.total);
+            } catch (error) {
+                // Si el chequeo barato falla, conservamos el comportamiento viejo
+                // de sincronizar para no quedarnos con vendedores desactualizados.
+                vendorsChanged = true;
+                this.logger.warn('No se pudo leer el high-watermark de vendedores', { error: error.message });
+            }
+            if (vendorsChanged) {
+                const result = await this.syncVendors();
+                if (result?.ok && vendorsWatermark) {
+                    this.state.vendorsWatermark = vendorsWatermark;
+                }
+            }
         } catch (error) {
             this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
         }
@@ -1510,20 +1575,49 @@ class ScaleBridge {
         const lastProductSyncTs = this.state.lastProductSyncAt ? new Date(this.state.lastProductSyncAt).getTime() : NaN;
         const runtimeSectionFingerprint = hashObject(runtimeSettings.runtimeScaleConfig?.sectionMappings || [], 20);
         const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
-        const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
-            || runtimeSettings.forceProductRewrite
+        const forceProductRewrite = runtimeSettings.forceProductRewrite
             || startupPluConsolidation.forceProductRewrite
-            || sectionConfigChanged
+            || sectionConfigChanged;
+        const intervalElapsed = !Number.isFinite(lastProductSyncTs)
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
+        let watermark = null;
+        let watermarkChanged = false;
+        if (intervalElapsed && !forceProductRewrite) {
+            try {
+                watermark = await this.readProductsWatermark();
+                const previous = this.state.productsWatermark || null;
+                watermarkChanged = !previous
+                    || previous.maxUpdatedAt !== watermark.maxUpdatedAt
+                    || Number(previous.total) !== Number(watermark.total);
+            } catch (error) {
+                // Si el chequeo barato falla, caemos al flujo viejo y dejamos que
+                // el sync pesado decida (puede ser primera corrida sin tabla aun).
+                watermarkChanged = true;
+                this.logger.warn('No se pudo leer el high-watermark de productos', { error: error.message });
+            }
+        }
+        const shouldSyncProducts = forceProductRewrite
+            || (intervalElapsed && watermarkChanged);
         if (shouldSyncProducts) {
             products = await this.syncProducts({
                 runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
                 priceFormat: runtimeSettings.priceFormat,
-                forceProductRewrite: runtimeSettings.forceProductRewrite
-                    || startupPluConsolidation.forceProductRewrite
-                    || sectionConfigChanged,
+                forceProductRewrite,
             });
             this.state.lastProductSyncAt = new Date().toISOString();
+            if (products.ok && watermark) {
+                this.state.productsWatermark = watermark;
+            } else if (products.ok) {
+                // Releemos el watermark recien actualizado para reflejar el estado real
+                // tras un sync forzado (firma cambia, seccion cambia, etc.).
+                try {
+                    this.state.productsWatermark = await this.readProductsWatermark();
+                } catch {
+                    // Si no se puede, lo dejamos como estaba; el proximo ciclo lo recalcula.
+                }
+            }
+        } else if (intervalElapsed) {
+            products = { ...products, skipped: 0, deferred: false, watermarkUnchanged: true };
         }
 
         let sales = { ok: true, fetched: 0, stored: 0, skipped: skipSales, error: null };
