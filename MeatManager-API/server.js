@@ -8429,47 +8429,29 @@ app.post('/api/bridge/auth/login', bridgeAuthLimiter, async (req, res) => {
 
         const firebaseUser = await firebaseSignInWithPassword(email, password);
 
-        const conn = await clientsControlPool.getConnection();
-        let userRow = null;
-        try {
-            const [rows] = await conn.query(
-                `SELECT
-                    cu.id            AS userId,
-                    cu.clientId,
-                    cu.firebaseUid,
-                    cu.email,
-                    cu.role,
-                    cu.status        AS userStatus,
-                    c.businessName,
-                    c.taxId,
-                    c.status         AS clientStatus
-                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` cu
-                 INNER JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\` c
-                    ON c.id = cu.clientId
-                 WHERE (cu.firebaseUid = ? OR LOWER(cu.email) = ?)
-                 ORDER BY CASE WHEN cu.firebaseUid = ? THEN 0 ELSE 1 END, cu.id ASC
-                 LIMIT 1`,
-                [firebaseUser.uid, normalizeEmail(firebaseUser.email), firebaseUser.uid]
-            );
-            userRow = rows?.[0] || null;
-        } finally {
-            conn.release();
-        }
+        // Usa la misma resolucion que el resto del API (cubre owner fallback
+        // por billingEmail y Firestore).
+        const accessContext = await getClientAccessContext({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+        });
 
-        if (!userRow) {
+        if (!accessContext?.user) {
             return res.status(403).json({ error: 'El usuario no está vinculado a un cliente' });
         }
-        if (String(userRow.role || '').toLowerCase() !== 'admin') {
+        const user = accessContext.user;
+        const client = accessContext.client;
+        if (String(user.role || '').toLowerCase() !== 'admin') {
             return res.status(403).json({ error: 'Sólo usuarios admin pueden instalar el bridge' });
         }
-        if (String(userRow.userStatus || '').toUpperCase() !== 'ACTIVE') {
+        if (String(user.userStatus || '').toUpperCase() !== 'ACTIVE') {
             return res.status(403).json({ error: 'El usuario no está activo' });
         }
-        if (String(userRow.clientStatus || '').toUpperCase() !== 'ACTIVE') {
+        if (String(client?.status || '').toUpperCase() !== 'ACTIVE') {
             return res.status(403).json({ error: 'El cliente no está activo' });
         }
 
-        const clientId = Number(userRow.clientId);
+        const clientId = Number(client.id);
         const branches = await listClientBranches(clientId);
         if (branches.length === 0) {
             return res.status(409).json({ error: 'El cliente no tiene sucursales activas' });
@@ -8478,7 +8460,6 @@ app.post('/api/bridge/auth/login', bridgeAuthLimiter, async (req, res) => {
         const sessionToken = signBridgeSessionToken({
             uid: firebaseUser.uid,
             email: normalizeEmail(firebaseUser.email),
-            userId: Number(userRow.userId),
             clientId,
             branchIds: branches.map((branch) => Number(branch.id)),
         });
@@ -8487,8 +8468,8 @@ app.post('/api/bridge/auth/login', bridgeAuthLimiter, async (req, res) => {
             sessionToken,
             clientId,
             tenantId: clientId,
-            clientName: userRow.businessName,
-            taxId: userRow.taxId,
+            clientName: client.businessName,
+            taxId: client.taxId,
             branches: branches.map((branch) => ({
                 id: branch.id,
                 name: branch.name,
