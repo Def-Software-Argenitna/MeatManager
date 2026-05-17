@@ -156,8 +156,10 @@ async function fetchBridgeStatus() {
                 reachable: true,
                 running: payload.running === true,
                 lastRunStatus: payload.lastRunStatus || null,
+                lastRunMessage: payload.lastRunMessage || null,
                 lastError: payload.lastError || null,
                 lastRunAt: payload.lastRunAt || null,
+                scaleReachable: payload.scaleReachable !== false,
             },
             updatedAt: new Date().toISOString(),
         };
@@ -168,8 +170,10 @@ async function fetchBridgeStatus() {
                 reachable: false,
                 running: false,
                 lastRunStatus: null,
+                lastRunMessage: null,
                 lastError: 'Bridge HTTP no disponible',
                 lastRunAt: null,
+                scaleReachable: true,
             },
             updatedAt: new Date().toISOString(),
         };

@@ -58,23 +58,55 @@ class ScaleBridge {
     }
 
     async ping() {
-        const response = await this.scale.send(23, '');
-        return {
-            ok: response.crc.ok && !String(response.data || '').startsWith('E'),
-            fn: response.fn,
-            data: response.data,
-            crc: response.crc,
-            status: String(response.data || '').slice(-1),
-        };
+        try {
+            const response = await this.scale.send(23, '');
+            return {
+                ok: response.crc.ok && !String(response.data || '').startsWith('E'),
+                fn: response.fn,
+                data: response.data,
+                crc: response.crc,
+                status: String(response.data || '').slice(-1),
+                scaleReachable: true,
+            };
+        } catch (error) {
+            return {
+                ok: false,
+                error: error.message,
+                scaleReachable: false,
+            };
+        }
     }
 
     async signature() {
         let response = null;
-        for (let i = 0; i < 3; i += 1) {
-            response = await this.scale.send(2, '');
-            if (response?.fn === 2 && response?.crc?.ok) break;
+        try {
+            for (let i = 0; i < 3; i += 1) {
+                response = await this.scale.send(2, '');
+                if (response?.fn === 2 && response?.crc?.ok) break;
+            }
+        } catch (error) {
+            return {
+                ok: false,
+                fn: 2,
+                data: '',
+                crc: { ok: false },
+                protocolVersion: 0,
+                scaleReachable: false,
+                error: error.message,
+            };
         }
-        const match = String(response?.data || '').match(/S(\d{4})/);
+        if (!response || !response.crc?.ok) {
+            return {
+                ok: false,
+                fn: 2,
+                data: String(response?.data || ''),
+                crc: response?.crc || { ok: false },
+                protocolVersion: 0,
+                scaleReachable: false,
+                error: 'Sin respuesta valida tras 3 intentos',
+            };
+        }
+        const match = String(response.data || '').match(/S(\d{4})/);
         const protocolVersion = match ? Number.parseInt(match[1], 10) : 0;
         return {
             ok: response.crc.ok && !String(response.data || '').startsWith('E'),
@@ -82,6 +114,7 @@ class ScaleBridge {
             data: response.data,
             crc: response.crc,
             protocolVersion,
+            scaleReachable: true,
         };
     }
 
@@ -458,6 +491,21 @@ class ScaleBridge {
 
     async syncProducts(options = {}) {
         const signature = await this.signature();
+        if (signature.scaleReachable === false) {
+            this.logger.warn('Balanza no responde a signature (fn 2), sincronizacion de productos omitida', {
+                error: signature.error || null,
+            });
+            return {
+                ok: true,
+                scaleReachable: false,
+                processed: 0,
+                written: 0,
+                skipped: 0,
+                deleted: 0,
+                failed: 0,
+                error: signature.error || 'Balanza no responde',
+            };
+        }
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
         const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
@@ -1014,8 +1062,14 @@ class ScaleBridge {
 
         this.state.lastRunAt = new Date().toISOString();
         this.state.lastRunStatus = 'ok';
-        this.state.lastRunMessage = `Productos:${products.written}/${products.deleted} Ventas:${sales.fetched}`;
-        this.state.lastError = null;
+        this.state.scaleReachable = products.scaleReachable === false ? false : true;
+        if (products.scaleReachable === false) {
+            this.state.lastRunMessage = 'Balanza no responde (productos no sincronizados)';
+            this.state.lastError = null;
+        } else {
+            this.state.lastRunMessage = `Productos:${products.written}/${products.deleted} Ventas:${sales.fetched}`;
+            this.state.lastError = null;
+        }
         if (!this.state.lastProductSyncAt) this.state.lastProductSyncAt = this.state.lastRunAt;
         if (!this.state.lastTicketSyncAt && sales.ok) this.state.lastTicketSyncAt = this.state.lastRunAt;
         this.stateStore.save(this.state);
