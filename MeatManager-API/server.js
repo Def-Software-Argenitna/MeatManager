@@ -5511,7 +5511,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 reason: 'lookup_summary_barcode',
                 barcode,
             });
-            const retryUntil = Date.now() + 7500;
+            const retryUntil = Date.now() + 15000;
             while (!ticketRows.length && Date.now() < retryUntil) {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 [ticketRows] = await pool.query(
