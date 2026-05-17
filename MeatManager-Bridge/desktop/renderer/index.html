@@ -34,7 +34,7 @@
       border: 1px solid var(--line);
       border-radius: 14px;
       background: color-mix(in oklab, var(--card) 94%, #000);
-      padding: 14px;
+      padding: 18px;
     }
     .head {
       display: flex;
@@ -47,6 +47,11 @@
       font-size: 1.15rem;
       font-weight: 700;
       letter-spacing: .3px;
+    }
+    h2 {
+      margin: 0 0 6px 0;
+      font-size: 1rem;
+      font-weight: 700;
     }
     .sub {
       margin-top: 4px;
@@ -101,6 +106,10 @@
       font-weight: 600;
       cursor: pointer;
     }
+    button:disabled {
+      opacity: .5;
+      cursor: not-allowed;
+    }
     button.primary {
       background: color-mix(in oklab, var(--cta) 35%, #0f172a);
       border-color: color-mix(in oklab, var(--cta) 40%, var(--line));
@@ -113,6 +122,39 @@
       padding-top: 12px;
       white-space: pre-wrap;
     }
+    .form {
+      display: grid;
+      gap: 12px;
+    }
+    .form .row {
+      display: grid;
+      gap: 6px;
+    }
+    input, select {
+      background: #0f172a;
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: .95rem;
+    }
+    input:focus, select:focus {
+      outline: 2px solid color-mix(in oklab, var(--cta) 50%, transparent);
+    }
+    .alert {
+      background: color-mix(in oklab, var(--bad) 22%, #0f172a);
+      border: 1px solid color-mix(in oklab, var(--bad) 60%, var(--line));
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      color: #fecaca;
+    }
+    .alert.ok {
+      background: color-mix(in oklab, var(--ok) 22%, #0f172a);
+      border-color: color-mix(in oklab, var(--ok) 60%, var(--line));
+      color: #bbf7d0;
+    }
+    .hidden { display: none !important; }
     @media (max-width: 780px) {
       .status-grid {
         grid-template-columns: 1fr;
@@ -122,17 +164,72 @@
 </head>
 <body>
   <main class="wrap">
-    <section class="card">
+    <!-- ── Vista: Onboarding ───────────────────────────────────────── -->
+    <section id="view-onboarding" class="card hidden">
+      <div class="head">
+        <div>
+          <h1>Configuración inicial</h1>
+          <div class="sub">Identificá esta PC contra MeatManager para empezar a sincronizar con la balanza.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-onboarding-login" class="card hidden">
+      <h2>Paso 1 — Iniciar sesión</h2>
+      <div class="sub" style="margin-bottom:14px">Ingresá las credenciales del administrador del cliente.</div>
+      <form id="login-form" class="form">
+        <div class="row">
+          <label for="login-base-url" class="label">Servidor MeatManager</label>
+          <input id="login-base-url" type="text" placeholder="https://meatmanager.demo.def-software.com/api" autocomplete="off" />
+        </div>
+        <div class="row">
+          <label for="login-email" class="label">Email</label>
+          <input id="login-email" type="email" autocomplete="username" required />
+        </div>
+        <div class="row">
+          <label for="login-password" class="label">Contraseña</label>
+          <input id="login-password" type="password" autocomplete="current-password" required />
+        </div>
+        <div id="login-error" class="alert hidden"></div>
+        <div class="actions">
+          <button type="submit" id="login-submit" class="primary">Continuar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-onboarding-branch" class="card hidden">
+      <h2>Paso 2 — Elegir sucursal</h2>
+      <div id="onboarding-client-name" class="sub" style="margin-bottom:14px"></div>
+      <form id="branch-form" class="form">
+        <div class="row">
+          <label for="branch-select" class="label">Sucursal donde corre este bridge</label>
+          <select id="branch-select" required></select>
+        </div>
+        <div id="branch-error" class="alert hidden"></div>
+        <div class="actions">
+          <button type="button" id="branch-back">Atrás</button>
+          <button type="submit" id="branch-submit" class="primary">Confirmar instalación</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-onboarding-success" class="card hidden">
+      <h2>Listo</h2>
+      <div class="alert ok" id="onboarding-success-msg">Bridge configurado correctamente. Arrancando sincronización...</div>
+    </section>
+
+    <!-- ── Vista: Status (post-onboarding) ─────────────────────────── -->
+    <section id="view-status-header" class="card hidden">
       <div class="head">
         <div>
           <h1>MeatManager Bridge</h1>
-          <div class="sub">Estado en tiempo real de la conexión con balanza y MeatManager.</div>
+          <div id="status-tenant-line" class="sub">Estado en tiempo real de la conexión con balanza y MeatManager.</div>
         </div>
         <div id="update-pill" class="pill"><span class="dot"></span><span>Sin novedades</span></div>
       </div>
     </section>
 
-    <section class="card status-grid">
+    <section id="view-status-grid" class="card status-grid hidden">
       <article>
         <div class="label">Proceso Bridge</div>
         <div id="bridge-process" class="value">-</div>
@@ -151,12 +248,13 @@
       </article>
     </section>
 
-    <section class="card">
+    <section id="view-status-actions" class="card hidden">
       <div class="actions">
         <button id="btn-restart">Reiniciar bridge</button>
         <button id="btn-check-updates">Buscar actualización</button>
         <button id="btn-install-update" class="primary">Aplicar actualización</button>
         <button id="btn-open-logs">Abrir carpeta de logs</button>
+        <button id="btn-reset-install">Re-configurar bridge</button>
       </div>
       <div id="event" class="event">Listo.</div>
     </section>
