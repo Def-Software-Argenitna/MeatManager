@@ -386,10 +386,11 @@ function renderStatus(status) {
         procPid);
 
     const apiReachable = status?.bridgeHttp?.reachable === true;
+    const fetchError = status?.bridgeHttp?.fetchError;
     setTile('api',
         apiReachable ? 'ok' : 'warn',
         apiReachable ? 'Conectada' : 'Sin conexión',
-        apiReachable ? '' : 'El proceso del bridge no responde en el puerto local.');
+        apiReachable ? '' : (fetchError || 'El proceso del bridge no responde en el puerto local.'));
 
     const scaleReachable = status?.bridgeHttp?.scaleReachable !== false;
     if (!apiReachable) {

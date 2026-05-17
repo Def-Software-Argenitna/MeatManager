@@ -140,14 +140,36 @@ function buildTrayIcon() {
 }
 
 function sendStatusToRenderer() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        logDesktop('sendStatusToRenderer: mainWindow null/destroyed');
+        return;
+    }
     mainWindow.webContents.send('bridge-status', lastStatus);
+}
+
+function desktopLogPath() {
+    return path.join(runtimeDir(), 'logs', 'desktop.log');
+}
+
+function logDesktop(message) {
+    try {
+        const line = `[${new Date().toISOString()}] ${message}\n`;
+        fs.appendFileSync(desktopLogPath(), line, 'utf8');
+    } catch (_) { /* best effort */ }
 }
 
 async function fetchBridgeStatus() {
     if (onboardingActive) return;
     try {
-        const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/health`);
+        const url = `http://127.0.0.1:${BRIDGE_PORT}/health`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        let response;
+        try {
+            response = await fetch(url, { signal: controller.signal });
+        } finally {
+            clearTimeout(timeout);
+        }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         lastStatus = {
@@ -160,10 +182,13 @@ async function fetchBridgeStatus() {
                 lastError: payload.lastError || null,
                 lastRunAt: payload.lastRunAt || null,
                 scaleReachable: payload.scaleReachable !== false,
+                fetchError: null,
             },
             updatedAt: new Date().toISOString(),
         };
-    } catch {
+    } catch (error) {
+        const detail = `${error?.name || 'Error'}: ${error?.message || String(error)}${error?.cause ? ` | cause=${error.cause?.code || error.cause?.message || error.cause}` : ''}`;
+        logDesktop(`fetchBridgeStatus FAILED → ${detail}`);
         lastStatus = {
             ...lastStatus,
             bridgeHttp: {
@@ -174,6 +199,7 @@ async function fetchBridgeStatus() {
                 lastError: 'Bridge HTTP no disponible',
                 lastRunAt: null,
                 scaleReachable: true,
+                fetchError: detail,
             },
             updatedAt: new Date().toISOString(),
         };
@@ -365,6 +391,7 @@ function checkForUpdatesNow(manual = false) {
 }
 
 function startStatusPolling() {
+    logDesktop(`startStatusPolling called (interval=${STATUS_POLL_MS}ms, bridgePort=${BRIDGE_PORT})`);
     fetchBridgeStatus();
     if (statusTimer) clearInterval(statusTimer);
     statusTimer = setInterval(fetchBridgeStatus, STATUS_POLL_MS);
