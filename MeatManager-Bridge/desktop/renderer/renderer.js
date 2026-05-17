@@ -452,15 +452,21 @@ document.getElementById('btn-open-logs').addEventListener('click', async () => {
 });
 
 document.getElementById('btn-reset-install').addEventListener('click', async () => {
-    const confirmed = confirm('¿Re-configurar este bridge desde cero? Vas a tener que volver a loguearte y elegir sucursal.');
-    if (!confirmed) return;
+    // El handler IPC abre un dialog nativo y devuelve cancelled:true si el
+    // usuario no confirma. Asi evitamos confirm() del renderer (que rompia
+    // el foco de los inputs del wizard despues de cerrar).
     const result = await window.bridgeDesktop.onboarding.reset();
-    if (result?.ok) {
-        pendingSession = null;
-        cachedBaseUrl = '';
-        const onboardingState = await window.bridgeDesktop.onboarding.status();
-        showOnboardingLogin(onboardingState.defaultBaseUrl);
-    }
+    if (result?.cancelled) return;
+    if (!result?.ok) return;
+    pendingSession = null;
+    cachedBaseUrl = '';
+    const onboardingState = await window.bridgeDesktop.onboarding.status();
+    showOnboardingLogin(onboardingState.defaultBaseUrl);
+    await window.bridgeDesktop.requestWindowFocus();
+    setTimeout(() => {
+        const emailInput = document.getElementById('login-email');
+        if (emailInput) emailInput.focus();
+    }, 50);
 });
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────
