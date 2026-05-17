@@ -418,6 +418,14 @@ async function handleOnboardingComplete({ baseUrl, sessionToken, branchId }) {
         method: 'POST',
         body: { sessionToken, branchId, hostname },
     });
+    // Empezamos de cero con la config: cualquier override anterior (MYSQL_*
+    // de instalaciones 0.3.x, SYNC_INTERVAL_MS de testing, barcode formats
+    // mal copiados, etc.) se descarta. La balanza se vuelve a configurar
+    // en el Paso 3 del wizard, escribiendo SCALE_PORT/ADDRESS limpios.
+    try {
+        const overridesFile = configOverridesPath();
+        if (fs.existsSync(overridesFile)) fs.unlinkSync(overridesFile);
+    } catch (_) { /* best effort */ }
     const installation = {
         apiBaseUrl: normalizeBaseUrl(baseUrl),
         deviceToken: result.deviceToken,
@@ -499,8 +507,10 @@ function setupIpc() {
 
         stopBridgeProcess();
         try {
-            const file = installationFilePath();
-            if (fs.existsSync(file)) fs.unlinkSync(file);
+            const installFile = installationFilePath();
+            if (fs.existsSync(installFile)) fs.unlinkSync(installFile);
+            const overridesFile = configOverridesPath();
+            if (fs.existsSync(overridesFile)) fs.unlinkSync(overridesFile);
         } catch (error) {
             return { ok: false, error: error.message };
         }
