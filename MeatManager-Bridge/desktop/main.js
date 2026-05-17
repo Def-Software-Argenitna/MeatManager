@@ -123,10 +123,11 @@ function resolveGithubPublishTarget() {
 }
 
 function getIconPath(fileName) {
-    const devBase = path.join(__dirname, '..', 'public', 'branding');
-    const prodBase = path.join(process.resourcesPath, 'public', 'branding');
-    const candidate = app.isPackaged ? path.join(prodBase, fileName) : path.join(devBase, fileName);
-    return candidate;
+    // app.getAppPath() devuelve la raiz del proyecto en dev y la ruta dentro
+    // de app.asar en prod (Electron maneja la VFS de asar transparentemente
+    // en nativeImage.createFromPath y fs apis). Combinado con asarUnpack del
+    // package.json, garantiza que el icono se encuentre en ambos modos.
+    return path.join(app.getAppPath(), 'public', 'branding', fileName);
 }
 
 function buildTrayIcon() {
