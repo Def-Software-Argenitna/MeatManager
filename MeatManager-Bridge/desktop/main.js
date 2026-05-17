@@ -53,6 +53,56 @@ function writeInstallation(payload) {
     fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
 }
 
+function configOverridesPath() {
+    return path.join(runtimeDir(), 'data', 'config-overrides.json');
+}
+
+function readConfigOverrides() {
+    const file = configOverridesPath();
+    if (!fs.existsSync(file)) return {};
+    try {
+        let raw = fs.readFileSync(file, 'utf8');
+        if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+        return JSON.parse(raw) || {};
+    } catch {
+        return {};
+    }
+}
+
+function writeConfigOverrides(patch) {
+    const file = configOverridesPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const current = readConfigOverrides();
+    const next = { ...current, ...patch };
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
+    return next;
+}
+
+async function listSerialPorts() {
+    try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
+        const { SerialPort } = require('serialport');
+        const ports = await SerialPort.list();
+        return ports.map((port) => ({
+            path: port.path,
+            manufacturer: port.manufacturer || null,
+            friendlyName: port.friendlyName || null,
+        }));
+    } catch {
+        return [];
+    }
+}
+
+function getAppVersion() {
+    try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
+        const pkg = require(path.join(app.getAppPath(), 'package.json'));
+        return String(pkg?.version || '');
+    } catch {
+        return '';
+    }
+}
+
 function resolveGithubPublishTarget() {
     const envOwner = String(process.env.BRIDGE_UPDATE_OWNER || '').trim();
     const envRepo = String(process.env.BRIDGE_UPDATE_REPO || '').trim();
@@ -440,6 +490,49 @@ function setupIpc() {
         onboardingActive = true;
         return { ok: true };
     });
+
+    ipcMain.handle('scale:list-ports', async () => {
+        const ports = await listSerialPorts();
+        return { ok: true, ports };
+    });
+
+    ipcMain.handle('scale:save-config', async (_event, payload = {}) => {
+        try {
+            const port = String(payload?.port || '').trim();
+            const addressRaw = Number.parseInt(payload?.address, 10);
+            const address = Number.isFinite(addressRaw) && addressRaw >= 1 && addressRaw <= 99
+                ? addressRaw
+                : 20;
+            if (!port) {
+                return { ok: false, error: 'Tenés que elegir un puerto COM' };
+            }
+            writeConfigOverrides({
+                SCALE_PORT: port,
+                SCALE_ADDRESS: String(address),
+            });
+            return { ok: true, port, address };
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('scale:test', async () => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/scale/ping`, { method: 'POST' });
+            if (!response.ok) {
+                return { ok: false, error: `Bridge devolvio HTTP ${response.status}` };
+            }
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            return { ok: false, error: error.message || 'Bridge no esta corriendo' };
+        }
+    });
+
+    ipcMain.handle('app:meta', async () => ({
+        appVersion: getAppVersion(),
+        platform: process.platform,
+    }));
 }
 
 async function bootstrap() {

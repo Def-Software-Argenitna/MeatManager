@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
     checkUpdates: () => ipcRenderer.invoke('update:check'),
     installUpdateNow: () => ipcRenderer.invoke('update:install-now'),
     openLogDir: () => ipcRenderer.invoke('app:open-log-dir'),
+    getAppMeta: () => ipcRenderer.invoke('app:meta'),
     onStatus: (handler) => {
         const listener = (_, payload) => handler(payload);
         ipcRenderer.on('bridge-status', listener);
@@ -21,5 +22,10 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
         login: (payload) => ipcRenderer.invoke('onboarding:login', payload),
         complete: (payload) => ipcRenderer.invoke('onboarding:complete', payload),
         reset: () => ipcRenderer.invoke('onboarding:reset'),
+    },
+    scale: {
+        listPorts: () => ipcRenderer.invoke('scale:list-ports'),
+        saveConfig: (payload) => ipcRenderer.invoke('scale:save-config', payload),
+        test: () => ipcRenderer.invoke('scale:test'),
     },
 });
