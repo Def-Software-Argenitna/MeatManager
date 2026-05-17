@@ -2,7 +2,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { fork } = require('child_process');
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
 
 const APP_NAME = 'MeatManager Bridge';
@@ -270,13 +270,15 @@ function quitApp() {
 }
 
 function createMainWindow() {
+    const windowIcon = nativeImage.createFromPath(getIconPath('def-software-512.png'));
     mainWindow = new BrowserWindow({
-        width: 920,
-        height: 620,
-        minWidth: 760,
-        minHeight: 500,
+        width: 1000,
+        height: 780,
+        minWidth: 820,
+        minHeight: 640,
         show: !process.argv.includes('--hidden') || onboardingActive,
         title: APP_NAME,
+        icon: windowIcon.isEmpty() ? undefined : windowIcon,
         autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -480,6 +482,17 @@ function setupIpc() {
         }
     });
     ipcMain.handle('onboarding:reset', async () => {
+        const confirmResult = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['Cancelar', 'Re-configurar'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Re-configurar bridge',
+            message: '¿Re-configurar este bridge desde cero?',
+            detail: 'Vas a tener que volver a loguearte y elegir sucursal. La configuración actual se elimina.',
+        });
+        if (confirmResult.response !== 1) return { ok: false, cancelled: true };
+
         stopBridgeProcess();
         try {
             const file = installationFilePath();
@@ -488,6 +501,27 @@ function setupIpc() {
             return { ok: false, error: error.message };
         }
         onboardingActive = true;
+
+        // Devolver el foco al renderer despues del dialog nativo. Sin esto,
+        // los inputs del wizard quedan inaccesibles hasta que el usuario
+        // clickee la ventana.
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+                mainWindow.webContents.focus();
+            }
+        } catch (_) { /* best effort */ }
+
+        return { ok: true };
+    });
+
+    ipcMain.handle('window:focus', async () => {
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+                mainWindow.webContents.focus();
+            }
+        } catch (_) { /* best effort */ }
         return { ok: true };
     });
 
@@ -537,6 +571,9 @@ function setupIpc() {
 
 async function bootstrap() {
     app.setName(APP_NAME);
+    // Necesario para que Windows muestre el icono correcto en la barra de
+    // tareas y agrupe los procesos del bridge.
+    try { app.setAppUserModelId('com.defsoftware.meatmanager.bridge'); } catch (_) { /* best effort */ }
     const hasLock = app.requestSingleInstanceLock();
     if (!hasLock) {
         app.quit();

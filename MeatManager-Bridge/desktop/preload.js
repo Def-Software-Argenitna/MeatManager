@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
         ipcRenderer.on('update-event', listener);
         return () => ipcRenderer.removeListener('update-event', listener);
     },
+    requestWindowFocus: () => ipcRenderer.invoke('window:focus'),
     onboarding: {
         status: () => ipcRenderer.invoke('onboarding:status'),
         login: (payload) => ipcRenderer.invoke('onboarding:login', payload),
