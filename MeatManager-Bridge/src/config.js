@@ -110,7 +110,10 @@ const config = {
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
     closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
-    httpPort: intEnv('HTTP_PORT', 4045),
+    // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
+    // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".
+    // Default a 4046 que no esta restringido.
+    httpPort: intEnv('HTTP_PORT', 4046),
     logLevel: strEnv('LOG_LEVEL', 'info').toLowerCase(),
     watchMode: process.argv.includes('--watch'),
     once: process.argv.includes('--once'),
