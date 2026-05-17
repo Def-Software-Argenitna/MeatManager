@@ -28,5 +28,6 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
         listPorts: () => ipcRenderer.invoke('scale:list-ports'),
         saveConfig: (payload) => ipcRenderer.invoke('scale:save-config', payload),
         test: () => ipcRenderer.invoke('scale:test'),
+        reset: () => ipcRenderer.invoke('scale:reset'),
     },
 });
