@@ -619,6 +619,32 @@ function setupIpc() {
         }
     });
 
+    ipcMain.handle('scale:reset', async () => {
+        const confirmResult = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['Cancelar', 'Resetear balanza'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Resetear balanza completa',
+            message: '¿Borrar TODOS los PLUs de la balanza y re-sincronizar desde cero?',
+            detail: 'Se itera fn5 sobre PLU 1..8000. Puede tardar varios minutos. Útil cuando se cambia la balanza por una usada o quedaron PLUs huerfanos. Despues del reset el siguiente ciclo va a re-sincronizar todo el catalogo desde MeatManager.',
+        });
+        if (confirmResult.response !== 1) return { ok: false, cancelled: true };
+
+        try {
+            const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/scale/reset`, {
+                method: 'POST',
+                signal: AbortSignal.timeout(20 * 60 * 1000),
+            });
+            if (!response.ok) {
+                return { ok: false, error: `Bridge devolvio HTTP ${response.status}` };
+            }
+            return await response.json();
+        } catch (error) {
+            return { ok: false, error: error.message || 'Reset falló' };
+        }
+    });
+
     ipcMain.handle('app:meta', async () => ({
         appVersion: getAppVersion(),
         platform: process.platform,

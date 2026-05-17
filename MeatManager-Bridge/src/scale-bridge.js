@@ -489,6 +489,75 @@ class ScaleBridge {
         };
     }
 
+    async resetScaleAll({ pluRange = [1, 8000], reason = 'manual' } = {}) {
+        const [min, max] = pluRange;
+        this.logger.info('Reset completo de balanza iniciado', { reason, min, max });
+        let deleted = 0;
+        let failed = 0;
+        const startedAt = Date.now();
+
+        for (let plu = min; plu <= max; plu += 1) {
+            try {
+                const payload = buildDeletePluPayload(String(plu));
+                const response = await this.scale.send(5, payload);
+                if (response.crc?.ok && !String(response.data || '').startsWith('E')) {
+                    deleted += 1;
+                }
+            } catch (error) {
+                failed += 1;
+                if (failed > 50 && failed > (plu - min + 1) * 0.8) {
+                    // Si mas del 80% falla en el inicio, la balanza esta caida.
+                    this.logger.error('Reset abortado: la balanza no responde de manera sostenida', {
+                        plu,
+                        failed,
+                        error: error.message,
+                    });
+                    throw new Error(`Reset abortado: balanza no responde (PLU ${plu}, ${failed} fallos)`);
+                }
+            }
+            if ((plu - min + 1) % 500 === 0) {
+                this.logger.info('Reset en progreso', {
+                    plu,
+                    processed: plu - min + 1,
+                    total: max - min + 1,
+                    deletedOk: deleted,
+                    failed,
+                    elapsedMs: Date.now() - startedAt,
+                });
+            }
+        }
+
+        // Limpio el sync-state server-side para que el proximo cycle reescriba todo.
+        try {
+            await this.api.deleteSyncState(this.scaleId, { resetAll: true });
+        } catch (error) {
+            this.logger.warn('No se pudo limpiar sync-state despues del reset', { error: error.message });
+        }
+
+        // Limpio cache de orphan PLU cooldown.
+        this.state.orphanPluCleanupCache = {};
+        // Forzo re-aplicar settings/vendedores/productos en proximo cycle.
+        this.state.barcodeConfigFingerprint = null;
+        this.state.marqueeConfigFingerprint = null;
+        this.state.ticketHeaderFingerprint = null;
+        this.state.priceFormatFingerprint = null;
+        this.state.vendorConfigFingerprint = null;
+        this.state.sectionMapFingerprint = null;
+        this.state.lastProductSyncAt = null;
+        this.state.firstScaleResetDoneAt = new Date().toISOString();
+        this.stateStore.save(this.state);
+
+        const elapsedMs = Date.now() - startedAt;
+        this.logger.info('Reset completo de balanza terminado', {
+            reason,
+            processed: max - min + 1,
+            deletedOk: deleted,
+            failed,
+            elapsedMs,
+        });
+        return { ok: true, processed: max - min + 1, deletedOk: deleted, failed, elapsedMs };
+    }
+
     async syncProducts(options = {}) {
         const signature = await this.signature();
         if (signature.scaleReachable === false) {
@@ -505,6 +574,29 @@ class ScaleBridge {
                 failed: 0,
                 error: signature.error || 'Balanza no responde',
             };
+        }
+
+        // Auto-reset en primer arranque exitoso contra una balanza. Esto cubre
+        // el caso de balanza usada que viene con PLUs cargados por otro bridge
+        // o programados a mano — sin esto los PLUs viejos quedarian para siempre
+        // porque cleanupOrphanPluCodes solo conoce los que este bridge sincronizo.
+        if (!this.state.firstScaleResetDoneAt) {
+            this.logger.info('Primera conexion exitosa a la balanza: ejecutando reset completo antes del sync inicial');
+            try {
+                await this.resetScaleAll({ reason: 'first-connection' });
+            } catch (error) {
+                this.logger.error('Reset inicial fallo, sync de productos omitido este ciclo', { error: error.message });
+                return {
+                    ok: true,
+                    scaleReachable: true,
+                    processed: 0,
+                    written: 0,
+                    skipped: 0,
+                    deleted: 0,
+                    failed: 0,
+                    error: `Reset inicial fallo: ${error.message}`,
+                };
+            }
         }
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;

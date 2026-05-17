@@ -217,6 +217,15 @@ function startHttpServer() {
             return sendJson(res, result.ok ? 200 : 500, result);
         }
 
+        if (pathname === '/api/scale/reset' && req.method === 'POST') {
+            try {
+                const result = await bridge.resetScaleAll({ reason: 'manual' });
+                return sendJson(res, 200, result);
+            } catch (error) {
+                return sendJson(res, 500, { ok: false, error: error.message });
+            }
+        }
+
         if (pathname === '/api/scale/sync-products' && req.method === 'POST') {
             try {
                 const result = await bridge.syncProducts();

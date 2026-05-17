@@ -469,6 +469,27 @@ document.getElementById('btn-open-logs').addEventListener('click', async () => {
     await window.bridgeDesktop.openLogDir();
 });
 
+document.getElementById('btn-reset-scale').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-reset-scale');
+    const ev = document.getElementById('event');
+    setBtnLoading(btn, 'Reseteando balanza...', true);
+    ev.textContent = 'Reseteando balanza. Esto puede tardar varios minutos, no cierres la app.';
+    try {
+        const result = await window.bridgeDesktop.scale.reset();
+        if (result?.cancelled) {
+            ev.textContent = 'Reset cancelado.';
+        } else if (result?.ok) {
+            ev.textContent = `✓ Reset completo. ${result.deletedOk || 0} slots borrados, ${result.failed || 0} fallos. Tomó ${Math.round((result.elapsedMs || 0) / 1000)}s. El próximo ciclo re-sincroniza todo desde MeatManager.`;
+        } else {
+            ev.textContent = `✗ Reset falló: ${result?.error || 'sin detalles'}`;
+        }
+    } catch (error) {
+        ev.textContent = `✗ Error en reset: ${error.message}`;
+    } finally {
+        setBtnLoading(btn, '', false);
+    }
+});
+
 document.getElementById('btn-reset-install').addEventListener('click', async () => {
     // El handler IPC abre un dialog nativo y devuelve cancelled:true si el
     // usuario no confirma. Asi evitamos confirm() del renderer (que rompia
