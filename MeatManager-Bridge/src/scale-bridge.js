@@ -1,4 +1,3 @@
-const { query: mysqlQuery, execute: mysqlExecute } = require('./mysql');
 const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode } = require('./helpers');
 const { CuoraClient } = require('./cuora-client');
 const {
@@ -39,207 +38,23 @@ function deriveItemMetrics({ units, grams }) {
     };
 }
 
-function normalizePriceFormat(value) {
-    const normalized = String(value || '').trim().toLowerCase();
-    return normalized === '6d' ? '6d' : '4d2d';
-}
-
 function normalizeToken(value) {
     return normalizeAscii(String(value || '')).toLowerCase().trim();
 }
 
 class ScaleBridge {
-    constructor({ config, logger, state, stateStore, mysqlPool }) {
+    constructor({ config, logger, state, stateStore, apiClient }) {
+        if (!apiClient) throw new Error('ScaleBridge requiere apiClient');
         this.config = config;
         this.logger = logger;
         this.state = state;
         this.stateStore = stateStore;
-        this.mysqlPool = mysqlPool;
+        this.api = apiClient;
+        this.scaleId = String(config.scaleId || '1');
         this.scale = new CuoraClient({
             config: config.scale,
             logger,
         });
-    }
-
-    async ensureSchema() {
-        await mysqlExecute(this.mysqlPool, `
-            CREATE TABLE IF NOT EXISTS scale_bridge_product_map (
-                id BIGINT PRIMARY KEY AUTO_INCREMENT,
-                device_id VARCHAR(64) NOT NULL,
-                tenant_id BIGINT NOT NULL,
-                product_id BIGINT NOT NULL,
-                plu_code VARCHAR(16) NOT NULL,
-                fingerprint VARCHAR(128) NOT NULL,
-                synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY ux_scale_product_map (device_id, tenant_id, product_id),
-                KEY ix_scale_product_plu (device_id, plu_code)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        `);
-
-        await mysqlExecute(this.mysqlPool, `
-            CREATE TABLE IF NOT EXISTS scale_users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                tenant_id BIGINT NOT NULL,
-                slot_no TINYINT UNSIGNED NOT NULL,
-                display_name VARCHAR(100) NOT NULL,
-                active TINYINT(1) NOT NULL DEFAULT 1,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY ux_scale_users_tenant_slot (tenant_id, slot_no),
-                KEY ix_scale_users_tenant (tenant_id)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        `);
-
-        await mysqlExecute(this.mysqlPool, `
-            CREATE TABLE IF NOT EXISTS scale_bridge_sales_item (
-                id BIGINT PRIMARY KEY AUTO_INCREMENT,
-                device_id VARCHAR(64) NOT NULL,
-                tenant_id BIGINT NOT NULL,
-                branch_id BIGINT NULL,
-                ticket_id VARCHAR(32) NOT NULL,
-                ticket_barcode VARCHAR(64) NULL,
-                printed_ticket_barcode VARCHAR(32) NULL,
-                line_no INT NOT NULL,
-                sale_at DATETIME NOT NULL,
-                vendor_code VARCHAR(8) NOT NULL,
-                vendor_name VARCHAR(100) NULL,
-                plu_code VARCHAR(16) NOT NULL,
-                sector_code VARCHAR(8) NOT NULL,
-                units INT NOT NULL DEFAULT 0,
-                grams INT NOT NULL DEFAULT 0,
-                drained_grams INT NOT NULL DEFAULT 0,
-                amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-                ticket_total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-                ticket_item_count INT NOT NULL DEFAULT 0,
-                item_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
-                item_quantity_unit VARCHAR(8) NOT NULL DEFAULT 'un',
-                raw_payload JSON NULL,
-                synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                UNIQUE KEY ux_scale_sale_line (device_id, ticket_id, line_no),
-                KEY ix_scale_sale_date (device_id, sale_at),
-                KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        `);
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_sales_item
-                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_sales_item
-                ADD COLUMN ticket_barcode VARCHAR(64) NULL AFTER ticket_id;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_sales_item
-                ADD COLUMN printed_ticket_barcode VARCHAR(32) NULL AFTER ticket_barcode;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        for (const stmt of [
-            "ALTER TABLE scale_bridge_sales_item ADD COLUMN ticket_total_amount DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER amount",
-            "ALTER TABLE scale_bridge_sales_item ADD COLUMN ticket_item_count INT NOT NULL DEFAULT 0 AFTER ticket_total_amount",
-            "ALTER TABLE scale_bridge_sales_item ADD COLUMN item_quantity DECIMAL(12,3) NOT NULL DEFAULT 0 AFTER ticket_item_count",
-            "ALTER TABLE scale_bridge_sales_item ADD COLUMN item_quantity_unit VARCHAR(8) NOT NULL DEFAULT 'un' AFTER item_quantity",
-        ]) {
-            try {
-                await mysqlExecute(this.mysqlPool, stmt);
-            } catch (error) {
-                const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                    || String(error?.message || '').toLowerCase().includes('duplicate column');
-                if (!duplicate) throw error;
-            }
-        }
-
-        await mysqlExecute(this.mysqlPool, `
-            CREATE TABLE IF NOT EXISTS scale_bridge_ticket_map (
-                id BIGINT PRIMARY KEY AUTO_INCREMENT,
-                device_id VARCHAR(64) NOT NULL,
-                tenant_id BIGINT NOT NULL,
-                branch_id BIGINT NULL,
-                scale_address INT NULL,
-                ticket_id VARCHAR(32) NOT NULL,
-                ticket_barcode VARCHAR(64) NOT NULL,
-                printed_ticket_barcode VARCHAR(32) NULL,
-                vendor_code VARCHAR(16) NULL,
-                vendor_name VARCHAR(100) NULL,
-                sale_at DATETIME NOT NULL,
-                total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
-                item_count INT NOT NULL DEFAULT 0,
-                ticket_status VARCHAR(16) NOT NULL DEFAULT 'open',
-                charged_sale_id BIGINT NULL,
-                charged_at DATETIME NULL,
-                voided_sale_id BIGINT NULL,
-                voided_at DATETIME NULL,
-                fingerprint VARCHAR(128) NOT NULL,
-                synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                UNIQUE KEY ux_scale_ticket_device (device_id, ticket_id),
-                UNIQUE KEY ux_scale_ticket_barcode (ticket_barcode),
-                KEY ix_scale_ticket_addr (tenant_id, scale_address, sale_at),
-                KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-        `);
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_ticket_map
-                ADD COLUMN vendor_name VARCHAR(100) NULL AFTER vendor_code;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_ticket_map
-                ADD COLUMN scale_address INT NULL AFTER branch_id;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        try {
-            await mysqlExecute(this.mysqlPool, `
-                ALTER TABLE scale_bridge_ticket_map
-                ADD COLUMN printed_ticket_barcode VARCHAR(32) NULL AFTER ticket_barcode;
-            `);
-        } catch (error) {
-            const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                || String(error?.message || '').toLowerCase().includes('duplicate column');
-            if (!duplicate) throw error;
-        }
-        for (const stmt of [
-            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN ticket_status VARCHAR(16) NOT NULL DEFAULT 'open' AFTER item_count",
-            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN charged_sale_id BIGINT NULL AFTER ticket_status",
-            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN charged_at DATETIME NULL AFTER charged_sale_id",
-            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN voided_sale_id BIGINT NULL AFTER charged_at",
-            "ALTER TABLE scale_bridge_ticket_map ADD COLUMN voided_at DATETIME NULL AFTER voided_sale_id",
-        ]) {
-            try {
-                await mysqlExecute(this.mysqlPool, stmt);
-            } catch (error) {
-                const duplicate = error?.code === 'ER_DUP_FIELDNAME'
-                    || String(error?.message || '').toLowerCase().includes('duplicate column');
-                if (!duplicate) throw error;
-            }
-        }
     }
 
     async ping() {
@@ -251,157 +66,6 @@ class ScaleBridge {
             crc: response.crc,
             status: String(response.data || '').slice(-1),
         };
-    }
-
-    async normalizeStoredSalesItems() {
-        await mysqlExecute(
-            this.mysqlPool,
-            `UPDATE scale_bridge_sales_item s
-             INNER JOIN scale_bridge_ticket_map t
-                ON t.device_id = s.device_id
-               AND t.tenant_id = s.tenant_id
-               AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
-               AND t.ticket_id = s.ticket_id
-             SET s.ticket_barcode = t.ticket_barcode,
-                 s.printed_ticket_barcode = t.printed_ticket_barcode,
-                 s.vendor_name = t.vendor_name,
-                 s.ticket_total_amount = t.total_amount,
-                 s.ticket_item_count = t.item_count,
-                 s.synced_at = NOW()
-             WHERE s.device_id = ?
-               AND s.tenant_id = ?
-               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
-               AND (
-                    s.ticket_barcode IS NULL
-                    OR s.ticket_barcode <> t.ticket_barcode
-                    OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
-                    OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
-                    OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
-                    OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
-               )`,
-            [
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-            ]
-        );
-
-        await mysqlExecute(
-            this.mysqlPool,
-            `UPDATE scale_bridge_sales_item s
-             INNER JOIN (
-                SELECT device_id,
-                       tenant_id,
-                       COALESCE(branch_id, 0) AS branch_id_key,
-                       ticket_id,
-                       ROUND(SUM(amount), 2) AS ticket_total_amount,
-                       COUNT(*) AS ticket_item_count
-                  FROM scale_bridge_sales_item
-                 WHERE device_id = ?
-                   AND tenant_id = ?
-                   AND COALESCE(branch_id, 0) = COALESCE(?, 0)
-                 GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id
-             ) totals
-                ON totals.device_id = s.device_id
-               AND totals.tenant_id = s.tenant_id
-               AND totals.branch_id_key = COALESCE(s.branch_id, 0)
-               AND totals.ticket_id = s.ticket_id
-             SET s.ticket_total_amount = totals.ticket_total_amount,
-                 s.ticket_item_count = totals.ticket_item_count,
-                 s.synced_at = NOW()
-             WHERE s.device_id = ?
-               AND s.tenant_id = ?
-               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
-               AND (
-                    ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(totals.ticket_total_amount, 0)) >= 0.01
-                    OR COALESCE(s.ticket_item_count, 0) <> COALESCE(totals.ticket_item_count, 0)
-               )`,
-            [
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-            ]
-        );
-
-        await mysqlExecute(
-            this.mysqlPool,
-            `UPDATE scale_bridge_sales_item
-             SET item_quantity = CASE
-                    WHEN COALESCE(grams, 0) > 0 THEN ROUND(COALESCE(grams, 0) / 1000, 3)
-                    ELSE COALESCE(units, 0)
-                 END,
-                 item_quantity_unit = CASE
-                    WHEN COALESCE(grams, 0) > 0 THEN 'kg'
-                    ELSE 'un'
-                 END,
-                 synced_at = NOW()
-             WHERE device_id = ?
-               AND tenant_id = ?
-               AND COALESCE(branch_id, 0) = COALESCE(?, 0)
-               AND (
-                    ABS(COALESCE(item_quantity, 0) - CASE
-                        WHEN COALESCE(grams, 0) > 0 THEN ROUND(COALESCE(grams, 0) / 1000, 3)
-                        ELSE COALESCE(units, 0)
-                    END) >= 0.001
-                    OR COALESCE(item_quantity_unit, '') <> CASE
-                        WHEN COALESCE(grams, 0) > 0 THEN 'kg'
-                        ELSE 'un'
-                    END
-               )`,
-            [
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-            ]
-        );
-
-        await mysqlExecute(
-            this.mysqlPool,
-            `UPDATE scale_bridge_ticket_map t
-             LEFT JOIN scale_users u
-               ON u.tenant_id = t.tenant_id
-              AND COALESCE(u.active, 1) = 1
-              AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
-             SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
-             WHERE t.device_id = ?
-               AND t.tenant_id = ?
-               AND COALESCE(t.branch_id, 0) = COALESCE(?, 0)
-               AND (
-                    t.vendor_name IS NULL
-                    OR t.vendor_name = ''
-               )`,
-            [
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-            ]
-        );
-
-        await mysqlExecute(
-            this.mysqlPool,
-            `UPDATE scale_bridge_sales_item s
-             LEFT JOIN scale_users u
-               ON u.tenant_id = s.tenant_id
-              AND COALESCE(u.active, 1) = 1
-              AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
-             SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
-                 s.synced_at = NOW()
-             WHERE s.device_id = ?
-               AND s.tenant_id = ?
-               AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
-               AND (
-                    s.vendor_name IS NULL
-                    OR s.vendor_name = ''
-               )`,
-            [
-                this.config.deviceId,
-                this.config.tenantId,
-                this.config.branchId || null,
-            ]
-        );
     }
 
     async signature() {
@@ -421,83 +85,13 @@ class ScaleBridge {
         };
     }
 
-    async getScaleSettings(keys = []) {
-        const cleanKeys = [...new Set((keys || []).map((key) => String(key || '').trim()).filter(Boolean))];
-        if (cleanKeys.length === 0) return {};
-        const placeholders = cleanKeys.map(() => '?').join(', ');
-        const rows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT \`key\`, value
-             FROM settings
-             WHERE tenant_id = ?
-               AND \`key\` IN (${placeholders})`,
-            [this.config.tenantId, ...cleanKeys]
-        );
-        return rows.reduce((acc, row) => {
-            acc[String(row.key)] = row.value;
-            return acc;
-        }, {});
-    }
-
-    parseSectionMappings(rawValue) {
-        try {
-            const parsed = JSON.parse(String(rawValue || '[]'));
-            if (!Array.isArray(parsed)) return [];
-            return parsed
-                .map((row) => ({
-                    category: normalizeToken(row?.category),
-                    sectionId: Math.max(1, Math.min(99, Number.parseInt(row?.sectionId, 10) || 2)),
-                    sectionName: normalizeAscii(String(row?.sectionName || this.config.scale.sectionDefaultName || 'CARNICERIA'))
-                        .toUpperCase()
-                        .slice(0, 18) || 'CARNICERIA',
-                }))
-                .filter((row) => row.category);
-        } catch {
-            return [];
-        }
-    }
-
-    parseMarqueeText(rawPayload, fallbackText = '') {
-        const fallback = normalizeAscii(String(fallbackText || '')).slice(0, 80);
-        if (!rawPayload) return fallback;
-        try {
-            const parsed = JSON.parse(String(rawPayload));
-            if (!Array.isArray(parsed)) return fallback;
-            const active = parsed.find((line) => (
-                Number(line?.active ?? 1) === 1 && String(line?.text || '').trim().length > 0
-            ));
-            return normalizeAscii(String(active?.text || '')).slice(0, 80) || fallback;
-        } catch {
-            return fallback;
-        }
-    }
-
-    parseTicketHeader(lines = {}) {
-        return {
-            line1: normalizeAscii(String(lines.line1 || '')).slice(0, 18),
-            line2: normalizeAscii(String(lines.line2 || '')).slice(0, 34),
-            line3: normalizeAscii(String(lines.line3 || '')).slice(0, 34),
-        };
-    }
-
     async loadRuntimeScaleConfig() {
-        const rows = await this.getScaleSettings([
-            'scale_ticket_header_line1',
-            'scale_ticket_header_line2',
-            'scale_ticket_header_line3',
-            'scale_section_mappings',
-            'scale_marquee_messages',
-            'scale_marquee_text',
-        ]);
-
+        const settings = await this.api.getSettings();
         return {
-            ticketHeader: this.parseTicketHeader({
-                line1: rows.scale_ticket_header_line1,
-                line2: rows.scale_ticket_header_line2,
-                line3: rows.scale_ticket_header_line3,
-            }),
-            sectionMappings: this.parseSectionMappings(rows.scale_section_mappings),
-            marqueeText: this.parseMarqueeText(rows.scale_marquee_messages, rows.scale_marquee_text),
+            ticketHeader: settings?.ticketHeader || { line1: '', line2: '', line3: '' },
+            sectionMappings: Array.isArray(settings?.sectionMappings) ? settings.sectionMappings : [],
+            marqueeText: String(settings?.marqueeText || ''),
+            priceFormat: settings?.priceFormat || '4d2d',
         };
     }
 
@@ -514,13 +108,9 @@ class ScaleBridge {
                 name: mapped.sectionName,
             };
         }
-
         const meat = ['carne', 'carniceria', 'vaca', 'vacuno', 'res', 'cerdo', 'pollo', 'ave', 'cordero'];
         if (meat.some((item) => text.includes(item))) {
-            return {
-                id: 2,
-                name: 'CARNICERIA',
-            };
+            return { id: 2, name: 'CARNICERIA' };
         }
         return {
             id: this.config.scale.sectionDefaultId,
@@ -530,14 +120,14 @@ class ScaleBridge {
 
     async applyMarqueeConfig(marqueeText) {
         const text = normalizeAscii(String(marqueeText || '')).slice(0, 80);
-        if (!text) return { ok: true, skipped: true, reason: 'empty' };
+        const payload = text || ' '.repeat(80);
 
-        const fingerprint = hashObject({ marquee: text }, 20);
+        const fingerprint = hashObject({ marquee: payload }, 20);
         if (this.state.marqueeConfigFingerprint === fingerprint) {
             return { ok: true, skipped: true, reason: 'unchanged' };
         }
 
-        const response = await this.scale.send(6, text);
+        const response = await this.scale.send(6, payload);
         if (!response.crc.ok) {
             throw new Error('CRC invalido al configurar marquesina (funcion 6)');
         }
@@ -546,7 +136,7 @@ class ScaleBridge {
         }
 
         this.state.marqueeConfigFingerprint = fingerprint;
-        return { ok: true, updated: true, text };
+        return { ok: true, updated: true, text, cleared: !text };
     }
 
     async applyTicketHeaderConfig(ticketHeader = {}) {
@@ -606,7 +196,7 @@ class ScaleBridge {
     }
 
     async applyPriceFormatConfig(priceFormat) {
-        const normalized = normalizePriceFormat(priceFormat);
+        const normalized = priceFormat === '6d' ? '6d' : '4d2d';
         // En CUORA MAX V6 (fw S0060), CPr=0 trabaja en entero (6d) y CPr=2 en 4d2d.
         const payload = normalized === '6d' ? '0' : '2';
         const fingerprint = `${normalized}:${payload}`;
@@ -626,36 +216,14 @@ class ScaleBridge {
         return { ok: true, updated: true, normalized, payload };
     }
 
-    async getPriceFormatSetting() {
-        const rows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT value
-             FROM settings
-             WHERE tenant_id = ?
-                             AND \`key\` = ?
-             LIMIT 1`,
-            [this.config.tenantId, 'precio_formato']
-        );
-        return normalizePriceFormat(rows[0]?.value);
-    }
-
     async syncVendors() {
+        const { vendors = [] } = await this.api.getVendors();
         const maxSlots = 4;
-        const rows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT id, slot_no, display_name
-             FROM scale_users
-             WHERE tenant_id = ?
-               AND COALESCE(active, 1) = 1
-             ORDER BY slot_no ASC, id ASC
-             LIMIT ?`,
-            [this.config.tenantId, maxSlots]
-        );
 
         const bySlot = [];
         for (let slot = 1; slot <= maxSlots; slot += 1) {
-            const row = rows.find((entry) => Number(entry.slot_no) === slot) || null;
-            const name = String(row?.display_name || `VENDEDOR ${slot}`).trim();
+            const row = vendors.find((entry) => Number(entry.slot) === slot) || null;
+            const name = String(row?.displayName || `VENDEDOR ${slot}`).trim();
             bySlot.push({ slot, name });
         }
 
@@ -682,10 +250,7 @@ class ScaleBridge {
         }
 
         this.state.vendorConfigFingerprint = fingerprint;
-        this.logger.info('Vendedores sincronizados en balanza', {
-            synced,
-            vendors: bySlot,
-        });
+        this.logger.info('Vendedores sincronizados en balanza', { synced, vendors: bySlot });
         return { ok: true, synced };
     }
 
@@ -694,10 +259,11 @@ class ScaleBridge {
             ticketHeader: { line1: '', line2: '', line3: '' },
             sectionMappings: [],
             marqueeText: '',
+            priceFormat: '4d2d',
         }));
 
         let forceProductRewrite = false;
-        const priceFormat = await this.getPriceFormatSetting().catch(() => '4d2d');
+        const priceFormat = config.priceFormat || '4d2d';
 
         try {
             const barcodeResult = await this.applyBarcodeConfig();
@@ -761,9 +327,39 @@ class ScaleBridge {
         return String(parsed);
     }
 
+    async loadSyncCatalogEntries() {
+        const catalog = await this.api.getCatalog();
+        const products = Array.isArray(catalog?.products) ? catalog.products : [];
+        const promotions = Array.isArray(catalog?.promotions) ? catalog.promotions : [];
+
+        const toEntry = (row) => ({
+            id: row.sourceId,
+            plu: row.plu,
+            name: row.name,
+            category: row.category,
+            unit: row.unit,
+            current_price: row.currentPrice,
+            updated_at: row.updatedAt,
+            effective_plu_code: row.effectivePluCode,
+            sourceType: row.sourceType,
+            sourceId: row.sourceId,
+            mapProductId: row.mapProductId,
+        });
+
+        const entries = [...products.map(toEntry), ...promotions.map(toEntry)]
+            .filter((row) => Number.isFinite(row.mapProductId));
+
+        this.logger.info('Catalogo a sincronizar hacia balanza', {
+            products: products.length,
+            promotions: promotions.length,
+        });
+
+        return { entries, pluDuplicates: Array.isArray(catalog?.pluDuplicates) ? catalog.pluDuplicates : [] };
+    }
+
     async cleanupOrphanPluCodes(expectedProducts = []) {
         const nowMs = Date.now();
-        const cooldownMs = 12 * 60 * 60 * 1000; // 12h
+        const cooldownMs = 12 * 60 * 60 * 1000;
         const cleanupCacheRaw = this.state.orphanPluCleanupCache && typeof this.state.orphanPluCleanupCache === 'object'
             ? this.state.orphanPluCleanupCache
             : {};
@@ -775,33 +371,14 @@ class ScaleBridge {
                 .filter(Boolean)
         );
 
-        // Si un PLU volvio a existir en MM, lo removemos del cache para no bloquear futuros eventos.
         for (const plu of Object.keys(cleanupCache)) {
             if (expected.has(plu)) delete cleanupCache[plu];
         }
 
-        const observedRows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT DISTINCT plu_code
-             FROM (
-                SELECT m.plu_code
-                FROM scale_bridge_product_map m
-                WHERE m.device_id = ?
-                  AND m.tenant_id = ?
-                UNION ALL
-                SELECT s.plu_code
-                FROM scale_bridge_sales_item s
-                WHERE s.device_id = ?
-                  AND s.tenant_id = ?
-                  AND s.sale_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)
-             ) x
-             WHERE TRIM(COALESCE(plu_code, '')) <> ''`,
-            [this.config.deviceId, this.config.tenantId, this.config.deviceId, this.config.tenantId]
-        );
-
+        const { observedPlus = [] } = await this.api.getObservedPlus(this.scaleId);
         const orphanPluCodesRaw = [...new Set(
-            observedRows
-                .map((row) => this.canonicalPluCode(row.plu_code))
+            observedPlus
+                .map((plu) => this.canonicalPluCode(plu))
                 .filter((plu) => plu && !expected.has(plu))
         )];
 
@@ -818,10 +395,10 @@ class ScaleBridge {
 
         let deleted = 0;
         let failed = 0;
+        const deletedPluCodes = [];
 
         for (const plu of orphanPluCodes) {
             const pluNumber = Number.parseInt(plu, 10);
-            // En CUORA V6, fn5 trabaja en 1..8000. Evitamos clamping silencioso.
             if (!Number.isFinite(pluNumber) || pluNumber < 1 || pluNumber > 8000) {
                 this.logger.warn('PLU huerfano fuera de rango de borrado fn5, se omite', { plu });
                 failed += 1;
@@ -838,23 +415,23 @@ class ScaleBridge {
                     throw new Error(`Error balanza al borrar PLU huerfano ${plu}: ${deleteResp.data}`);
                 }
 
-                await mysqlExecute(
-                    this.mysqlPool,
-                    `DELETE FROM scale_bridge_product_map
-                     WHERE device_id = ?
-                       AND tenant_id = ?
-                       AND (
-                            TRIM(CAST(plu_code AS CHAR)) = ?
-                            OR (TRIM(CAST(plu_code AS CHAR)) REGEXP '^[0-9]+$' AND CAST(TRIM(CAST(plu_code AS CHAR)) AS UNSIGNED) = ?)
-                       )`,
-                    [this.config.deviceId, this.config.tenantId, plu, pluNumber]
-                );
                 cleanupCache[plu] = nowMs;
+                deletedPluCodes.push(plu);
                 deleted += 1;
             } catch (error) {
                 failed += 1;
                 this.logger.warn('No se pudo borrar un PLU huerfano en balanza', {
                     plu,
+                    error: error.message,
+                });
+            }
+        }
+
+        if (deletedPluCodes.length > 0) {
+            try {
+                await this.api.deleteSyncState(this.scaleId, { pluCodes: deletedPluCodes });
+            } catch (error) {
+                this.logger.warn('No se pudo limpiar sync state de PLUs huerfanos en API', {
                     error: error.message,
                 });
             }
@@ -883,12 +460,13 @@ class ScaleBridge {
         const signature = await this.signature();
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
-        const priceFormat = options.priceFormat || await this.getPriceFormatSetting().catch(() => '4d2d');
         const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
             ticketHeader: { line1: '', line2: '', line3: '' },
             sectionMappings: [],
             marqueeText: '',
+            priceFormat: '4d2d',
         }));
+        const priceFormat = options.priceFormat || runtimeScaleConfig.priceFormat || '4d2d';
         const effectiveLegacyPriceMultiplier = priceFormat === '6d'
             ? Math.max(1, Number(this.config.scale.priceFormat6dMultiplier || 10))
             : this.config.scale.legacyPriceMultiplier;
@@ -912,89 +490,68 @@ class ScaleBridge {
         let failed = 0;
         const touchedSections = new Map();
 
-        const removedRows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT m.product_id,
-                    m.plu_code,
-                    COALESCE(
-                        NULLIF(
-                            TRIM(CAST(p.plu AS CHAR)),
-                            ''
-                        ),
-                        CAST(p.id AS CHAR)
-                    ) AS expected_plu_code
-             FROM scale_bridge_product_map m
-             LEFT JOIN products p
-                ON p.id = m.product_id
-               AND p.tenant_id = m.tenant_id
-             WHERE m.device_id = ?
-               AND m.tenant_id = ?
-                AND (
-                    p.id IS NULL
-                    OR COALESCE(p.current_price, 0) <= 0
-                    OR COALESCE(
-                        NULLIF(
-                            TRIM(CAST(p.plu AS CHAR)),
-                            ''
-                        ),
-                        CAST(p.id AS CHAR)
-                    ) <> CAST(m.plu_code AS CHAR)
-                )`,
-            [this.config.deviceId, this.config.tenantId]
-        );
+        // 1) Productos a borrar de la balanza (cambiaron PLU o ya no existen)
+        const { removed = [] } = await this.api.getCatalogRemoved(this.scaleId).catch((error) => {
+            this.logger.warn('No se pudo leer catalogo/removed', { error: error.message });
+            return { removed: [] };
+        });
 
-        for (const removed of removedRows) {
+        const successfullyDeletedProductIds = [];
+        for (const row of removed) {
             try {
-                const deletePayload = buildDeletePluPayload(removed.plu_code);
+                const deletePayload = buildDeletePluPayload(row.pluCode);
                 const deleteResp = await this.scale.send(5, deletePayload);
                 if (!deleteResp.crc.ok) {
-                    throw new Error(`CRC invalido al borrar PLU ${removed.plu_code}`);
+                    throw new Error(`CRC invalido al borrar PLU ${row.pluCode}`);
                 }
                 if (String(deleteResp.data || '').startsWith('E')) {
-                    throw new Error(`Error balanza al borrar PLU ${removed.plu_code}: ${deleteResp.data}`);
+                    throw new Error(`Error balanza al borrar PLU ${row.pluCode}: ${deleteResp.data}`);
                 }
-                await mysqlExecute(
-                    this.mysqlPool,
-                    `DELETE FROM scale_bridge_product_map
-                     WHERE device_id = ? AND tenant_id = ? AND product_id = ?`,
-                    [this.config.deviceId, this.config.tenantId, removed.product_id]
-                );
+                successfullyDeletedProductIds.push(row.mapProductId);
                 deleted += 1;
             } catch (error) {
                 failed += 1;
                 this.logger.warn('No se pudo eliminar un producto de la balanza', {
-                    productId: removed.product_id,
-                    plu: removed.plu_code,
-                    expectedPlu: removed.expected_plu_code || null,
+                    productId: row.mapProductId,
+                    plu: row.pluCode,
+                    expectedPlu: row.expectedPluCode || null,
+                    error: error.message,
+                });
+            }
+        }
+        if (successfullyDeletedProductIds.length > 0) {
+            try {
+                await this.api.deleteSyncState(this.scaleId, { productIds: successfullyDeletedProductIds });
+            } catch (error) {
+                this.logger.warn('No se pudo limpiar sync-state luego del borrado en balanza', {
                     error: error.message,
                 });
             }
         }
 
-        const products = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT id,
-                    plu,
-                    name,
-                    category,
-                    unit,
-                    current_price,
-                    updated_at,
-                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
-             FROM products
-             WHERE tenant_id = ?
-               AND COALESCE(current_price, 0) > 0
-             ORDER BY updated_at ASC, id ASC`,
-            [this.config.tenantId]
-        );
+        // 2) Catalogo actual completo
+        const { entries: products } = await this.loadSyncCatalogEntries();
 
+        // 3) Orphan cleanup (incluye su propio batch DELETE)
         const orphanCleanup = await this.cleanupOrphanPluCodes(products);
         deleted += Number(orphanCleanup.deleted || 0);
         failed += Number(orphanCleanup.failed || 0);
 
+        // 4) Fingerprints actuales — una sola llamada
+        const { entries: fingerprintEntries = [] } = await this.api.getSyncState(this.scaleId).catch((error) => {
+            this.logger.warn('No se pudo leer sync-state', { error: error.message });
+            return { entries: [] };
+        });
+        const fingerprintByProductId = new Map(
+            fingerprintEntries.map((entry) => [Number(entry.productId), String(entry.fingerprint || '')])
+        );
+
+        const upsertBatch = [];
         for (const product of products) {
             const pluCode = String(product.effective_plu_code || product.plu || product.id);
             const fingerprint = hashObject({
+                sourceType: product.sourceType || 'product',
+                sourceId: product.sourceId || product.id,
                 pluCode,
                 name: product.name,
                 category: product.category,
@@ -1008,15 +565,8 @@ class ScaleBridge {
                 legacyPriceEncoding: useLegacyPlu4 ? 'adaptive-v2' : null,
             });
 
-            const mapRows = await mysqlQuery(
-                this.mysqlPool,
-                `SELECT fingerprint
-                 FROM scale_bridge_product_map
-                 WHERE device_id = ? AND tenant_id = ? AND product_id = ?
-                 LIMIT 1`,
-                [this.config.deviceId, this.config.tenantId, product.id]
-            );
-            if (!forceProductRewrite && mapRows[0] && mapRows[0].fingerprint === fingerprint) {
+            const storedFingerprint = fingerprintByProductId.get(Number(product.mapProductId));
+            if (!forceProductRewrite && storedFingerprint && storedFingerprint === fingerprint) {
                 skipped += 1;
                 continue;
             }
@@ -1037,7 +587,7 @@ class ScaleBridge {
                     ? buildPlu4Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
-                        maintainTotals: Boolean(mapRows[0]),
+                        maintainTotals: Boolean(storedFingerprint),
                         priceMultiplier: effectiveLegacyPriceMultiplier,
                         price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,
@@ -1058,7 +608,6 @@ class ScaleBridge {
                 }
 
                 if (useLegacyPlu4 && priceFormat === '6d') {
-                    // En CUORA MAX V6, reforzamos precio con fn33 para evitar desfasajes de visualizacion.
                     const priceValue = Math.max(0, Math.min(999999, Math.round(Number(product.current_price) || 0)));
                     const pricePayload = buildPriceChange33Payload(pluCode, priceValue, { version: '1' });
                     const priceResponse = await this.scale.send(33, pricePayload);
@@ -1070,23 +619,26 @@ class ScaleBridge {
                     }
                 }
 
-                await mysqlExecute(
-                    this.mysqlPool,
-                    `INSERT INTO scale_bridge_product_map (device_id, tenant_id, product_id, plu_code, fingerprint, synced_at)
-                 VALUES (?, ?, ?, ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE
-                    plu_code = VALUES(plu_code),
-                    fingerprint = VALUES(fingerprint),
-                    synced_at = VALUES(synced_at)`,
-                    [this.config.deviceId, this.config.tenantId, product.id, pluCode, fingerprint]
-                );
+                upsertBatch.push({ productId: Number(product.mapProductId), pluCode, fingerprint });
                 written += 1;
             } catch (error) {
                 failed += 1;
                 this.logger.warn('No se pudo sincronizar un producto hacia balanza', {
                     productId: product.id,
+                    sourceType: product.sourceType || 'product',
                     plu: pluCode,
                     error: error.message,
+                });
+            }
+        }
+
+        if (upsertBatch.length > 0) {
+            try {
+                await this.api.putSyncState(this.scaleId, upsertBatch);
+            } catch (error) {
+                this.logger.warn('No se pudo persistir el sync-state (batch PUT)', {
+                    error: error.message,
+                    pending: upsertBatch.length,
                 });
             }
         }
@@ -1110,67 +662,12 @@ class ScaleBridge {
         };
     }
 
-    async readVendorsWatermark() {
-        // Mismo patron que productos: una query barata para saltar el sync de
-        // vendedores cuando no hubo altas, bajas ni renombres recientes.
-        const rows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT
-                COALESCE(MAX(updated_at), '1970-01-01 00:00:00') AS max_updated_at,
-                COUNT(*) AS total
-             FROM scale_users
-             WHERE tenant_id = ?
-               AND COALESCE(active, 1) = 1`,
-            [this.config.tenantId]
-        );
-        const row = rows[0] || {};
-        const maxUpdatedAt = row.max_updated_at instanceof Date
-            ? row.max_updated_at.toISOString()
-            : (row.max_updated_at ? String(row.max_updated_at) : null);
-        return {
-            maxUpdatedAt,
-            total: Number(row.total || 0),
-        };
-    }
-
-    async readProductsWatermark() {
-        // Chequeo barato para saltar el sync pesado cuando nada cambio en el catalogo.
-        // Si MAX(updated_at) y COUNT(*) coinciden con la marca anterior, no hay altas,
-        // bajas ni modificaciones que justifiquen el round trip serial por producto.
-        const rows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT
-                COALESCE(MAX(updated_at), '1970-01-01 00:00:00') AS max_updated_at,
-                COUNT(*) AS total
-             FROM products
-             WHERE tenant_id = ?
-               AND COALESCE(current_price, 0) > 0`,
-            [this.config.tenantId]
-        );
-        const row = rows[0] || {};
-        const maxUpdatedAt = row.max_updated_at instanceof Date
-            ? row.max_updated_at.toISOString()
-            : (row.max_updated_at ? String(row.max_updated_at) : null);
-        return {
-            maxUpdatedAt,
-            total: Number(row.total || 0),
-        };
-    }
-
     async pullSales({ fromDate, toDate, closeAfter = false }) {
-        const vendorRows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT slot_no, display_name
-             FROM scale_users
-             WHERE tenant_id = ?
-               AND COALESCE(active, 1) = 1
-             ORDER BY slot_no ASC`,
-            [this.config.tenantId]
-        ).catch(() => []);
+        const { vendors: vendorRows = [] } = await this.api.getVendors().catch(() => ({ vendors: [] }));
         const vendorByCode = new Map(
             vendorRows.map((row) => [
-                String(Number.parseInt(row.slot_no, 10) || 0).padStart(2, '0'),
-                String(row.display_name || '').trim(),
+                String(Number.parseInt(row.slot, 10) || 0).padStart(2, '0'),
+                String(row.displayName || '').trim(),
             ])
         );
         const resolveVendorName = (vendorCodeRaw) => {
@@ -1198,8 +695,6 @@ class ScaleBridge {
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         let responseData = String(response.data || '');
         if (responseData.startsWith('E7')) {
-            // En algunos firmwares la consulta por dia devuelve E7 aunque existan ventas.
-            // Fallback: rango anual y luego consulta sin parametros.
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),
@@ -1269,10 +764,8 @@ class ScaleBridge {
             });
         }
 
-        let inserted = 0;
         let latestSaleAt = null;
         const tickets = new Map();
-        const indexedRows = [];
         for (const row of rows) {
             const saleAt = asDateParts(row.date, row.time);
             if (!latestSaleAt || saleAt > latestSaleAt) latestSaleAt = saleAt;
@@ -1295,21 +788,30 @@ class ScaleBridge {
             const lineNo = ticket.lines.length + 1;
             ticket.totalAmount += Number((row.amountTimes100 || 0) / 100);
             ticket.itemCount += 1;
+            const itemMetrics = deriveItemMetrics(row);
             ticket.lines.push({
-                line: lineNo,
-                plu: row.plu,
+                lineNo,
+                plu: String(row.plu || '').slice(0, 16),
+                sector: String(row.sector || '').slice(0, 8),
+                vendorCode: String(row.vendor || '').slice(0, 8),
+                vendorName: resolveVendorName(row.vendor),
                 units: row.units,
                 grams: row.grams,
-                amountTimes100: row.amountTimes100,
+                drainedGrams: row.drainedGrams,
+                amount: Number((row.amountTimes100 || 0) / 100),
+                itemQuantity: itemMetrics.itemQuantity,
+                itemQuantityUnit: itemMetrics.itemQuantityUnit,
+                rawPayload: row,
+                saleAt,
             });
             if (!ticket.vendorCode && row.vendor) ticket.vendorCode = String(row.vendor).trim();
             if (!ticket.vendorName) {
                 ticket.vendorName = resolveVendorName(ticket.vendorCode);
             }
             if (saleAt < ticket.saleAt) ticket.saleAt = saleAt;
-            indexedRows.push({ row, lineNo, saleAt });
         }
 
+        const ticketsPayload = [];
         for (const ticket of tickets.values()) {
             const fingerprint = hashObject({
                 ticketId: ticket.ticketId,
@@ -1317,10 +819,16 @@ class ScaleBridge {
                 saleAt: ticket.saleAt ? ticket.saleAt.toISOString() : null,
                 totalAmount: Number(ticket.totalAmount.toFixed(2)),
                 itemCount: ticket.itemCount,
-                lines: ticket.lines,
+                lines: ticket.lines.map((line) => ({
+                    line: line.lineNo,
+                    plu: line.plu,
+                    units: line.units,
+                    grams: line.grams,
+                    amountTimes100: Math.round((line.amount || 0) * 100),
+                })),
             });
             const ticketBarcode = formatTicketBarcode({
-                deviceId: this.config.deviceId,
+                deviceId: `${this.config.deviceId}-scale-${this.scaleId}`,
                 ticketId: ticket.ticketId,
                 sourceDate: ticket.saleAt || new Date(),
                 fingerprint,
@@ -1330,136 +838,43 @@ class ScaleBridge {
                 itemCount: ticket.itemCount,
                 totalAmount: Number(ticket.totalAmount.toFixed(2)) / Math.max(1, Number(this.config.scale.legacyPriceMultiplier || 1)),
             });
-            ticket.ticketBarcode = ticketBarcode;
-            ticket.printedTicketBarcode = printedTicketBarcode;
 
-            await mysqlExecute(
-                this.mysqlPool,
-                `INSERT INTO scale_bridge_ticket_map
-                 (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode, vendor_code, vendor_name, sale_at, total_amount, item_count, fingerprint, synced_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE
-                    scale_address = VALUES(scale_address),
-                    ticket_barcode = VALUES(ticket_barcode),
-                    printed_ticket_barcode = VALUES(printed_ticket_barcode),
-                    vendor_code = VALUES(vendor_code),
-                    vendor_name = VALUES(vendor_name),
-                    sale_at = VALUES(sale_at),
-                    total_amount = VALUES(total_amount),
-                    item_count = VALUES(item_count),
-                    fingerprint = VALUES(fingerprint),
-                    synced_at = VALUES(synced_at)`,
-                [
-                    this.config.deviceId,
-                    this.config.tenantId,
-                    this.config.branchId || null,
-                    this.config.scale.address || null,
-                    ticket.ticketId,
-                    ticketBarcode,
-                    printedTicketBarcode,
-                    ticket.vendorCode || null,
-                    ticket.vendorName || null,
-                    ticket.saleAt || new Date(),
-                    Number(ticket.totalAmount.toFixed(2)),
-                    ticket.itemCount,
-                    fingerprint,
-                ]
-            );
-
-            await mysqlExecute(
-                this.mysqlPool,
-                `UPDATE scale_bridge_sales_item
-                 SET ticket_barcode = ?,
-                     printed_ticket_barcode = ?,
-                     vendor_name = ?,
-                     synced_at = NOW()
-                 WHERE device_id = ?
-                   AND tenant_id = ?
-                   AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
-                   AND ticket_id = ?`,
-                [
-                    ticketBarcode,
-                    printedTicketBarcode,
-                    ticket.vendorName || null,
-                    this.config.deviceId,
-                    this.config.tenantId,
-                    this.config.branchId || null,
-                    this.config.branchId || null,
-                    ticket.ticketId,
-                ]
-            );
-        }
-
-        await this.normalizeStoredSalesItems();
-
-        const barcodeByTicketId = new Map(
-            [...tickets.values()].map((ticket) => [ticket.ticketId, ticket.ticketBarcode || null])
-        );
-        const printedBarcodeByTicketId = new Map(
-            [...tickets.values()].map((ticket) => [ticket.ticketId, ticket.printedTicketBarcode || null])
-        );
-
-        const totalsByTicketId = new Map(
-            [...tickets.values()].map((ticket) => [ticket.ticketId, {
+            ticketsPayload.push({
+                ticketId: ticket.ticketId,
+                vendorCode: ticket.vendorCode || null,
+                vendorName: ticket.vendorName || null,
+                saleAt: (ticket.saleAt || new Date()).toISOString(),
                 totalAmount: Number(ticket.totalAmount.toFixed(2)),
                 itemCount: ticket.itemCount,
-            }])
-        );
+                fingerprint,
+                ticketBarcode,
+                printedTicketBarcode,
+                lines: ticket.lines.map((line) => ({
+                    lineNo: line.lineNo,
+                    plu: line.plu,
+                    sector: line.sector,
+                    vendorCode: line.vendorCode,
+                    vendorName: line.vendorName,
+                    units: line.units,
+                    grams: line.grams,
+                    drainedGrams: line.drainedGrams,
+                    amount: line.amount,
+                    itemQuantity: line.itemQuantity,
+                    itemQuantityUnit: line.itemQuantityUnit,
+                    saleAt: line.saleAt ? line.saleAt.toISOString() : undefined,
+                    rawPayload: line.rawPayload,
+                })),
+            });
+        }
 
-        for (const entry of indexedRows) {
-            const itemMetrics = deriveItemMetrics(entry.row);
-            const ticketTotals = totalsByTicketId.get(String(entry.row.ticketId || '').trim()) || {
-                totalAmount: 0,
-                itemCount: 0,
-            };
-            await mysqlExecute(
-                this.mysqlPool,
-                `INSERT INTO scale_bridge_sales_item
-                      (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode, line_no, sale_at, vendor_code, vendor_name, plu_code, sector_code, units, grams, drained_grams, amount, ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit, raw_payload, synced_at)
-                      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
-                 ON DUPLICATE KEY UPDATE
-                    ticket_barcode = VALUES(ticket_barcode),
-                          printed_ticket_barcode = VALUES(printed_ticket_barcode),
-                    sale_at = VALUES(sale_at),
-                    vendor_code = VALUES(vendor_code),
-                    vendor_name = VALUES(vendor_name),
-                    plu_code = VALUES(plu_code),
-                    sector_code = VALUES(sector_code),
-                    units = VALUES(units),
-                    grams = VALUES(grams),
-                    drained_grams = VALUES(drained_grams),
-                    amount = VALUES(amount),
-                    ticket_total_amount = VALUES(ticket_total_amount),
-                    ticket_item_count = VALUES(ticket_item_count),
-                    item_quantity = VALUES(item_quantity),
-                    item_quantity_unit = VALUES(item_quantity_unit),
-                    raw_payload = VALUES(raw_payload),
-                    synced_at = VALUES(synced_at)`,
-                [
-                    this.config.deviceId,
-                    this.config.tenantId,
-                    this.config.branchId || null,
-                    entry.row.ticketId,
-                    barcodeByTicketId.get(String(entry.row.ticketId || '').trim()) || null,
-                    printedBarcodeByTicketId.get(String(entry.row.ticketId || '').trim()) || null,
-                    entry.lineNo,
-                    entry.saleAt,
-                    String(entry.row.vendor || '').slice(0, 8),
-                    resolveVendorName(entry.row.vendor),
-                    String(entry.row.plu || '').slice(0, 16),
-                    String(entry.row.sector || '').slice(0, 8),
-                    entry.row.units,
-                    entry.row.grams,
-                    entry.row.drainedGrams,
-                    Number((entry.row.amountTimes100 || 0) / 100),
-                    ticketTotals.totalAmount,
-                    ticketTotals.itemCount,
-                    itemMetrics.itemQuantity,
-                    itemMetrics.itemQuantityUnit,
-                    JSON.stringify(entry.row),
-                ]
-            );
-            inserted += 1;
+        let stored = 0;
+        if (ticketsPayload.length > 0) {
+            const apiResult = await this.api.postSales({
+                scaleId: this.scaleId,
+                scaleAddress: this.config.scale.address,
+                tickets: ticketsPayload,
+            });
+            stored = Number(apiResult?.itemsUpserted || 0);
         }
 
         if (closeAfter && rows.length > 0) {
@@ -1472,45 +887,28 @@ class ScaleBridge {
         return {
             ok: true,
             fetched: rows.length,
-            stored: inserted,
+            stored,
             tickets: tickets.size,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
     }
 
     async consolidatePluCatalogOnStartup() {
-        const duplicatePluRows = await mysqlQuery(
-            this.mysqlPool,
-            `SELECT effective_plu_code, COUNT(*) AS qty
-             FROM (
-                SELECT COALESCE(
-                    NULLIF(TRIM(CAST(plu AS CHAR)), ''),
-                    CAST(id AS CHAR)
-                ) AS effective_plu_code
-                FROM products
-                WHERE tenant_id = ?
-                  AND COALESCE(current_price, 0) > 0
-             ) x
-             GROUP BY effective_plu_code
-             HAVING COUNT(*) > 1
-             ORDER BY effective_plu_code`,
-            [this.config.tenantId]
-        );
+        const { pluDuplicates = [] } = await this.loadSyncCatalogEntries();
 
-        if (duplicatePluRows.length > 0) {
-            const sample = duplicatePluRows.slice(0, 10).map((row) => `${row.effective_plu_code}(${row.qty})`);
+        if (pluDuplicates.length > 0) {
+            const sample = pluDuplicates.slice(0, 10).map((row) => `${row.pluCode}(${row.count})`);
             throw new Error(`PLU duplicados detectados al iniciar: ${sample.join(', ')}`);
         }
 
-        const deletedMapRows = await mysqlExecute(
-            this.mysqlPool,
-            `DELETE FROM scale_bridge_product_map
-             WHERE device_id = ?
-               AND tenant_id = ?`,
-            [this.config.deviceId, this.config.tenantId]
-        );
+        let removedMappings = 0;
+        try {
+            const result = await this.api.deleteSyncState(this.scaleId, { resetAll: true });
+            removedMappings = Number(result?.deleted || 0);
+        } catch (error) {
+            this.logger.warn('No se pudo resetear sync-state al iniciar', { error: error.message });
+        }
 
-        const removedMappings = Number(deletedMapRows?.affectedRows || 0);
         this.logger.info('Consolidado general de PLU ejecutado al iniciar', {
             tenantId: this.config.tenantId,
             deviceId: this.config.deviceId,
@@ -1526,34 +924,13 @@ class ScaleBridge {
     async runOnce(options = {}) {
         const reason = String(options.reason || 'scheduled');
         const skipSales = options.skipSales === true;
-        await this.ensureSchema();
-        await this.normalizeStoredSalesItems();
         const runtimeSettings = await this.syncRuntimeSettings();
         let startupPluConsolidation = { forceProductRewrite: false, removedMappings: 0 };
         if (reason === 'startup') {
             startupPluConsolidation = await this.consolidatePluCatalogOnStartup();
         }
         try {
-            let vendorsWatermark = null;
-            let vendorsChanged = false;
-            try {
-                vendorsWatermark = await this.readVendorsWatermark();
-                const previous = this.state.vendorsWatermark || null;
-                vendorsChanged = !previous
-                    || previous.maxUpdatedAt !== vendorsWatermark.maxUpdatedAt
-                    || Number(previous.total) !== Number(vendorsWatermark.total);
-            } catch (error) {
-                // Si el chequeo barato falla, conservamos el comportamiento viejo
-                // de sincronizar para no quedarnos con vendedores desactualizados.
-                vendorsChanged = true;
-                this.logger.warn('No se pudo leer el high-watermark de vendedores', { error: error.message });
-            }
-            if (vendorsChanged) {
-                const result = await this.syncVendors();
-                if (result?.ok && vendorsWatermark) {
-                    this.state.vendorsWatermark = vendorsWatermark;
-                }
-            }
+            await this.syncVendors();
         } catch (error) {
             this.logger.warn('No se pudieron sincronizar vendedores en balanza', { error: error.message });
         }
@@ -1575,49 +952,20 @@ class ScaleBridge {
         const lastProductSyncTs = this.state.lastProductSyncAt ? new Date(this.state.lastProductSyncAt).getTime() : NaN;
         const runtimeSectionFingerprint = hashObject(runtimeSettings.runtimeScaleConfig?.sectionMappings || [], 20);
         const sectionConfigChanged = this.state.sectionMapFingerprint !== runtimeSectionFingerprint;
-        const forceProductRewrite = runtimeSettings.forceProductRewrite
+        const shouldSyncProducts = !Number.isFinite(lastProductSyncTs)
+            || runtimeSettings.forceProductRewrite
             || startupPluConsolidation.forceProductRewrite
-            || sectionConfigChanged;
-        const intervalElapsed = !Number.isFinite(lastProductSyncTs)
+            || sectionConfigChanged
             || (Date.now() - lastProductSyncTs) >= this.config.productSyncIntervalMs;
-        let watermark = null;
-        let watermarkChanged = false;
-        if (intervalElapsed && !forceProductRewrite) {
-            try {
-                watermark = await this.readProductsWatermark();
-                const previous = this.state.productsWatermark || null;
-                watermarkChanged = !previous
-                    || previous.maxUpdatedAt !== watermark.maxUpdatedAt
-                    || Number(previous.total) !== Number(watermark.total);
-            } catch (error) {
-                // Si el chequeo barato falla, caemos al flujo viejo y dejamos que
-                // el sync pesado decida (puede ser primera corrida sin tabla aun).
-                watermarkChanged = true;
-                this.logger.warn('No se pudo leer el high-watermark de productos', { error: error.message });
-            }
-        }
-        const shouldSyncProducts = forceProductRewrite
-            || (intervalElapsed && watermarkChanged);
         if (shouldSyncProducts) {
             products = await this.syncProducts({
                 runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
                 priceFormat: runtimeSettings.priceFormat,
-                forceProductRewrite,
+                forceProductRewrite: runtimeSettings.forceProductRewrite
+                    || startupPluConsolidation.forceProductRewrite
+                    || sectionConfigChanged,
             });
             this.state.lastProductSyncAt = new Date().toISOString();
-            if (products.ok && watermark) {
-                this.state.productsWatermark = watermark;
-            } else if (products.ok) {
-                // Releemos el watermark recien actualizado para reflejar el estado real
-                // tras un sync forzado (firma cambia, seccion cambia, etc.).
-                try {
-                    this.state.productsWatermark = await this.readProductsWatermark();
-                } catch {
-                    // Si no se puede, lo dejamos como estaba; el proximo ciclo lo recalcula.
-                }
-            }
-        } else if (intervalElapsed) {
-            products = { ...products, skipped: 0, deferred: false, watermarkUnchanged: true };
         }
 
         let sales = { ok: true, fetched: 0, stored: 0, skipped: skipSales, error: null };
@@ -1629,8 +977,6 @@ class ScaleBridge {
                     closeAfter: this.config.closeSalesAfterPull,
                 });
 
-                // Si no hubo datos en la ventana incremental, intentamos un backfill
-                // para recuperar ventas demoradas sin depender de intervencion manual.
                 if (sales.ok && Number(sales.fetched || 0) === 0) {
                     const lastBackfillTs = this.state.lastSalesBackfillAt ? new Date(this.state.lastSalesBackfillAt).getTime() : NaN;
                     const shouldBackfill = !Number.isFinite(lastBackfillTs) || (Date.now() - lastBackfillTs) >= 60_000;
@@ -1657,7 +1003,6 @@ class ScaleBridge {
                     }
                 }
 
-                // El cursor avanza solo cuando realmente ingresan ventas.
                 if (sales.ok && Number(sales.fetched || 0) > 0) {
                     this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
                 }
@@ -1666,7 +1011,6 @@ class ScaleBridge {
                 this.logger.warn('No se pudieron leer ventas de la balanza en este ciclo', { error: error.message });
             }
         }
-
 
         this.state.lastRunAt = new Date().toISOString();
         this.state.lastRunStatus = 'ok';
