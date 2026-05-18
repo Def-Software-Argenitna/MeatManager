@@ -1,0 +1,21 @@
+$kind: http-request
+name: 'ERR - Onboarding con branchId ajeno (debe dar 403)'
+method: POST
+url: '{{baseUrl}}/bridge/onboarding/complete'
+order: 15000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "sessionToken": "{{sessionToken}}",
+      "branchId": 99999,
+      "hostname": "postman-test"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 403 o 401', () => pm.expect([401, 403]).to.include(pm.response.code));

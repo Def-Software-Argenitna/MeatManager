@@ -14,7 +14,7 @@ jobs:
     runs-on: self-hosted
     env:
       REGISTRY: ghcr.io
-      IMAGE_OWNER: ${{ github.repository_owner }}
+      GHCR_NAMESPACE: ghcr.io/def-software-argentina
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
       - uses: actions/checkout@v4
@@ -26,15 +26,22 @@ jobs:
             exit 1
           fi
 
-      - name: Lowercase owner
-        id: owner
-        run: echo "value=${IMAGE_OWNER,,}" >> "$GITHUB_OUTPUT"
+      - name: Validate GHCR credentials
+        run: |
+          if [ -z "${{ secrets.GHCR_USERNAME }}" ]; then
+            echo "GHCR_USERNAME is empty or missing"
+            exit 1
+          fi
+          if [ -z "${{ secrets.GHCR_TOKEN }}" ]; then
+            echo "GHCR_TOKEN is empty or missing"
+            exit 1
+          fi
 
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.GHCR_USERNAME }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - uses: docker/build-push-action@v6
         with:
@@ -42,8 +49,8 @@ jobs:
           file: ./MeatManager-web/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:main
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-web:sha-${{ github.sha }}
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-web:main
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-web:sha-${{ github.sha }}
           build-args: |
             VITE_API_URL=/api
           secrets: |
@@ -55,19 +62,30 @@ jobs:
           file: ./MeatManager-API/Dockerfile
           push: true
           tags: |
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:main
-            ghcr.io/${{ steps.owner.outputs.value }}/meatmanager-api:sha-${{ github.sha }}
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-api:main
+            ${{ env.GHCR_NAMESPACE }}/meatmanager-api:sha-${{ github.sha }}
 
       - name: Deploy main stack on self-hosted runner
         env:
-          GHCR_NAMESPACE: ghcr.io/${{ steps.owner.outputs.value }}
+          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           MAIN_DOMAIN: meatmanager.def-software.com
           DEMO_DOMAIN: meatmanager.demo.def-software.com
           DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           API_MAIN_ENV: ${{ secrets.API_MAIN_ENV }}
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: |
+          if [ -z "${GHCR_USERNAME}" ]; then
+            echo "GHCR_USERNAME is empty or missing"
+            exit 1
+          fi
+          if [ -z "${GHCR_TOKEN}" ]; then
+            echo "GHCR_TOKEN is empty or missing"
+            exit 1
+          fi
           mkdir -p "${DEPLOY_PATH}/env" "${DEPLOY_PATH}/secrets" "${DEPLOY_PATH}/nginx"
           cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
           cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
@@ -82,9 +100,13 @@ jobs:
             "dev" > "${DEPLOY_PATH}/.env"
           printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
           printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
+          if [ -n "${FIREBASE_WEB_API_KEY}" ]; then
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-dev.env"
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-main.env"
+          fi
           printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
           cd "${DEPLOY_PATH}"
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main
           docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-main api-main

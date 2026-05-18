@@ -1,0 +1,26 @@
+$kind: http-request
+name: '01 - Onboarding complete (POST /api/bridge/onboarding/complete)'
+method: POST
+url: '{{baseUrl}}/bridge/onboarding/complete'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "sessionToken": "{{sessionToken}}",
+      "branchId": {{branchId}},
+      "hostname": "postman-test"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('returns deviceToken', () => pm.expect(data.deviceToken).to.be.a('string').and.not.empty);
+      pm.test('returns deviceId', () => pm.expect(data.deviceId).to.match(/^bridge-/));
+      pm.collectionVariables.set('deviceToken', data.deviceToken);
+      console.log('deviceId:', data.deviceId, '| branchName:', data.branchName);

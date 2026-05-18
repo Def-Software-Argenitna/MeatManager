@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Guía Maestra MeatManager - Gestión de Sucursales</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #FFD700;
+            --primary-dark: #b8860b;
+            --dark: #121212;
+            --dark-soft: #1e1e1e;
+            --text: #333;
+            --text-light: #666;
+            --white: #ffffff;
+            --bg: #f8f9fa;
+            --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.08);
+            --radius: 16px;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Outfit', sans-serif;
+            background-color: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+            padding-bottom: 50px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        header {
+            text-align: center;
+            padding: 60px 0;
+            background: linear-gradient(135deg, var(--dark) 0%, #333 100%);
+            color: white;
+            border-radius: 0 0 var(--radius) var(--radius);
+            margin-bottom: 60px;
+            box-shadow: var(--card-shadow);
+            position: relative;
+            overflow: hidden;
+        }
+
+        header::before {
+            content: "";
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: radial-gradient(circle, rgba(255, 215, 0, 0.1) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .logo-icon {
+            font-size: 60px;
+            margin-bottom: 20px;
+            display: inline-block;
+        }
+
+        h1 {
+            font-size: 42px;
+            font-weight: 800;
+            letter-spacing: -1px;
+            margin-bottom: 10px;
+            line-height: 1.1;
+        }
+
+        .subtitle {
+            font-size: 18px;
+            color: var(--primary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+        }
+
+        .intro-text {
+            text-align: center;
+            max-width: 700px;
+            margin: -30px auto 60px;
+            background: var(--white);
+            padding: 30px;
+            border-radius: var(--radius);
+            box-shadow: var(--card-shadow);
+            font-size: 18px;
+            color: var(--text-light);
+            border-top: 5px solid var(--primary);
+        }
+
+        section {
+            background: var(--white);
+            padding: 40px;
+            border-radius: var(--radius);
+            margin-bottom: 40px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.03);
+            border-left: 0 solid var(--primary);
+            transition: all 0.3s ease;
+        }
+
+        section:hover {
+            transform: translateY(-5px);
+            box-shadow: var(--card-shadow);
+            border-left-width: 8px;
+        }
+
+        h2 {
+            font-size: 28px;
+            font-weight: 700;
+            margin-bottom: 25px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            color: var(--dark);
+        }
+
+        h2 span {
+            background: var(--primary);
+            color: var(--dark);
+            width: 45px;
+            height: 45px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 12px;
+            font-size: 24px;
+        }
+
+        h3 {
+            font-size: 20px;
+            font-weight: 600;
+            margin: 20px 0 15px;
+            color: var(--primary-dark);
+            border-bottom: 2px solid rgba(255, 215, 0, 0.2);
+            padding-bottom: 5px;
+            display: inline-block;
+        }
+
+        .role-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .role-box {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .role-card {
+            background: #fafafa;
+            padding: 25px;
+            border-radius: 12px;
+            border: 1px solid #eee;
+        }
+
+        .role-card.master {
+            background: linear-gradient(to bottom right, #fffdf0, #fffcf0);
+            border-color: rgba(255, 215, 0, 0.3);
+        }
+
+        ul {
+            list-style: none;
+        }
+
+        li {
+            position: relative;
+            padding-left: 30px;
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+
+        li::before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: var(--primary-dark);
+            font-weight: bold;
+        }
+
+        .manual-steps li::before {
+            content: counters(item, ".") ". ";
+            counter-increment: item;
+            color: var(--primary-dark);
+        }
+
+        .manual-steps {
+            counter-reset: item;
+        }
+
+        .highlight {
+            background: #fff8d6;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+            color: var(--dark);
+        }
+
+        .pin-code {
+            display: inline-block;
+            background: var(--dark);
+            color: var(--primary);
+            padding: 5px 15px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 20px;
+            font-weight: bold;
+            letter-spacing: 2px;
+            margin: 10px 0;
+        }
+
+        .faq-item {
+            margin-bottom: 25px;
+        }
+
+        .faq-item strong {
+            display: block;
+            font-size: 18px;
+            color: var(--dark);
+            margin-bottom: 8px;
+        }
+
+        footer {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-light);
+            font-size: 14px;
+            border-top: 1px solid #eee;
+            margin-top: 60px;
+        }
+
+        .badge {
+            background: var(--dark);
+            color: white;
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 700;
+            vertical-align: middle;
+            margin-left: 10px;
+            text-transform: uppercase;
+        }
+
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+
+            section {
+                box-shadow: none;
+                border: 1px solid #eee;
+                page-break-inside: avoid;
+            }
+
+            .intro-text {
+                box-shadow: none;
+                border: 1px solid #eee;
+                margin-top: 20px;
+            }
+
+            header {
+                border-radius: 0;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <header>
+        <div class="logo-icon">👑</div>
+        <h1>Guía Maestra de Gestión</h1>
+        <div class="subtitle">Sucursales y Stock Global</div>
+    </header>
+
+    <div class="container">
+        <div class="intro-text">
+            Esta guía explica paso a paso cómo configurar y operar el sistema en múltiples locales para que la
+            administración central tenga el control total de los kilos de carne sin necesidad de servidores costosos.
+        </div>
+
+        <section id="identidad">
+            <h2><span>1</span> Configuración de Identidad</h2>
+            <p>Cada computadora donde se instale el programa debe tener su propia identidad configurada correctamente.
+            </p>
+
+            <div class="role-box">
+                <div class="role-card">
+                    <h3>📍 Sucursal de Venta</h3>
+                    <ul class="manual-steps">
+                        <li>Entrá al menú <strong>Sucursales</strong>.</li>
+                        <li>Tocá el ícono del <strong>Pin de Ubicación (📍)</strong>.</li>
+                        <li>Completá la ficha con el nombre, dirección y responsable.</li>
+                        <li>Elegí el Rol: <span class="highlight">Sucursal de Venta</span>.</li>
+                        <li>Tocá <strong>Guardar Perfil</strong>.</li>
+                    </ul>
+                </div>
+                <div class="role-card master">
+                    <h3>👑 Administración Central</h3>
+                    <ul class="manual-steps">
+                        <li>Entrá al menú <strong>Sucursales</strong>.</li>
+                        <li>Tocá el ícono del <strong>Pin (📍)</strong>.</li>
+                        <li>Elegí el Rol: <span class="highlight">Administración Central (Master)</span>.</li>
+                        <li>Ingresá el PIN de Seguridad por defecto:</li>
+                        <div class="pin-code">1234</div>
+                        <li>Verás que aparece la etiqueta <span class="badge">CONTROL</span>.</li>
+                    </ul>
+                </div>
+            </div>
+        </section>
+
+        <section id="nexo">
+            <h2><span>2</span> El Nexo: Carpeta Compartida</h2>
+            <p>Para que los datos viajen entre locales, usaremos una carpeta en la nube (Google Drive o Dropbox).</p>
+            <ul class="manual-steps" style="margin-top: 20px;">
+                <li>Instalá <strong>Google Drive</strong> en todas las PCs de la empresa.</li>
+                <li>Creá una subcarpeta llamada <span class="highlight">STOCK_CARNICERIA</span>.</li>
+                <li>En el programa, tocá el botón <strong>"Vincular Carpeta"</strong>.</li>
+                <li>Seleccioná la carpeta que creaste en el Drive.</li>
+                <li><strong>¡Éxito!</strong> Ahora la PC está conectada con el resto de la red.</li>
+            </ul>
+        </section>
+
+        <section id="operativa">
+            <h2><span>3</span> Operativa Diaria</h2>
+
+            <div style="margin-bottom: 30px;">
+                <h3>🌅 Al Cierre del Día (El Carnicero)</h3>
+                <p>El carnicero entra a Sucursales y toca <strong>"Exportar Stock"</strong>.</p>
+                <ul>
+                    <li>El sistema genera el archivo <code>STOCK_Local.json</code> automáticamente.</li>
+                    <li>El archivo se sube al Drive de la dueña en segundos por internet.</li>
+                </ul>
+            </div>
+
+            <div>
+                <h3>👁️ Consulta de la Dueña (Vista Global)</h3>
+                <p>La dueña entra a su sección y toca el botón del <strong>Ojito</strong>.</p>
+                <ul>
+                    <li>El sistema escanea la carpeta y busca los datos de todos los locales.</li>
+                    <li>Se abre la tabla comparativa con kilos por producto y totales generales.</li>
+                </ul>
+            </div>
+        </section>
+
+        <section id="seguridad">
+            <h2><span>4</span> Seguridad e Integridad</h2>
+            <div style="background: #fff4f4; padding: 20px; border-radius: 12px; border-left: 5px solid #ff4d4d;">
+                <p><strong>PIN Master:</strong> El código <code>1234</code> es la llave de tu información. No lo
+                    compartas con empleados.</p>
+                <p style="margin-top: 10px;"><strong>Archivos:</strong> No borres ni muevas los archivos
+                    <code>.json</code> del Drive manualmente. Dejá que el sistema los gestione para evitar errores de
+                    sincronización.</p>
+            </div>
+        </section>
+
+        <section id="faq">
+            <h2><span>?</span> Preguntas Frecuentes</h2>
+
+            <div class="faq-item">
+                <strong>¿Qué pasa si no tengo internet?</strong>
+                <p>Podés exportar igual. El archivo se guarda en tu PC y Google Drive lo subirá automáticamente apenas
+                    recuperes la conexión.</p>
+            </div>
+
+            <div class="faq-item">
+                <strong>¿Puedo ver las ventas de cada local?</strong>
+                <p>Esta guía es para el control de <strong>Stock (Kilos)</strong>. Para ventas en tiempo real, necesitás
+                    el módulo Cloud Pro sincronizado.</p>
+            </div>
+
+            <div class="faq-item">
+                <strong>¿Cómo cambio el PIN de acceso?</strong>
+                <p>Por ahora el PIN es <code>1234</code>. Para personalizarlo, podés solicitar el cambio en el menú de
+                    <span class="highlight">Configuración > Seguridad</span>.</p>
+            </div>
+        </section>
+
+        <footer>
+            Manual generado por Antigravity AI para MeatManager CONTROL Edition<br>
+            &copy; 2026 Carnicería Antigravity - Todos los derechos reservados
+        </footer>
+    </div>
+
+</body>
+
+</html>

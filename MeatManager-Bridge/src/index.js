@@ -3,7 +3,7 @@ const fs = require('fs');
 const config = require('./config');
 const { Logger } = require('./logger');
 const { loadState, resetState, saveState } = require('./state');
-const { buildMySqlPool } = require('./mysql');
+const { ApiClient } = require('./api-client');
 const { ScaleBridge } = require('./scale-bridge');
 const { CuoraClient } = require('./cuora-client');
 
@@ -13,12 +13,30 @@ fs.mkdirSync(config.logsDir, { recursive: true });
 const logger = new Logger({ logFile: config.logFile, level: config.logLevel });
 const state = config.resetStateOnStart ? resetState(config.stateFile) : loadState(config.stateFile);
 const stateStore = { save: (nextState) => saveState(config.stateFile, nextState) };
-const mysqlPool = buildMySqlPool(config.mysql);
-const bridge = new ScaleBridge({ config, logger, state, stateStore, mysqlPool });
 
-let running = false;
+if (!config.isOnboarded) {
+    logger.error('Bridge no onboardeado: faltan apiBaseUrl o deviceToken en installation.json', {
+        installationFile: config.installationFile,
+        apiBaseUrl: config.apiBaseUrl || null,
+        hasDeviceToken: Boolean(config.deviceToken),
+    });
+    console.error('[BRIDGE] Falta onboarding. Corre el wizard del desktop o crea installation.json con { apiBaseUrl, deviceToken, deviceId, tenantId, clientId, branchId }');
+    process.exit(2);
+}
+
+const apiClient = new ApiClient({
+    baseUrl: config.apiBaseUrl,
+    deviceToken: config.deviceToken,
+    logger,
+});
+
+const bridge = new ScaleBridge({ config, logger, state, stateStore, apiClient });
+
+let cycleRunning = false;
+let pulseRunning = false;
 let timer = null;
 let salesPulseTimer = null;
+let heartbeatTimer = null;
 let server = null;
 let schedulerActive = false;
 
@@ -47,27 +65,36 @@ function readBody(req) {
 function runtimeSnapshot() {
     return {
         ok: true,
-        running,
-        mode: 'direct-usb',
+        running: cycleRunning || pulseRunning,
+        cycleRunning,
+        pulseRunning,
+        mode: 'direct-usb-api',
+        apiBaseUrl: config.apiBaseUrl,
         deviceId: config.deviceId,
         bridgeName: config.bridgeName,
+        clientName: config.clientName,
+        branchName: config.siteName,
         tenantId: config.tenantId,
+        clientId: config.clientId,
         branchId: config.branchId,
+        scaleId: config.scaleId,
         scalePort: config.scale.port,
         scaleAddress: config.scale.address,
         syncIntervalMs: config.syncIntervalMs,
         productSyncIntervalMs: config.productSyncIntervalMs,
         salesResyncSkewMinutes: config.salesResyncSkewMinutes,
         lastRunStatus: state.lastRunStatus,
+        lastRunMessage: state.lastRunMessage,
         lastRunAt: state.lastRunAt,
         lastError: state.lastError,
+        scaleReachable: state.scaleReachable !== false,
         logFile: config.logFile,
     };
 }
 
 async function runCycle(reason = 'scheduled') {
-    if (running) return { ok: false, skipped: true };
-    running = true;
+    if (cycleRunning) return { ok: false, skipped: true };
+    cycleRunning = true;
     logger.info('Iniciando ciclo de sincronizacion', { reason });
     try {
         const result = await bridge.runOnce({
@@ -85,13 +112,13 @@ async function runCycle(reason = 'scheduled') {
         logger.error('Ciclo de sincronizacion con error', { reason, error: error.message });
         return { ok: false, error: error.message };
     } finally {
-        running = false;
+        cycleRunning = false;
     }
 }
 
 async function runSalesPulse(reason = 'sales-pulse', options = {}) {
-    if (running) return { ok: false, skipped: true, busy: true };
-    running = true;
+    if (pulseRunning) return { ok: false, skipped: true, busy: true };
+    pulseRunning = true;
     try {
         const now = options.toDate ? new Date(options.toDate) : new Date();
         const from = options.fromDate ? new Date(options.fromDate) : (() => {
@@ -131,7 +158,22 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
         }
         return { ok: false, error: error.message };
     } finally {
-        running = false;
+        pulseRunning = false;
+    }
+}
+
+async function sendHeartbeat() {
+    try {
+        await apiClient.postHeartbeat({
+            scales: [{
+                scaleId: config.scaleId,
+                port: config.scale.port,
+                address: config.scale.address,
+                lastPingOk: state.lastRunStatus === 'ok',
+            }],
+        });
+    } catch (error) {
+        logger.warn('No se pudo enviar heartbeat', { error: error.message });
     }
 }
 
@@ -175,6 +217,15 @@ function startHttpServer() {
             return sendJson(res, result.ok ? 200 : 500, result);
         }
 
+        if (pathname === '/api/scale/reset' && req.method === 'POST') {
+            try {
+                const result = await bridge.resetScaleAll({ reason: 'manual' });
+                return sendJson(res, 200, result);
+            } catch (error) {
+                return sendJson(res, 500, { ok: false, error: error.message });
+            }
+        }
+
         if (pathname === '/api/scale/sync-products' && req.method === 'POST') {
             try {
                 const result = await bridge.syncProducts();
@@ -215,7 +266,6 @@ function startHttpServer() {
 async function main() {
     if (config.once) {
         const result = await runCycle('once');
-        await mysqlPool.end().catch(() => {});
         process.exit(result.ok ? 0 : 1);
         return;
     }
@@ -247,6 +297,18 @@ async function main() {
         };
         scheduleSalesPulse(config.salesPulseIntervalMs);
     }
+
+    // Heartbeat al API cada 60s para que el server sepa que el bridge esta vivo.
+    const heartbeatIntervalMs = 60_000;
+    const scheduleHeartbeat = () => {
+        if (!schedulerActive) return;
+        heartbeatTimer = setTimeout(async () => {
+            heartbeatTimer = null;
+            await sendHeartbeat();
+            scheduleHeartbeat();
+        }, heartbeatIntervalMs);
+    };
+    scheduleHeartbeat();
 }
 
 async function shutdown(signal) {
@@ -254,9 +316,9 @@ async function shutdown(signal) {
     schedulerActive = false;
     if (timer) clearTimeout(timer);
     if (salesPulseTimer) clearTimeout(salesPulseTimer);
+    if (heartbeatTimer) clearTimeout(heartbeatTimer);
     if (server) await new Promise((resolve) => server.close(resolve));
     await bridge.scale.close().catch(() => {});
-    await mysqlPool.end().catch(() => {});
     process.exit(0);
 }
 
@@ -266,6 +328,5 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 main().catch(async (error) => {
     logger.error('No se pudo iniciar el bridge', { error: error.message });
     await bridge.scale.close().catch(() => {});
-    await mysqlPool.end().catch(() => {});
     process.exit(1);
 });

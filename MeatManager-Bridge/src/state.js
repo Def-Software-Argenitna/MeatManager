@@ -15,6 +15,8 @@ const defaultState = () => ({
     marqueeConfigFingerprint: null,
     ticketHeaderFingerprint: null,
     sectionMapFingerprint: null,
+    productsWatermark: null,
+    vendorsWatermark: null,
     ticketFingerprints: {},
     productFingerprints: {},
 });

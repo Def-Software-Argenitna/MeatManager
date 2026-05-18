@@ -1,0 +1,50 @@
+$kind: http-request
+name: '10 - Sales (POST /api/bridge/sales)'
+method: POST
+url: '{{baseUrl}}/bridge/sales'
+order: 11000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "scaleId": "{{scaleId}}",
+      "scaleAddress": {{scaleAddress}},
+      "tickets": [
+        {
+          "ticketId": "POSTMAN-TKT-001",
+          "vendorCode": "01",
+          "vendorName": "Postman",
+          "saleAt": "2026-05-17T15:00:00Z",
+          "totalAmount": 250.50,
+          "itemCount": 1,
+          "fingerprint": "postman-fingerprint-tkt-001",
+          "ticketBarcode": "postman-barcode-001",
+          "printedTicketBarcode": "PT001",
+          "lines": [
+            {
+              "lineNo": 1,
+              "plu": "100",
+              "sector": "02",
+              "units": 0,
+              "grams": 500,
+              "drainedGrams": 0,
+              "amount": 250.50,
+              "itemQuantity": 0.5,
+              "itemQuantityUnit": "kg"
+            }
+          ]
+        }
+      ]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('ticketsUpserted >= 1', () => pm.expect(data.ticketsUpserted).to.be.at.least(1));

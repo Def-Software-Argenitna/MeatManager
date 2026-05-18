@@ -1,6 +1,6 @@
 {
   "name": "meatmanager-bridge",
-  "version": "0.1.0",
+  "version": "0.4.1",
   "private": true,
   "author": "Def-Software",
   "description": "Bridge local directo USB para balanzas Systel CUORA MAX + MySQL cloud",
@@ -24,7 +24,6 @@
     "@serialport/parser-inter-byte-timeout": "^13.0.0",
     "dotenv": "^16.4.5",
     "electron-updater": "^6.6.2",
-    "mysql2": "^3.9.1",
     "serialport": "^13.0.0"
   },
   "devDependencies": {
@@ -38,6 +37,9 @@
     "appId": "com.defsoftware.meatmanager.bridge",
     "productName": "MeatManager Bridge",
     "asar": true,
+    "asarUnpack": [
+      "public/branding/**"
+    ],
     "files": [
       "desktop/**/*",
       "src/**/*",
@@ -52,6 +54,7 @@
       "target": [
         "nsis"
       ],
+      "icon": "public/branding/def-software.ico",
       "artifactName": "MeatManager-Bridge-${version}-Setup.${ext}"
     },
     "nsis": {
@@ -59,7 +62,15 @@
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+      "createStartMenuShortcut": true,
+      "installerIcon": "public/branding/def-software.ico",
+      "uninstallerIcon": "public/branding/def-software.ico"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ]
   }
 }

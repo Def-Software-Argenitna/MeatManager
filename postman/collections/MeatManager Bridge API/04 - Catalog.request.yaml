@@ -1,0 +1,18 @@
+$kind: http-request
+name: '04 - Catalog (GET /api/bridge/catalog)'
+method: GET
+url: '{{baseUrl}}/bridge/catalog'
+order: 5000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('products is array', () => pm.expect(data.products).to.be.an('array'));
+      pm.test('promotions is array', () => pm.expect(data.promotions).to.be.an('array'));
+      pm.test('pluDuplicates is array', () => pm.expect(data.pluDuplicates).to.be.an('array'));
+      console.log('products:', data.products.length, '| promotions:', data.promotions.length, '| duplicates:', data.pluDuplicates.length);

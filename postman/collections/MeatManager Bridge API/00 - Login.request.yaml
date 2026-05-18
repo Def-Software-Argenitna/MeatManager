@@ -1,0 +1,28 @@
+$kind: http-request
+name: '00 - Login (POST /api/bridge/auth/login)'
+method: POST
+url: '{{baseUrl}}/bridge/auth/login'
+order: 1000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "{{email}}",
+      "password": "{{password}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('returns sessionToken', () => pm.expect(data.sessionToken).to.be.a('string').and.not.empty);
+      pm.test('returns branches[]', () => pm.expect(data.branches).to.be.an('array').and.not.empty);
+      pm.collectionVariables.set('sessionToken', data.sessionToken);
+      if (data.branches && data.branches[0]) {
+          pm.collectionVariables.set('branchId', String(data.branches[0].id));
+      }
+      console.log('clientId:', data.clientId, '| branches:', data.branches.map(b => `${b.id}:${b.name}`).join(', '));

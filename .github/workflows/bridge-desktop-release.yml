@@ -26,6 +26,13 @@ jobs:
           cache: npm
           cache-dependency-path: MeatManager-Bridge/package-lock.json
 
+      - name: Setup Python 3.11
+        # node-gyp aun importa distutils, removido en Python 3.12; fijamos 3.11
+        # para que @serialport/bindings-cpp pueda recompilar contra Electron.
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
       - name: Install dependencies
         run: npm ci
 

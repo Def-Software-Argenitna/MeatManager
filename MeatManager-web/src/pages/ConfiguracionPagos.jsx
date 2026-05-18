@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Settings, TrendingUp, TrendingDown, Save, ChevronDown, Trash2, Plus, X } from 'lucide-react';
+import { Settings, TrendingUp, TrendingDown, Save, ChevronDown, Trash2, Plus, X, Edit2 } from 'lucide-react';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
@@ -33,6 +33,7 @@ const EMPTY_NEW = { name: '', type: 'cash', percentage: 0 };
 const ConfiguracionPagos = () => {
     const [editingId, setEditingId] = useState(null);
     const [editValue, setEditValue] = useState('');
+    const [editingMethod, setEditingMethod] = useState(null);
     const [collapsedGroups, setCollapsedGroups] = useState({});
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [showNewForm, setShowNewForm] = useState(false);
@@ -52,11 +53,39 @@ const ConfiguracionPagos = () => {
         setEditValue(method.percentage.toString());
     };
 
+    const handleEditMethod = (method) => {
+        setEditingMethod({
+            id: method.id,
+            name: method.name,
+            type: method.type,
+            percentage: method.percentage
+        });
+        setShowNewForm(false);
+    };
+
     const handleSave = async (id) => {
         await saveTableRecord('payment_methods', 'update', { percentage: parseFloat(editValue) }, id);
         setEditingId(null);
         setEditValue('');
         await loadMethods();
+    };
+
+    const handleSaveMethod = async (e) => {
+        e.preventDefault();
+        if (!editingMethod.name.trim()) return;
+        if (isSaving) return;
+        setIsSaving(true);
+        try {
+            await saveTableRecord('payment_methods', 'update', {
+                name: editingMethod.name.trim(),
+                type: editingMethod.type,
+                percentage: parseFloat(editingMethod.percentage) || 0,
+            }, editingMethod.id);
+            setEditingMethod(null);
+            await loadMethods();
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     const handleToggle = async (id, currentState) => {
@@ -149,7 +178,10 @@ const ConfiguracionPagos = () => {
                 <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <button
                         className="neo-button"
-                        onClick={() => setShowNewForm(f => !f)}
+                        onClick={() => {
+                            setShowNewForm(f => !f);
+                            setEditingMethod(null);
+                        }}
                         style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', fontSize: '0.9rem' }}
                     >
                         {showNewForm ? <X size={16} /> : <Plus size={16} />}
@@ -187,6 +219,145 @@ const ConfiguracionPagos = () => {
                     </div>
                 </div>
             </DirectionalReveal>
+
+            {showNewForm && (
+                <DirectionalReveal from="up" delay={0.12}>
+                    <form className="payment-new-form" onSubmit={handleAddNew}>
+                        <div className="payment-new-form-header">
+                            <h2>Agregar método de pago</h2>
+                            <span>Creá un nuevo medio y dejalo disponible en ventas, compras y módulos relacionados.</span>
+                        </div>
+
+                        <div className="payment-new-form-grid">
+                            <label className="payment-new-field">
+                                <span>Nombre</span>
+                                <input
+                                    type="text"
+                                    value={newMethod.name}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, name: e.target.value }))}
+                                    placeholder="Ej: Transferencia Banco Nación"
+                                    maxLength={100}
+                                    autoFocus
+                                />
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Tipo</span>
+                                <select
+                                    value={newMethod.type}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, type: e.target.value }))}
+                                >
+                                    {Object.entries(TYPE_LABELS)
+                                        .filter(([type]) => type !== 'mixto')
+                                        .map(([type, meta]) => (
+                                            <option key={type} value={type}>{meta.name}</option>
+                                        ))}
+                                </select>
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Ajuste (%)</span>
+                                <input
+                                    type="number"
+                                    value={newMethod.percentage}
+                                    onChange={(e) => setNewMethod((prev) => ({ ...prev, percentage: e.target.value }))}
+                                    step="0.1"
+                                    placeholder="0"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="payment-new-form-actions">
+                            <button
+                                type="button"
+                                className="neo-button"
+                                onClick={() => {
+                                    setNewMethod(EMPTY_NEW);
+                                    setShowNewForm(false);
+                                }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                className="neo-button payment-new-submit"
+                                disabled={isSaving || !newMethod.name.trim()}
+                            >
+                                <Plus size={16} />
+                                {isSaving ? 'Guardando...' : 'Agregar método'}
+                            </button>
+                        </div>
+                    </form>
+                </DirectionalReveal>
+            )}
+
+            {editingMethod && (
+                <DirectionalReveal from="up" delay={0.12}>
+                    <form className="payment-new-form" onSubmit={handleSaveMethod}>
+                        <div className="payment-new-form-header">
+                            <h2>Editar método de pago</h2>
+                            <span>Modificá el nombre, tipo o porcentaje de ajuste.</span>
+                        </div>
+
+                        <div className="payment-new-form-grid">
+                            <label className="payment-new-field">
+                                <span>Nombre</span>
+                                <input
+                                    type="text"
+                                    value={editingMethod.name}
+                                    onChange={(e) => setEditingMethod((prev) => ({ ...prev, name: e.target.value }))}
+                                    placeholder="Ej: Transferencia Banco Nación"
+                                    maxLength={100}
+                                    autoFocus
+                                />
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Tipo</span>
+                                <select
+                                    value={editingMethod.type}
+                                    onChange={(e) => setEditingMethod((prev) => ({ ...prev, type: e.target.value }))}
+                                >
+                                    {Object.entries(TYPE_LABELS)
+                                        .filter(([type]) => type !== 'mixto')
+                                        .map(([type, meta]) => (
+                                            <option key={type} value={type}>{meta.name}</option>
+                                        ))}
+                                </select>
+                            </label>
+
+                            <label className="payment-new-field">
+                                <span>Ajuste (%)</span>
+                                <input
+                                    type="number"
+                                    value={editingMethod.percentage}
+                                    onChange={(e) => setEditingMethod((prev) => ({ ...prev, percentage: e.target.value }))}
+                                    step="0.1"
+                                    placeholder="0"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="payment-new-form-actions">
+                            <button
+                                type="button"
+                                className="neo-button"
+                                onClick={() => setEditingMethod(null)}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                className="neo-button payment-new-submit"
+                                disabled={isSaving || !editingMethod.name.trim()}
+                            >
+                                <Save size={16} />
+                                {isSaving ? 'Guardando...' : 'Guardar cambios'}
+                            </button>
+                        </div>
+                    </form>
+                </DirectionalReveal>
+            )}
 
             <div className="payment-groups">
                 {Object.entries(groupedMethods).map(([type, methods]) => {
@@ -283,6 +454,17 @@ const ConfiguracionPagos = () => {
                                                             />
                                                             <span className="toggle-slider"></span>
                                                         </label>
+                                                        <button
+                                                            title="Editar método"
+                                                            onClick={() => handleEditMethod(method)}
+                                                            style={{
+                                                                background: 'transparent', border: 'none',
+                                                                color: 'var(--color-text-muted)', cursor: 'pointer',
+                                                                padding: '0.25rem', borderRadius: '4px', lineHeight: 0,
+                                                            }}
+                                                        >
+                                                            <Edit2 size={15} />
+                                                        </button>
                                                         <button
                                                             title="Eliminar método"
                                                             onClick={() => handleDelete(method.id, method.name)}

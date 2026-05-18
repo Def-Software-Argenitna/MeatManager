@@ -66,12 +66,13 @@ const toNumber = (value) => {
 const formatNumericLocale = (value, locale = 'es-AR', options = undefined) => toNumber(value).toLocaleString(locale, options);
 const normalizeBarcode = (value) => String(value || '').trim().toLowerCase();
 const normalizeBarcodeDigits = (value) => String(value || '').replace(/\D/g, '');
-const PAYMENT_METHOD_ORDER = ['Efectivo', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
+const PAYMENT_METHOD_ORDER = ['Efectivo', 'Transferencia', 'Cuenta Corriente', 'Mercado Pago', 'Cuenta DNI', 'Postnet', 'Mixto'];
 
 const canonicalizePaymentMethodName = (name) => {
     const normalized = String(name || '').trim().toLowerCase();
     if (!normalized) return '';
     if (normalized.includes('efectivo')) return 'Efectivo';
+    if (normalized.includes('transferencia')) return 'Transferencia';
     if (normalized.includes('cuenta corriente')) return 'Cuenta Corriente';
     if (normalized.includes('mercado pago')) return 'Mercado Pago';
     if (normalized.includes('cuenta dni')) return 'Cuenta DNI';
@@ -84,6 +85,7 @@ const normalizePaymentMethodType = (rawType, canonicalName) => {
     const normalizedType = String(rawType || '').trim().toLowerCase();
     const normalizedName = String(canonicalName || '').trim().toLowerCase();
     if (normalizedType === 'mixto' || normalizedType === 'mixed' || normalizedName === 'mixto') return 'mixed';
+    if (normalizedType === 'transfer' || normalizedName === 'transferencia') return 'transfer';
     if (normalizedType === 'cuenta_corriente' || normalizedName === 'cuenta corriente') return 'cuenta_corriente';
     if (normalizedType === 'cash' || normalizedName === 'efectivo') return 'cash';
     if (normalizedType === 'card' || normalizedName === 'postnet') return 'card';
@@ -153,8 +155,6 @@ const Ventas = () => {
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
-    const [showPrintConfirmModal, setShowPrintConfirmModal] = useState(false);
-    const [pendingPrintData, setPendingPrintData] = useState(null);
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
     const [promotions, setPromotions] = useState([]);
@@ -307,7 +307,6 @@ const Ventas = () => {
             || showQuickCreateModal
             || showDeleteTicketModal
             || showTicketPreview
-            || showPrintConfirmModal
             || isScaleSyncing
         ) {
             return undefined;
@@ -333,7 +332,6 @@ const Ventas = () => {
         showDeleteTicketModal,
         showTicketPreview,
         editingPriceId,
-        showPrintConfirmModal,
         isScaleSyncing,
     ]);
 
@@ -593,32 +591,34 @@ const Ventas = () => {
         const normalizedNumber = String(parseInt(normalized, 10));
         const promo = findPromotionByPromoPlu(normalized);
         if (promo) {
+            const baseProductById = promo?.product_id != null
+                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
+                : null;
+            const baseProductByName = productsCatalog.find((p) => (
+                String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
+            ));
+            const baseProduct = baseProductById || baseProductByName;
             const promoUnitPrice = toNumber(promo?.promo_unit_price);
             const minQtyKg = toNumber(promo?.min_qty_kg, 3);
             const fallbackUnitPrice = minQtyKg > 0 ? toNumber(promo?.promo_total_price) / minQtyKg : 0;
             const resolvedPromoUnitPrice = promoUnitPrice > 0 ? promoUnitPrice : fallbackUnitPrice;
             const promoStockQty = getCurrentStockQty({
-                productId: promo?.product_id,
-                productName: promo?.product_name,
+                productId: baseProduct?.id || promo?.product_id,
+                productName: baseProduct?.name || promo?.product_name,
             });
-            if (resolvedPromoUnitPrice > 0 && promoStockQty > 0) {
+            if (resolvedPromoUnitPrice > 0) {
                 return {
-                    id: promo?.product_id || null,
-                    product_id: normalizeProductKey(promo?.product_name || `PLU ${normalized}`),
-                    product_ref_id: promo?.product_id || null,
+                    id: baseProduct?.id || promo?.product_id || null,
+                    product_id: normalizeProductKey(baseProduct?.name || promo?.product_name || `PLU ${normalized}`),
+                    product_ref_id: baseProduct?.id || promo?.product_id || null,
                     price: resolvedPromoUnitPrice,
                     plu: normalized,
-                    updated_at: new Date().toISOString(),
+                    updated_at: promo?.updated_at || baseProduct?.updated_at || new Date().toISOString(),
                     isPromoPlu: true,
                     promo,
+                    noStockWarning: !(promoStockQty > 0),
                 };
             }
-            // Promo encontrada pero sin stock: buscar el producto BASE (no por promo_plu)
-            const baseProduct = promo?.product_id != null
-                ? productsCatalog.find((p) => Number(p?.id) === Number(promo.product_id))
-                : productsCatalog.find((p) => (
-                    String(p?.name || '').trim().toLowerCase() === String(promo?.product_name || '').trim().toLowerCase()
-                ));
             if (baseProduct) {
                 return {
                     id: baseProduct.id,
@@ -690,6 +690,16 @@ const Ventas = () => {
 
     const buildCartProductFromPriceRecord = React.useCallback((product, priceRecord) => {
         if (!product || !priceRecord) return product || null;
+        if (priceRecord?.priceLocked) {
+            return {
+                ...product,
+                price: priceRecord.price,
+                priceLocked: true,
+                lockedSource: priceRecord.lockedSource || 'scale_ticket',
+                lockedTicketAmount: toNumber(priceRecord.ticketAmount),
+                linkedPromoPlu: normalizePluCode(priceRecord.plu),
+            };
+        }
         if (!priceRecord?.isPromoPlu || !priceRecord?.promo) {
             return { ...product, price: priceRecord.price };
         }
@@ -967,9 +977,29 @@ const Ventas = () => {
                 }
 
                 const quantity = Number(row?.quantity || 0);
+                const lineAmount = Number(row?.amount || 0);
+                if (quantity > 0 && lineAmount > 0) {
+                    const effectiveUnitPrice = Number((lineAmount / quantity).toFixed(2));
+                    const currentResolvedPrice = Number(priceRecord?.price || product?.price || 0);
+                    if (effectiveUnitPrice > 0 && Math.abs((currentResolvedPrice * quantity) - lineAmount) > 0.01) {
+                        priceRecord = {
+                            ...(priceRecord || {}),
+                            id: priceRecord?.id || row?.product?.id || product?.productId || null,
+                            product_id: priceRecord?.product_id || normalizeProductKey(product?.name || row?.product?.name || `PLU ${pluNormalized}`),
+                            product_ref_id: priceRecord?.product_ref_id || row?.product?.id || product?.productId || null,
+                            price: effectiveUnitPrice,
+                            plu: pluRaw || pluNormalized,
+                            updated_at: row?.saleAt || new Date().toISOString(),
+                            priceLocked: true,
+                            lockedSource: 'scale_ticket',
+                            ticketAmount: lineAmount,
+                        };
+                    }
+                }
                 return {
                     plu: pluRaw || pluNormalized,
                     weight: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+                    amount: lineAmount,
                     priceRecord,
                     product,
                 };
@@ -1365,7 +1395,7 @@ const Ventas = () => {
     };
     const addToCart = async (product, externalWeight = null) => {
         let resolvedProduct = product;
-        if (!product?.promoLocked) {
+        if (!product?.promoLocked && !product?.priceLocked) {
             const catalogProduct = findProductByIdentity(productsCatalog, {
                 id: product?.productId || product?.id || null,
                 name: product?.name,
@@ -1403,6 +1433,8 @@ const Ventas = () => {
 
         const cartItemId = resolvedProduct?.promoLocked && resolvedProduct?.forcedPromo?.id
             ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:promo:${resolvedProduct.forcedPromo.id}`
+            : resolvedProduct?.priceLocked
+                ? `${resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`}:locked:${Number(resolvedProduct.price || 0).toFixed(2)}`
             : (resolvedProduct.id || `product:${resolvedProduct.productId || normalizeProductKey(resolvedProduct.name)}`);
 
         const normalizedProduct = { ...resolvedProduct, id: cartItemId };
@@ -1745,36 +1777,12 @@ const Ventas = () => {
             playCashRegister();
             setActiveScaleTicketBarcode(null);
 
-            // Guardar snapshot del carrito antes de resetear (para imprimir después)
-            const cartSnapshot = [...cart];
-            const cartSnapshotWithTotals = cartSnapshot.map((item) => {
-                const line = cartPricing.lineMap.get(item.id);
-                return {
-                    ...item,
-                    subtotal: line?.subtotal ?? (item.price * item.quantity),
-                    promo: line?.promo || null,
-                };
-            });
-            setPendingPrintData({
-                saleData: {
-                    id: saleId,
-                    receipt_number: saleReceiptNumber,
-                    receipt_code: saleReceiptCode,
-                    subtotal: cartTotal,
-                    adjustment: adjustment,
-                    total: finalTotal,
-                    employee_discount_pct: selectedClientEmployeeDiscountPct,
-                    employee_discount_amount: employeeDiscountAmount,
-                },
-                items: cartSnapshotWithTotals
-            });
-
-            // Resetear todo ANTES de mostrar el modal (sin confirm() nativo que roba el foco)
+            // Resetear todo y devolver el foco al scanner sin abrir la confirmacion de impresion
             setCart([]);
             setSelectedClientId(null);
             setClientSearch('');
             resetPaymentState();
-            setShowPrintConfirmModal(true);
+            setTimeout(() => barcodeInputRef.current?.focus(), 100);
         } catch (error) {
             console.error('Error crítico al guardar la venta:', error);
             showToast('❌ Hubo un fallo al guardar la venta en la base de datos: ' + error.message, 'error');
@@ -1782,16 +1790,6 @@ const Ventas = () => {
             processingRef.current = false;
             setIsProcessing(false);
         }
-    };
-
-    const handlePrintConfirm = (shouldPrint) => {
-        if (shouldPrint && pendingPrintData) {
-            printTicket(pendingPrintData.saleData, pendingPrintData.items);
-        }
-        setShowPrintConfirmModal(false);
-        setPendingPrintData(null);
-        // Devolver el foco al scanner sin pasar por ningún diálogo nativo
-        setTimeout(() => barcodeInputRef.current?.focus(), 100);
     };
 
     const confirmPayment = () => {
@@ -2799,44 +2797,6 @@ const Ventas = () => {
                                 }}
                             >
                                 Vender igual
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* MODAL CONFIRMAR IMPRESIÓN (reemplaza confirm() nativo para no perder foco en Electron) */}
-            {showPrintConfirmModal && (
-                <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1100 }}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '360px', width: '90%', textAlign: 'center', padding: '2rem' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>🧾</div>
-                        <h2 style={{ fontSize: '1.2rem', fontWeight: '800', marginBottom: '0.5rem' }}>¡Venta registrada!</h2>
-                        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
-                            ¿Desea imprimir el ticket?
-                        </p>
-                        <div style={{ display: 'flex', gap: '0.75rem' }}>
-                            <button
-                                autoFocus
-                                onClick={() => handlePrintConfirm(false)}
-                                style={{
-                                    flex: 1,
-                                    padding: '0.75rem',
-                                    borderRadius: 'var(--radius-md)',
-                                    border: '1px solid var(--color-border)',
-                                    background: 'transparent',
-                                    color: 'var(--color-text-main)',
-                                    cursor: 'pointer',
-                                    fontSize: '0.95rem'
-                                }}
-                            >
-                                No, gracias
-                            </button>
-                            <button
-                                onClick={() => handlePrintConfirm(true)}
-                                className="neo-button"
-                                style={{ flex: 1 }}
-                            >
-                                Imprimir 🖨️
                             </button>
                         </div>
                     </div>

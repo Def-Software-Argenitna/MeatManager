@@ -1,0 +1,326 @@
+{
+  "info": {
+    "name": "MeatManager Bridge API",
+    "description": "Pruebas end-to-end de la API de onboarding y sincronizacion del bridge. Empezar por '00 - Login' y seguir el orden numerico — los scripts de Tests guardan sessionToken y deviceToken automaticamente.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://meatmanager.demo.def-software.com/api", "type": "string" },
+    { "key": "email", "value": "rodrigo.cortes@southex.com.ar", "type": "string" },
+    { "key": "password", "value": "REEMPLAZAR", "type": "string" },
+    { "key": "branchId", "value": "1", "type": "string" },
+    { "key": "scaleId", "value": "1", "type": "string" },
+    { "key": "scaleAddress", "value": "1", "type": "string" },
+    { "key": "sessionToken", "value": "", "type": "string" },
+    { "key": "deviceToken", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "00 - Login (POST /api/bridge/auth/login)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "let data = {};",
+              "try { data = pm.response.json() || {}; } catch (_) { data = {}; }",
+              "if (pm.response.code !== 200) {",
+              "    console.error('Login fallo:', pm.response.code, JSON.stringify(data));",
+              "}",
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "pm.test('returns sessionToken', () => pm.expect(data.sessionToken).to.be.a('string').and.not.empty);",
+              "pm.test('returns branches[]', () => pm.expect(data.branches).to.be.an('array').and.not.empty);",
+              "if (data.sessionToken) pm.collectionVariables.set('sessionToken', data.sessionToken);",
+              "if (Array.isArray(data.branches) && data.branches[0]) {",
+              "    pm.collectionVariables.set('branchId', String(data.branches[0].id));",
+              "    console.log('clientId:', data.clientId, '| branches:', data.branches.map(b => `${b.id}:${b.name}`).join(', '));",
+              "}"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/auth/login", "host": ["{{baseUrl}}"], "path": ["bridge", "auth", "login"] }
+      }
+    },
+    {
+      "name": "01 - Onboarding complete (POST /api/bridge/onboarding/complete)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test('returns deviceToken', () => pm.expect(data.deviceToken).to.be.a('string').and.not.empty);",
+              "pm.test('returns deviceId', () => pm.expect(data.deviceId).to.match(/^bridge-/));",
+              "pm.collectionVariables.set('deviceToken', data.deviceToken);",
+              "console.log('deviceId:', data.deviceId, '| branchName:', data.branchName);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sessionToken\": \"{{sessionToken}}\",\n  \"branchId\": {{branchId}},\n  \"hostname\": \"postman-test\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/onboarding/complete", "host": ["{{baseUrl}}"], "path": ["bridge", "onboarding", "complete"] }
+      }
+    },
+    {
+      "name": "02 - Settings (GET /api/bridge/settings)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test('ticketHeader present', () => pm.expect(data.ticketHeader).to.be.an('object'));",
+              "pm.test('priceFormat is 4d2d or 6d', () => pm.expect(['4d2d','6d']).to.include(data.priceFormat));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": { "raw": "{{baseUrl}}/bridge/settings", "host": ["{{baseUrl}}"], "path": ["bridge", "settings"] }
+      }
+    },
+    {
+      "name": "03 - Vendors (GET /api/bridge/vendors)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test('vendors.length === 4', () => pm.expect(data.vendors).to.have.lengthOf(4));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": { "raw": "{{baseUrl}}/bridge/vendors", "host": ["{{baseUrl}}"], "path": ["bridge", "vendors"] }
+      }
+    },
+    {
+      "name": "04 - Catalog (GET /api/bridge/catalog)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test('products is array', () => pm.expect(data.products).to.be.an('array'));",
+              "pm.test('promotions is array', () => pm.expect(data.promotions).to.be.an('array'));",
+              "pm.test('pluDuplicates is array', () => pm.expect(data.pluDuplicates).to.be.an('array'));",
+              "console.log('products:', data.products.length, '| promotions:', data.promotions.length, '| duplicates:', data.pluDuplicates.length);"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": { "raw": "{{baseUrl}}/bridge/catalog", "host": ["{{baseUrl}}"], "path": ["bridge", "catalog"] }
+      }
+    },
+    {
+      "name": "05 - Catalog removed (GET /api/bridge/catalog/removed)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/bridge/catalog/removed?scaleId={{scaleId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["bridge", "catalog", "removed"],
+          "query": [{ "key": "scaleId", "value": "{{scaleId}}" }]
+        }
+      }
+    },
+    {
+      "name": "06 - Catalog observed PLU (GET /api/bridge/catalog/observed-plu)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/bridge/catalog/observed-plu?scaleId={{scaleId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["bridge", "catalog", "observed-plu"],
+          "query": [{ "key": "scaleId", "value": "{{scaleId}}" }]
+        }
+      }
+    },
+    {
+      "name": "07 - Sync state GET (GET /api/bridge/sync-state/product-map)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Authorization", "value": "Bearer {{deviceToken}}" }],
+        "url": {
+          "raw": "{{baseUrl}}/bridge/sync-state/product-map?scaleId={{scaleId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["bridge", "sync-state", "product-map"],
+          "query": [{ "key": "scaleId", "value": "{{scaleId}}" }]
+        }
+      }
+    },
+    {
+      "name": "08 - Sync state PUT (PUT /api/bridge/sync-state/product-map)",
+      "request": {
+        "method": "PUT",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{deviceToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"scaleId\": \"{{scaleId}}\",\n  \"entries\": [\n    { \"productId\": 9999, \"pluCode\": \"9999\", \"fingerprint\": \"postman-test-fingerprint-001\" }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/sync-state/product-map", "host": ["{{baseUrl}}"], "path": ["bridge", "sync-state", "product-map"] }
+      }
+    },
+    {
+      "name": "09 - Sync state DELETE (DELETE /api/bridge/sync-state/product-map)",
+      "request": {
+        "method": "DELETE",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{deviceToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"scaleId\": \"{{scaleId}}\",\n  \"productIds\": [9999]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/sync-state/product-map", "host": ["{{baseUrl}}"], "path": ["bridge", "sync-state", "product-map"] }
+      }
+    },
+    {
+      "name": "10 - Sales (POST /api/bridge/sales)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 200', () => pm.response.to.have.status(200));",
+              "const data = pm.response.json();",
+              "pm.test('ticketsUpserted >= 1', () => pm.expect(data.ticketsUpserted).to.be.at.least(1));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{deviceToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"scaleId\": \"{{scaleId}}\",\n  \"scaleAddress\": {{scaleAddress}},\n  \"tickets\": [\n    {\n      \"ticketId\": \"POSTMAN-TKT-001\",\n      \"vendorCode\": \"01\",\n      \"vendorName\": \"Postman\",\n      \"saleAt\": \"2026-05-17T15:00:00Z\",\n      \"totalAmount\": 250.50,\n      \"itemCount\": 1,\n      \"fingerprint\": \"postman-fingerprint-tkt-001\",\n      \"ticketBarcode\": \"postman-barcode-001\",\n      \"printedTicketBarcode\": \"PT001\",\n      \"lines\": [\n        {\n          \"lineNo\": 1,\n          \"plu\": \"100\",\n          \"sector\": \"02\",\n          \"units\": 0,\n          \"grams\": 500,\n          \"drainedGrams\": 0,\n          \"amount\": 250.50,\n          \"itemQuantity\": 0.5,\n          \"itemQuantityUnit\": \"kg\"\n        }\n      ]\n    }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/sales", "host": ["{{baseUrl}}"], "path": ["bridge", "sales"] }
+      }
+    },
+    {
+      "name": "11 - Heartbeat (POST /api/bridge/heartbeat)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{deviceToken}}" },
+          { "key": "Content-Type", "value": "application/json" }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"scales\": [\n    { \"scaleId\": \"{{scaleId}}\", \"port\": \"COM3\", \"address\": {{scaleAddress}}, \"lastPingOk\": true }\n  ]\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/heartbeat", "host": ["{{baseUrl}}"], "path": ["bridge", "heartbeat"] }
+      }
+    },
+    {
+      "name": "ERR - Login con password incorrecta (debe dar 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"este-password-no-existe-asdasd\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/auth/login", "host": ["{{baseUrl}}"], "path": ["bridge", "auth", "login"] }
+      }
+    },
+    {
+      "name": "ERR - Settings sin token (debe dar 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 401', () => pm.response.to.have.status(401));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/bridge/settings", "host": ["{{baseUrl}}"], "path": ["bridge", "settings"] }
+      }
+    },
+    {
+      "name": "ERR - Onboarding con branchId ajeno (debe dar 403)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('status 403 o 401', () => pm.expect([401, 403]).to.include(pm.response.code));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"sessionToken\": \"{{sessionToken}}\",\n  \"branchId\": 99999,\n  \"hostname\": \"postman-test\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/bridge/onboarding/complete", "host": ["{{baseUrl}}"], "path": ["bridge", "onboarding", "complete"] }
+      }
+    }
+  ]
+}
