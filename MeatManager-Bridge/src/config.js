@@ -10,24 +10,29 @@ const envFile = path.join(rootDir, '.env');
 const overridesFile = process.env.BRIDGE_OVERRIDES_FILE
     ? path.resolve(process.env.BRIDGE_OVERRIDES_FILE)
     : path.join(runtimeRootDir, 'data', 'config-overrides.json');
+const installationFile = process.env.BRIDGE_INSTALLATION_FILE
+    ? path.resolve(process.env.BRIDGE_INSTALLATION_FILE)
+    : path.join(runtimeRootDir, 'data', 'installation.json');
+
 if (fs.existsSync(envFile)) {
     dotenv.config({ path: envFile });
 } else {
     dotenv.config();
 }
 
-let overrides = {};
-if (fs.existsSync(overridesFile)) {
+function readJsonFile(filePath) {
+    if (!fs.existsSync(filePath)) return {};
     try {
-        let raw = fs.readFileSync(overridesFile, 'utf8');
-        // Strip BOM UTF-8: PowerShell Out-File/Set-Content escribe con BOM por
-        // default y JSON.parse falla en silencio sobre el u+FEFF inicial.
+        let raw = fs.readFileSync(filePath, 'utf8');
         if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
-        overrides = JSON.parse(raw);
+        return JSON.parse(raw);
     } catch {
-        overrides = {};
+        return {};
     }
 }
+
+const overrides = readJsonFile(overridesFile);
+const installation = readJsonFile(installationFile);
 
 const boolEnv = (name, fallback = false) => {
     const overrideValue = overrides[name];
@@ -46,6 +51,16 @@ const strEnv = (name, fallback = '') => {
     return value || fallback;
 };
 
+// Identidad y credenciales del bridge — preferir installation.json (lo
+// escribe el wizard de onboarding), caer a env vars para entornos sin
+// instalador (dev/CI/once-off).
+const apiBaseUrl = String(installation.apiBaseUrl || strEnv('BRIDGE_API_BASE_URL', strEnv('API_BASE_URL', ''))).trim().replace(/\/+$/, '');
+const deviceToken = String(installation.deviceToken || strEnv('BRIDGE_DEVICE_TOKEN', '')).trim();
+const installationDeviceId = String(installation.deviceId || '').trim();
+const installationTenantId = Number(installation.tenantId);
+const installationClientId = Number(installation.clientId);
+const installationBranchId = Number(installation.branchId);
+
 const config = {
     rootDir,
     runtimeRootDir,
@@ -53,15 +68,20 @@ const config = {
     logsDir: path.join(runtimeRootDir, 'logs'),
     envFile,
     overridesFile,
+    installationFile,
     stateFile: path.resolve(runtimeRootDir, strEnv('STATE_FILE', './data/state.json')),
     logFile: path.resolve(runtimeRootDir, strEnv('LOG_FILE', './logs/bridge.log')),
     resetStateOnStart: boolEnv('RESET_STATE_ON_START', true),
-    deviceId: strEnv('BRIDGE_DEVICE_ID', 'CUORA-LOCAL-01'),
+    apiBaseUrl,
+    deviceToken,
+    deviceId: installationDeviceId || strEnv('BRIDGE_DEVICE_ID', 'CUORA-LOCAL-01'),
+    scaleId: strEnv('BRIDGE_SCALE_ID', '1'),
     bridgeName: strEnv('BRIDGE_NAME', 'Cuora Direct Bridge'),
-    siteName: strEnv('BRIDGE_SITE_NAME', ''),
-    clientId: intEnv('BRIDGE_CLIENT_ID', intEnv('MYSQL_TENANT_ID', 1)),
-    tenantId: intEnv('BRIDGE_CLIENT_ID', intEnv('MYSQL_TENANT_ID', 1)),
-    branchId: intEnv('BRIDGE_BRANCH_ID', intEnv('MYSQL_BRANCH_ID', 1)),
+    siteName: String(installation.branchName || strEnv('BRIDGE_SITE_NAME', '')),
+    clientName: String(installation.clientName || ''),
+    clientId: Number.isFinite(installationClientId) ? installationClientId : intEnv('BRIDGE_CLIENT_ID', 1),
+    tenantId: Number.isFinite(installationTenantId) ? installationTenantId : intEnv('BRIDGE_CLIENT_ID', 1),
+    branchId: Number.isFinite(installationBranchId) ? installationBranchId : intEnv('BRIDGE_BRANCH_ID', 1),
     scale: {
         port: strEnv('SCALE_PORT', 'COM3'),
         baudRate: intEnv('SCALE_BAUD_RATE', 115200),
@@ -81,14 +101,6 @@ const config = {
             saleTotalFormat: strEnv('SCALE_BARCODE_TOTAL_FORMAT', '22AAIIIIIIII'),
         },
     },
-    mysql: {
-        host: strEnv('MYSQL_HOST', '127.0.0.1'),
-        port: intEnv('MYSQL_PORT', 3306),
-        user: strEnv('MYSQL_USER', 'root'),
-        password: strEnv('MYSQL_PASSWORD', ''),
-        database: strEnv('MYSQL_DATABASE', 'meatmanager'),
-        ssl: boolEnv('MYSQL_SSL', false),
-    },
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
     salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
     salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 2000),
@@ -98,10 +110,14 @@ const config = {
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
     closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
-    httpPort: intEnv('HTTP_PORT', 4045),
+    // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
+    // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".
+    // Default a 4046 que no esta restringido.
+    httpPort: intEnv('HTTP_PORT', 4046),
     logLevel: strEnv('LOG_LEVEL', 'info').toLowerCase(),
     watchMode: process.argv.includes('--watch'),
     once: process.argv.includes('--once'),
+    isOnboarded: Boolean(apiBaseUrl && deviceToken),
 };
 
 module.exports = config;
