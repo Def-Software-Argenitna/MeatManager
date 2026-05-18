@@ -3,10 +3,12 @@ import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 import { registerSW } from 'virtual:pwa-register'
 import ErrorBoundary from './components/ErrorBoundary'
+import { installGlobalErrorReporting } from './utils/errorReporting'
 import './index.css'
 import App from './App.jsx'
 
 console.log('App starting...');
+installGlobalErrorReporting();
 
 function showAppUpdateOverlay() {
   if (document.getElementById('app-update-overlay')) return;

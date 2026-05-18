@@ -1,4 +1,5 @@
 import React from 'react';
+import { reportReactError } from '../utils/errorReporting';
 
 class ErrorBoundary extends React.Component {
     constructor(props) {
@@ -16,6 +17,7 @@ class ErrorBoundary extends React.Component {
             errorInfo: errorInfo
         });
         console.error("Uncaught error:", error, errorInfo);
+        reportReactError(error, errorInfo);
     }
 
     render() {
