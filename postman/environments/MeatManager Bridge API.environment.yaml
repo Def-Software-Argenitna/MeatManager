@@ -1,0 +1,34 @@
+name: MeatManager Bridge API
+values:
+  - key: baseUrl
+    value: 'https://meatmanager.demo.def-software.com/api'
+    enabled: true
+    secret: false
+  - key: email
+    value: 'rc.cortesr@gmail.com'
+    enabled: true
+    secret: false
+  - key: password
+    value: pos38ric0S
+    enabled: true
+    secret: true
+  - key: branchId
+    value: ''
+    enabled: true
+    secret: false
+  - key: scaleId
+    value: ''
+    enabled: true
+    secret: false
+  - key: scaleAddress
+    value: ''
+    enabled: true
+    secret: false
+  - key: sessionToken
+    value: ''
+    enabled: true
+    secret: true
+  - key: deviceToken
+    value: ''
+    enabled: true
+    secret: true

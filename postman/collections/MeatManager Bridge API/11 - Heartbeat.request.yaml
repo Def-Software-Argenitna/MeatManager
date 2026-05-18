@@ -1,0 +1,23 @@
+$kind: http-request
+name: '11 - Heartbeat (POST /api/bridge/heartbeat)'
+method: POST
+url: '{{baseUrl}}/bridge/heartbeat'
+order: 12000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "scales": [
+        { "scaleId": "{{scaleId}}", "port": "COM3", "address": {{scaleAddress}}, "lastPingOk": true }
+      ]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200 or 204', () => pm.expect([200, 204]).to.include(pm.response.code));

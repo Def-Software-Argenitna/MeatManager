@@ -1,0 +1,15 @@
+$kind: http-request
+name: '07 - Sync state GET (GET /api/bridge/sync-state/product-map)'
+method: GET
+url: '{{baseUrl}}/bridge/sync-state/product-map?scaleId={{scaleId}}'
+order: 8000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('response exists', () => pm.expect(data).to.exist);

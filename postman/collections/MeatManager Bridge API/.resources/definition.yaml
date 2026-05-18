@@ -1,0 +1,12 @@
+$kind: collection
+name: MeatManager Bridge API
+description: Pruebas end-to-end de la API de onboarding y sincronizacion del bridge. Empezar por '00 - Login' y seguir el orden numerico — los scripts de Tests guardan sessionToken y deviceToken automaticamente.
+variables:
+  baseUrl: https://meatmanager.demo.def-software.com/api
+  email: ""
+  password: ""
+  branchId: "1"
+  scaleId: "1"
+  scaleAddress: "1"
+  sessionToken: ""
+  deviceToken: ""

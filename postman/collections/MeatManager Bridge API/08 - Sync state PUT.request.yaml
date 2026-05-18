@@ -1,0 +1,24 @@
+$kind: http-request
+name: '08 - Sync state PUT (PUT /api/bridge/sync-state/product-map)'
+method: PUT
+url: '{{baseUrl}}/bridge/sync-state/product-map'
+order: 9000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "scaleId": "{{scaleId}}",
+      "entries": [
+        { "productId": 9999, "pluCode": "9999", "fingerprint": "postman-test-fingerprint-001" }
+      ]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200 or 204', () => pm.expect([200, 204]).to.include(pm.response.code));

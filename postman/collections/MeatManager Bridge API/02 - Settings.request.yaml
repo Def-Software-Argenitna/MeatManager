@@ -1,0 +1,16 @@
+$kind: http-request
+name: '02 - Settings (GET /api/bridge/settings)'
+method: GET
+url: '{{baseUrl}}/bridge/settings'
+order: 3000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('ticketHeader present', () => pm.expect(data.ticketHeader).to.be.an('object'));
+      pm.test('priceFormat is 4d2d or 6d', () => pm.expect(['4d2d','6d']).to.include(data.priceFormat));

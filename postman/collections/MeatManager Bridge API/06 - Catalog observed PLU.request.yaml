@@ -1,0 +1,15 @@
+$kind: http-request
+name: '06 - Catalog observed PLU (GET /api/bridge/catalog/observed-plu)'
+method: GET
+url: '{{baseUrl}}/bridge/catalog/observed-plu?scaleId={{scaleId}}'
+order: 7000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('response exists', () => pm.expect(data).to.exist);
