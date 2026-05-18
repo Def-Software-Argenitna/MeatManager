@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Generar Pedidos</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📲 Generar Pedidos</h1>
+            <p>Crear pedidos de clientes con entrega</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué es un Pedido?</h2>
+            <p>Un pedido es una orden de venta con entrega a domicilio o punto de retiro. Permite:</p>
+            <ul>
+                <li>Registrar órdenes anticipadas de clientes</li>
+                <li>Programar entregas</li>
+                <li>Gestionar logística</li>
+                <li>Armar paquetes personalizados</li>
+                <li>Generar comprobantes de pedido</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Pedidos</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca <span class="highlight">Pedidos</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá la interfaz</strong> con lista de pedidos
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Crear un Nuevo Pedido</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Haz clic en</strong> "+ Nuevo Pedido"
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Selecciona el cliente</strong> (o crea uno nuevo si no existe)
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Completa información del pedido:</strong>
+                <table>
+                    <tr>
+                        <th>Campo</th>
+                        <th>Descripción</th>
+                    </tr>
+                    <tr>
+                        <td><strong>Fecha de Entrega</strong></td>
+                        <td>Cuándo debe ser entregado</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Horario de Entrega</strong></td>
+                        <td>Rango de horario preferido</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Dirección de Entrega</strong></td>
+                        <td>Domicilio donde entrega (puede variar de cliente)</td>
+                    </tr>
+                    <tr>
+                        <td><strong>Nota de Pedido</strong></td>
+                        <td>Instrucciones especiales (ej: "Bien congelado")</td>
+                    </tr>
+                </table>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Agrega productos:</strong> Haz clic en "+ Agregar Producto"
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>Para cada producto ingresa cantidad</strong>
+            </div>
+            <div class="step">
+                <span class="step-number">6</span>
+                <strong>Haz clic en</strong> <span class="highlight">Guardar Pedido</span>
+            </div>
+            <div class="success">✓ El pedido se creará en estado "Pendiente"</div>
+        </div>
+        
+        <div class="section">
+            <h2>Estados de Pedido</h2>
+            <table>
+                <tr>
+                    <th>Estado</th>
+                    <th>Significado</th>
+                    <th>Acción Siguiente</th>
+                </tr>
+                <tr>
+                    <td><strong>Pendiente</strong></td>
+                    <td>Recibido, no procesado aún</td>
+                    <td>Confirmar disponibilidad</td>
+                </tr>
+                <tr>
+                    <td><strong>Confirmado</strong></td>
+                    <td>Stock reservado, listo para armar</td>
+                    <td>Preparar para entrega</td>
+                </tr>
+                <tr>
+                    <td><strong>Preparado</strong></td>
+                    <td>Embolsado y listo</td>
+                    <td>Enviar a entregar</td>
+                </tr>
+                <tr>
+                    <td><strong>Entregado</strong></td>
+                    <td>Fue recibido por cliente</td>
+                    <td>Finalizado</td>
+                </tr>
+                <tr>
+                    <td><strong>Cancelado</strong></td>
+                    <td>Cliente anuló o no se puede entregar</td>
+                    <td>Liberar stock y contactar cliente</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Cambiar Estado de Pedido</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde la lista,</strong> busca el pedido
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en</strong> "Editar" o en el pedido
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Cambio el estado</strong> en el menú desplegable
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Haz clic en</strong> "Guardar"
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Generar Comprobante de Pedido</h2>
+            <divstep">
+                <span class="step-number">1</span>
+                <strong>Desde la lista,</strong> selecciona el pedido
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Haz clic en</strong> "Imprimir" o "PDF"
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Se generará un comprobante</strong> con todos los detalles
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Imprime o envía por email</strong> al cliente
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Consejos Prácticos</h2>
+            <ul>
+                <li>✓ Confirma disponibilidad de stock antes de dar fecha de entrega</li>
+                <li>✓ Establece ventanas de entrega claras (1-2 horas)</li>
+                <li>✓ Agrupar pedidos por zona para optimizar logística</li>
+                <li>✓ Usar estado "Preparado" para separar pedidos listos</li>
+                <li>✓ Mantener flujo: Pendiente → Confirmado → Preparado → Entregado</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

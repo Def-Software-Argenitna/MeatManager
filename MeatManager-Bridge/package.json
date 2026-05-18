@@ -1,6 +1,6 @@
 {
   "name": "meatmanager-bridge",
-  "version": "0.3.18",
+  "version": "0.4.1",
   "private": true,
   "author": "Def-Software",
   "description": "Bridge local directo USB para balanzas Systel CUORA MAX + MySQL cloud",
@@ -24,17 +24,11 @@
     "@serialport/parser-inter-byte-timeout": "^13.0.0",
     "dotenv": "^16.4.5",
     "electron-updater": "^6.6.2",
-    "mysql2": "^3.9.1",
     "serialport": "^13.0.0"
   },
   "devDependencies": {
     "electron": "^37.2.5",
-    "electron-builder": "^25.1.8",
-    "node-gyp": "^10.3.1",
-    "png-to-ico": "^3.0.1"
-  },
-  "overrides": {
-    "node-gyp": "^10.3.1"
+    "electron-builder": "^25.1.8"
   },
   "engines": {
     "node": ">=22.0.0"
@@ -44,10 +38,8 @@
     "productName": "MeatManager Bridge",
     "asar": true,
     "asarUnpack": [
-      "src/**"
+      "public/branding/**"
     ],
-    "npmRebuild": false,
-    "buildDependenciesFromSource": false,
     "files": [
       "desktop/**/*",
       "src/**/*",
@@ -58,28 +50,27 @@
     "directories": {
       "buildResources": "public"
     },
-    "publish": [
-      {
-        "provider": "github",
-        "releaseType": "release"
-      }
-    ],
     "win": {
       "target": [
         "nsis"
       ],
-      "icon": "public/branding/app.ico",
+      "icon": "public/branding/def-software.ico",
       "artifactName": "MeatManager-Bridge-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "perMachine": false,
-      "installerIcon": "public/branding/app.ico",
-      "uninstallerIcon": "public/branding/app.ico",
-      "installerHeaderIcon": "public/branding/app.ico",
       "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    }
+      "createStartMenuShortcut": true,
+      "installerIcon": "public/branding/def-software.ico",
+      "uninstallerIcon": "public/branding/def-software.ico"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "releaseType": "release"
+      }
+    ]
   }
 }

@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Cierre de Caja</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #667eea;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #764ba2;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f9f9;
+            border-left: 4px solid #667eea;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+        }
+        .highlight {
+            background: #fffacd;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: bold;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .info {
+            background: #d1ecf1;
+            border-left: 4px solid #17a2b8;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0f7ff;
+            color: #667eea;
+            font-weight: bold;
+        }
+        tr:hover { background: #f9f9f9; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>💳 Cierre de Caja</h1>
+            <p>Cerrar caja diaria y generar reportes de ventas</p>
+        </header>
+        
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+        
+        <div class="section">
+            <h2>¿Qué es Cierre de Caja?</h2>
+            <p>El cierre de caja es el proceso de finalizar el día de ventas. Permite:</p>
+            <ul>
+                <li>Contabilizar todas las ventas del día</li>
+                <li>Verificar que money matches (dinero coincida con ventas)</li>
+                <li>Generar reportes diarios</li>
+                <li>Identificar diferencias o faltantes</li>
+                <li>Crear un registro histórico de transacciones</li>
+                <li>Preparar depósitos bancarios</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>¿Cuándo Cerrar Caja?</h2>
+            <p><strong>Idealmente:</strong> Al final del día de atención</p>
+            <p><strong>Frecuencia recomendada:</strong> Diaria</p>
+            <p><strong>Horario sugerido:</strong> Después de las últimas ventas</p>
+            <div class="success">✓ Los cierres diarios ayudan a identificar problemas rápidamente</div>
+        </div>
+        
+        <div class="section">
+            <h2>Acceder a Cierre de Caja</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Desde el menú lateral:</strong> Busca <span class="highlight">Cierre de Caja</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Se abrirá la interfaz</strong> con información del día
+            </div>
+        </div>
+        
+        <div class="section">
+            <h2>Paso a Paso: Realizar un Cierre</h2>
+            <div class="step">
+                <span class="step-number">1</span>
+                <strong>Verifica que NO haya ventas pendientes</strong> de registrar
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                <strong>Consulla el TOTAL DE VENTAS</strong> mostrado en la pantalla
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                <strong>Desglose por forma de pago:</strong>
+                <ul>
+                    <li>Cuánto en Efectivo</li>
+                    <li>Cuánto en Tarjeta</li>
+                    <li>Cuánto en Transferencia</li>
+                    <li>Otros medios</li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                <strong>Si existe, ingresa monto en caja física</strong> (efectivo contado manualmente)
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                <strong>El sistema calcula automáticamente: Diferencia = Monto Real - Monto Sistema</strong>
+            </div>
+            <div class="step">
+                <span class="step-number">6</span>
+                <strong>Si hay diferencia,</strong> especifica:
+                <ul>
+                    <li>¿Es faltante o sobrante?</li>
+                    <li>¿Probable causa?</li>
+                    <li>Notas adicionales</li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">7</span>
+                <strong>Haz clic en</strong> <span class="highlight">Cerrar Caja</span>
+            </div>
+            <div class="success">✓ El cierre se registrará como finalizado</div>
+        </div>
+        
+        <div class="section">
+            <h2>Información que Genera el Sistema</h2>
+            <table>
+                <tr>
+                    <th>Dato</th>
+                    <th>Descripción</th>
+                </tr>
+                <tr>
+                    <td><strong>Fecha/Hora Cierre</strong></td>
+                    <td>Cuándo se realizó el cierre</td>
+                </tr>
+                <tr>
+                    <td><strong>Total Ventas</strong></td>
+                    <td>Suma de todas las ventas del período</td>
+                </tr>
+                <tr>
+                    <td><strong>Cantidad Transacciones</strong></td>
+                    <td>Cantidad de ventas registradas</td>
+                </tr>
+                <tr>
+                    <td><strong>Detalle por Medio de Pago</strong></td>
+                    <td>Desglose de efectivo, tarjeta, transferencia, etc.</td>
+                </tr>
+                <tr>
+                    <td><strong>Diferencia si la hay</strong></td>
+                    <td>Faltante o sobrante detectado</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Ejemplo: Cierre de Caja Diario</h2>
+            <div class="info">
+                ℹ️ <strong>Situación:</strong> 15 de febrero de 2026, cierre de jornada
+            </div>
+            <table>
+                <tr>
+                    <th>Concepto</th>
+                    <th>Valor</th>
+                </tr>
+                <tr>
+                    <td>Total Ventas (Sistema)</td>
+                    <td>$5.240</td>
+                </tr>
+                <tr>
+                    <td>Composición:</td>
+                    <td></td>
+                </tr>
+                <tr>
+                    <td>&nbsp;&nbsp;- Efectivo</td>
+                    <td>$3.000</td>
+                </tr>
+                <tr>
+                    <td>&nbsp;&nbsp;- Tarjeta Débito</td>
+                    <td>$1.200</td>
+                </tr>
+                <tr>
+                    <td>&nbsp;&nbsp;- Transferencia</td>
+                    <td>$1.040</td>
+                </tr>
+                <tr>
+                    <td>Efectivo Contado (Real)</td>
+                    <td>$3.050</td>
+                </tr>
+                <tr>
+                    <td><strong>Diferencia</strong></td>
+                    <td><strong>+$50 (Sobrante)</strong></td>
+                </tr>
+            </table>
+            <p><strong>Notas:</strong> Posible error de vuelto o cliente que dejó de más</p>
+        </div>
+        
+        <div class="section">
+            <h2>Diferencias Comunes y Causas</h2>
+            <table>
+                <tr>
+                    <th>Situación</th>
+                    <th>Probable Causa</th>
+                    <th>Acción</th>
+                </tr>
+                <tr>
+                    <td>Faltante pequeño (< 5%)</td>
+                    <td>Error de vuelto, transferencia pendiente</td>
+                    <td>Documentar y monitorear</td>
+                </tr>
+                <tr>
+                    <td>Faltante grande</td>
+                    <td>Venta no registrada, robo</td>
+                    <td>Revisar historial de ventas</td>
+                </tr>
+                <tr>
+                    <td>Sobrante</td>
+                    <td>Cliente pagó extra, error de sistema</td>
+                    <td>Investigar y retornar si aplica</td>
+                </tr>
+                <tr>
+                    <td>Gran diferencia</td>
+                    <td>Errores no capturados en el día</td>
+                    <td>Revisar todas las ventas</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Reapertura de Caja (Editar Cierre)</h2>
+            <div class="warning">
+                ⚠️ <strong>Cautela:</strong> Solo usa esto si necesitas corregir algo del mismo día. Regularmente no se debe reabrir.
+            </div>
+            <ol>
+                <li>Desde el historial de cierres, selecciona el cierre a editar</li>
+                <li>Haz clic en "Reabrir"</li>
+                <li>Realiza las correcciones necesarias</li>
+                <li>Vuelve a cerrar</li>
+            </ol>
+        </div>
+        
+        <div class="section">
+            <h2>Historial de Cierres</h2>
+            <p>El sistema mantiene un registro completo de todo los cierres realizado:</p>
+            <ul>
+                <li>Puedes consultar información histórica</li>
+                <li>Filtrar por rango de fechas</li>
+                <li>Generar reportes consolidados</li>
+                <li>Exportar datos para auditoría</li>
+            </ul>
+        </div>
+        
+        <div class="section">
+            <h2>Impacto en Otros Módulos</h2>
+            <table>
+                <tr>
+                    <th>Módulo</th>
+                    <th>Efecto</th>
+                </tr>
+                <tr>
+                    <td><strong>Ventas</strong></td>
+                    <td>Las ventas pueden seguir registrándose después del cierre</td>
+                </tr>
+                <tr>
+                    <td><strong>Informes PRO</strong></td>
+                    <td>Los datos de cierre se incluyen en reportes diarios</td>
+                </tr>
+                <tr>
+                    <td><strong>Stock</strong></td>
+                    <td>Ya se actualizó durante las ventas, no se ve afectado</td>
+                </tr>
+            </table>
+        </div>
+        
+        <div class="section">
+            <h2>Consejos Importantes</h2>
+            <ul>
+                <li>✓ Realiza cierre de caja todos los días sin falta</li>
+                <li>✓ Usa un libro de registro para anotar diferencias</li>
+                <li>✓ Investiga diferencias signifitivas inmediatamente</li>
+                <li>✓ Guarda documentación de depósitos bancarios</li>
+                <li>✓ Usa reportes de cierre para análisis gerencial</li>
+                <li>✓ Si hay problema de dinero, documenta máximo detalle</li>
+            </ul>
+        </div>
+    </div>
+</body>
+</html>

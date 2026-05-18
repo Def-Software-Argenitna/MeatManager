@@ -1,0 +1,113 @@
+﻿<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Manual de Usuario MeatManager</title>
+  <style>
+    :root {
+      --ink: #11233f;
+      --muted: #4c617f;
+      --brand: #0f6fb8;
+      --brand-2: #00a6a6;
+      --line: #d7e3f3;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Arial, sans-serif;
+      color: var(--ink);
+      background: #fff;
+      line-height: 1.45;
+    }
+    .page { width: 210mm; margin: 0 auto; padding: 14mm 14mm 18mm; }
+    .hero {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(130deg, #eaf4ff 0%, #f0fcfc 100%);
+      padding: 18px 20px;
+      display: grid;
+      grid-template-columns: 82px 1fr;
+      gap: 14px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .logo { width: 72px; height: 72px; object-fit: contain; border-radius: 12px; background: #fff; border: 1px solid var(--line); padding: 8px; }
+    h1 { margin: 0; font-size: 30px; letter-spacing: 0.2px; }
+    .subtitle { margin: 4px 0 0; font-size: 15px; color: var(--muted); }
+    .pill { display: inline-block; margin-top: 8px; background: #e1f3ff; color: #0b4f86; border: 1px solid #b8ddf7; border-radius: 999px; font-size: 12px; padding: 4px 10px; font-weight: 600; }
+
+    .toc { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: #fff; margin-bottom: 12px; }
+    .toc h2 { margin: 0 0 8px; font-size: 16px; }
+    .toc table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .toc th, .toc td { border-bottom: 1px solid var(--line); padding: 6px 4px; text-align: left; vertical-align: top; }
+    .toc th { color: #1e3f68; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; background: #f7fbff; }
+
+    .section { border: 1px solid var(--line); border-radius: 12px; padding: 12px; margin-bottom: 10px; page-break-inside: avoid; background: #fff; }
+    .section h3 { margin: 0 0 8px; font-size: 17px; color: var(--brand); border-left: 4px solid var(--brand-2); padding-left: 8px; }
+    .steps { margin: 0; padding-left: 18px; font-size: 13px; }
+    .steps li { margin-bottom: 5px; }
+    .note { margin-top: 8px; font-size: 12px; color: var(--muted); background: #f8fbff; border: 1px dashed #bcd1ee; padding: 7px 9px; border-radius: 8px; }
+    .shot { margin-top: 8px; font-size: 11px; color: var(--muted); border: 1px dashed #bcd1ee; border-radius: 8px; background: #f9fcff; padding: 6px 8px; }
+
+    .footer { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; color: var(--muted); font-size: 11px; display: flex; justify-content: space-between; align-items: center; }
+
+    @media print {
+      @page { size: A4; margin: 10mm; }
+      .page { width: auto; margin: 0; padding: 0; }
+      .section, .hero, .toc { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <img class="logo" src="../public/def-software-apple-touch-icon.png" alt="Def-Software" />
+      <div>
+        <h1>Manual de Usuario MeatManager</h1>
+        <p class="subtitle">Guía operativa por módulos para gestión de mostrador, producción, logística y sucursales.</p>
+        <span class="pill">Def-Software · Revisión profesional · Abril 2026</span>
+      </div>
+    </section>
+
+    <section class="toc">
+      <h2>Índice Ejecutivo</h2>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:8%">#</th>
+            <th style="width:30%">Módulo</th>
+            <th style="width:34%">Objetivo operativo</th>
+            <th style="width:28%">Control clave</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td>Inicio y configuración base</td><td>Puesta en marcha diaria sin desvíos</td><td>Sucursal activa y parámetros validados</td></tr>
+          <tr><td>2</td><td>Productos, categorías y stock</td><td>Inventario y catálogo consistentes</td><td>PLU, unidad y precio vigentes</td></tr>
+          <tr><td>3</td><td>Compras y proveedores</td><td>Ingreso correcto de mercadería</td><td>Costos, cantidades y comprobantes</td></tr>
+          <tr><td>4</td><td>Ventas, promociones y balanza</td><td>Cobro trazable en mostrador</td><td>Ticket, promociones y sync de balanza</td></tr>
+          <tr><td>5</td><td>Pedidos y clientes</td><td>Gestión comercial y seguimiento</td><td>Estados de pedido y datos del cliente</td></tr>
+          <tr><td>6</td><td>Caja y cierre diario</td><td>Conciliación financiera del turno</td><td>Apertura, movimientos y cierre</td></tr>
+          <tr><td>7</td><td>Despostada y rendimiento</td><td>Control de merma y rendimiento</td><td>Kg de entrada vs. cortes resultantes</td></tr>
+          <tr><td>8</td><td>Sucursales y transferencias</td><td>Operación multi-sucursal segura</td><td>Origen/destino y recepción conforme</td></tr>
+          <tr><td>9</td><td>Logística y reparto (PRO)</td><td>Entrega eficiente de pedidos</td><td>Asignación y confirmación de entrega</td></tr>
+          <tr><td>10</td><td>Seguridad y mantenimiento</td><td>Continuidad operativa y resguardo</td><td>Permisos, respaldos y actualizaciones</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="section"><h3>1) Inicio y configuración base</h3><ol class="steps"><li>Ingresar con usuario administrador y validar sucursal activa.</li><li>Revisar productos, medios de pago y permisos antes de abrir caja.</li><li>Si hay balanza, sincronizar artículos y precios antes de vender.</li><li>Realizar venta de prueba para validar ticket, stock y caja.</li></ol><div class="shot">Captura real pendiente: portada del sistema con sucursal activa.</div></section>
+    <section class="section"><h3>2) Productos, categorías y stock</h3><ol class="steps"><li>Dar de alta artículos con nombre comercial, unidad, categoría y PLU.</li><li>Normalizar categorías para evitar duplicados.</li><li>Usar ajustes con motivo para trazabilidad.</li><li>Confirmar precios vigentes antes de cambios masivos.</li></ol><div class="shot">Captura real pendiente: módulo Stock e Inventario.</div></section>
+    <section class="section"><h3>3) Compras y proveedores</h3><ol class="steps"><li>Registrar proveedor con datos fiscales y condiciones.</li><li>Cargar compra con cantidades y costos.</li><li>Validar comprobantes y comparar históricos.</li><li>Normalizar productos de compra.</li></ol><div class="shot">Captura real pendiente: módulo Compras (cabecera + ítems).</div></section>
+    <section class="section"><h3>4) Ventas, promociones y balanza</h3><ol class="steps"><li>Buscar por nombre, PLU o código de barra.</li><li>Aplicar promociones por kg según configuración.</li><li>Cobrar por medio simple o pago dividido.</li><li>Sincronizar PLU/precios de balanza y validar tickets.</li><li>Usar eliminación de ticket con control de seguridad.</li></ol><div class="shot">Captura real pendiente: pantalla de Ventas (carrito + cobro).</div><div class="shot">Captura real pendiente: integración de balanza (sync/config).</div></section>
+    <section class="section"><h3>5) Pedidos y clientes</h3><ol class="steps"><li>Registrar clientes con datos de contacto.</li><li>Tomar pedidos manuales o desde canal digital.</li><li>Asignar estado operativo.</li><li>Conservar historial para seguimiento.</li></ol><div class="shot">Captura real pendiente: módulo Pedidos.</div></section>
+    <section class="section"><h3>6) Caja y cierre diario</h3><ol class="steps"><li>Registrar apertura por medios y saldo inicial.</li><li>Cargar movimientos con categoría y comprobante.</li><li>Conciliar diferencias antes de cerrar.</li><li>Guardar cierre diario para auditoría.</li></ol><div class="shot">Captura real pendiente: cierre de caja (resumen por medios).</div></section>
+    <section class="section"><h3>7) Despostada y rendimiento</h3><ol class="steps"><li>Ingresar peso inicial por especie.</li><li>Distribuir en cortes resultantes.</li><li>Controlar merma y rendimiento final.</li><li>Impactar automáticamente en stock.</li></ol><div class="shot">Captura real pendiente: módulo Despostada.</div></section>
+    <section class="section"><h3>8) Sucursales y transferencias</h3><ol class="steps"><li>Verificar sucursal activa antes de operar.</li><li>Transferir stock con trazabilidad.</li><li>Evitar mezcla de datos entre sucursales.</li><li>Controlar recepción en destino.</li></ol><div class="shot">Captura real pendiente: módulo Sucursales/Transferencias.</div></section>
+    <section class="section"><h3>9) Logística y reparto (PRO)</h3><ol class="steps"><li>Asignar pedidos a repartidores.</li><li>Seguir estado de entregas.</li><li>Registrar incidencias.</li><li>Cerrar circuito con confirmación.</li></ol><div class="shot">Captura real pendiente: panel Logística.</div></section>
+    <section class="section"><h3>10) Seguridad y mantenimiento</h3><ol class="steps"><li>Administrar usuarios, roles y permisos.</li><li>Configurar PIN/código de autorización.</li><li>Realizar respaldos periódicos.</li><li>Mantener Bridge y app actualizados.</li></ol><div class="shot">Captura real pendiente: módulo Seguridad.</div></section>
+
+    <footer class="footer"><span>Def-Software · MeatManager</span><span>Soporte: soporte@def-software.com.ar</span></footer>
+  </main>
+</body>
+</html>

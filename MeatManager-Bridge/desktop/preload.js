@@ -1,4 +1,4 @@
-﻿const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('bridgeDesktop', {
     getStatus: () => ipcRenderer.invoke('status:get'),
@@ -6,17 +6,7 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
     checkUpdates: () => ipcRenderer.invoke('update:check'),
     installUpdateNow: () => ipcRenderer.invoke('update:install-now'),
     openLogDir: () => ipcRenderer.invoke('app:open-log-dir'),
-
-    getOnboarding: () => ipcRenderer.invoke('onboarding:get'),
-    onboardingLogin: (payload) => ipcRenderer.invoke('onboarding:login', payload),
-    onboardingClients: (payload) => ipcRenderer.invoke('onboarding:clients', payload),
-    onboardingBranches: (payload) => ipcRenderer.invoke('onboarding:branches', payload),
-    onboardingPorts: () => ipcRenderer.invoke('onboarding:ports'),
-    onboardingSave: (payload) => ipcRenderer.invoke('onboarding:save', payload),
-    getConfig: () => ipcRenderer.invoke('config:get'),
-    configPorts: () => ipcRenderer.invoke('config:ports'),
-    configSave: (payload) => ipcRenderer.invoke('config:save', payload),
-
+    getAppMeta: () => ipcRenderer.invoke('app:meta'),
     onStatus: (handler) => {
         const listener = (_, payload) => handler(payload);
         ipcRenderer.on('bridge-status', listener);
@@ -26,5 +16,18 @@ contextBridge.exposeInMainWorld('bridgeDesktop', {
         const listener = (_, payload) => handler(payload);
         ipcRenderer.on('update-event', listener);
         return () => ipcRenderer.removeListener('update-event', listener);
+    },
+    requestWindowFocus: () => ipcRenderer.invoke('window:focus'),
+    onboarding: {
+        status: () => ipcRenderer.invoke('onboarding:status'),
+        login: (payload) => ipcRenderer.invoke('onboarding:login', payload),
+        complete: (payload) => ipcRenderer.invoke('onboarding:complete', payload),
+        reset: () => ipcRenderer.invoke('onboarding:reset'),
+    },
+    scale: {
+        listPorts: () => ipcRenderer.invoke('scale:list-ports'),
+        saveConfig: (payload) => ipcRenderer.invoke('scale:save-config', payload),
+        test: () => ipcRenderer.invoke('scale:test'),
+        reset: () => ipcRenderer.invoke('scale:reset'),
     },
 });

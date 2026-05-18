@@ -4,12 +4,22 @@ const path = require('path');
 const LEVELS = ['debug', 'info', 'warn', 'error'];
 
 class Logger {
-    constructor({ logFile, level = 'info', truncateOnStart = false }) {
+    constructor({ logFile, level = 'info' }) {
         this.logFile = logFile;
         this.level = LEVELS.includes(level) ? level : 'info';
         fs.mkdirSync(path.dirname(logFile), { recursive: true });
-        if (truncateOnStart) {
-            fs.writeFileSync(this.logFile, '', 'utf8');
+        // Rotar al iniciar: bridge.log → bridge.log.prev, y empezar fresco.
+        // Asi el log no crece infinito y siempre podemos ver el run actual +
+        // el anterior (en .prev) para troubleshooting.
+        try {
+            if (fs.existsSync(logFile)) {
+                const prev = `${logFile}.prev`;
+                try { fs.unlinkSync(prev); } catch (_) { /* no previo */ }
+                try { fs.renameSync(logFile, prev); } catch (_) { /* sino lo truncamos */ }
+            }
+            fs.writeFileSync(logFile, '', 'utf8');
+        } catch (_) {
+            // Si no podemos rotar, seguimos appendeando. Mejor eso que crashear.
         }
     }
 

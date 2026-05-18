@@ -9,6 +9,7 @@ class CuoraClient {
         this.port = null;
         this.parser = null;
         this.pending = null;
+        this.sendQueue = Promise.resolve();
     }
 
     async open() {
@@ -65,43 +66,51 @@ class CuoraClient {
         }
     }
 
-    async send(fn, data = '', options = {}) {
-        const address = Number(options.address ?? this.config.address);
-        await this.open();
-        if (this.pending) throw new Error('Ya existe una solicitud pendiente en el puerto serie');
+    send(fn, data = '', options = {}) {
+        // Serializa los send concurrentes sobre el puerto serie: el ciclo general
+        // y el sales pulse pueden invocarlo en paralelo y la cola garantiza que
+        // ninguno tire "ya existe una solicitud pendiente".
+        const runner = async () => {
+            const address = Number(options.address ?? this.config.address);
+            await this.open();
 
-        const frame = encodeFrame(address, fn, data);
-        const responsePromise = new Promise((resolve, reject) => {
-            const timeout = setTimeout(() => {
-                if (this.pending) {
-                    this.pending = null;
-                    reject(new Error(`Timeout esperando respuesta de funcion ${fn}`));
-                }
-            }, options.timeoutMs || this.config.responseTimeoutMs);
+            const frame = encodeFrame(address, fn, data);
+            const responsePromise = new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => {
+                    if (this.pending) {
+                        this.pending = null;
+                        reject(new Error(`Timeout esperando respuesta de funcion ${fn}`));
+                    }
+                }, options.timeoutMs || this.config.responseTimeoutMs);
 
-            this.pending = {
-                buffer: Buffer.alloc(0),
-                resolve: (payload) => {
-                    clearTimeout(timeout);
-                    resolve(payload);
-                },
-                reject: (error) => {
-                    clearTimeout(timeout);
-                    reject(error);
-                },
-            };
-        });
+                this.pending = {
+                    buffer: Buffer.alloc(0),
+                    resolve: (payload) => {
+                        clearTimeout(timeout);
+                        resolve(payload);
+                    },
+                    reject: (error) => {
+                        clearTimeout(timeout);
+                        reject(error);
+                    },
+                };
+            });
 
-        await new Promise((resolve, reject) => {
-            this.port.write(frame, (error) => (error ? reject(error) : resolve()));
-        });
-        await new Promise((resolve, reject) => {
-            this.port.drain((error) => (error ? reject(error) : resolve()));
-        });
+            await new Promise((resolve, reject) => {
+                this.port.write(frame, (error) => (error ? reject(error) : resolve()));
+            });
+            await new Promise((resolve, reject) => {
+                this.port.drain((error) => (error ? reject(error) : resolve()));
+            });
 
-        const response = await responsePromise;
-        await new Promise((resolve) => setTimeout(resolve, this.config.interCommandDelayMs));
-        return response;
+            const response = await responsePromise;
+            await new Promise((resolve) => setTimeout(resolve, this.config.interCommandDelayMs));
+            return response;
+        };
+
+        const next = this.sendQueue.then(runner, runner);
+        this.sendQueue = next.catch(() => {});
+        return next;
     }
 
     static async listPorts() {

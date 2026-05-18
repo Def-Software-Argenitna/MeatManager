@@ -1,571 +1,526 @@
-﻿const processNodeEl = document.getElementById('bridge-process');
-const bridgeHttpEl = document.getElementById('bridge-http');
-const lastRunAtEl = document.getElementById('last-run-at');
-const lastErrorEl = document.getElementById('last-error');
-const devicesSummaryEl = document.getElementById('devices-summary');
-const eventEl = document.getElementById('event');
-const updatePillEl = document.getElementById('update-pill');
+// ── DOM cache ─────────────────────────────────────────────────────────────
+const views = {
+    onboardingHeader: document.getElementById('view-onboarding-header'),
+    login: document.getElementById('view-onboarding-login'),
+    branch: document.getElementById('view-onboarding-branch'),
+    scale: document.getElementById('view-onboarding-scale'),
+    success: document.getElementById('view-onboarding-success'),
+    statusHeader: document.getElementById('view-status-header'),
+    statusGrid: document.getElementById('view-status-grid'),
+    statusActions: document.getElementById('view-status-actions'),
+    statusConfig: document.getElementById('view-status-config'),
+};
 
-const statusCard = document.getElementById('status-card');
-const actionsCard = document.getElementById('actions-card');
-const onboardingCard = document.getElementById('onboarding-card');
-const configCard = document.getElementById('config-card');
+const stepperEls = {
+    1: document.getElementById('step-1'),
+    2: document.getElementById('step-2'),
+    3: document.getElementById('step-3'),
+};
 
-const btnRestart = document.getElementById('btn-restart');
-const btnCheckUpdates = document.getElementById('btn-check-updates');
-const btnInstallUpdate = document.getElementById('btn-install-update');
-const btnOpenLogs = document.getElementById('btn-open-logs');
-
-const obIdentifier = document.getElementById('ob-identifier');
-const obPassword = document.getElementById('ob-password');
-const obLogin = document.getElementById('ob-login');
-const obFeedbackEl = document.getElementById('ob-feedback');
-const obAfterLogin = document.getElementById('ob-after-login');
-const obClient = document.getElementById('ob-client');
-const obBranch = document.getElementById('ob-branch');
-const obModel = document.getElementById('ob-model');
-const obDetectPorts = document.getElementById('ob-detect-ports');
-const obAddScale = document.getElementById('ob-add-scale');
-const obDevices = document.getElementById('ob-devices');
-const obSave = document.getElementById('ob-save');
-const cfgDetectPorts = document.getElementById('cfg-detect-ports');
-const cfgAddScale = document.getElementById('cfg-add-scale');
-const cfgSave = document.getElementById('cfg-save');
-const cfgFeedbackEl = document.getElementById('cfg-feedback');
-const cfgDevicesEl = document.getElementById('cfg-devices');
-
-let onboardingRequired = false;
-let onboardingToken = '';
-let onboardingAuthMode = 'tenant-admin';
-let onboardingAdmin = null;
-let onboardingClients = [];
-let onboardingBranches = [];
-let onboardingPorts = [];
-let onboardingDevices = [];
-let supportedModels = ['Systel Cuora Max'];
-let onboardingBusy = false;
-let configPorts = [];
-let configDevices = [];
-
-function setOnboardingFeedback(message, tone = 'info') {
-    if (!obFeedbackEl) return;
-    obFeedbackEl.textContent = message || '';
-    if (tone === 'ok') {
-        obFeedbackEl.style.color = '#22c55e';
+// ── Helpers ───────────────────────────────────────────────────────────────
+function show(node) { if (node) node.classList.remove('hidden'); }
+function hide(node) { if (node) node.classList.add('hidden'); }
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text == null ? '' : String(text);
+}
+function showAlert(id, message, kind = 'err') {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (!message) {
+        el.classList.add('hidden');
+        el.textContent = '';
         return;
     }
-    if (tone === 'error') {
-        obFeedbackEl.style.color = '#ef4444';
+    el.classList.remove('hidden');
+    el.textContent = message;
+    el.classList.remove('ok', 'warn');
+    if (kind === 'ok') el.classList.add('ok');
+    if (kind === 'warn') el.classList.add('warn');
+}
+function setStepper(activeStep) {
+    [1, 2, 3].forEach((step) => {
+        const el = stepperEls[step];
+        if (!el) return;
+        el.classList.remove('active', 'done');
+        if (step < activeStep) el.classList.add('done');
+        if (step === activeStep) el.classList.add('active');
+    });
+}
+function setBtnLoading(button, label, isLoading) {
+    if (!button) return;
+    if (isLoading) {
+        if (!button.dataset.originalLabel) button.dataset.originalLabel = button.innerHTML;
+        button.innerHTML = `<span class="btn-spinner"></span>${label || 'Procesando...'}`;
+        button.disabled = true;
+    } else {
+        if (button.dataset.originalLabel) {
+            button.innerHTML = button.dataset.originalLabel;
+            delete button.dataset.originalLabel;
+        }
+        button.disabled = false;
+    }
+}
+function formatRelative(value) {
+    if (!value) return null;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return null;
+    const deltaMs = Date.now() - date.getTime();
+    if (deltaMs < 0) return 'recién';
+    if (deltaMs < 5_000) return 'recién';
+    if (deltaMs < 60_000) return `hace ${Math.round(deltaMs / 1000)} seg`;
+    if (deltaMs < 3_600_000) return `hace ${Math.round(deltaMs / 60_000)} min`;
+    if (deltaMs < 86_400_000) return `hace ${Math.round(deltaMs / 3_600_000)} h`;
+    return date.toLocaleString('es-AR');
+}
+function formatDateTime(value) {
+    if (!value) return '-';
+    try { return new Date(value).toLocaleString('es-AR'); } catch { return String(value); }
+}
+
+// ── Onboarding state ──────────────────────────────────────────────────────
+let pendingSession = null;
+let cachedBaseUrl = '';
+
+function showOnboardingLogin(defaultBaseUrl) {
+    setStepper(1);
+    show(views.onboardingHeader);
+    show(views.login);
+    hide(views.branch);
+    hide(views.scale);
+    hide(views.success);
+    hide(views.statusHeader);
+    hide(views.statusGrid);
+    hide(views.statusActions);
+    hide(views.statusConfig);
+    const baseInput = document.getElementById('login-base-url');
+    if (baseInput && !baseInput.value) baseInput.value = defaultBaseUrl || '';
+}
+
+function showOnboardingBranch({ branches, clientName, taxId }) {
+    setStepper(2);
+    show(views.onboardingHeader);
+    hide(views.login);
+    show(views.branch);
+    hide(views.scale);
+    hide(views.success);
+    setText('onboarding-client-name',
+        clientName ? `Cliente: ${clientName}${taxId ? ` · CUIT ${taxId}` : ''}` : '');
+    const select = document.getElementById('branch-select');
+    select.innerHTML = '';
+    for (const branch of branches || []) {
+        const option = document.createElement('option');
+        option.value = String(branch.id);
+        option.textContent = `${branch.name}${branch.internalCode ? ` (${branch.internalCode})` : ''}`;
+        select.appendChild(option);
+    }
+}
+
+async function showOnboardingScale() {
+    setStepper(3);
+    show(views.onboardingHeader);
+    hide(views.login);
+    hide(views.branch);
+    show(views.scale);
+    hide(views.success);
+    await refreshScalePorts();
+}
+
+async function refreshScalePorts() {
+    const select = document.getElementById('scale-port');
+    const help = document.getElementById('scale-ports-help');
+    select.innerHTML = '<option value="">Detectando puertos...</option>';
+    select.disabled = true;
+    const { ports } = await window.bridgeDesktop.scale.listPorts();
+    select.innerHTML = '';
+    if (!Array.isArray(ports) || ports.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'No detectamos puertos COM disponibles';
+        select.appendChild(opt);
+        help.textContent = 'Conectá la balanza por USB y tocá "Refrescar". Si igual no aparece, podés saltar y configurar el puerto manualmente después.';
+        select.disabled = false;
         return;
     }
-    obFeedbackEl.style.color = '#9fb0d1';
+    for (const port of ports) {
+        const opt = document.createElement('option');
+        opt.value = port.path;
+        const friendly = port.friendlyName || port.manufacturer || '';
+        opt.textContent = friendly ? `${port.path} — ${friendly}` : port.path;
+        select.appendChild(opt);
+    }
+    select.disabled = false;
+    help.textContent = `Detectamos ${ports.length} puerto${ports.length === 1 ? '' : 's'}. Elegí el que corresponde a la balanza.`;
+}
+
+function showOnboardingSuccess(installation) {
+    hide(views.login);
+    hide(views.branch);
+    hide(views.scale);
+    show(views.onboardingHeader);
+    show(views.success);
+    setText('onboarding-success-msg',
+        `Listo. Cliente: ${installation.clientName || '-'} / Sucursal: ${installation.branchName || '-'}. Arrancando el bridge...`);
+    setTimeout(() => showStatusView(installation), 1400);
+}
+
+async function showStatusView(installation) {
+    hide(views.onboardingHeader);
+    hide(views.login);
+    hide(views.branch);
+    hide(views.scale);
+    hide(views.success);
+    show(views.statusHeader);
+    show(views.statusGrid);
+    show(views.statusActions);
+    show(views.statusConfig);
+
+    if (installation) {
+        setText('status-tenant-line',
+            `${installation.clientName || 'Cliente'} · ${installation.branchName || 'Sucursal'}`);
+        setText('cfg-client', installation.clientName || '-');
+        const branchLabel = installation.branchName + (installation.branchInternalCode ? ` (${installation.branchInternalCode})` : '');
+        setText('cfg-branch', branchLabel);
+        setText('cfg-device-id', installation.deviceId || '-');
+        setText('cfg-api-url', installation.apiBaseUrl || '-');
+        setText('cfg-tax-id', installation.taxId || '-');
+        setText('cfg-onboarded-at', formatDateTime(installation.onboardedAt));
+    }
+
+    const meta = await window.bridgeDesktop.getAppMeta();
+    if (meta?.appVersion) {
+        setText('status-app-version', `v${meta.appVersion}`);
+        setText('footer-meta', `MeatManager Bridge v${meta.appVersion} · ${meta.platform || ''}`);
+    }
+}
+
+// ── Form handlers ─────────────────────────────────────────────────────────
+document.getElementById('login-password-toggle').addEventListener('click', () => {
+    const input = document.getElementById('login-password');
+    const btn = document.getElementById('login-password-toggle');
+    if (input.type === 'password') {
+        input.type = 'text';
+        btn.textContent = 'Ocultar';
+    } else {
+        input.type = 'password';
+        btn.textContent = 'Mostrar';
+    }
+});
+
+function mapLoginError(message, status) {
+    if (!message) return 'No se pudo iniciar sesión';
+    const lower = String(message).toLowerCase();
+    if (lower.includes('contraseña') || lower.includes('email o')) return 'Email o contraseña inválidos. Verificá las credenciales.';
+    if (lower.includes('admin')) return 'Esa cuenta no es administrador del cliente. Pedí al admin que te dé acceso.';
+    if (lower.includes('cliente') && lower.includes('no')) return 'El email no está vinculado a ningún cliente en MeatManager.';
+    if (lower.includes('sucursales activas')) return 'El cliente no tiene sucursales activas. Pedí que activen una desde MeatManager.';
+    if (lower.includes('firebase')) return 'No pudimos contactar al servidor de autenticación. Verificá tu conexión.';
+    if (status === 502 || status === 503) return 'El servidor no está disponible en este momento. Volvé a probar en un rato.';
+    return message;
+}
+
+document.getElementById('login-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    showAlert('login-error', '');
+    const baseUrl = document.getElementById('login-base-url').value.trim();
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+    if (!email || !password) {
+        showAlert('login-error', 'Completá email y contraseña.');
+        return;
+    }
+    const submit = document.getElementById('login-submit');
+    setBtnLoading(submit, 'Verificando...', true);
+    try {
+        const result = await window.bridgeDesktop.onboarding.login({ baseUrl, email, password });
+        if (!result?.ok) {
+            showAlert('login-error', mapLoginError(result?.error, result?.status));
+            return;
+        }
+        pendingSession = {
+            sessionToken: result.sessionToken,
+            clientId: result.clientId,
+            clientName: result.clientName,
+            taxId: result.taxId,
+        };
+        cachedBaseUrl = baseUrl;
+        showOnboardingBranch({
+            branches: result.branches || [],
+            clientName: result.clientName,
+            taxId: result.taxId,
+        });
+    } catch (error) {
+        showAlert('login-error', error?.message || 'Error inesperado');
+    } finally {
+        setBtnLoading(submit, '', false);
+    }
+});
+
+document.getElementById('branch-back').addEventListener('click', () => {
+    pendingSession = null;
+    showOnboardingLogin(cachedBaseUrl);
+});
+
+document.getElementById('branch-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    showAlert('branch-error', '');
+    if (!pendingSession) {
+        showAlert('branch-error', 'La sesión expiró. Iniciá sesión de nuevo.');
+        showOnboardingLogin(cachedBaseUrl);
+        return;
+    }
+    const branchId = Number(document.getElementById('branch-select').value);
+    const submit = document.getElementById('branch-submit');
+    setBtnLoading(submit, 'Confirmando...', true);
+    try {
+        const result = await window.bridgeDesktop.onboarding.complete({
+            baseUrl: cachedBaseUrl,
+            sessionToken: pendingSession.sessionToken,
+            branchId,
+        });
+        if (!result?.ok) {
+            showAlert('branch-error', result?.error || 'No se pudo completar el onboarding');
+            return;
+        }
+        pendingSession = { ...pendingSession, installation: result };
+        await showOnboardingScale();
+    } catch (error) {
+        showAlert('branch-error', error?.message || 'Error inesperado');
+    } finally {
+        setBtnLoading(submit, '', false);
+    }
+});
+
+document.getElementById('scale-refresh-ports').addEventListener('click', refreshScalePorts);
+
+async function finalizeOnboarding({ withScaleConfig }) {
+    const submit = document.getElementById('scale-submit');
+    const skip = document.getElementById('scale-skip');
+    showAlert('scale-error', '');
+    if (withScaleConfig) {
+        const port = document.getElementById('scale-port').value;
+        const address = Number(document.getElementById('scale-address').value);
+        if (!port) {
+            showAlert('scale-error', 'Elegí un puerto COM o tocá "Saltar y configurar después".');
+            return;
+        }
+        if (!Number.isFinite(address) || address < 1 || address > 99) {
+            showAlert('scale-error', 'Dirección de balanza inválida (debe ser entre 1 y 99).');
+            return;
+        }
+        setBtnLoading(submit, 'Guardando...', true);
+        const saved = await window.bridgeDesktop.scale.saveConfig({ port, address });
+        setBtnLoading(submit, '', false);
+        if (!saved?.ok) {
+            showAlert('scale-error', saved?.error || 'No se pudo guardar la configuración de la balanza');
+            return;
+        }
+    } else {
+        setBtnLoading(skip, 'Saltando...', true);
+    }
+    showOnboardingSuccess(pendingSession?.installation || {});
+    setBtnLoading(skip, '', false);
+}
+
+document.getElementById('scale-form').addEventListener('submit', (event) => {
+    event.preventDefault();
+    finalizeOnboarding({ withScaleConfig: true });
+});
+
+document.getElementById('scale-skip').addEventListener('click', () => {
+    finalizeOnboarding({ withScaleConfig: false });
+});
+
+// ── Status rendering ──────────────────────────────────────────────────────
+function setHealthBadge(level, text) {
+    const badge = document.getElementById('health-badge');
+    if (!badge) return;
+    badge.classList.remove('ok', 'warn', 'bad');
+    badge.classList.add(level);
+    setText('health-text', text);
+}
+
+function setTile(id, level, valueText, tinyText = '') {
+    const tile = document.getElementById(`tile-${id}`);
+    if (!tile) return;
+    tile.classList.remove('ok', 'warn', 'bad');
+    tile.classList.add(level);
+    if (id === 'process') {
+        setText('bridge-process', valueText);
+        setText('bridge-process-tiny', tinyText);
+    } else if (id === 'api') {
+        setText('bridge-http', valueText);
+        setText('bridge-http-tiny', tinyText);
+    } else if (id === 'scale') {
+        setText('scale-status', valueText);
+        setText('scale-status-tiny', tinyText);
+    } else if (id === 'error') {
+        setText('last-error', valueText);
+        setText('last-run-at', tinyText);
+    }
 }
 
 function setUpdatePill(status, message) {
+    const updatePillEl = document.getElementById('update-pill');
+    if (!updatePillEl) return;
+    let html = '';
     if (status === 'available' || status === 'downloaded') {
-        updatePillEl.innerHTML = '<span class="dot warn"></span><span>Actualizacion disponible</span>';
+        html = '<span class="dot warn"></span><span>Actualización disponible</span>';
+        document.getElementById('btn-install-update').classList.remove('hidden');
     } else if (status === 'error') {
-        updatePillEl.innerHTML = '<span class="dot bad"></span><span>Error de actualizacion</span>';
+        html = '<span class="dot bad"></span><span>Error de actualización</span>';
     } else {
-        updatePillEl.innerHTML = '<span class="dot ok"></span><span>Sin novedades</span>';
+        html = '<span class="dot ok"></span><span>Sin novedades</span>';
     }
-    if (message) eventEl.textContent = message;
-}
-
-function setConfigFeedback(message, tone = 'info') {
-    if (!cfgFeedbackEl) return;
-    cfgFeedbackEl.textContent = message || '';
-    if (tone === 'ok') {
-        cfgFeedbackEl.style.color = '#22c55e';
-        return;
-    }
-    if (tone === 'error') {
-        cfgFeedbackEl.style.color = '#ef4444';
-        return;
-    }
-    cfgFeedbackEl.style.color = '#9fb0d1';
-}
-
-function formatDate(value) {
-    if (!value) return '-';
-    try {
-        return new Date(value).toLocaleString('es-AR');
-    } catch {
-        return value;
-    }
-}
-
-function setOnboardingMode(enabled) {
-    onboardingRequired = enabled;
-    onboardingCard.classList.toggle('hidden', !enabled);
-    actionsCard.classList.toggle('hidden', enabled);
-    configCard.classList.toggle('hidden', enabled);
-    if (!enabled) {
-        setOnboardingFeedback('');
-        loadRuntimeConfig().catch(() => {});
-    }
+    updatePillEl.innerHTML = html;
+    const eventEl = document.getElementById('event');
+    if (message && eventEl) eventEl.textContent = message;
 }
 
 function renderStatus(status) {
     const procRunning = status?.bridgeProcess?.running === true;
-    const runningCount = Number(status?.bridgeProcess?.runningCount || 0);
-    const total = Number(status?.bridgeProcess?.total || 0);
-
-    if (procRunning && total > 1) {
-        processNodeEl.textContent = `Activo (${runningCount}/${total} balanzas)`;
-    } else {
-        const procPid = status?.bridgeProcess?.pid ? ` (PID ${status.bridgeProcess.pid})` : '';
-        processNodeEl.textContent = procRunning ? `Activo${procPid}` : 'Detenido';
-    }
+    const procPid = status?.bridgeProcess?.pid ? `PID ${status.bridgeProcess.pid}` : '';
+    setTile('process',
+        procRunning ? 'ok' : 'bad',
+        procRunning ? 'Activo' : 'Detenido',
+        procPid);
 
     const apiReachable = status?.bridgeHttp?.reachable === true;
-    bridgeHttpEl.textContent = apiReachable ? 'Conectada' : 'Sin conexion';
-    bridgeHttpEl.style.color = apiReachable ? '#22c55e' : '#ef4444';
+    const fetchError = status?.bridgeHttp?.fetchError;
+    setTile('api',
+        apiReachable ? 'ok' : 'warn',
+        apiReachable ? 'Conectada' : 'Sin conexión',
+        apiReachable ? '' : (fetchError || 'El proceso del bridge no responde en el puerto local.'));
 
-    lastRunAtEl.textContent = formatDate(status?.bridgeHttp?.lastRunAt || status?.updatedAt);
-    lastErrorEl.textContent = status?.bridgeHttp?.lastError || status?.bridgeHttp?.lastRunStatus || 'Sin errores';
-
-    const devices = Array.isArray(status?.devices) ? status.devices : [];
-    devicesSummaryEl.textContent = devices.length
-        ? devices.map((d) => `${d.name} (${d.port}) ${d.reachable ? 'OK' : 'Sin respuesta'}`).join(' | ')
-        : '';
-
-    setOnboardingMode(status?.onboardingRequired === true);
-}
-
-function clearSelect(selectEl, placeholder) {
-    selectEl.innerHTML = '';
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = placeholder;
-    selectEl.appendChild(opt);
-}
-
-function fillClientSelect(clients) {
-    clearSelect(obClient, 'Seleccionar cliente...');
-    clients.forEach((client) => {
-        const opt = document.createElement('option');
-        opt.value = String(client.id);
-        opt.textContent = client.businessName || `Cliente ${client.id}`;
-        obClient.appendChild(opt);
-    });
-}
-
-function fillBranchSelect(branches) {
-    clearSelect(obBranch, 'Seleccionar sucursal...');
-    branches.forEach((branch) => {
-        const opt = document.createElement('option');
-        opt.value = String(branch.id);
-        opt.textContent = branch.name || `Sucursal ${branch.id}`;
-        obBranch.appendChild(opt);
-    });
-}
-
-function fillModelSelect(models) {
-    clearSelect(obModel, 'Seleccionar modelo...');
-    models.forEach((model) => {
-        const opt = document.createElement('option');
-        opt.value = model;
-        opt.textContent = model;
-        obModel.appendChild(opt);
-    });
-    if (models.length) obModel.value = models[0];
-}
-
-function portsOptionsHtml(selected) {
-    const options = ['<option value="">Seleccionar puerto...</option>'];
-    onboardingPorts.forEach((port) => {
-        const value = String(port.path || '').trim();
-        if (!value) return;
-        options.push(`<option value="${value}" ${selected === value ? 'selected' : ''}>${value}</option>`);
-    });
-    return options.join('');
-}
-
-function portsOptionsHtmlFrom(ports, selected) {
-    const options = ['<option value="">Seleccionar puerto...</option>'];
-    (ports || []).forEach((port) => {
-        const value = String(port.path || '').trim();
-        if (!value) return;
-        options.push(`<option value="${value}" ${selected === value ? 'selected' : ''}>${value}</option>`);
-    });
-    return options.join('');
-}
-
-function pickNextAvailablePort(ports, used = []) {
-    const usedSet = new Set((used || []).filter(Boolean));
-    return (ports || []).map((port) => String(port.path || '').trim()).find((p) => p && !usedSet.has(p)) || '';
-}
-
-function autofillDevicePorts(devices, ports) {
-    const next = Array.isArray(devices) ? devices.map((d) => ({ ...d })) : [];
-    const used = next.map((d) => String(d.port || '').trim()).filter(Boolean);
-    next.forEach((device) => {
-        if (String(device.port || '').trim()) return;
-        const candidate = pickNextAvailablePort(ports, used);
-        if (candidate) {
-            device.port = candidate;
-            used.push(candidate);
-        }
-    });
-    return next;
-}
-
-function renderOnboardingDevices() {
-    obDevices.innerHTML = '';
-    onboardingDevices.forEach((device, index) => {
-        const row = document.createElement('div');
-        row.className = 'device-row';
-        row.innerHTML = `
-            <div class="device-head">
-              <strong>Balanza ${index + 1}</strong>
-              <button data-remove="${index}" class="danger">Quitar</button>
-            </div>
-            <div class="device-grid">
-              <div class="field"><label>Nombre</label><input data-field="name" data-index="${index}" value="${device.name}" /></div>
-              <div class="field"><label>Modelo</label><input data-field="model" data-index="${index}" value="${device.model}" readonly /></div>
-              <div class="field"><label>Puerto COM</label><select data-field="port" data-index="${index}">${portsOptionsHtml(device.port)}</select></div>
-              <div class="field"><label>Direccion balanza</label><input data-field="address" data-index="${index}" value="${device.address}" /></div>
-            </div>
-        `;
-        obDevices.appendChild(row);
-    });
-
-    obDevices.querySelectorAll('button[data-remove]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const idx = Number(btn.getAttribute('data-remove'));
-            onboardingDevices = onboardingDevices.filter((_, i) => i !== idx);
-            renderOnboardingDevices();
-        });
-    });
-
-    obDevices.querySelectorAll('[data-field]').forEach((input) => {
-        input.addEventListener('change', () => {
-            const idx = Number(input.getAttribute('data-index'));
-            const field = input.getAttribute('data-field');
-            if (!onboardingDevices[idx]) return;
-            onboardingDevices[idx][field] = String(input.value || '').trim();
-        });
-    });
-}
-
-async function detectPorts() {
-    const result = await window.bridgeDesktop.onboardingPorts();
-    if (!result?.ok) {
-        setOnboardingFeedback(result?.error || 'No se pudieron leer puertos', 'error');
-        return;
-    }
-    onboardingPorts = Array.isArray(result.ports) ? result.ports : [];
-    onboardingDevices = autofillDevicePorts(onboardingDevices, onboardingPorts);
-    if (!onboardingDevices.length && onboardingPorts.length > 0) {
-        onboardingDevices.push({
-            id: `scale-${Date.now()}-1`,
-            name: 'Balanza 1',
-            model: obModel.value || supportedModels[0] || 'Systel Cuora Max',
-            port: onboardingPorts[0].path,
-            address: '20',
-            baudRate: '115200',
-            enabled: true,
-        });
-    }
-    renderOnboardingDevices();
-    setOnboardingFeedback(onboardingPorts.length
-        ? `Puertos detectados/autocompletados: ${onboardingPorts.map((p) => p.path).join(', ')}`
-        : 'No se detectaron puertos COM.');
-}
-
-async function loadOnboardingInitialState() {
-    const payload = await window.bridgeDesktop.getOnboarding();
-    supportedModels = Array.isArray(payload?.supportedModels) && payload.supportedModels.length
-        ? payload.supportedModels
-        : ['Systel Cuora Max'];
-    fillModelSelect(supportedModels);
-    if (!payload?.defaultApiBaseUrl) {
-        setOnboardingFeedback('No se detecto URL API del sistema. Contacta soporte.', 'error');
+    const scaleReachable = status?.bridgeHttp?.scaleReachable !== false;
+    if (!apiReachable) {
+        setTile('scale', 'warn', 'Pendiente', 'Esperando bridge');
+    } else if (scaleReachable) {
+        setTile('scale', 'ok', 'Conectada', 'Respondiendo al protocolo CUORA');
+    } else {
+        setTile('scale', 'warn', 'No responde', 'Verificá que esté encendida y conectada por USB');
     }
 
-    if (payload?.required) {
-        setOnboardingMode(true);
-        obAfterLogin.classList.add('hidden');
-        await detectPorts();
+    const lastError = status?.bridgeHttp?.lastError;
+    const lastRunStatus = status?.bridgeHttp?.lastRunStatus;
+    const lastRunMessage = status?.bridgeHttp?.lastRunMessage;
+    const lastRunAt = status?.bridgeHttp?.lastRunAt;
+    if (lastError && lastError !== 'Bridge HTTP no disponible') {
+        setTile('error', 'bad', lastError, formatDateTime(lastRunAt));
+    } else if (lastRunStatus === 'ok' && lastRunMessage) {
+        const level = scaleReachable ? 'ok' : 'warn';
+        setTile('error', level, lastRunMessage, formatRelative(lastRunAt) || formatDateTime(lastRunAt));
+    } else if (lastRunStatus === 'ok') {
+        setTile('error', 'ok', 'Sincronizando OK', formatRelative(lastRunAt) || formatDateTime(lastRunAt));
+    } else {
+        setTile('error', 'warn', 'Esperando primer ciclo', formatDateTime(lastRunAt) || '-');
+    }
+
+    if (!procRunning) setHealthBadge('bad', 'Bridge detenido');
+    else if (!apiReachable) setHealthBadge('warn', 'Bridge arrancando');
+    else if (lastError && lastError !== 'Bridge HTTP no disponible') setHealthBadge('warn', 'Sincronización con incidencias');
+    else if (!scaleReachable) setHealthBadge('warn', 'Balanza desconectada');
+    else if (lastRunStatus === 'ok') setHealthBadge('ok', 'Todo en orden');
+    else setHealthBadge('warn', 'Verificando...');
+
+    const lastSyncText = lastRunAt ? formatRelative(lastRunAt) : 'Sin sincronizaciones aún';
+    setText('last-sync-text', `Última sync: ${lastSyncText}`);
+    const lastSyncPill = document.getElementById('last-sync-pill');
+    const dot = lastSyncPill?.querySelector('.dot');
+    if (dot) {
+        dot.classList.remove('ok', 'warn', 'bad');
+        dot.classList.add(lastRunStatus === 'ok' ? 'ok' : (lastRunAt ? 'warn' : 'bad'));
     }
 }
 
-btnRestart.addEventListener('click', async () => {
+// ── Status actions ────────────────────────────────────────────────────────
+document.getElementById('btn-restart').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-restart');
+    setBtnLoading(btn, 'Reiniciando...', true);
     await window.bridgeDesktop.restartBridge();
-    eventEl.textContent = 'Bridge reiniciado.';
+    setBtnLoading(btn, '', false);
+    document.getElementById('event').textContent = 'Bridge reiniciado.';
 });
 
-btnCheckUpdates.addEventListener('click', async () => {
+document.getElementById('btn-test-scale').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-test-scale');
+    setBtnLoading(btn, 'Pingueando...', true);
+    const result = await window.bridgeDesktop.scale.test();
+    setBtnLoading(btn, '', false);
+    const ev = document.getElementById('event');
+    if (result?.ok) {
+        ev.textContent = `✓ Balanza responde (fn ${result.fn || '-'}, status ${result.status || '-'}).`;
+    } else {
+        ev.textContent = `✗ No se pudo pinguear la balanza: ${result?.error || 'sin detalles'}`;
+    }
+});
+
+document.getElementById('btn-check-updates').addEventListener('click', async () => {
     await window.bridgeDesktop.checkUpdates();
-    eventEl.textContent = 'Buscando actualizaciones...';
+    document.getElementById('event').textContent = 'Buscando actualizaciones...';
 });
 
-btnInstallUpdate.addEventListener('click', async () => {
-    eventEl.textContent = 'Aplicando actualizacion y reiniciando...';
+document.getElementById('btn-install-update').addEventListener('click', async () => {
+    document.getElementById('event').textContent = 'Aplicando actualización y reiniciando...';
     await window.bridgeDesktop.installUpdateNow();
 });
 
-btnOpenLogs.addEventListener('click', async () => {
+document.getElementById('btn-open-logs').addEventListener('click', async () => {
     await window.bridgeDesktop.openLogDir();
 });
 
-obLogin.addEventListener('click', async () => {
-    if (onboardingBusy) return;
-    onboardingBusy = true;
-    obLogin.disabled = true;
-    setOnboardingFeedback('Validando credenciales de admin...');
-    const payload = {
-        identifier: obIdentifier.value,
-        password: obPassword.value,
-    };
+document.getElementById('btn-reset-scale').addEventListener('click', async () => {
+    const btn = document.getElementById('btn-reset-scale');
+    const ev = document.getElementById('event');
+    setBtnLoading(btn, 'Reseteando balanza...', true);
+    ev.textContent = 'Reseteando balanza. Esto puede tardar varios minutos, no cierres la app.';
     try {
-        const login = await window.bridgeDesktop.onboardingLogin(payload);
-        if (!login?.ok) {
-            setOnboardingFeedback(login?.error || 'No se pudo iniciar sesion', 'error');
-            return;
+        const result = await window.bridgeDesktop.scale.reset();
+        if (result?.cancelled) {
+            ev.textContent = 'Reset cancelado.';
+        } else if (result?.ok) {
+            ev.textContent = `✓ Reset completo. ${result.deletedOk || 0} slots borrados, ${result.failed || 0} fallos. Tomó ${Math.round((result.elapsedMs || 0) / 1000)}s. El próximo ciclo re-sincroniza todo desde MeatManager.`;
+        } else {
+            ev.textContent = `✗ Reset falló: ${result?.error || 'sin detalles'}`;
         }
-        onboardingToken = login.token;
-        onboardingAuthMode = String(login?.authMode || 'tenant-admin').trim().toLowerCase();
-        onboardingAdmin = login.admin || null;
-
-        const clients = await window.bridgeDesktop.onboardingClients({
-            token: onboardingToken,
-            authMode: onboardingAuthMode,
-        });
-        if (!clients?.ok) {
-            setOnboardingFeedback(clients?.error || 'No se pudieron leer clientes', 'error');
-            return;
-        }
-
-        onboardingClients = Array.isArray(clients.clients) ? clients.clients : [];
-        fillClientSelect(onboardingClients);
-        obAfterLogin.classList.remove('hidden');
-        const modeLabel = onboardingAuthMode === 'internal-admin' ? 'SuperAdmin' : 'Admin tenant';
-        setOnboardingFeedback(`Sesion iniciada como ${login?.admin?.email || 'admin'} (${modeLabel}).`, 'ok');
     } catch (error) {
-        setOnboardingFeedback(error?.message || 'No se pudo iniciar sesion', 'error');
+        ev.textContent = `✗ Error en reset: ${error.message}`;
     } finally {
-        onboardingBusy = false;
-        obLogin.disabled = false;
+        setBtnLoading(btn, '', false);
     }
 });
 
-obClient.addEventListener('change', async () => {
-    const clientId = Number(obClient.value || 0);
-    if (!clientId) {
-        fillBranchSelect([]);
-        return;
-    }
-
-    const branches = await window.bridgeDesktop.onboardingBranches({
-        token: onboardingToken,
-        authMode: onboardingAuthMode,
-        clientId,
-    });
-    if (!branches?.ok) {
-        setOnboardingFeedback(branches?.error || 'No se pudieron leer sucursales', 'error');
-        fillBranchSelect([]);
-        return;
-    }
-    onboardingBranches = Array.isArray(branches.branches) ? branches.branches : [];
-    fillBranchSelect(onboardingBranches);
-    setOnboardingFeedback(`Sucursales cargadas: ${onboardingBranches.length}.`);
+document.getElementById('btn-reset-install').addEventListener('click', async () => {
+    // El handler IPC abre un dialog nativo y devuelve cancelled:true si el
+    // usuario no confirma. Asi evitamos confirm() del renderer (que rompia
+    // el foco de los inputs del wizard despues de cerrar).
+    const result = await window.bridgeDesktop.onboarding.reset();
+    if (result?.cancelled) return;
+    if (!result?.ok) return;
+    pendingSession = null;
+    cachedBaseUrl = '';
+    const onboardingState = await window.bridgeDesktop.onboarding.status();
+    showOnboardingLogin(onboardingState.defaultBaseUrl);
+    await window.bridgeDesktop.requestWindowFocus();
+    setTimeout(() => {
+        const emailInput = document.getElementById('login-email');
+        if (emailInput) emailInput.focus();
+    }, 50);
 });
 
-obDetectPorts.addEventListener('click', detectPorts);
-
-obAddScale.addEventListener('click', () => {
-    const used = onboardingDevices.map((d) => String(d.port || '').trim()).filter(Boolean);
-    onboardingDevices.push({
-        id: `scale-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        name: `Balanza ${onboardingDevices.length + 1}`,
-        model: obModel.value || supportedModels[0] || 'Systel Cuora Max',
-        port: pickNextAvailablePort(onboardingPorts, used) || '',
-        address: '20',
-        baudRate: '115200',
-        enabled: true,
-    });
-    renderOnboardingDevices();
-});
-
-obSave.addEventListener('click', async () => {
-    const clientId = Number(obClient.value || 0);
-    const branchId = Number(obBranch.value || 0);
-    if (!clientId || !branchId) {
-        setOnboardingFeedback('Selecciona cliente y sucursal.', 'error');
-        return;
-    }
-    if (!onboardingDevices.length) {
-        setOnboardingFeedback('Agrega al menos una balanza.', 'error');
-        return;
-    }
-    const invalidPort = onboardingDevices.find((device) => !String(device.port || '').trim());
-    if (invalidPort) {
-        setOnboardingFeedback(`Falta puerto COM en ${invalidPort.name}.`, 'error');
-        return;
-    }
-
-    const uniquePorts = new Set(onboardingDevices.map((device) => device.port));
-    if (uniquePorts.size !== onboardingDevices.length) {
-        setOnboardingFeedback('No se puede repetir el mismo puerto COM en dos balanzas.', 'error');
-        return;
-    }
-
-    const client = onboardingClients.find((row) => Number(row.id) === clientId);
-    const branch = onboardingBranches.find((row) => Number(row.id) === branchId);
-
-    const save = await window.bridgeDesktop.onboardingSave({
-        auth: {
-            mode: onboardingAuthMode,
-            adminEmail: onboardingAdmin?.email || '',
-            adminName: [onboardingAdmin?.name, onboardingAdmin?.lastname].filter(Boolean).join(' ').trim(),
-        },
-        client: { id: clientId, name: client?.businessName || `Cliente ${clientId}` },
-        branch: { id: branchId, name: branch?.name || `Sucursal ${branchId}` },
-        devices: onboardingDevices.map((device, index) => ({
-            id: device.id || `scale-${index + 1}`,
-            name: device.name || `Balanza ${index + 1}`,
-            model: device.model || 'Systel Cuora Max',
-            port: device.port,
-            address: device.address || '20',
-            baudRate: device.baudRate || '115200',
-            enabled: true,
-        })),
-    });
-
-    if (!save?.ok) {
-        setOnboardingFeedback(save?.error || 'No se pudo guardar configuracion', 'error');
-        return;
-    }
-
-    setOnboardingFeedback('Vinculacion guardada. Iniciando sincronizacion...', 'ok');
-    eventEl.textContent = 'Vinculacion guardada. Iniciando sincronizacion...';
-    setOnboardingMode(false);
-});
-
+// ── Bootstrap ─────────────────────────────────────────────────────────────
 window.bridgeDesktop.onStatus(renderStatus);
 window.bridgeDesktop.onUpdateEvent((payload) => {
     setUpdatePill(payload?.status, payload?.message);
 });
 
-function renderConfigDevices() {
-    cfgDevicesEl.innerHTML = '';
-    configDevices.forEach((device, index) => {
-        const row = document.createElement('div');
-        row.className = 'device-row';
-        row.innerHTML = `
-            <div class="device-head">
-              <strong>${device.name || `Balanza ${index + 1}`}</strong>
-              <button data-cfg-remove="${index}" class="danger">Quitar</button>
-            </div>
-            <div class="device-grid">
-              <div class="field"><label>Nombre</label><input data-cfg-field="name" data-cfg-index="${index}" value="${device.name || ''}" /></div>
-              <div class="field"><label>Modelo</label><input value="${device.model || 'Systel Cuora Max'}" readonly /></div>
-              <div class="field"><label>Puerto COM</label><select data-cfg-field="port" data-cfg-index="${index}">${portsOptionsHtmlFrom(configPorts, device.port)}</select></div>
-              <div class="field"><label>Direccion balanza</label><input data-cfg-field="address" data-cfg-index="${index}" value="${device.address || '20'}" /></div>
-            </div>
-        `;
-        cfgDevicesEl.appendChild(row);
-    });
-
-    cfgDevicesEl.querySelectorAll('button[data-cfg-remove]').forEach((btn) => {
-        btn.addEventListener('click', () => {
-            const idx = Number(btn.getAttribute('data-cfg-remove'));
-            configDevices = configDevices.filter((_, i) => i !== idx);
-            renderConfigDevices();
-        });
-    });
-
-    cfgDevicesEl.querySelectorAll('[data-cfg-field]').forEach((input) => {
-        input.addEventListener('change', () => {
-            const idx = Number(input.getAttribute('data-cfg-index'));
-            const field = input.getAttribute('data-cfg-field');
-            if (!configDevices[idx]) return;
-            configDevices[idx][field] = String(input.value || '').trim();
-        });
-    });
-}
-
-async function detectConfigPorts() {
-    const result = await window.bridgeDesktop.configPorts();
-    if (!result?.ok) {
-        setConfigFeedback(result?.error || 'No se pudieron leer puertos', 'error');
-        return;
+(async () => {
+    const onboardingState = await window.bridgeDesktop.onboarding.status();
+    if (onboardingState?.onboarded) {
+        await showStatusView(onboardingState.installation);
+        window.bridgeDesktop.getStatus().then(renderStatus);
+    } else {
+        cachedBaseUrl = onboardingState?.defaultBaseUrl || '';
+        showOnboardingLogin(cachedBaseUrl);
     }
-    configPorts = Array.isArray(result.ports) ? result.ports : [];
-    configDevices = autofillDevicePorts(configDevices, configPorts);
-    renderConfigDevices();
-    setConfigFeedback(configPorts.length
-        ? `Puertos detectados/autocompletados: ${configPorts.map((p) => p.path).join(', ')}`
-        : 'No se detectaron puertos COM.');
-}
-
-async function loadRuntimeConfig() {
-    const payload = await window.bridgeDesktop.getConfig();
-    if (!payload?.ok) return;
-    const devices = Array.isArray(payload?.installation?.devices) ? payload.installation.devices : [];
-    configDevices = devices.map((device, index) => ({
-        id: device.id || `scale-${index + 1}`,
-        name: device.name || `Balanza ${index + 1}`,
-        model: device.model || 'Systel Cuora Max',
-        port: device.port || '',
-        address: String(device.address || '20'),
-        baudRate: String(device.baudRate || '115200'),
-        enabled: device.enabled !== false,
-    }));
-    await detectConfigPorts();
-}
-
-cfgDetectPorts?.addEventListener('click', detectConfigPorts);
-cfgAddScale?.addEventListener('click', () => {
-    const used = configDevices.map((d) => String(d.port || '').trim()).filter(Boolean);
-    configDevices.push({
-        id: `scale-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-        name: `Balanza ${configDevices.length + 1}`,
-        model: 'Systel Cuora Max',
-        port: pickNextAvailablePort(configPorts, used) || '',
-        address: '20',
-        baudRate: '115200',
-        enabled: true,
-    });
-    renderConfigDevices();
-});
-
-cfgSave?.addEventListener('click', async () => {
-    if (!configDevices.length) {
-        setConfigFeedback('No hay balanzas configuradas.', 'error');
-        return;
-    }
-    const invalid = configDevices.find((device) => !String(device.port || '').trim());
-    if (invalid) {
-        setConfigFeedback(`Falta puerto COM en ${invalid.name}.`, 'error');
-        return;
-    }
-    const unique = new Set(configDevices.map((d) => d.port));
-    if (unique.size !== configDevices.length) {
-        setConfigFeedback('No se puede repetir puerto COM entre balanzas.', 'error');
-        return;
-    }
-
-    const result = await window.bridgeDesktop.configSave({
-        devices: configDevices.map((device, index) => ({
-            id: device.id || `scale-${index + 1}`,
-            name: device.name || `Balanza ${index + 1}`,
-            model: device.model || 'Systel Cuora Max',
-            port: device.port,
-            address: device.address || '20',
-            baudRate: device.baudRate || '115200',
-            enabled: true,
-        })),
-    });
-    if (!result?.ok) {
-        setConfigFeedback(result?.error || 'No se pudo guardar configuracion', 'error');
-        return;
-    }
-    setConfigFeedback('Configuracion guardada. Bridge reiniciado.', 'ok');
-    eventEl.textContent = 'Configuracion de balanzas guardada y bridge reiniciado.';
-});
-
-window.bridgeDesktop.getStatus().then(renderStatus);
-loadOnboardingInitialState();
+})();

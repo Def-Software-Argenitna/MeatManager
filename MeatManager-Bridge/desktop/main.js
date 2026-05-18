@@ -1,56 +1,27 @@
-﻿const path = require('path');
+const path = require('path');
 const fs = require('fs');
-const http = require('http');
-const https = require('https');
+const os = require('os');
 const { fork } = require('child_process');
-const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell } = require('electron');
-const { SerialPort } = require('serialport');
+const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 const APP_NAME = 'MeatManager Bridge';
-const BRIDGE_PORT_BASE = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4045', 10);
+const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4046', 10);
 const STATUS_POLL_MS = 4000;
-const UPDATE_POLL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_SCALE_MODEL = 'Systel Cuora Max';
-const SUPPORTED_SCALE_MODELS = [DEFAULT_SCALE_MODEL];
-
-const DEFAULT_API_BASE_URL = String(process.env.BRIDGE_API_BASE_URL || '').trim();
-const FALLBACK_API_BASE_URL = 'https://meatmanager.def-software.com';
-const FIREBASE_API_KEY = String(process.env.BRIDGE_FIREBASE_API_KEY || 'AIzaSyCzgv2OrxRrIfmux3BBWe80Um5sukOImEM').trim();
-const DEFAULT_DB_CONFIG = {
-    host: String(process.env.BRIDGE_MYSQL_HOST || '34.136.100.63').trim(),
-    port: String(process.env.BRIDGE_MYSQL_PORT || '3306').trim(),
-    database: String(process.env.BRIDGE_MYSQL_DATABASE || 'meatmanager').trim(),
-    user: String(process.env.BRIDGE_MYSQL_USER || 'root').trim(),
-    password: String(process.env.BRIDGE_MYSQL_PASSWORD || 'pos38ric0S'),
-    ssl: String(process.env.BRIDGE_MYSQL_SSL || 'false').trim(),
-};
-
-const DEFAULT_BRIDGE_OVERRIDES = {
-    SCALE_BAUD_RATE: '115200',
-    SCALE_ADDRESS: '20',
-    SYNC_INTERVAL_MS: '1000',
-    PRODUCT_SYNC_INTERVAL_MS: '5000',
-    SCALE_BARCODE_CONFIG_ENABLED: 'true',
-    SCALE_BARCODE_WEIGHT_FORMAT: '20PPPPIIIIII',
-    SCALE_BARCODE_UNIT_FORMAT: '21PPPPIIIIII',
-    SCALE_BARCODE_TOTAL_FORMAT: '2220AAIIIIII',
-};
+const UPDATE_POLL_MS = 6 * 60 * 60 * 1000; // 6h
+const DEFAULT_API_BASE_URL = process.env.BRIDGE_API_BASE_URL || 'https://meatmanager.demo.def-software.com/api';
 
 let mainWindow = null;
 let tray = null;
+let bridgeProc = null;
 let statusTimer = null;
 let updateTimer = null;
 let isQuitting = false;
 let updateAvailable = false;
-let autoUpdater = null;
-
-let installation = null;
-let bridgeChildren = new Map();
-
+let onboardingActive = false;
 let lastStatus = {
-    bridgeProcess: { running: false, pid: null, restarts: 0, total: 0, runningCount: 0 },
+    bridgeProcess: { running: false, pid: null, restarts: 0 },
     bridgeHttp: { reachable: false, running: false, lastRunStatus: null, lastError: null, lastRunAt: null },
-    devices: [],
     updatedAt: new Date().toISOString(),
 };
 
@@ -58,134 +29,78 @@ function runtimeDir() {
     return path.join(app.getPath('userData'), 'runtime');
 }
 
-function runtimeDataDir() {
-    return path.join(runtimeDir(), 'data');
-}
-
 function installationFilePath() {
-    return path.join(runtimeDataDir(), 'installation.json');
+    return path.join(runtimeDir(), 'data', 'installation.json');
 }
 
-function devicesOverridesDir() {
-    return path.join(runtimeDataDir(), 'devices');
-}
-
-function parseJsonFile(filePath, fallback = null) {
-    if (!fs.existsSync(filePath)) return fallback;
+function readInstallation() {
+    const file = installationFilePath();
+    if (!fs.existsSync(file)) return null;
     try {
-        const raw = fs.readFileSync(filePath, 'utf8');
-        const normalized = raw.replace(/^\uFEFF/, '').trim();
-        if (!normalized) return fallback;
-        return JSON.parse(normalized);
+        let raw = fs.readFileSync(file, 'utf8');
+        if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+        const parsed = JSON.parse(raw);
+        if (!parsed?.apiBaseUrl || !parsed?.deviceToken) return null;
+        return parsed;
     } catch {
-        return fallback;
+        return null;
     }
 }
 
-function writeJsonFile(filePath, value) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+function writeInstallation(payload) {
+    const file = installationFilePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
 }
 
-function getLegacyOverrides() {
-    return parseJsonFile(path.join(runtimeDataDir(), 'config-overrides.json'), {}) || {};
+function configOverridesPath() {
+    return path.join(runtimeDir(), 'data', 'config-overrides.json');
 }
 
-function isInstallationValid(candidate) {
-    if (!candidate || typeof candidate !== 'object') return false;
-    if (Number.parseInt(candidate.onboardingVersion || '0', 10) < 1) return false;
-    const authMode = String(candidate.auth?.mode || '').trim();
-    if (!['internal-admin', 'tenant-admin'].includes(authMode)) return false;
-    if (!String(candidate.auth?.adminEmail || '').trim()) return false;
-    if (!candidate.client || !Number.isFinite(Number(candidate.client.id))) return false;
-    if (!candidate.branch || !Number.isFinite(Number(candidate.branch.id))) return false;
-    if (!Array.isArray(candidate.devices) || candidate.devices.length === 0) return false;
-    return candidate.devices.every((device) => String(device.port || '').trim());
+function readConfigOverrides() {
+    const file = configOverridesPath();
+    if (!fs.existsSync(file)) return {};
+    try {
+        let raw = fs.readFileSync(file, 'utf8');
+        if (raw.charCodeAt(0) === 0xFEFF) raw = raw.slice(1);
+        return JSON.parse(raw) || {};
+    } catch {
+        return {};
+    }
 }
 
-function sanitizeInstallation(candidate) {
-    if (!candidate || typeof candidate !== 'object') return null;
-    const devices = Array.isArray(candidate.devices) ? candidate.devices : [];
-    const cleanedDevices = devices
-        .map((device, index) => ({
-            id: String(device.id || `scale-${index + 1}`).trim() || `scale-${index + 1}`,
-            name: String(device.name || `Balanza ${index + 1}`).trim() || `Balanza ${index + 1}`,
-            model: SUPPORTED_SCALE_MODELS.includes(String(device.model || '').trim())
-                ? String(device.model).trim()
-                : DEFAULT_SCALE_MODEL,
-            port: String(device.port || '').trim(),
-            address: String(device.address || DEFAULT_BRIDGE_OVERRIDES.SCALE_ADDRESS).trim() || DEFAULT_BRIDGE_OVERRIDES.SCALE_ADDRESS,
-            baudRate: String(device.baudRate || DEFAULT_BRIDGE_OVERRIDES.SCALE_BAUD_RATE).trim() || DEFAULT_BRIDGE_OVERRIDES.SCALE_BAUD_RATE,
-            enabled: device.enabled !== false,
-        }))
-        .filter((device) => device.port);
-
-    return {
-        onboardingVersion: Number.parseInt(candidate.onboardingVersion || '0', 10) || 0,
-        auth: {
-            mode: String(candidate.auth?.mode || '').trim(),
-            adminEmail: String(candidate.auth?.adminEmail || '').trim(),
-            adminName: String(candidate.auth?.adminName || '').trim(),
-            verifiedAt: String(candidate.auth?.verifiedAt || '').trim(),
-        },
-        apiBaseUrl: String(candidate.apiBaseUrl || DEFAULT_API_BASE_URL || '').trim(),
-        client: {
-            id: Number(candidate.client?.id || 0),
-            name: String(candidate.client?.name || '').trim(),
-        },
-        branch: {
-            id: Number(candidate.branch?.id || 0),
-            name: String(candidate.branch?.name || '').trim(),
-        },
-        devices: cleanedDevices,
-        configuredAt: candidate.configuredAt || new Date().toISOString(),
-    };
+function writeConfigOverrides(patch) {
+    const file = configOverridesPath();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const current = readConfigOverrides();
+    const next = { ...current, ...patch };
+    fs.writeFileSync(file, JSON.stringify(next, null, 2), 'utf8');
+    return next;
 }
 
-function loadInstallation() {
-    const parsed = sanitizeInstallation(parseJsonFile(installationFilePath(), null));
-    if (isInstallationValid(parsed)) return parsed;
-
-    return null;
+async function listSerialPorts() {
+    try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
+        const { SerialPort } = require('serialport');
+        const ports = await SerialPort.list();
+        return ports.map((port) => ({
+            path: port.path,
+            manufacturer: port.manufacturer || null,
+            friendlyName: port.friendlyName || null,
+        }));
+    } catch {
+        return [];
+    }
 }
 
-function buildDeviceOverrides(deviceConfig) {
-    const legacy = getLegacyOverrides();
-    const db = {
-        host: String(legacy.MYSQL_HOST || DEFAULT_DB_CONFIG.host),
-        port: String(legacy.MYSQL_PORT || DEFAULT_DB_CONFIG.port),
-        database: String(legacy.MYSQL_DATABASE || DEFAULT_DB_CONFIG.database),
-        user: String(legacy.MYSQL_USER || DEFAULT_DB_CONFIG.user),
-        password: String(legacy.MYSQL_PASSWORD ?? DEFAULT_DB_CONFIG.password),
-        ssl: String(legacy.MYSQL_SSL || DEFAULT_DB_CONFIG.ssl),
-    };
-    return {
-        ...DEFAULT_BRIDGE_OVERRIDES,
-        BRIDGE_CLIENT_ID: String(installation.client.id),
-        BRIDGE_BRANCH_ID: String(installation.branch.id),
-        BRIDGE_NAME: `${APP_NAME} - ${deviceConfig.name}`,
-        BRIDGE_DEVICE_ID: `CUORA-${installation.client.id}-${installation.branch.id}-${deviceConfig.id}`,
-        SCALE_PORT: deviceConfig.port,
-        SCALE_ADDRESS: String(deviceConfig.address || DEFAULT_BRIDGE_OVERRIDES.SCALE_ADDRESS),
-        SCALE_BAUD_RATE: String(deviceConfig.baudRate || DEFAULT_BRIDGE_OVERRIDES.SCALE_BAUD_RATE),
-        MYSQL_HOST: db.host,
-        MYSQL_PORT: db.port,
-        MYSQL_DATABASE: db.database,
-        MYSQL_USER: db.user,
-        MYSQL_PASSWORD: db.password,
-        MYSQL_SSL: db.ssl,
-    };
-}
-
-function writeDeviceOverridesFiles() {
-    fs.mkdirSync(devicesOverridesDir(), { recursive: true });
-    const files = [];
-    installation.devices.forEach((device) => {
-        const filePath = path.join(devicesOverridesDir(), `${device.id}.json`);
-        writeJsonFile(filePath, buildDeviceOverrides(device));
-        files.push(filePath);
-    });
-    return files;
+function getAppVersion() {
+    try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
+        const pkg = require(path.join(app.getAppPath(), 'package.json'));
+        return String(pkg?.version || '');
+    } catch {
+        return '';
+    }
 }
 
 function resolveGithubPublishTarget() {
@@ -194,6 +109,7 @@ function resolveGithubPublishTarget() {
     if (envOwner && envRepo) return { owner: envOwner, repo: envRepo };
 
     try {
+        // eslint-disable-next-line global-require, import/no-dynamic-require
         const pkg = require(path.join(app.getAppPath(), 'package.json'));
         const repoUrl = String(pkg?.repository?.url || pkg?.repository || '').trim();
         const match = repoUrl.match(/github\.com[:/](.+?)\/(.+?)(?:\.git)?$/i);
@@ -207,20 +123,17 @@ function resolveGithubPublishTarget() {
 }
 
 function getIconPath(fileName) {
-    const appBase = path.join(app.getAppPath(), 'public', 'branding');
-    const devBase = path.join(__dirname, '..', 'public', 'branding');
-    const first = app.isPackaged ? path.join(appBase, fileName) : path.join(devBase, fileName);
-    if (fs.existsSync(first)) return first;
-    return path.join(devBase, fileName);
+    // app.getAppPath() devuelve la raiz del proyecto en dev y la ruta dentro
+    // de app.asar en prod (Electron maneja la VFS de asar transparentemente
+    // en nativeImage.createFromPath y fs apis). Combinado con asarUnpack del
+    // package.json, garantiza que el icono se encuentre en ambos modos.
+    return path.join(app.getAppPath(), 'public', 'branding', fileName);
 }
 
 function buildTrayIcon() {
     const fileName = updateAvailable ? 'def-software-tray-update.png' : 'def-software-tray.png';
     const pngPath = getIconPath(fileName);
     let icon = nativeImage.createFromPath(pngPath);
-    if (icon.isEmpty()) {
-        icon = nativeImage.createFromPath(getIconPath('def-software-512.png'));
-    }
     if (!icon.isEmpty()) {
         icon = icon.resize({ width: 18, height: 18, quality: 'best' });
     }
@@ -228,199 +141,70 @@ function buildTrayIcon() {
 }
 
 function sendStatusToRenderer() {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send('bridge-status', {
-        ...lastStatus,
-        onboardingRequired: !isInstallationValid(installation),
-    });
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        logDesktop('sendStatusToRenderer: mainWindow null/destroyed');
+        return;
+    }
+    mainWindow.webContents.send('bridge-status', lastStatus);
 }
 
-function formatUpdateError(error) {
-    const raw = String(error?.message || error || '').trim();
-    if (!raw) return 'No se pudo verificar actualizaciones.';
-    if (raw.includes('Unable to find latest version on GitHub')) {
-        return 'No se encontro una release valida para auto-update. Usa tags semver (ej: v0.2.1) y release publicada.';
-    }
-    if (raw.includes('Cannot parse releases feed')) {
-        return 'No se pudo leer el feed de releases de GitHub.';
-    }
-    const firstLine = raw.split('\n').map((line) => line.trim()).find(Boolean) || raw;
-    return firstLine.length > 220 ? `${firstLine.slice(0, 220)}...` : firstLine;
+function desktopLogPath() {
+    return path.join(runtimeDir(), 'logs', 'desktop.log');
 }
 
-function resolveApiBaseUrl(preferred = '') {
-    const candidates = [
-        String(preferred || '').trim(),
-        String(installation?.apiBaseUrl || '').trim(),
-        DEFAULT_API_BASE_URL,
-        FALLBACK_API_BASE_URL,
-    ];
-    const selected = candidates.find((value) => value) || '';
-    return selected.replace(/\/$/, '');
-}
-
-function normalizeAuthErrorMessage(rawMessage = '') {
-    const code = String(rawMessage || '').trim().toUpperCase();
-    if (!code) return 'No se pudo iniciar sesion';
-    if (code.includes('INVALID_LOGIN_CREDENTIALS') || code.includes('INVALID_PASSWORD') || code.includes('EMAIL_NOT_FOUND')) {
-        return 'Credenciales invalidas';
-    }
-    if (code.includes('TOO_MANY_ATTEMPTS_TRY_LATER')) {
-        return 'Demasiados intentos. Espera unos minutos e intenta de nuevo.';
-    }
-    if (code.includes('USER_DISABLED')) {
-        return 'El usuario esta deshabilitado';
-    }
-    return rawMessage;
-}
-
-function httpJsonRequest(urlOrOptions, { method = 'GET', headers = {}, body = null, timeout = 5000 } = {}) {
-    return new Promise((resolve, reject) => {
-        const requestOptions = typeof urlOrOptions === 'string'
-            ? (() => {
-                const u = new URL(urlOrOptions);
-                return {
-                    protocol: u.protocol,
-                    hostname: u.hostname,
-                    port: u.port,
-                    path: `${u.pathname}${u.search}`,
-                };
-            })()
-            : urlOrOptions;
-
-        const transport = String(requestOptions?.protocol || '').startsWith('https') ? https : http;
-
-        const req = transport.request(
-            {
-                ...requestOptions,
-                method,
-                timeout,
-                headers,
-            },
-            (res) => {
-                let data = '';
-                res.setEncoding('utf8');
-                res.on('data', (chunk) => { data += chunk; });
-                res.on('end', () => {
-                    const status = Number(res.statusCode || 0);
-                    const parsed = (() => {
-                        try {
-                            return data ? JSON.parse(data) : {};
-                        } catch {
-                            return {};
-                        }
-                    })();
-                    if (status < 200 || status >= 300) {
-                        const apiError = typeof parsed?.error === 'string'
-                            ? parsed.error
-                            : (typeof parsed?.error?.message === 'string' ? parsed.error.message : null);
-                        const err = new Error(apiError || `HTTP ${status}`);
-                        err.statusCode = status;
-                        reject(err);
-                        return;
-                    }
-                    resolve(parsed);
-                });
-            }
-        );
-        req.on('error', reject);
-        req.on('timeout', () => req.destroy(new Error('timeout')));
-        if (body) req.write(typeof body === 'string' ? body : JSON.stringify(body));
-        req.end();
-    });
+function logDesktop(message) {
+    try {
+        const line = `[${new Date().toISOString()}] ${message}\n`;
+        fs.appendFileSync(desktopLogPath(), line, 'utf8');
+    } catch (_) { /* best effort */ }
 }
 
 async function fetchBridgeStatus() {
-    if (!isInstallationValid(installation) || bridgeChildren.size === 0) {
+    if (onboardingActive) return;
+    try {
+        const url = `http://127.0.0.1:${BRIDGE_PORT}/health`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        let response;
+        try {
+            response = await fetch(url, { signal: controller.signal });
+        } finally {
+            clearTimeout(timeout);
+        }
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const payload = await response.json();
         lastStatus = {
             ...lastStatus,
-            bridgeProcess: {
-                ...lastStatus.bridgeProcess,
-                running: false,
-                pid: null,
-                total: 0,
-                runningCount: 0,
+            bridgeHttp: {
+                reachable: true,
+                running: payload.running === true,
+                lastRunStatus: payload.lastRunStatus || null,
+                lastRunMessage: payload.lastRunMessage || null,
+                lastError: payload.lastError || null,
+                lastRunAt: payload.lastRunAt || null,
+                scaleReachable: payload.scaleReachable !== false,
+                fetchError: null,
             },
+            updatedAt: new Date().toISOString(),
+        };
+    } catch (error) {
+        const detail = `${error?.name || 'Error'}: ${error?.message || String(error)}${error?.cause ? ` | cause=${error.cause?.code || error.cause?.message || error.cause}` : ''}`;
+        logDesktop(`fetchBridgeStatus FAILED → ${detail}`);
+        lastStatus = {
+            ...lastStatus,
             bridgeHttp: {
                 reachable: false,
                 running: false,
                 lastRunStatus: null,
-                lastError: 'Configuracion inicial pendiente',
+                lastRunMessage: null,
+                lastError: 'Bridge HTTP no disponible',
                 lastRunAt: null,
+                scaleReachable: true,
+                fetchError: detail,
             },
-            devices: [],
             updatedAt: new Date().toISOString(),
         };
-        sendStatusToRenderer();
-        return;
     }
-
-    const checks = await Promise.all(
-        [...bridgeChildren.values()].map(async (entry) => {
-            const processAlive = entry.proc && entry.proc.exitCode == null && !entry.proc.killed;
-            const base = {
-                id: entry.device.id,
-                name: entry.device.name,
-                port: entry.device.port,
-                model: entry.device.model,
-                httpPort: entry.httpPort,
-                pid: processAlive ? entry.proc.pid : null,
-                processAlive,
-                reachable: false,
-                lastRunStatus: null,
-                lastError: null,
-                lastRunAt: null,
-            };
-            if (!processAlive) return base;
-            try {
-                const payload = await httpJsonRequest({
-                    hostname: '127.0.0.1',
-                    port: entry.httpPort,
-                    path: '/health',
-                }, { timeout: 2500 });
-                return {
-                    ...base,
-                    reachable: true,
-                    lastRunStatus: payload.lastRunStatus || null,
-                    lastError: payload.lastError || null,
-                    lastRunAt: payload.lastRunAt || null,
-                };
-            } catch (error) {
-                return {
-                    ...base,
-                    reachable: false,
-                    lastError: error.message || 'Bridge HTTP no disponible',
-                };
-            }
-        })
-    );
-
-    const runningCount = checks.filter((row) => row.processAlive).length;
-    const reachableCount = checks.filter((row) => row.reachable).length;
-    const firstPid = checks.find((row) => row.processAlive)?.pid || null;
-    const latestRunAt = checks.map((row) => row.lastRunAt).filter(Boolean).sort().at(-1) || null;
-    const firstError = checks.find((row) => row.lastError)?.lastError || null;
-
-    lastStatus = {
-        ...lastStatus,
-        bridgeProcess: {
-            ...lastStatus.bridgeProcess,
-            running: runningCount > 0,
-            pid: firstPid,
-            total: checks.length,
-            runningCount,
-        },
-        bridgeHttp: {
-            reachable: reachableCount > 0,
-            running: reachableCount === checks.length && checks.length > 0,
-            lastRunStatus: reachableCount === checks.length ? 'ok' : (reachableCount > 0 ? 'partial' : null),
-            lastError: firstError || (reachableCount > 0 ? null : 'Bridge HTTP no disponible'),
-            lastRunAt: latestRunAt,
-        },
-        devices: checks,
-        updatedAt: new Date().toISOString(),
-    };
-
     sendStatusToRenderer();
 }
 
@@ -429,13 +213,13 @@ function updateTrayMenu() {
     tray.setImage(buildTrayIcon());
     tray.setToolTip(
         updateAvailable
-            ? `${APP_NAME} - Hay una actualizacion disponible`
+            ? `${APP_NAME} - Hay una actualización disponible`
             : APP_NAME
     );
     const menu = Menu.buildFromTemplate([
         { label: 'Abrir estado', click: () => showMainWindow() },
         { type: 'separator' },
-        { label: 'Reiniciar bridge', click: () => restartBridgeProcesses() },
+        { label: 'Reiniciar bridge', click: () => restartBridgeProcess() },
         { label: 'Buscar actualizaciones', click: () => checkForUpdatesNow(true) },
         { type: 'separator' },
         { label: 'Salir', click: () => quitApp() },
@@ -444,75 +228,59 @@ function updateTrayMenu() {
 }
 
 function bridgeScriptPath() {
-    if (app.isPackaged) {
-        const asarPath = path.join(app.getAppPath(), 'src', 'index.js');
-        if (fs.existsSync(asarPath)) return asarPath;
-        const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'src', 'index.js');
-        if (fs.existsSync(unpackedPath)) return unpackedPath;
-    }
     return path.join(app.getAppPath(), 'src', 'index.js');
 }
 
-function stopBridgeProcesses() {
-    for (const entry of bridgeChildren.values()) {
-        try {
-            entry.proc.kill('SIGTERM');
-        } catch {
-            // ignore
-        }
-    }
-    bridgeChildren = new Map();
-}
-
-function startSingleBridge(device, index) {
+function startBridgeProcess() {
+    if (bridgeProc && !bridgeProc.killed) return;
     const scriptPath = bridgeScriptPath();
-    if (!fs.existsSync(scriptPath)) return;
-
-    const httpPort = BRIDGE_PORT_BASE + index;
-    const overridesFile = path.join(devicesOverridesDir(), `${device.id}.json`);
-    const proc = fork(scriptPath, [], {
+    bridgeProc = fork(scriptPath, [], {
         env: {
             ...process.env,
             ELECTRON_RUN_AS_NODE: '1',
             BRIDGE_APP_DATA_DIR: runtimeDir(),
-            BRIDGE_OVERRIDES_FILE: overridesFile,
-            HTTP_PORT: String(httpPort),
+            HTTP_PORT: String(BRIDGE_PORT),
         },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });
-
-    bridgeChildren.set(device.id, { proc, httpPort, device });
-
-    proc.on('exit', () => {
-        bridgeChildren.delete(device.id);
-        if (!isQuitting && isInstallationValid(installation)) {
+    lastStatus.bridgeProcess = {
+        ...lastStatus.bridgeProcess,
+        running: true,
+        pid: bridgeProc.pid || null,
+    };
+    bridgeProc.on('exit', () => {
+        lastStatus.bridgeProcess = {
+            ...lastStatus.bridgeProcess,
+            running: false,
+            pid: null,
+        };
+        sendStatusToRenderer();
+        if (!isQuitting && !onboardingActive) {
             setTimeout(() => {
-                const current = installation.devices.find((d) => d.id === device.id && d.enabled !== false);
-                if (!current) return;
-                const idx = installation.devices.filter((d) => d.enabled !== false).findIndex((d) => d.id === device.id);
-                if (idx < 0) return;
-                lastStatus.bridgeProcess.restarts = Number(lastStatus.bridgeProcess.restarts || 0) + 1;
-                startSingleBridge(current, idx);
+                lastStatus.bridgeProcess = {
+                    ...lastStatus.bridgeProcess,
+                    restarts: Number(lastStatus.bridgeProcess.restarts || 0) + 1,
+                };
+                startBridgeProcess();
             }, 2000);
         }
     });
+    sendStatusToRenderer();
 }
 
-function startBridgeProcesses() {
-    stopBridgeProcesses();
-    if (!isInstallationValid(installation)) {
-        fetchBridgeStatus();
-        return;
+function stopBridgeProcess() {
+    if (!bridgeProc) return;
+    try {
+        bridgeProc.kill('SIGTERM');
+    } catch {
+        // ignore best effort
     }
-
-    writeDeviceOverridesFiles();
-    const enabledDevices = installation.devices.filter((device) => device.enabled !== false);
-    enabledDevices.forEach((device, index) => startSingleBridge(device, index));
-    fetchBridgeStatus();
+    bridgeProc = null;
 }
 
-function restartBridgeProcesses() {
-    startBridgeProcesses();
+function restartBridgeProcess() {
+    stopBridgeProcess();
+    setTimeout(startBridgeProcess, 350);
 }
 
 function showMainWindow() {
@@ -533,16 +301,15 @@ function quitApp() {
 }
 
 function createMainWindow() {
-    const shouldStartHidden = process.argv.some((arg) => String(arg || '').trim().toLowerCase() === '--hidden');
-    const windowIcon = getIconPath('app.ico');
+    const windowIcon = nativeImage.createFromPath(getIconPath('def-software-512.png'));
     mainWindow = new BrowserWindow({
-        width: 940,
-        height: 680,
+        width: 1000,
+        height: 780,
         minWidth: 820,
-        minHeight: 560,
-        show: false,
+        minHeight: 640,
+        show: !process.argv.includes('--hidden') || onboardingActive,
         title: APP_NAME,
-        icon: windowIcon,
+        icon: windowIcon.isEmpty() ? undefined : windowIcon,
         autoHideMenuBar: true,
         webPreferences: {
             preload: path.join(__dirname, 'preload.js'),
@@ -552,11 +319,6 @@ function createMainWindow() {
     });
 
     mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-    mainWindow.once('ready-to-show', () => {
-        if (!shouldStartHidden) {
-            showMainWindow();
-        }
-    });
     mainWindow.on('close', (event) => {
         if (!isQuitting) {
             event.preventDefault();
@@ -580,18 +342,6 @@ function configureAutoLaunch() {
 }
 
 function configureAutoUpdate() {
-    try {
-        ({ autoUpdater } = require('electron-updater'));
-    } catch (error) {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-event', {
-                status: 'error',
-                message: `Auto-update no disponible: ${formatUpdateError(error)}`,
-            });
-        }
-        return;
-    }
-
     const { owner, repo } = resolveGithubPublishTarget();
     if (!owner || !repo) return;
 
@@ -605,18 +355,7 @@ function configureAutoUpdate() {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-event', {
                 status: 'available',
-                message: 'Hay una actualizacion disponible. Se descargara automaticamente.',
-            });
-        }
-    });
-
-    autoUpdater.on('update-not-available', () => {
-        updateAvailable = false;
-        updateTrayMenu();
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-event', {
-                status: 'idle',
-                message: 'No hay actualizaciones nuevas disponibles.',
+                message: 'Hay una actualización disponible. Se descargará automáticamente.',
             });
         }
     });
@@ -625,23 +364,22 @@ function configureAutoUpdate() {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-event', {
                 status: 'downloaded',
-                message: 'Actualizacion lista. Reinicia desde la UI para aplicarla.',
+                message: 'Actualización lista. Reiniciá desde la UI para aplicarla.',
+            });
+        }
+    });
+
+    autoUpdater.on('update-not-available', () => {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('update-event', {
+                status: 'not-available',
+                message: 'Bridge actualizado a la ultima version disponible.',
             });
         }
     });
 }
 
 function checkForUpdatesNow(manual = false) {
-    if (!autoUpdater) {
-        if (manual && mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-event', {
-                status: 'error',
-                message: 'Auto-update no inicializado.',
-            });
-        }
-        return;
-    }
-
     const { owner, repo } = resolveGithubPublishTarget();
     if (!owner || !repo) {
         if (manual && mainWindow && !mainWindow.isDestroyed()) {
@@ -653,235 +391,110 @@ function checkForUpdatesNow(manual = false) {
         return;
     }
     autoUpdater.checkForUpdates().catch((error) => {
-        if (mainWindow && !mainWindow.isDestroyed()) {
-            mainWindow.webContents.send('update-event', {
-                status: 'error',
-                message: `No se pudo buscar actualizacion: ${formatUpdateError(error)}`,
-            });
-        }
-    });
-}
-
-async function listAvailableSerialPorts() {
-    try {
-        const ports = await SerialPort.list();
-        return ports
-            .map((port) => ({
-                path: String(port.path || port.comName || '').trim(),
-                manufacturer: port.manufacturer || null,
-                serialNumber: port.serialNumber || null,
-            }))
-            .filter((port) => port.path)
-            .sort((a, b) => a.path.localeCompare(b.path));
-    } catch (error) {
-        return [];
-    }
-}
-
-async function onboardingLogin({ apiBaseUrl, identifier, password }) {
-    const base = resolveApiBaseUrl(apiBaseUrl);
-    if (!base) throw new Error('No hay URL API configurada en este Bridge');
-    if (!identifier || !password) throw new Error('Completa email/usuario y contrasena');
-    if (!FIREBASE_API_KEY) throw new Error('Falta FIREBASE API KEY en Bridge');
-
-    // Prioridad: si las credenciales corresponden a SuperAdmin interno, habilitamos modo multi-tenant.
-    try {
-        const internal = await httpJsonRequest(`${base}/api/internal-admin/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: {
-                identifier: String(identifier).trim(),
-                password: String(password),
-            },
-            timeout: 10000,
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        const message = String(error?.message || '');
+        // "No published versions on GitHub" no es realmente un error — pasa
+        // cuando estamos en una version prerelease y no hay stable mas nueva.
+        const benign = /no published versions/i.test(message);
+        mainWindow.webContents.send('update-event', {
+            status: benign ? 'not-available' : 'error',
+            message: benign
+                ? 'No hay actualizaciones disponibles en este momento.'
+                : `No se pudo buscar actualización: ${message}`,
         });
-        const internalToken = String(internal?.token || '').trim();
-        if (internal?.ok && internalToken) {
-            return {
-                ok: true,
-                token: internalToken,
-                authMode: 'internal-admin',
-                admin: {
-                    email: String(internal?.admin?.email || identifier).trim(),
-                    name: String(internal?.admin?.name || '').trim(),
-                    lastname: String(internal?.admin?.lastname || '').trim(),
-                    role: 'admin',
-                },
-            };
-        }
-    } catch {
-        // Fallback natural: login por Firebase (tenant-admin).
-    }
-
-    let idToken = '';
-    try {
-        const firebaseLogin = await httpJsonRequest(
-            `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_API_KEY)}`,
-            {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: {
-                    email: String(identifier).trim(),
-                    password: String(password),
-                    returnSecureToken: true,
-                },
-                timeout: 10000,
-            }
-        );
-        idToken = String(firebaseLogin?.idToken || '').trim();
-    } catch (error) {
-        throw new Error(normalizeAuthErrorMessage(error?.message || 'Credenciales invalidas'));
-    }
-
-    if (!idToken) throw new Error('No se pudo obtener token de autenticacion');
-
-    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
-        headers: { Authorization: `Bearer ${idToken}` },
-        timeout: 10000,
     });
-
-    const user = me?.user || {};
-    if (String(user.role || '').toLowerCase() !== 'admin') {
-        throw new Error('El usuario no tiene rol admin para configurar el Bridge');
-    }
-
-    return {
-        ok: true,
-        token: idToken,
-        authMode: 'tenant-admin',
-        admin: {
-            email: user.email || String(identifier).trim(),
-            name: user.username || '',
-            lastname: '',
-            role: user.role || 'admin',
-        },
-    };
-}
-
-async function onboardingFetchClients({ apiBaseUrl, token, authMode = 'tenant-admin', search = '' }) {
-    const base = resolveApiBaseUrl(apiBaseUrl);
-    if (!base || !token) throw new Error('Sesion admin invalida');
-    const normalizedMode = String(authMode || 'tenant-admin').trim().toLowerCase();
-
-    if (normalizedMode === 'internal-admin') {
-        const query = String(search || '').trim();
-        const querySuffix = query ? `?search=${encodeURIComponent(query)}` : '';
-        const payload = await httpJsonRequest(`${base}/api/internal-admin/clients${querySuffix}`, {
-            headers: { Authorization: `Bearer ${token}` },
-            timeout: 10000,
-        });
-        const clients = Array.isArray(payload?.clients) ? payload.clients : [];
-        return { ok: true, clients };
-    }
-
-    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000,
-    });
-    const user = me?.user || {};
-    if (!user?.clientId) {
-        throw new Error('No se encontro cliente asociado al admin');
-    }
-
-    const needle = String(search || '').trim().toLowerCase();
-    const clients = [{
-        id: Number(user.clientId),
-        businessName: String(user.businessName || `Cliente ${user.clientId}`),
-        status: String(user.clientStatus || 'ACTIVE'),
-    }].filter((client) => !needle || client.businessName.toLowerCase().includes(needle));
-
-    return { ok: true, clients };
-}
-
-async function onboardingFetchBranches({ apiBaseUrl, token, authMode = 'tenant-admin', clientId }) {
-    const base = resolveApiBaseUrl(apiBaseUrl);
-    const numericClientId = Number.parseInt(clientId, 10);
-    if (!base || !token || !Number.isFinite(numericClientId) || numericClientId <= 0) {
-        throw new Error('Datos invalidos para sucursales');
-    }
-    const normalizedMode = String(authMode || 'tenant-admin').trim().toLowerCase();
-
-    if (normalizedMode === 'internal-admin') {
-        return httpJsonRequest(`${base}/api/internal-admin/clients/${numericClientId}/branches`, {
-            headers: { Authorization: `Bearer ${token}` },
-            timeout: 10000,
-        });
-    }
-
-    const me = await httpJsonRequest(`${base}/api/firebase-users/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000,
-    });
-    const currentClientId = Number(me?.user?.clientId || 0);
-    if (!Number.isFinite(currentClientId) || currentClientId <= 0 || currentClientId !== numericClientId) {
-        throw new Error('No tienes acceso a ese cliente');
-    }
-
-    return httpJsonRequest(`${base}/api/client/branches`, {
-        headers: { Authorization: `Bearer ${token}` },
-        timeout: 10000,
-    });
-}
-
-function saveInstallation(payload) {
-    const authMode = String(payload?.auth?.mode || 'tenant-admin').trim().toLowerCase();
-    const next = sanitizeInstallation({
-        ...payload,
-        onboardingVersion: 1,
-        auth: {
-            mode: authMode === 'internal-admin' ? 'internal-admin' : 'tenant-admin',
-            adminEmail: String(payload?.auth?.adminEmail || '').trim(),
-            adminName: String(payload?.auth?.adminName || '').trim(),
-            verifiedAt: new Date().toISOString(),
-        },
-    });
-    if (!isInstallationValid(next)) {
-        throw new Error('Configuracion incompleta');
-    }
-    installation = next;
-    writeJsonFile(installationFilePath(), installation);
-    startBridgeProcesses();
-    return installation;
-}
-
-function saveRuntimeDevices(devicesPayload = []) {
-    if (!isInstallationValid(installation)) {
-        throw new Error('Primero completa la configuracion inicial');
-    }
-    const cleanDevices = sanitizeInstallation({
-        ...installation,
-        devices: Array.isArray(devicesPayload) ? devicesPayload : [],
-    })?.devices || [];
-    if (!cleanDevices.length) {
-        throw new Error('Debes configurar al menos una balanza con puerto COM');
-    }
-    installation = {
-        ...installation,
-        devices: cleanDevices,
-        configuredAt: new Date().toISOString(),
-    };
-    writeJsonFile(installationFilePath(), installation);
-    startBridgeProcesses();
-    return installation;
 }
 
 function startStatusPolling() {
+    logDesktop(`startStatusPolling called (interval=${STATUS_POLL_MS}ms, bridgePort=${BRIDGE_PORT})`);
     fetchBridgeStatus();
+    if (statusTimer) clearInterval(statusTimer);
     statusTimer = setInterval(fetchBridgeStatus, STATUS_POLL_MS);
 }
 
 function startUpdatePolling() {
     checkForUpdatesNow(false);
+    if (updateTimer) clearInterval(updateTimer);
     updateTimer = setInterval(() => checkForUpdatesNow(false), UPDATE_POLL_MS);
 }
 
+// ── Onboarding HTTP helpers ────────────────────────────────────────────────
+function normalizeBaseUrl(value) {
+    return String(value || DEFAULT_API_BASE_URL).trim().replace(/\/+$/, '');
+}
+
+async function apiCall(baseUrl, path, { method = 'GET', body = null, headers = {} } = {}) {
+    const url = `${normalizeBaseUrl(baseUrl)}${path}`;
+    const init = {
+        method,
+        headers: { 'Content-Type': 'application/json', ...headers },
+    };
+    if (body != null) init.body = JSON.stringify(body);
+    const response = await fetch(url, init);
+    const text = await response.text();
+    let parsed = null;
+    if (text) { try { parsed = JSON.parse(text); } catch { parsed = text; } }
+    if (!response.ok) {
+        const message = parsed?.error || `HTTP ${response.status}`;
+        const err = new Error(message);
+        err.status = response.status;
+        err.body = parsed;
+        throw err;
+    }
+    return parsed;
+}
+
+async function handleOnboardingLogin({ baseUrl, email, password }) {
+    if (!email || !password) {
+        throw new Error('Email y contraseña son requeridos');
+    }
+    return apiCall(baseUrl, '/bridge/auth/login', {
+        method: 'POST',
+        body: { email, password },
+    });
+}
+
+async function handleOnboardingComplete({ baseUrl, sessionToken, branchId }) {
+    const hostname = os.hostname() || 'desktop';
+    const result = await apiCall(baseUrl, '/bridge/onboarding/complete', {
+        method: 'POST',
+        body: { sessionToken, branchId, hostname },
+    });
+    // Empezamos de cero con la config: cualquier override anterior (MYSQL_*
+    // de instalaciones 0.3.x, SYNC_INTERVAL_MS de testing, barcode formats
+    // mal copiados, etc.) se descarta. La balanza se vuelve a configurar
+    // en el Paso 3 del wizard, escribiendo SCALE_PORT/ADDRESS limpios.
+    try {
+        const overridesFile = configOverridesPath();
+        if (fs.existsSync(overridesFile)) fs.unlinkSync(overridesFile);
+    } catch (_) { /* best effort */ }
+    const installation = {
+        apiBaseUrl: normalizeBaseUrl(baseUrl),
+        deviceToken: result.deviceToken,
+        deviceId: result.deviceId,
+        tenantId: result.tenantId,
+        clientId: result.clientId,
+        clientName: result.clientName,
+        taxId: result.taxId,
+        branchId: result.branchId,
+        branchName: result.branchName,
+        branchInternalCode: result.branchInternalCode,
+        hostname,
+        onboardedAt: new Date().toISOString(),
+    };
+    writeInstallation(installation);
+    onboardingActive = false;
+    startBridgeProcess();
+    startStatusPolling();
+    return { ok: true, ...installation, deviceToken: undefined };
+}
+
 function setupIpc() {
-    ipcMain.handle('status:get', async () => ({ ...lastStatus, onboardingRequired: !isInstallationValid(installation) }));
+    ipcMain.handle('status:get', async () => lastStatus);
     ipcMain.handle('status:restart-bridge', async () => {
-        restartBridgeProcesses();
+        restartBridgeProcess();
         return { ok: true };
     });
-
     ipcMain.handle('update:check', async () => {
         checkForUpdatesNow(true);
         return { ok: true };
@@ -896,71 +509,153 @@ function setupIpc() {
         return { ok: true };
     });
 
-    ipcMain.handle('onboarding:get', async () => ({
-        ok: true,
-        required: !isInstallationValid(installation),
-        installation,
-        supportedModels: SUPPORTED_SCALE_MODELS,
-        defaultApiBaseUrl: resolveApiBaseUrl(),
+    ipcMain.handle('onboarding:status', async () => {
+        const installation = readInstallation();
+        return {
+            onboarded: Boolean(installation),
+            installation: installation
+                ? { ...installation, deviceToken: undefined }
+                : null,
+            defaultBaseUrl: DEFAULT_API_BASE_URL,
+        };
+    });
+    ipcMain.handle('onboarding:login', async (_event, payload = {}) => {
+        try {
+            const result = await handleOnboardingLogin(payload || {});
+            return { ok: true, ...result };
+        } catch (error) {
+            return { ok: false, error: error.message, status: error.status || null };
+        }
+    });
+    ipcMain.handle('onboarding:complete', async (_event, payload = {}) => {
+        try {
+            const result = await handleOnboardingComplete(payload || {});
+            return result;
+        } catch (error) {
+            return { ok: false, error: error.message, status: error.status || null };
+        }
+    });
+    ipcMain.handle('onboarding:reset', async () => {
+        const confirmResult = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['Cancelar', 'Re-configurar'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Re-configurar bridge',
+            message: '¿Re-configurar este bridge desde cero?',
+            detail: 'Vas a tener que volver a loguearte y elegir sucursal. La configuración actual se elimina.',
+        });
+        if (confirmResult.response !== 1) return { ok: false, cancelled: true };
+
+        stopBridgeProcess();
+        try {
+            const installFile = installationFilePath();
+            if (fs.existsSync(installFile)) fs.unlinkSync(installFile);
+            const overridesFile = configOverridesPath();
+            if (fs.existsSync(overridesFile)) fs.unlinkSync(overridesFile);
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
+        onboardingActive = true;
+
+        // Devolver el foco al renderer despues del dialog nativo. Sin esto,
+        // los inputs del wizard quedan inaccesibles hasta que el usuario
+        // clickee la ventana.
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+                mainWindow.webContents.focus();
+            }
+        } catch (_) { /* best effort */ }
+
+        return { ok: true };
+    });
+
+    ipcMain.handle('window:focus', async () => {
+        try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+                mainWindow.webContents.focus();
+            }
+        } catch (_) { /* best effort */ }
+        return { ok: true };
+    });
+
+    ipcMain.handle('scale:list-ports', async () => {
+        const ports = await listSerialPorts();
+        return { ok: true, ports };
+    });
+
+    ipcMain.handle('scale:save-config', async (_event, payload = {}) => {
+        try {
+            const port = String(payload?.port || '').trim();
+            const addressRaw = Number.parseInt(payload?.address, 10);
+            const address = Number.isFinite(addressRaw) && addressRaw >= 1 && addressRaw <= 99
+                ? addressRaw
+                : 20;
+            if (!port) {
+                return { ok: false, error: 'Tenés que elegir un puerto COM' };
+            }
+            writeConfigOverrides({
+                SCALE_PORT: port,
+                SCALE_ADDRESS: String(address),
+            });
+            return { ok: true, port, address };
+        } catch (error) {
+            return { ok: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('scale:test', async () => {
+        try {
+            const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/scale/ping`, { method: 'POST' });
+            if (!response.ok) {
+                return { ok: false, error: `Bridge devolvio HTTP ${response.status}` };
+            }
+            const data = await response.json();
+            return data;
+        } catch (error) {
+            return { ok: false, error: error.message || 'Bridge no esta corriendo' };
+        }
+    });
+
+    ipcMain.handle('scale:reset', async () => {
+        const confirmResult = await dialog.showMessageBox(mainWindow, {
+            type: 'warning',
+            buttons: ['Cancelar', 'Resetear balanza'],
+            defaultId: 0,
+            cancelId: 0,
+            title: 'Resetear balanza completa',
+            message: '¿Borrar TODOS los PLUs de la balanza y re-sincronizar desde cero?',
+            detail: 'Se itera fn5 sobre PLU 1..8000. Puede tardar varios minutos. Útil cuando se cambia la balanza por una usada o quedaron PLUs huerfanos. Despues del reset el siguiente ciclo va a re-sincronizar todo el catalogo desde MeatManager.',
+        });
+        if (confirmResult.response !== 1) return { ok: false, cancelled: true };
+
+        try {
+            const response = await fetch(`http://127.0.0.1:${BRIDGE_PORT}/api/scale/reset`, {
+                method: 'POST',
+                signal: AbortSignal.timeout(20 * 60 * 1000),
+            });
+            if (!response.ok) {
+                return { ok: false, error: `Bridge devolvio HTTP ${response.status}` };
+            }
+            return await response.json();
+        } catch (error) {
+            return { ok: false, error: error.message || 'Reset falló' };
+        }
+    });
+
+    ipcMain.handle('app:meta', async () => ({
+        appVersion: getAppVersion(),
+        platform: process.platform,
     }));
-
-    ipcMain.handle('onboarding:ports', async () => ({ ok: true, ports: await listAvailableSerialPorts() }));
-
-    ipcMain.handle('onboarding:login', async (_, payload = {}) => {
-        try {
-            const result = await onboardingLogin(payload);
-            return { ok: true, ...result };
-        } catch (error) {
-            return { ok: false, error: error.message || 'No se pudo iniciar sesion' };
-        }
-    });
-
-    ipcMain.handle('onboarding:clients', async (_, payload = {}) => {
-        try {
-            const result = await onboardingFetchClients(payload);
-            return { ok: true, ...result };
-        } catch (error) {
-            return { ok: false, error: error.message || 'No se pudieron leer clientes' };
-        }
-    });
-
-    ipcMain.handle('onboarding:branches', async (_, payload = {}) => {
-        try {
-            const result = await onboardingFetchBranches(payload);
-            return { ok: true, ...result };
-        } catch (error) {
-            return { ok: false, error: error.message || 'No se pudieron leer sucursales' };
-        }
-    });
-
-    ipcMain.handle('onboarding:save', async (_, payload = {}) => {
-        try {
-            const saved = saveInstallation(payload);
-            return { ok: true, installation: saved };
-        } catch (error) {
-            return { ok: false, error: error.message || 'No se pudo guardar configuracion' };
-        }
-    });
-
-    ipcMain.handle('config:get', async () => ({
-        ok: true,
-        installation,
-        supportedModels: SUPPORTED_SCALE_MODELS,
-    }));
-    ipcMain.handle('config:ports', async () => ({ ok: true, ports: await listAvailableSerialPorts() }));
-    ipcMain.handle('config:save', async (_, payload = {}) => {
-        try {
-            const saved = saveRuntimeDevices(payload?.devices);
-            return { ok: true, installation: saved };
-        } catch (error) {
-            return { ok: false, error: error.message || 'No se pudo guardar configuracion de balanzas' };
-        }
-    });
 }
 
 async function bootstrap() {
     app.setName(APP_NAME);
-    app.setAppUserModelId('com.defsoftware.meatmanager.bridge');
+    // Necesario para que Windows muestre el icono correcto en la barra de
+    // tareas y agrupe los procesos del bridge.
+    try { app.setAppUserModelId('com.defsoftware.meatmanager.bridge'); } catch (_) { /* best effort */ }
     const hasLock = app.requestSingleInstanceLock();
     if (!hasLock) {
         app.quit();
@@ -970,15 +665,23 @@ async function bootstrap() {
     app.on('second-instance', () => showMainWindow());
 
     await app.whenReady();
-    installation = loadInstallation();
-
     configureAutoLaunch();
     configureAutoUpdate();
+
+    onboardingActive = !readInstallation();
+
     createMainWindow();
     createTray();
     setupIpc();
-    startBridgeProcesses();
-    startStatusPolling();
+
+    if (onboardingActive) {
+        // No arrancamos el bridge ni el polling hasta que se complete el wizard.
+        // El renderer detecta onboardingActive via IPC y muestra el flow.
+        showMainWindow();
+    } else {
+        startBridgeProcess();
+        startStatusPolling();
+    }
     startUpdatePolling();
 
     app.on('activate', () => {
@@ -991,12 +694,11 @@ app.on('before-quit', () => {
     isQuitting = true;
     if (statusTimer) clearInterval(statusTimer);
     if (updateTimer) clearInterval(updateTimer);
-    stopBridgeProcesses();
+    stopBridgeProcess();
 });
 
 bootstrap().catch((error) => {
+    // eslint-disable-next-line no-console
     console.error('[desktop bootstrap error]', error);
     app.exit(1);
 });
-
-

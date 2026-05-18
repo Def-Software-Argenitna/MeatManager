@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="es">
 <head>
   <meta charset="UTF-8" />
@@ -11,10 +11,12 @@
       --line: #1f2a43;
       --text: #e7ecf7;
       --muted: #9fb0d1;
+      --muted-soft: #6f80a3;
       --ok: #22c55e;
       --warn: #f59e0b;
       --bad: #ef4444;
       --cta: #38bdf8;
+      --cta-soft: rgba(56, 189, 248, .14);
     }
     * { box-sizing: border-box; }
     body {
@@ -22,128 +24,525 @@
       background: radial-gradient(circle at top, #14213b 0%, var(--bg) 58%);
       color: var(--text);
       font-family: "Segoe UI", "Inter", sans-serif;
+      min-height: 100vh;
     }
-    .wrap { max-width: 1020px; margin: 0 auto; padding: 18px; display: grid; gap: 14px; }
-    .card { border: 1px solid var(--line); border-radius: 14px; background: color-mix(in oklab, var(--card) 94%, #000); padding: 14px; }
-    .head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-    h1 { margin: 0; font-size: 1.15rem; font-weight: 700; }
-    .sub { margin-top: 4px; color: var(--muted); font-size: .86rem; }
-    .pill { display: inline-flex; align-items: center; gap: 6px; font-size: .8rem; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; }
-    .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--muted); }
-    .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
-    .status-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-    .label { color: var(--muted); font-size: .8rem; margin-bottom: 6px; }
-    .value { font-size: .95rem; font-weight: 600; word-break: break-word; }
-    .actions { display: flex; flex-wrap: wrap; gap: 10px; }
-    button { border: 1px solid var(--line); border-radius: 10px; background: #16233d; color: var(--text); padding: 9px 12px; font-size: .86rem; font-weight: 600; cursor: pointer; }
-    button.primary { background: color-mix(in oklab, var(--cta) 35%, #0f172a); border-color: color-mix(in oklab, var(--cta) 40%, var(--line)); }
-    button.danger { background: color-mix(in oklab, var(--bad) 25%, #0f172a); border-color: color-mix(in oklab, var(--bad) 45%, var(--line)); }
-    .event { color: var(--muted); font-size: .82rem; border-top: 1px solid var(--line); margin-top: 12px; padding-top: 12px; white-space: pre-wrap; }
+    .wrap {
+      max-width: 940px;
+      margin: 0 auto;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: color-mix(in oklab, var(--card) 94%, #000);
+      padding: 14px 16px;
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+    .brand-row img {
+      width: 44px;
+      height: 44px;
+      border-radius: 10px;
+      background: rgba(255,255,255,.04);
+      padding: 4px;
+    }
+    .brand-row .titles { flex: 1; min-width: 0; }
+    h1 {
+      margin: 0;
+      font-size: 1.18rem;
+      font-weight: 700;
+      letter-spacing: .3px;
+    }
+    h2 {
+      margin: 0 0 6px 0;
+      font-size: 1rem;
+      font-weight: 700;
+    }
+    .sub {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: .86rem;
+    }
+    .sub.tiny {
+      font-size: .78rem;
+      color: var(--muted-soft);
+    }
+    .health-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: .85rem;
+      font-weight: 600;
+      border: 1px solid var(--line);
+    }
+    .health-badge.ok { background: color-mix(in oklab, var(--ok) 18%, #0f172a); border-color: color-mix(in oklab, var(--ok) 55%, var(--line)); color: #bbf7d0; }
+    .health-badge.warn { background: color-mix(in oklab, var(--warn) 18%, #0f172a); border-color: color-mix(in oklab, var(--warn) 55%, var(--line)); color: #fde68a; }
+    .health-badge.bad { background: color-mix(in oklab, var(--bad) 18%, #0f172a); border-color: color-mix(in oklab, var(--bad) 55%, var(--line)); color: #fecaca; }
+    .health-badge .dot { width: 9px; height: 9px; border-radius: 999px; background: currentColor; }
+
+    .stepper {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .step {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.03);
+      border: 1px solid var(--line);
+      font-size: .85rem;
+      color: var(--muted);
+    }
+    .step .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.05);
+      color: var(--muted);
+      font-weight: 700;
+      font-size: .78rem;
+    }
+    .step.active {
+      color: var(--text);
+      background: var(--cta-soft);
+      border-color: color-mix(in oklab, var(--cta) 50%, var(--line));
+    }
+    .step.active .num { background: var(--cta); color: #0b1220; }
+    .step.done { color: #bbf7d0; border-color: color-mix(in oklab, var(--ok) 50%, var(--line)); }
+    .step.done .num { background: var(--ok); color: #0b1220; }
+    .step-sep { color: var(--muted-soft); }
+
+    .status-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .status-tile {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: rgba(255,255,255,.02);
+    }
+    .status-tile .icon {
+      width: 36px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      background: rgba(255,255,255,.04);
+      font-size: 1.2rem;
+      flex-shrink: 0;
+    }
+    .status-tile.ok .icon { background: color-mix(in oklab, var(--ok) 22%, #0f172a); }
+    .status-tile.warn .icon { background: color-mix(in oklab, var(--warn) 22%, #0f172a); }
+    .status-tile.bad .icon { background: color-mix(in oklab, var(--bad) 22%, #0f172a); }
+    .status-tile .body { min-width: 0; }
+    .status-tile .label {
+      color: var(--muted);
+      font-size: .78rem;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: 4px;
+    }
+    .status-tile .value {
+      font-size: .98rem;
+      font-weight: 600;
+      word-break: break-word;
+    }
+    .status-tile .tiny {
+      color: var(--muted-soft);
+      font-size: .76rem;
+      margin-top: 4px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: .78rem;
+      padding: 5px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+    }
+    .pill .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: var(--muted);
+    }
+    .pill .dot.ok { background: var(--ok); }
+    .pill .dot.bad { background: var(--bad); }
+    .pill .dot.warn { background: var(--warn); }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    button {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #16233d;
+      color: var(--text);
+      padding: 9px 14px;
+      font-size: .88rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .05s;
+    }
+    button:hover:not(:disabled) {
+      background: color-mix(in oklab, #16233d 85%, var(--cta));
+    }
+    button:disabled {
+      opacity: .55;
+      cursor: not-allowed;
+    }
+    button.primary {
+      background: color-mix(in oklab, var(--cta) 40%, #0f172a);
+      border-color: color-mix(in oklab, var(--cta) 50%, var(--line));
+    }
+    button.danger {
+      background: color-mix(in oklab, var(--bad) 30%, #0f172a);
+      border-color: color-mix(in oklab, var(--bad) 50%, var(--line));
+    }
+    button.ghost {
+      background: transparent;
+      color: var(--muted);
+    }
+    .btn-spinner {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .event {
+      color: var(--muted);
+      font-size: .82rem;
+      border-top: 1px solid var(--line);
+      margin-top: 14px;
+      padding-top: 12px;
+      white-space: pre-wrap;
+    }
+    .form {
+      display: grid;
+      gap: 14px;
+    }
+    .form .row {
+      display: grid;
+      gap: 6px;
+    }
+    .form .row .row-help {
+      color: var(--muted-soft);
+      font-size: .76rem;
+    }
+    input, select {
+      background: #0f172a;
+      border: 1px solid var(--line);
+      color: var(--text);
+      padding: 11px 12px;
+      border-radius: 10px;
+      font-size: .95rem;
+    }
+    input:focus, select:focus {
+      outline: 2px solid color-mix(in oklab, var(--cta) 50%, transparent);
+    }
+    .input-wrap {
+      position: relative;
+    }
+    .input-wrap input { width: 100%; padding-right: 70px; }
+    .input-wrap .toggle {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      transform: translateY(-50%);
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: .78rem;
+      cursor: pointer;
+      padding: 6px 10px;
+    }
+    .alert {
+      background: color-mix(in oklab, var(--bad) 18%, #0f172a);
+      border: 1px solid color-mix(in oklab, var(--bad) 55%, var(--line));
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: .88rem;
+      color: #fecaca;
+    }
+    .alert.ok {
+      background: color-mix(in oklab, var(--ok) 18%, #0f172a);
+      border-color: color-mix(in oklab, var(--ok) 55%, var(--line));
+      color: #bbf7d0;
+    }
+    .alert.warn {
+      background: color-mix(in oklab, var(--warn) 18%, #0f172a);
+      border-color: color-mix(in oklab, var(--warn) 55%, var(--line));
+      color: #fde68a;
+    }
+    .advanced {
+      margin-top: 4px;
+      padding: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 10px;
+      display: grid;
+      gap: 12px;
+    }
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px 18px;
+    }
+    .config-grid .label { color: var(--muted); font-size: .78rem; }
+    .config-grid .value { font-size: .92rem; font-weight: 500; word-break: break-word; }
+    details > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: .88rem;
+      padding: 4px 0;
+      list-style: none;
+    }
+    details > summary::-webkit-details-marker { display: none; }
+    details[open] > summary { color: var(--text); }
     .hidden { display: none !important; }
-    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-    .field { display: grid; gap: 6px; }
-    .field label { color: var(--muted); font-size: .78rem; }
-    .field input, .field select { width: 100%; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: #0f1a2d; color: var(--text); font-size: .84rem; }
-    .devices-list { display: grid; gap: 8px; margin-top: 10px; }
-    .device-row { border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: grid; gap: 8px; }
-    .device-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-    .device-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
-    .small { font-size: .75rem; color: var(--muted); }
-    @media (max-width: 900px) {
-      .status-grid, .grid { grid-template-columns: 1fr; }
-      .device-grid { grid-template-columns: 1fr; }
+    .footer-meta {
+      color: var(--muted-soft);
+      font-size: .76rem;
+      text-align: center;
+      padding: 4px 0 14px;
+    }
+    @media (max-width: 780px) {
+      .status-grid { grid-template-columns: 1fr; }
+      .config-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
 <body>
   <main class="wrap">
-    <section class="card">
-      <div class="head">
-        <div>
+    <!-- ONBOARDING -->
+    <section id="view-onboarding-header" class="card hidden">
+      <div class="brand-row">
+        <img src="../../public/branding/def-software-512.png" alt="DEF Software" onerror="this.style.display='none'" />
+        <div class="titles">
           <h1>MeatManager Bridge</h1>
-          <div class="sub">Estado en tiempo real de la conexion con balanza y MeatManager.</div>
+          <div class="sub">Configurá esta PC para que sincronice tu balanza con MeatManager.</div>
+        </div>
+      </div>
+      <div style="margin-top:16px" class="stepper">
+        <span id="step-1" class="step active"><span class="num">1</span>Cuenta</span>
+        <span class="step-sep">→</span>
+        <span id="step-2" class="step"><span class="num">2</span>Sucursal</span>
+        <span class="step-sep">→</span>
+        <span id="step-3" class="step"><span class="num">3</span>Balanza</span>
+      </div>
+    </section>
+
+    <section id="view-onboarding-login" class="card hidden">
+      <h2>Iniciá sesión</h2>
+      <div class="sub" style="margin-bottom:14px">Usá la cuenta del administrador del cliente. Esta info no se guarda en la PC.</div>
+      <form id="login-form" class="form">
+        <div class="row">
+          <label for="login-email" class="label">Email del administrador</label>
+          <input id="login-email" type="email" autocomplete="username" placeholder="admin@empresa.com" required />
+        </div>
+        <div class="row">
+          <label for="login-password" class="label">Contraseña</label>
+          <div class="input-wrap">
+            <input id="login-password" type="password" autocomplete="current-password" required />
+            <button type="button" id="login-password-toggle" class="toggle">Mostrar</button>
+          </div>
+        </div>
+        <details id="advanced-toggle">
+          <summary>Servidor avanzado</summary>
+          <div class="advanced">
+            <div class="row">
+              <label for="login-base-url" class="label">URL del servidor MeatManager</label>
+              <input id="login-base-url" type="text" autocomplete="off" placeholder="https://meatmanager.demo.def-software.com/api" />
+              <span class="row-help">Sólo cambialo si te lo indicó soporte técnico.</span>
+            </div>
+          </div>
+        </details>
+        <div id="login-error" class="alert hidden"></div>
+        <div class="actions">
+          <button type="submit" id="login-submit" class="primary">Continuar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-onboarding-branch" class="card hidden">
+      <h2>¿Dónde corre este bridge?</h2>
+      <div id="onboarding-client-name" class="sub" style="margin-bottom:14px"></div>
+      <form id="branch-form" class="form">
+        <div class="row">
+          <label for="branch-select" class="label">Sucursal</label>
+          <select id="branch-select" required></select>
+          <span class="row-help">Cada PC con bridge corresponde a una única sucursal. Si tenés varias sucursales necesitás un bridge en cada una.</span>
+        </div>
+        <div id="branch-error" class="alert hidden"></div>
+        <div class="actions">
+          <button type="button" id="branch-back" class="ghost">Atrás</button>
+          <button type="submit" id="branch-submit" class="primary">Continuar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-onboarding-scale" class="card hidden">
+      <h2>Conectá la balanza</h2>
+      <div class="sub" style="margin-bottom:14px">
+        Indicá por qué puerto está conectada la balanza Systel CUORA MAX. Si todavía no la enchufaste, podés saltar este paso y configurarla más tarde.
+      </div>
+      <form id="scale-form" class="form">
+        <div class="row">
+          <label for="scale-port" class="label">Puerto COM</label>
+          <div style="display:flex; gap:8px;">
+            <select id="scale-port" style="flex:1"></select>
+            <button type="button" id="scale-refresh-ports" class="ghost">↻ Refrescar</button>
+          </div>
+          <span class="row-help" id="scale-ports-help">Detectamos los puertos disponibles. Conectá la balanza por USB antes de refrescar.</span>
+        </div>
+        <div class="row">
+          <label for="scale-address" class="label">Dirección de la balanza</label>
+          <input id="scale-address" type="number" min="1" max="99" value="20" />
+          <span class="row-help">Número de 1 a 99 (default 20). Lo configurás en el menú de la balanza, opción ADDR.</span>
+        </div>
+        <div id="scale-error" class="alert hidden"></div>
+        <div class="actions">
+          <button type="button" id="scale-skip" class="ghost">Saltar y configurar después</button>
+          <button type="submit" id="scale-submit" class="primary">Finalizar y arrancar</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="view-onboarding-success" class="card hidden">
+      <div class="alert ok" id="onboarding-success-msg">Bridge configurado. Arrancando sincronización...</div>
+    </section>
+
+    <!-- STATUS -->
+    <section id="view-status-header" class="card hidden">
+      <div class="brand-row">
+        <img src="../../public/branding/def-software-512.png" alt="DEF Software" onerror="this.style.display='none'" />
+        <div class="titles">
+          <h1>MeatManager Bridge <span id="status-app-version" class="sub tiny" style="margin-left:6px"></span></h1>
+          <div id="status-tenant-line" class="sub">-</div>
         </div>
         <div id="update-pill" class="pill"><span class="dot"></span><span>Sin novedades</span></div>
       </div>
-    </section>
-
-    <section id="onboarding-card" class="card hidden">
-      <div class="label">Configuracion inicial obligatoria</div>
-      <div class="value">Vincula este Bridge con un admin, cliente, sucursal y una o mas balanzas.</div>
-
-      <div class="grid" style="margin-top:10px;">
-        <div class="field"><label>Email admin</label><input id="ob-identifier" /></div>
-        <div class="field"><label>Contrasena</label><input id="ob-password" type="password" /></div>
-      </div>
-      <div class="actions" style="margin-top:10px;">
-        <button id="ob-login" class="primary">Ingresar como admin</button>
-      </div>
-      <div id="ob-feedback" class="small" style="margin-top:8px;"></div>
-
-      <div id="ob-after-login" class="hidden" style="margin-top:10px;">
-        <div class="grid">
-          <div class="field"><label>Cliente</label><select id="ob-client"></select></div>
-          <div class="field"><label>Sucursal</label><select id="ob-branch"></select></div>
-          <div class="field"><label>Modelo</label><select id="ob-model"></select></div>
-        </div>
-
-        <div class="actions" style="margin-top:10px;">
-          <button id="ob-detect-ports">Detectar puertos COM</button>
-          <button id="ob-add-scale">Agregar balanza</button>
-        </div>
-
-        <div id="ob-devices" class="devices-list"></div>
-
-        <div class="actions" style="margin-top:10px;">
-          <button id="ob-save" class="primary">Guardar vinculacion y comenzar</button>
-        </div>
-        <div class="small">La app no inicia sincronizacion hasta completar esta vinculacion.</div>
+      <div style="margin-top:14px; display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span id="health-badge" class="health-badge"><span class="dot"></span><span id="health-text">Verificando...</span></span>
+        <span id="last-sync-pill" class="pill"><span class="dot"></span><span id="last-sync-text">Sin sincronizaciones aún</span></span>
       </div>
     </section>
 
-    <section id="status-card" class="card">
-      <div class="status-grid">
-        <article>
-          <div class="label">Proceso Bridge</div>
-          <div id="bridge-process" class="value">-</div>
-        </article>
-        <article>
-          <div class="label">API local del bridge</div>
-          <div id="bridge-http" class="value">-</div>
-        </article>
-        <article>
-          <div class="label">Ultima sincronizacion</div>
-          <div id="last-run-at" class="value">-</div>
-        </article>
-        <article>
-          <div class="label">Ultimo estado/error</div>
-          <div id="last-error" class="value">-</div>
-        </article>
+    <section id="view-status-grid" class="card hidden">
+      <div class="status-grid" style="grid-template-columns: repeat(4, minmax(0, 1fr))">
+        <div id="tile-process" class="status-tile">
+          <div class="icon">⚙️</div>
+          <div class="body">
+            <div class="label">Proceso bridge</div>
+            <div class="value" id="bridge-process">-</div>
+            <div class="tiny" id="bridge-process-tiny"></div>
+          </div>
+        </div>
+        <div id="tile-api" class="status-tile">
+          <div class="icon">📡</div>
+          <div class="body">
+            <div class="label">API local</div>
+            <div class="value" id="bridge-http">-</div>
+            <div class="tiny" id="bridge-http-tiny"></div>
+          </div>
+        </div>
+        <div id="tile-scale" class="status-tile">
+          <div class="icon">⚖️</div>
+          <div class="body">
+            <div class="label">Balanza</div>
+            <div class="value" id="scale-status">-</div>
+            <div class="tiny" id="scale-status-tiny"></div>
+          </div>
+        </div>
+        <div id="tile-error" class="status-tile">
+          <div class="icon">🔔</div>
+          <div class="body">
+            <div class="label">Último estado</div>
+            <div class="value" id="last-error">-</div>
+            <div class="tiny" id="last-run-at">-</div>
+          </div>
+        </div>
       </div>
-      <div id="devices-summary" class="small" style="margin-top:8px;"></div>
     </section>
 
-    <section id="actions-card" class="card">
+    <section id="view-status-actions" class="card hidden">
+      <h2 style="margin-bottom:10px">Acciones</h2>
       <div class="actions">
         <button id="btn-restart">Reiniciar bridge</button>
-        <button id="btn-check-updates">Buscar actualizacion</button>
-        <button id="btn-install-update" class="primary">Aplicar actualizacion</button>
-        <button id="btn-open-logs">Abrir carpeta de logs</button>
+        <button id="btn-test-scale">Probar balanza</button>
+        <button id="btn-check-updates">Buscar actualización</button>
+        <button id="btn-install-update" class="primary hidden">Aplicar actualización</button>
+        <button id="btn-open-logs" class="ghost">Abrir carpeta de logs</button>
+        <button id="btn-reset-scale" class="danger ghost">Resetear balanza</button>
+        <button id="btn-reset-install" class="danger ghost">Re-configurar bridge</button>
       </div>
       <div id="event" class="event">Listo.</div>
     </section>
 
-    <section id="config-card" class="card hidden">
-      <div class="label">Configuracion de balanzas</div>
-      <div class="value">Podes ajustar puertos COM y direccion de cada balanza sin reinstalar.</div>
-      <div class="actions" style="margin-top:10px;">
-        <button id="cfg-detect-ports">Detectar puertos COM</button>
-        <button id="cfg-add-scale">Agregar balanza</button>
-        <button id="cfg-save" class="primary">Guardar y reiniciar bridge</button>
-      </div>
-      <div id="cfg-feedback" class="small" style="margin-top:8px;"></div>
-      <div id="cfg-devices" class="devices-list"></div>
+    <section id="view-status-config" class="card hidden">
+      <details>
+        <summary>Información de configuración</summary>
+        <div class="config-grid" style="margin-top:14px">
+          <div>
+            <div class="label">Cliente</div>
+            <div class="value" id="cfg-client">-</div>
+          </div>
+          <div>
+            <div class="label">Sucursal</div>
+            <div class="value" id="cfg-branch">-</div>
+          </div>
+          <div>
+            <div class="label">Device ID</div>
+            <div class="value" id="cfg-device-id">-</div>
+          </div>
+          <div>
+            <div class="label">Servidor</div>
+            <div class="value" id="cfg-api-url">-</div>
+          </div>
+          <div>
+            <div class="label">CUIT</div>
+            <div class="value" id="cfg-tax-id">-</div>
+          </div>
+          <div>
+            <div class="label">Onboardeado</div>
+            <div class="value" id="cfg-onboarded-at">-</div>
+          </div>
+        </div>
+      </details>
     </section>
+
+    <div class="footer-meta" id="footer-meta"></div>
   </main>
   <script src="./renderer.js"></script>
 </body>

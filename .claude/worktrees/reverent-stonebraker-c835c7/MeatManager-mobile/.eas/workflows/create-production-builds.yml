@@ -1,0 +1,8 @@
+name: create-production-builds
+
+jobs:
+  android_production:
+    type: build
+    params:
+      platform: android
+      profile: production

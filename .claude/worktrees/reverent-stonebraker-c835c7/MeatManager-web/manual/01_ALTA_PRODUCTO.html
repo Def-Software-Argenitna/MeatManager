@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual: Alta de Producto - MeatManager PRO</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: #f5f5f5;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            padding: 40px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding-bottom: 20px;
+            border-bottom: 3px solid #3b82f6;
+        }
+        
+        .header h1 {
+            color: #1e40af;
+            font-size: 2rem;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            color: #6b7280;
+            font-size: 1.1rem;
+        }
+        
+        .section {
+            margin-bottom: 30px;
+        }
+        
+        .section h2 {
+            color: #1e40af;
+            font-size: 1.5rem;
+            margin-bottom: 15px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .section h3 {
+            color: #3b82f6;
+            font-size: 1.2rem;
+            margin: 20px 0 10px 0;
+        }
+        
+        .flowchart {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            margin: 20px 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            color: white;
+        }
+        
+        .flowchart .step {
+            text-align: center;
+            flex: 1;
+        }
+        
+        .flowchart .step .number {
+            background: white;
+            color: #667eea;
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            margin: 0 auto 10px auto;
+            font-size: 1.2rem;
+        }
+        
+        .flowchart .arrow {
+            font-size: 2rem;
+        }
+        
+        .steps-list {
+            list-style: none;
+            counter-reset: step-counter;
+        }
+        
+        .steps-list li {
+            counter-increment: step-counter;
+            margin-bottom: 15px;
+            padding-left: 40px;
+            position: relative;
+        }
+        
+        .steps-list li::before {
+            content: counter(step-counter);
+            position: absolute;
+            left: 0;
+            top: 0;
+            background: #3b82f6;
+            color: white;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        
+        .box {
+            background: #f0f9ff;
+            border-left: 4px solid #3b82f6;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }
+        
+        .box.warning {
+            background: #fef3c7;
+            border-left-color: #f59e0b;
+        }
+        
+        .box.success {
+            background: #d1fae5;
+            border-left-color: #10b981;
+        }
+        
+        .box.error {
+            background: #fee2e2;
+            border-left-color: #ef4444;
+        }
+        
+        .box strong {
+            display: block;
+            margin-bottom: 5px;
+        }
+        
+        .highlight {
+            background: #fef3c7;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        
+        .example {
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            padding: 20px;
+            border-radius: 6px;
+            margin: 15px 0;
+        }
+        
+        .example h4 {
+            color: #1e40af;
+            margin-bottom: 10px;
+        }
+        
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        
+        table th, table td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        
+        table th {
+            background: #3b82f6;
+            color: white;
+            font-weight: 600;
+        }
+        
+        table tr:hover {
+            background: #f9fafb;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 2px solid #e5e7eb;
+            color: #6b7280;
+        }
+        
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+            }
+            
+            .container {
+                box-shadow: none;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>📦 Manual: Alta de Producto</h1>
+            <p>MeatManager PRO - Sistema de Gestión para Carnicerías</p>
+        </div>
+
+        <div class="section">
+            <h2>🎯 Flujo Completo de Alta de Producto</h2>
+            <div class="flowchart">
+                <div class="step">
+                    <div class="number">1</div>
+                    <div>Categoría</div>
+                </div>
+                <div class="arrow">→</div>
+                <div class="step">
+                    <div class="number">2</div>
+                    <div>Catálogo</div>
+                </div>
+                <div class="arrow">→</div>
+                <div class="step">
+                    <div class="number">3</div>
+                    <div>Stock</div>
+                </div>
+                <div class="arrow">→</div>
+                <div class="step">
+                    <div class="number">4</div>
+                    <div>Vender</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>PASO 1: Crear Categoría (Opcional)</h2>
+            <p><strong>Ubicación:</strong> <span class="highlight">Configuración → Categorías</span></p>
+            
+            <div class="box">
+                <strong>¿Para qué sirve?</strong>
+                Las categorías organizan tus productos (Ej: "Carnes Rojas", "Aves", "Chacinados")
+            </div>
+
+            <ul class="steps-list">
+                <li>Click en <strong>"Nueva Categoría Principal"</strong></li>
+                <li>Escribir el nombre (Ejemplo: <code>Carnes Rojas</code>)</li>
+                <li>Guardar</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>⭐ PASO 2: Crear Producto en Catálogo de Compras</h2>
+            <p><strong>Ubicación:</strong> <span class="highlight">Configuración → Productos de Compra</span></p>
+            
+            <div class="box success">
+                <strong>IMPORTANTE:</strong>
+                Aquí defines TODOS los datos del producto: nombre, unidad, categoría, <strong>precio de venta</strong> y <strong>PLU para la balanza</strong>.
+            </div>
+
+            <h3>Datos Básicos</h3>
+            <table>
+                <tr>
+                    <th>Campo</th>
+                    <th>Descripción</th>
+                    <th>Ejemplo</th>
+                </tr>
+                <tr>
+                    <td>Nombre del Producto</td>
+                    <td>Descripción clara del producto</td>
+                    <td>Bife Ancho</td>
+                </tr>
+                <tr>
+                    <td>Categoría</td>
+                    <td>Rubro al que pertenece</td>
+                    <td>Carnes Rojas</td>
+                </tr>
+                <tr>
+                    <td>Unidad de Medida</td>
+                    <td>Cómo se vende</td>
+                    <td>kg / un / l</td>
+                </tr>
+                <tr>
+                    <td>Destino/Uso</td>
+                    <td>Venta directa o para despostar</td>
+                    <td>Venta Directa</td>
+                </tr>
+            </table>
+
+            <h3>Datos para Ventas (OBLIGATORIO)</h3>
+            <table>
+                <tr>
+                    <th>Campo</th>
+                    <th>Descripción</th>
+                    <th>Ejemplo</th>
+                </tr>
+                <tr>
+                    <td>Categoría de Venta</td>
+                    <td>Tipo de producto en ventas</td>
+                    <td>Vaca / Cerdo / Pollo</td>
+                </tr>
+                <tr>
+                    <td>PLU</td>
+                    <td>Código para la balanza</td>
+                    <td>111</td>
+                </tr>
+                <tr>
+                    <td>Precio de Venta</td>
+                    <td>Precio por kg o unidad</td>
+                    <td>15000</td>
+                </tr>
+            </table>
+
+            <div class="box success">
+                <strong>¿Qué hace el sistema automáticamente?</strong><br>
+                ✅ Crea el producto en el catálogo de compras<br>
+                ✅ Crea una entrada en Stock con cantidad 0<br>
+                ✅ Guarda el Precio y PLU para Ventas
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>PASO 3: Cargar Stock</h2>
+            
+            <h3>Opción A: Desde COMPRAS (Recomendado)</h3>
+            <p><strong>Ubicación:</strong> <span class="highlight">Compras</span></p>
+            <ul class="steps-list">
+                <li>Click en <strong>"Nueva Compra"</strong></li>
+                <li>Seleccionar <strong>Proveedor</strong></li>
+                <li>Agregar productos y cantidades</li>
+                <li>El sistema actualiza el stock automáticamente</li>
+            </ul>
+
+            <h3>Opción B: Ajuste Manual</h3>
+            <p><strong>Ubicación:</strong> <span class="highlight">Stock e Inventario</span></p>
+            <ul class="steps-list">
+                <li>Click en <strong>"Ajuste Manual"</strong></li>
+                <li>Seleccionar el Producto</li>
+                <li>Ingresar Cantidad</li>
+                <li>Elegir "Sumar Stock" o "Restar Stock"</li>
+                <li>Guardar</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>PASO 4: Vender el Producto</h2>
+            <p><strong>Ubicación:</strong> <span class="highlight">Ventas</span></p>
+
+            <h3>Método 1: Búsqueda Manual</h3>
+            <ul class="steps-list">
+                <li>Escribir el nombre o PLU en el buscador</li>
+                <li>Click en el producto para agregarlo al carrito</li>
+            </ul>
+
+            <h3>Método 2: Escanear Código de Barras</h3>
+            <ul class="steps-list">
+                <li>Click en el botón <strong>📦</strong> para activar el escáner</li>
+                <li>Escanear el código de la balanza</li>
+                <li>El producto se agrega automáticamente con el peso correcto</li>
+            </ul>
+        </div>
+
+        <div class="section">
+            <h2>🔍 Ejemplo Práctico</h2>
+            <div class="example">
+                <h4>Quiero vender "Bife Ancho"</h4>
+                
+                <p><strong>1. Categoría:</strong> Carnes Rojas (ya existe)</p>
+                
+                <p><strong>2. Catálogo de Compras:</strong></p>
+                <ul>
+                    <li>Nombre: <code>Bife Ancho</code></li>
+                    <li>Categoría: <code>Carnes Rojas</code></li>
+                    <li>Unidad: <code>kg</code></li>
+                    <li>Destino: <code>Venta Directa</code></li>
+                    <li>Categoría de Venta: <code>Vaca</code></li>
+                    <li>PLU: <code>111</code></li>
+                    <li>Precio: <code>15000</code></li>
+                </ul>
+                
+                <p><strong>3. Cargar Stock:</strong> Compro 50kg → Stock: <strong>50kg</strong></p>
+                
+                <p><strong>4. Vender:</strong></p>
+                <ul>
+                    <li>Cliente pide 2kg</li>
+                    <li>Busco "Bife Ancho" o escaneo código</li>
+                    <li>Carrito: 2kg × $15000 = <strong>$30000</strong></li>
+                    <li>Stock restante: <strong>48kg</strong></li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>⚠️ Errores Comunes</h2>
+            
+            <div class="box error">
+                <strong>❌ "No aparece mi producto en Ventas"</strong><br>
+                <strong>Solución:</strong> Verificar que completaste PLU y Precio en el Catálogo de Compras.
+            </div>
+
+            <div class="box error">
+                <strong>❌ "El escáner no lee el código"</strong><br>
+                <strong>Solución:</strong> 
+                <ol>
+                    <li>Activar el escáner con el botón 📦</li>
+                    <li>Verificar que el PLU del producto coincida con el de la balanza</li>
+                    <li>Revisar que el código sea EAN-13 (formato Systel)</li>
+                </ol>
+            </div>
+
+            <div class="box error">
+                <strong>❌ "Stock negativo"</strong><br>
+                <strong>Solución:</strong> Ir a Stock → Ajuste Manual y sumar la cantidad correcta.
+            </div>
+        </div>
+
+        <div class="footer">
+            <p><strong>MeatManager PRO</strong></p>
+            <p>Sistema de Gestión Integral para Carnicerías</p>
+            <p>Versión 1.0.0 - Febrero 2026</p>
+        </div>
+    </div>
+</body>
+</html>

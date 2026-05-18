@@ -1,0 +1,99 @@
+/* Dashboard Layout - High-Performance Crystal 3D Layout */
+.layout-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    background: #050505; /* Deep deep black */
+    color: #fff;
+    overflow: hidden;
+}
+
+.dashboard-layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.main-content {
+    flex: 1;
+    background: radial-gradient(circle at 50% 0%, rgba(20, 20, 30, 1) 0%, rgba(5, 5, 5, 1) 100%);
+    position: relative;
+    overflow-x: hidden;
+    overflow-y: auto;
+    height: 100%;
+    min-height: 0;
+    isolation: isolate;
+}
+
+.route-stage {
+    position: relative;
+    min-height: 100%;
+    perspective: 1400px;
+}
+
+.route-stage::before,
+.route-stage::after {
+    content: '';
+    position: fixed;
+    pointer-events: none;
+    inset: auto;
+    z-index: 0;
+    filter: blur(32px);
+    opacity: 0.5;
+}
+
+.route-stage::before {
+    top: 6rem;
+    left: -6rem;
+    width: 18rem;
+    height: 28rem;
+    background: linear-gradient(180deg, rgba(249, 115, 22, 0.12), rgba(249, 115, 22, 0));
+}
+
+.route-stage::after {
+    right: -5rem;
+    bottom: 4rem;
+    width: 16rem;
+    height: 22rem;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0));
+}
+
+.route-shell {
+    position: relative;
+    z-index: 1;
+    min-height: 100%;
+    transform-origin: center center;
+    will-change: transform, opacity, filter;
+    padding: 1.5rem;
+}
+
+/* Scrollbar styling for the whole app */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 10px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--color-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .route-shell {
+        will-change: auto;
+    }
+
+    .route-stage::before,
+    .route-stage::after {
+        display: none;
+    }
+}

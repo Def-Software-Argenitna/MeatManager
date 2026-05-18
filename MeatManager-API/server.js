@@ -148,6 +148,10 @@ const CLIENT_LICENSES_TABLE = process.env.CLIENT_LICENSES_TABLE || 'client_licen
 const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE || 'client_user_permissions';
 const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
 const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
+const BRIDGE_DEVICES_TABLE = process.env.BRIDGE_DEVICES_TABLE || 'bridge_devices';
+const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
+const BRIDGE_SESSION_TOKEN_EXPIRES_IN = process.env.BRIDGE_SESSION_TOKEN_EXPIRES_IN || '10m';
+const BRIDGE_DEVICE_TOKEN_BYTES = Math.max(16, Number.parseInt(process.env.BRIDGE_DEVICE_TOKEN_BYTES || '32', 10) || 32);
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
 const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
@@ -283,6 +287,123 @@ function verifyInternalAdminToken(token) {
         throw new Error('Invalid internal admin token');
     }
     return payload.admin;
+}
+
+// ── Bridge auth helpers ────────────────────────────────────────────────────
+async function firebaseSignInWithPassword(email, password) {
+    const normalizedEmail = normalizeEmail(email);
+    const cleanPassword = String(password || '');
+    if (!normalizedEmail || !cleanPassword) {
+        const error = new Error('Email y contraseña son requeridos');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!FIREBASE_WEB_API_KEY) {
+        if (localDevAuthBypass) {
+            return { uid: `dev-${normalizedEmail}`, email: normalizedEmail, devBypass: true };
+        }
+        const error = new Error('Firebase Web API Key no configurada en el servidor');
+        error.statusCode = 503;
+        throw error;
+    }
+
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(FIREBASE_WEB_API_KEY)}`;
+    let response;
+    try {
+        response = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: normalizedEmail, password: cleanPassword, returnSecureToken: true }),
+        });
+    } catch (networkError) {
+        const error = new Error('No se pudo contactar a Firebase para validar credenciales');
+        error.statusCode = 502;
+        error.cause = networkError;
+        throw error;
+    }
+
+    let body = null;
+    try {
+        body = await response.json();
+    } catch (_) {
+        body = null;
+    }
+
+    if (!response.ok) {
+        const firebaseCode = String(body?.error?.message || '').trim();
+        const knownAuthErrors = new Set([
+            'EMAIL_NOT_FOUND',
+            'INVALID_PASSWORD',
+            'INVALID_LOGIN_CREDENTIALS',
+            'USER_DISABLED',
+            'INVALID_EMAIL',
+            'MISSING_PASSWORD',
+        ]);
+        const message = knownAuthErrors.has(firebaseCode) || firebaseCode.startsWith('TOO_MANY_ATTEMPTS')
+            ? 'Email o contraseña inválidos'
+            : 'No se pudo validar el usuario contra Firebase';
+        const error = new Error(message);
+        error.statusCode = knownAuthErrors.has(firebaseCode) ? 401 : 502;
+        error.firebaseCode = firebaseCode;
+        throw error;
+    }
+
+    const uid = body?.localId || null;
+    if (!uid) {
+        const error = new Error('Respuesta de Firebase sin localId');
+        error.statusCode = 502;
+        throw error;
+    }
+    return { uid, email: body?.email || normalizedEmail, idToken: body?.idToken || null };
+}
+
+function signBridgeSessionToken(payload) {
+    return jwt.sign(
+        { kind: 'bridge_session', ...payload },
+        INTERNAL_ADMIN_JWT_SECRET,
+        { expiresIn: BRIDGE_SESSION_TOKEN_EXPIRES_IN }
+    );
+}
+
+function verifyBridgeSessionToken(token) {
+    const payload = jwt.verify(token, INTERNAL_ADMIN_JWT_SECRET);
+    if (payload?.kind !== 'bridge_session' || !payload?.uid || !payload?.clientId) {
+        throw new Error('Invalid bridge session token');
+    }
+    return payload;
+}
+
+function generateBridgeDeviceToken() {
+    return crypto.randomBytes(BRIDGE_DEVICE_TOKEN_BYTES).toString('hex');
+}
+
+function hashBridgeDeviceToken(token) {
+    return crypto
+        .createHmac('sha256', INTERNAL_ADMIN_JWT_SECRET)
+        .update(String(token || ''))
+        .digest('hex');
+}
+
+function generateBridgeDeviceId() {
+    return `bridge-${crypto.randomBytes(8).toString('hex')}`;
+}
+
+async function findBridgeDeviceByToken(token) {
+    const tokenString = String(token || '').trim();
+    if (!tokenString) return null;
+    const hash = hashBridgeDeviceToken(tokenString);
+    const [rows] = await clientsControlPool.query(
+        `SELECT id, tenantId, clientId, branchId, deviceId, hostname, status, lastSeenAt
+         FROM \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+         WHERE deviceTokenHash = ?
+         LIMIT 1`,
+        [hash]
+    );
+    const row = rows?.[0] || null;
+    if (!row) return null;
+    if (String(row.status || '').toUpperCase() !== 'ACTIVE') return null;
+    return row;
 }
 
 async function sendCashWithdrawalAuthorizationEmail({
@@ -1747,6 +1868,83 @@ async function ensureOperationalTenantIsolation() {
                 )
             `);
 
+            // ── Bridge sync state tables (antes creadas por el propio bridge) ──
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_bridge_product_map (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    device_id VARCHAR(64) NOT NULL,
+                    tenant_id BIGINT NOT NULL,
+                    product_id BIGINT NOT NULL,
+                    plu_code VARCHAR(16) NOT NULL,
+                    fingerprint VARCHAR(128) NOT NULL,
+                    synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY ux_scale_product_map (device_id, tenant_id, product_id),
+                    KEY ix_scale_product_plu (device_id, plu_code)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_bridge_sales_item (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    device_id VARCHAR(64) NOT NULL,
+                    tenant_id BIGINT NOT NULL,
+                    branch_id BIGINT NULL,
+                    ticket_id VARCHAR(32) NOT NULL,
+                    ticket_barcode VARCHAR(64) NULL,
+                    printed_ticket_barcode VARCHAR(32) NULL,
+                    line_no INT NOT NULL,
+                    sale_at DATETIME NOT NULL,
+                    vendor_code VARCHAR(8) NOT NULL,
+                    vendor_name VARCHAR(100) NULL,
+                    plu_code VARCHAR(16) NOT NULL,
+                    sector_code VARCHAR(8) NOT NULL,
+                    units INT NOT NULL DEFAULT 0,
+                    grams INT NOT NULL DEFAULT 0,
+                    drained_grams INT NOT NULL DEFAULT 0,
+                    amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    ticket_total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    ticket_item_count INT NOT NULL DEFAULT 0,
+                    item_quantity DECIMAL(12,3) NOT NULL DEFAULT 0,
+                    item_quantity_unit VARCHAR(8) NOT NULL DEFAULT 'un',
+                    raw_payload JSON NULL,
+                    synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY ux_scale_sale_line (device_id, ticket_id, line_no),
+                    KEY ix_scale_sale_date (device_id, sale_at),
+                    KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_bridge_ticket_map (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    device_id VARCHAR(64) NOT NULL,
+                    tenant_id BIGINT NOT NULL,
+                    branch_id BIGINT NULL,
+                    scale_address INT NULL,
+                    ticket_id VARCHAR(32) NOT NULL,
+                    ticket_barcode VARCHAR(64) NOT NULL,
+                    printed_ticket_barcode VARCHAR(32) NULL,
+                    vendor_code VARCHAR(16) NULL,
+                    vendor_name VARCHAR(100) NULL,
+                    sale_at DATETIME NOT NULL,
+                    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    item_count INT NOT NULL DEFAULT 0,
+                    ticket_status VARCHAR(16) NOT NULL DEFAULT 'open',
+                    charged_sale_id BIGINT NULL,
+                    charged_at DATETIME NULL,
+                    voided_sale_id BIGINT NULL,
+                    voided_at DATETIME NULL,
+                    fingerprint VARCHAR(128) NOT NULL,
+                    synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY ux_scale_ticket_device (device_id, ticket_id),
+                    UNIQUE KEY ux_scale_ticket_barcode (ticket_barcode),
+                    KEY ix_scale_ticket_addr (tenant_id, scale_address, sale_at),
+                    KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
             await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');
@@ -1951,6 +2149,25 @@ async function ensureClientsControlStore() {
                 ADD COLUMN cashAuthorizationEmail VARCHAR(150) NULL AFTER billingEmail
             `);
         }
+        await conn.query(`
+            CREATE TABLE IF NOT EXISTS \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\` (
+                id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+                tenantId            BIGINT NOT NULL,
+                clientId            BIGINT NOT NULL,
+                branchId            BIGINT NOT NULL,
+                deviceId            VARCHAR(64) NOT NULL,
+                deviceTokenHash     VARCHAR(128) NOT NULL,
+                hostname            VARCHAR(255) NULL,
+                status              VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+                lastSeenAt          DATETIME NULL,
+                createdAt           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updatedAt           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY uniq_bridge_devices_deviceId (deviceId),
+                INDEX idx_bridge_devices_tenant_branch (tenantId, branchId),
+                INDEX idx_bridge_devices_client (clientId),
+                INDEX idx_bridge_devices_status (status)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        `);
     } finally {
         conn.release();
     }
@@ -3036,6 +3253,42 @@ async function verifyFirebaseTokenWithClient(req, res, next) {
     } catch (error) {
         const statusCode = error?.statusCode || 500;
         return res.status(statusCode).json({ error: error?.message || 'No se pudo validar el usuario' });
+    }
+}
+
+async function verifyBridgeDeviceToken(req, res, next) {
+    const auth = req.headers.authorization;
+    if (!auth || !auth.startsWith('Bearer ')) {
+        return res.status(401).json({ error: 'Token de bridge requerido' });
+    }
+    const token = auth.slice('Bearer '.length).trim();
+    try {
+        const device = await findBridgeDeviceByToken(token);
+        if (!device) {
+            return res.status(401).json({ error: 'Token de bridge inválido' });
+        }
+        req.bridge = {
+            id: Number(device.id),
+            tenantId: Number(device.tenantId),
+            clientId: Number(device.clientId),
+            branchId: Number(device.branchId),
+            deviceId: String(device.deviceId),
+            hostname: device.hostname || null,
+        };
+        clientsControlPool
+            .query(
+                `UPDATE \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+                 SET lastSeenAt = NOW()
+                 WHERE id = ?`,
+                [device.id]
+            )
+            .catch((error) => {
+                console.warn('[BRIDGE AUTH] No se pudo actualizar lastSeenAt:', error?.message || error);
+            });
+        return next();
+    } catch (error) {
+        console.error('[BRIDGE AUTH ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'Error al validar token de bridge' });
     }
 }
 
@@ -5511,7 +5764,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 reason: 'lookup_summary_barcode',
                 barcode,
             });
-            const retryUntil = Date.now() + 7500;
+            const retryUntil = Date.now() + 15000;
             while (!ticketRows.length && Date.now() < retryUntil) {
                 await new Promise((resolve) => setTimeout(resolve, 500));
                 [ticketRows] = await pool.query(
@@ -8190,6 +8443,892 @@ app.get('/api/logistics/drivers/live', verifyFirebaseToken, async (req, res) => 
         console.error('[LIVE DRIVERS ERROR]', err.message);
         const statusCode = err.statusCode || 500;
         return res.status(statusCode).json({ error: err.message || 'No se pudo leer el mapa en tiempo real' });
+    }
+});
+
+// ── RUTAS: Onboarding del Bridge ───────────────────────────────────────────
+const bridgeAuthLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 30,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+app.post('/api/bridge/auth/login', bridgeAuthLimiter, async (req, res) => {
+    try {
+        const email = String(req.body?.email || '').trim();
+        const password = String(req.body?.password || '');
+        if (!email || !password) {
+            return res.status(400).json({ error: 'Email y contraseña son requeridos' });
+        }
+
+        const firebaseUser = await firebaseSignInWithPassword(email, password);
+
+        // Usa la misma resolucion que el resto del API (cubre owner fallback
+        // por billingEmail y Firestore).
+        const accessContext = await getClientAccessContext({
+            uid: firebaseUser.uid,
+            email: firebaseUser.email,
+        });
+
+        if (!accessContext?.user) {
+            return res.status(403).json({ error: 'El usuario no está vinculado a un cliente' });
+        }
+        const user = accessContext.user;
+        const client = accessContext.client;
+        if (String(user.role || '').toLowerCase() !== 'admin') {
+            return res.status(403).json({ error: 'Sólo usuarios admin pueden instalar el bridge' });
+        }
+        if (String(user.userStatus || '').toUpperCase() !== 'ACTIVE') {
+            return res.status(403).json({ error: 'El usuario no está activo' });
+        }
+        if (String(client?.status || '').toUpperCase() !== 'ACTIVE') {
+            return res.status(403).json({ error: 'El cliente no está activo' });
+        }
+
+        const clientId = Number(client.id);
+        const branches = await listClientBranches(clientId);
+        if (branches.length === 0) {
+            return res.status(409).json({ error: 'El cliente no tiene sucursales activas' });
+        }
+
+        const sessionToken = signBridgeSessionToken({
+            uid: firebaseUser.uid,
+            email: normalizeEmail(firebaseUser.email),
+            clientId,
+            branchIds: branches.map((branch) => Number(branch.id)),
+        });
+
+        return res.json({
+            sessionToken,
+            clientId,
+            tenantId: clientId,
+            clientName: client.businessName,
+            taxId: client.taxId,
+            branches: branches.map((branch) => ({
+                id: branch.id,
+                name: branch.name,
+                internalCode: branch.internalCode,
+                address: branch.address,
+            })),
+        });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) {
+            console.error('[BRIDGE LOGIN ERROR]', error?.message || error);
+        }
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo iniciar sesión' });
+    }
+});
+
+app.post('/api/bridge/onboarding/complete', bridgeAuthLimiter, async (req, res) => {
+    try {
+        const sessionToken = String(req.body?.sessionToken || '').trim();
+        const branchId = Number(req.body?.branchId);
+        const hostname = String(req.body?.hostname || '').trim().slice(0, 255) || null;
+        if (!sessionToken) {
+            return res.status(400).json({ error: 'sessionToken es requerido' });
+        }
+        if (!Number.isFinite(branchId) || branchId <= 0) {
+            return res.status(400).json({ error: 'branchId es requerido' });
+        }
+
+        let session;
+        try {
+            session = verifyBridgeSessionToken(sessionToken);
+        } catch (error) {
+            return res.status(401).json({ error: 'sessionToken inválido o expirado' });
+        }
+
+        const allowedBranches = Array.isArray(session.branchIds) ? session.branchIds.map(Number) : [];
+        if (!allowedBranches.includes(branchId)) {
+            return res.status(403).json({ error: 'La sucursal seleccionada no pertenece al cliente' });
+        }
+
+        const clientId = Number(session.clientId);
+        const branches = await listClientBranches(clientId);
+        const branch = branches.find((row) => Number(row.id) === branchId);
+        if (!branch) {
+            return res.status(409).json({ error: 'La sucursal ya no está activa' });
+        }
+
+        const conn = await clientsControlPool.getConnection();
+        let clientRow = null;
+        try {
+            const [clientRows] = await conn.query(
+                `SELECT id, businessName, taxId, status
+                 FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\`
+                 WHERE id = ?
+                 LIMIT 1`,
+                [clientId]
+            );
+            clientRow = clientRows?.[0] || null;
+        } finally {
+            conn.release();
+        }
+
+        if (!clientRow || String(clientRow.status || '').toUpperCase() !== 'ACTIVE') {
+            return res.status(409).json({ error: 'El cliente ya no está activo' });
+        }
+
+        const deviceId = generateBridgeDeviceId();
+        const deviceToken = generateBridgeDeviceToken();
+        const deviceTokenHash = hashBridgeDeviceToken(deviceToken);
+
+        await clientsControlPool.query(
+            `INSERT INTO \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+                (tenantId, clientId, branchId, deviceId, deviceTokenHash, hostname, status, lastSeenAt)
+             VALUES (?, ?, ?, ?, ?, ?, 'ACTIVE', NOW())`,
+            [clientId, clientId, branchId, deviceId, deviceTokenHash, hostname]
+        );
+
+        return res.json({
+            deviceToken,
+            deviceId,
+            tenantId: clientId,
+            clientId,
+            clientName: clientRow.businessName,
+            taxId: clientRow.taxId,
+            branchId: branch.id,
+            branchName: branch.name,
+            branchInternalCode: branch.internalCode,
+        });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) {
+            console.error('[BRIDGE ONBOARDING ERROR]', error?.message || error);
+        }
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo completar el onboarding' });
+    }
+});
+
+// ── RUTAS: Bridge autenticado por deviceToken ──────────────────────────────
+function getOperationalPool() {
+    return getTenantPool(OPERATIONAL_DB_NAME);
+}
+
+function resolveBridgeScaleDeviceId(req, scaleIdRaw) {
+    const scaleId = String(scaleIdRaw == null ? '' : scaleIdRaw).trim();
+    if (!scaleId || !/^[a-zA-Z0-9_-]{1,32}$/.test(scaleId)) {
+        const error = new Error('scaleId requerido (alfanumérico, 1-32 chars)');
+        error.statusCode = 400;
+        throw error;
+    }
+    return { scaleId, deviceId: `${req.bridge.deviceId}-scale-${scaleId}` };
+}
+
+function normalizeAsciiServer(value) {
+    return String(value || '')
+        .normalize('NFKD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[^\x20-\x7E]/g, '');
+}
+
+function parseBridgeSectionMappings(rawValue) {
+    try {
+        const parsed = JSON.parse(String(rawValue || '[]'));
+        if (!Array.isArray(parsed)) return [];
+        return parsed
+            .map((row) => {
+                const category = normalizeAsciiServer(row?.category).toLowerCase().trim();
+                if (!category) return null;
+                const sectionId = Math.max(1, Math.min(99, Number.parseInt(row?.sectionId, 10) || 2));
+                const sectionName = (normalizeAsciiServer(row?.sectionName || 'CARNICERIA').toUpperCase().slice(0, 18)) || 'CARNICERIA';
+                return { category, sectionId, sectionName };
+            })
+            .filter(Boolean);
+    } catch {
+        return [];
+    }
+}
+
+function parseBridgeMarqueeText(rawMessages, fallback = '') {
+    const fallbackText = normalizeAsciiServer(String(fallback || '')).slice(0, 80);
+    if (!rawMessages) return fallbackText;
+    try {
+        const parsed = JSON.parse(String(rawMessages));
+        if (!Array.isArray(parsed)) return fallbackText;
+        const active = parsed.find((line) => (
+            Number(line?.active ?? 1) === 1 && String(line?.text || '').trim().length > 0
+        ));
+        return normalizeAsciiServer(String(active?.text || '')).slice(0, 80) || fallbackText;
+    } catch {
+        return fallbackText;
+    }
+}
+
+function normalizePriceFormatServer(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized === '6d' ? '6d' : '4d2d';
+}
+
+app.get('/api/bridge/settings', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const pool = getOperationalPool();
+        const keys = [
+            'scale_ticket_header_line1',
+            'scale_ticket_header_line2',
+            'scale_ticket_header_line3',
+            'scale_section_mappings',
+            'scale_marquee_messages',
+            'scale_marquee_text',
+            'precio_formato',
+        ];
+        const placeholders = keys.map(() => '?').join(', ');
+        const [rows] = await pool.query(
+            `SELECT \`key\`, value FROM settings
+             WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders})`,
+            [req.bridge.tenantId, ...keys]
+        );
+        const byKey = rows.reduce((acc, row) => {
+            acc[String(row.key)] = row.value;
+            return acc;
+        }, {});
+        return res.json({
+            ticketHeader: {
+                line1: normalizeAsciiServer(byKey.scale_ticket_header_line1 || '').slice(0, 18),
+                line2: normalizeAsciiServer(byKey.scale_ticket_header_line2 || '').slice(0, 34),
+                line3: normalizeAsciiServer(byKey.scale_ticket_header_line3 || '').slice(0, 34),
+            },
+            sectionMappings: parseBridgeSectionMappings(byKey.scale_section_mappings),
+            marqueeText: parseBridgeMarqueeText(byKey.scale_marquee_messages, byKey.scale_marquee_text),
+            priceFormat: normalizePriceFormatServer(byKey.precio_formato),
+        });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE SETTINGS ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudieron leer los settings' });
+    }
+});
+
+app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+
+        const [duplicateRows] = await pool.query(
+            `SELECT effective_plu_code, COUNT(*) AS qty
+             FROM (
+                SELECT COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
+                FROM products
+                WHERE \`${TENANT_COLUMN}\` = ?
+                  AND COALESCE(current_price, 0) > 0
+                UNION ALL
+                SELECT TRIM(CAST(promo_plu AS CHAR)) AS effective_plu_code
+                FROM promotions
+                WHERE \`${TENANT_COLUMN}\` = ?
+                  AND COALESCE(active, 1) = 1
+                  AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+             ) x
+             GROUP BY effective_plu_code
+             HAVING COUNT(*) > 1
+             ORDER BY effective_plu_code`,
+            [tenantId, tenantId]
+        );
+
+        const [productRows] = await pool.query(
+            `SELECT id, plu, name, category, unit, current_price, updated_at,
+                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
+             FROM products
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND COALESCE(current_price, 0) > 0
+             ORDER BY updated_at ASC, id ASC`,
+            [tenantId]
+        );
+
+        let promotionRows = [];
+        try {
+            const [rows] = await pool.query(
+                `SELECT *
+                 FROM promotions
+                 WHERE \`${TENANT_COLUMN}\` = ?
+                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
+                 ORDER BY updated_at ASC, id ASC`,
+                [tenantId]
+            );
+            promotionRows = rows;
+        } catch (error) {
+            console.warn('[BRIDGE CATALOG] No se pudieron leer promociones:', error?.message || error);
+        }
+
+        const productById = new Map(productRows.map((row) => [Number(row.id), row]));
+
+        const products = productRows.map((row) => ({
+            mapProductId: Number(row.id),
+            sourceType: 'product',
+            sourceId: Number(row.id),
+            plu: row.plu,
+            name: row.name,
+            category: row.category,
+            unit: row.unit,
+            currentPrice: Number(row.current_price) || 0,
+            updatedAt: row.updated_at,
+            effectivePluCode: String(row.effective_plu_code || '').trim(),
+        }));
+
+        const promotions = promotionRows
+            .map((row) => {
+                const activeRaw = row.active;
+                const isActive = activeRaw == null
+                    || activeRaw === true
+                    || Number(activeRaw) === 1
+                    || String(activeRaw).trim().toLowerCase() === 'true';
+                if (!isActive) return null;
+                const promoPlu = String(row.promo_plu || '').trim();
+                if (!promoPlu) return null;
+                const linkedProduct = productById.get(Number(row.product_id)) || null;
+                const promoName = String(row.promo_name || '').trim();
+                const productName = String(row.product_name || '').trim();
+                const priceMode = String(row.promo_price_mode || 'total_kg').trim().toLowerCase();
+                const minQty = Number(row.min_qty_kg) || 0;
+                const totalPrice = Number(row.promo_total_price) || 0;
+                const unitPriceRaw = Number(row.promo_unit_price);
+                const effectiveUnitPrice = Number.isFinite(unitPriceRaw) && unitPriceRaw > 0
+                    ? unitPriceRaw
+                    : (priceMode === 'per_kg'
+                        ? totalPrice
+                        : (minQty > 0 ? (totalPrice / minQty) : totalPrice));
+                if (!(effectiveUnitPrice > 0)) return null;
+                const sourceId = Number(row.id);
+                return {
+                    mapProductId: -sourceId,
+                    sourceType: 'promotion',
+                    sourceId,
+                    plu: promoPlu,
+                    name: promoName || productName || `PROMO ${sourceId}`,
+                    category: linkedProduct?.category || 'PROMOCIONES',
+                    unit: linkedProduct?.unit || 'kg',
+                    currentPrice: effectiveUnitPrice,
+                    updatedAt: row.updated_at,
+                    effectivePluCode: promoPlu,
+                };
+            })
+            .filter(Boolean);
+
+        return res.json({
+            products,
+            promotions,
+            pluDuplicates: duplicateRows.map((row) => ({
+                pluCode: String(row.effective_plu_code || ''),
+                count: Number(row.qty) || 0,
+            })),
+            generatedAt: new Date().toISOString(),
+        });
+    } catch (error) {
+        console.error('[BRIDGE CATALOG ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo leer el catálogo' });
+    }
+});
+
+app.get('/api/bridge/catalog/removed', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.query?.scaleId);
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const [rows] = await pool.query(
+            `SELECT m.product_id AS mapProductId,
+                    m.plu_code   AS pluCode,
+                    CASE
+                        WHEN m.product_id < 0 THEN TRIM(CAST(pr.promo_plu AS CHAR))
+                        ELSE COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR))
+                    END AS expectedPluCode
+             FROM scale_bridge_product_map m
+             LEFT JOIN products p
+                ON m.product_id > 0 AND p.id = m.product_id AND p.\`${TENANT_COLUMN}\` = m.tenant_id
+             LEFT JOIN promotions pr
+                ON m.product_id < 0 AND pr.id = ABS(m.product_id) AND pr.\`${TENANT_COLUMN}\` = m.tenant_id
+             WHERE m.device_id = ?
+               AND m.tenant_id = ?
+               AND (
+                    (m.product_id > 0 AND (
+                        p.id IS NULL
+                        OR COALESCE(p.current_price, 0) <= 0
+                        OR COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR)) <> CAST(m.plu_code AS CHAR)
+                    ))
+                    OR (m.product_id < 0 AND (
+                        pr.id IS NULL
+                        OR COALESCE(pr.active, 1) <> 1
+                        OR TRIM(COALESCE(CAST(pr.promo_plu AS CHAR), '')) = ''
+                        OR TRIM(CAST(pr.promo_plu AS CHAR)) <> CAST(m.plu_code AS CHAR)
+                    ))
+               )`,
+            [deviceId, tenantId]
+        );
+        return res.json({
+            removed: rows.map((row) => ({
+                mapProductId: Number(row.mapProductId),
+                pluCode: String(row.pluCode || ''),
+                expectedPluCode: row.expectedPluCode ? String(row.expectedPluCode) : null,
+            })),
+        });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE CATALOG/REMOVED ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudieron leer productos removidos' });
+    }
+});
+
+app.get('/api/bridge/catalog/observed-plu', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.query?.scaleId);
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const [rows] = await pool.query(
+            `SELECT DISTINCT plu_code
+             FROM (
+                SELECT m.plu_code
+                FROM scale_bridge_product_map m
+                WHERE m.device_id = ? AND m.tenant_id = ?
+                UNION ALL
+                SELECT s.plu_code
+                FROM scale_bridge_sales_item s
+                WHERE s.device_id = ? AND s.tenant_id = ?
+                  AND s.sale_at >= DATE_SUB(NOW(), INTERVAL 365 DAY)
+             ) x
+             WHERE TRIM(COALESCE(plu_code, '')) <> ''`,
+            [deviceId, tenantId, deviceId, tenantId]
+        );
+        return res.json({ observedPlus: rows.map((row) => String(row.plu_code || '').trim()).filter(Boolean) });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE CATALOG/OBSERVED-PLU ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudieron leer PLUs observados' });
+    }
+});
+
+app.get('/api/bridge/sync-state/product-map', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.query?.scaleId);
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const idsRaw = String(req.query?.productIds || '').trim();
+        const productIds = idsRaw
+            ? idsRaw.split(',').map((value) => Number.parseInt(value.trim(), 10)).filter((value) => Number.isFinite(value))
+            : null;
+
+        let rows = [];
+        if (productIds && productIds.length > 0) {
+            const placeholders = productIds.map(() => '?').join(', ');
+            const [data] = await pool.query(
+                `SELECT product_id, plu_code, fingerprint, synced_at
+                 FROM scale_bridge_product_map
+                 WHERE device_id = ? AND tenant_id = ? AND product_id IN (${placeholders})`,
+                [deviceId, tenantId, ...productIds]
+            );
+            rows = data;
+        } else {
+            const [data] = await pool.query(
+                `SELECT product_id, plu_code, fingerprint, synced_at
+                 FROM scale_bridge_product_map
+                 WHERE device_id = ? AND tenant_id = ?`,
+                [deviceId, tenantId]
+            );
+            rows = data;
+        }
+
+        return res.json({
+            entries: rows.map((row) => ({
+                productId: Number(row.product_id),
+                pluCode: String(row.plu_code || ''),
+                fingerprint: String(row.fingerprint || ''),
+                syncedAt: row.synced_at,
+            })),
+        });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE SYNC-STATE GET ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo leer el sync state' });
+    }
+});
+
+app.put('/api/bridge/sync-state/product-map', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.body?.scaleId);
+        const entries = Array.isArray(req.body?.entries) ? req.body.entries : [];
+        if (entries.length === 0) {
+            return res.json({ ok: true, upserted: 0 });
+        }
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+
+        const values = [];
+        const placeholders = [];
+        for (const entry of entries) {
+            const productId = Number.parseInt(entry?.productId, 10);
+            const pluCode = String(entry?.pluCode || '').trim().slice(0, 16);
+            const fingerprint = String(entry?.fingerprint || '').trim().slice(0, 128);
+            if (!Number.isFinite(productId) || !pluCode || !fingerprint) continue;
+            placeholders.push('(?, ?, ?, ?, ?, NOW())');
+            values.push(deviceId, tenantId, productId, pluCode, fingerprint);
+        }
+        if (placeholders.length === 0) {
+            return res.json({ ok: true, upserted: 0 });
+        }
+
+        await pool.query(
+            `INSERT INTO scale_bridge_product_map (device_id, tenant_id, product_id, plu_code, fingerprint, synced_at)
+             VALUES ${placeholders.join(', ')}
+             ON DUPLICATE KEY UPDATE
+                plu_code    = VALUES(plu_code),
+                fingerprint = VALUES(fingerprint),
+                synced_at   = VALUES(synced_at)`,
+            values
+        );
+
+        return res.json({ ok: true, upserted: placeholders.length });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE SYNC-STATE PUT ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo escribir el sync state' });
+    }
+});
+
+app.delete('/api/bridge/sync-state/product-map', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.body?.scaleId);
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const resetAll = req.body?.resetAll === true;
+        const productIdsRaw = Array.isArray(req.body?.productIds) ? req.body.productIds : [];
+        const pluCodesRaw = Array.isArray(req.body?.pluCodes) ? req.body.pluCodes : [];
+
+        if (resetAll) {
+            const [result] = await pool.query(
+                `DELETE FROM scale_bridge_product_map WHERE device_id = ? AND tenant_id = ?`,
+                [deviceId, tenantId]
+            );
+            return res.json({ ok: true, deleted: Number(result?.affectedRows || 0), mode: 'resetAll' });
+        }
+
+        const productIds = productIdsRaw
+            .map((value) => Number.parseInt(value, 10))
+            .filter((value) => Number.isFinite(value));
+
+        const pluCodes = pluCodesRaw
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+            .slice(0, 500);
+
+        let totalDeleted = 0;
+
+        if (productIds.length > 0) {
+            const placeholders = productIds.map(() => '?').join(', ');
+            const [result] = await pool.query(
+                `DELETE FROM scale_bridge_product_map
+                 WHERE device_id = ? AND tenant_id = ? AND product_id IN (${placeholders})`,
+                [deviceId, tenantId, ...productIds]
+            );
+            totalDeleted += Number(result?.affectedRows || 0);
+        }
+
+        for (const pluCode of pluCodes) {
+            const pluNumber = Number.parseInt(pluCode, 10);
+            const params = [deviceId, tenantId, pluCode];
+            let extraSql = '';
+            if (Number.isFinite(pluNumber)) {
+                extraSql = ` OR (TRIM(CAST(plu_code AS CHAR)) REGEXP '^[0-9]+$' AND CAST(TRIM(CAST(plu_code AS CHAR)) AS UNSIGNED) = ?)`;
+                params.push(pluNumber);
+            }
+            const [result] = await pool.query(
+                `DELETE FROM scale_bridge_product_map
+                 WHERE device_id = ?
+                   AND tenant_id = ?
+                   AND (TRIM(CAST(plu_code AS CHAR)) = ?${extraSql})`,
+                params
+            );
+            totalDeleted += Number(result?.affectedRows || 0);
+        }
+
+        return res.json({ ok: true, deleted: totalDeleted });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE SYNC-STATE DELETE ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudo borrar del sync state' });
+    }
+});
+
+async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId }) {
+    const branchKey = Number.isFinite(branchId) && branchId > 0 ? branchId : null;
+
+    await pool.query(
+        `UPDATE scale_bridge_sales_item s
+         INNER JOIN scale_bridge_ticket_map t
+            ON t.device_id = s.device_id
+           AND t.tenant_id = s.tenant_id
+           AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+           AND t.ticket_id = s.ticket_id
+         SET s.ticket_barcode         = t.ticket_barcode,
+             s.printed_ticket_barcode = t.printed_ticket_barcode,
+             s.vendor_name            = t.vendor_name,
+             s.ticket_total_amount    = t.total_amount,
+             s.ticket_item_count      = t.item_count,
+             s.synced_at              = NOW()
+         WHERE s.device_id = ?
+           AND s.tenant_id = ?
+           AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+           AND (
+                s.ticket_barcode IS NULL
+                OR s.ticket_barcode <> t.ticket_barcode
+                OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
+                OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
+                OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
+                OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
+           )`,
+        [deviceId, tenantId, branchKey]
+    );
+
+    await pool.query(
+        `UPDATE scale_bridge_sales_item s
+         INNER JOIN (
+            SELECT device_id, tenant_id, COALESCE(branch_id, 0) AS branch_id_key, ticket_id,
+                   ROUND(SUM(amount), 2) AS ticket_total_amount,
+                   COUNT(*)              AS ticket_item_count
+              FROM scale_bridge_sales_item
+             WHERE device_id = ? AND tenant_id = ?
+               AND COALESCE(branch_id, 0) = COALESCE(?, 0)
+             GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id
+         ) totals
+            ON totals.device_id     = s.device_id
+           AND totals.tenant_id     = s.tenant_id
+           AND totals.branch_id_key = COALESCE(s.branch_id, 0)
+           AND totals.ticket_id     = s.ticket_id
+         SET s.ticket_total_amount = totals.ticket_total_amount,
+             s.ticket_item_count   = totals.ticket_item_count,
+             s.synced_at           = NOW()
+         WHERE s.device_id = ?
+           AND s.tenant_id = ?
+           AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+           AND (
+                ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(totals.ticket_total_amount, 0)) >= 0.01
+                OR COALESCE(s.ticket_item_count, 0) <> COALESCE(totals.ticket_item_count, 0)
+           )`,
+        [deviceId, tenantId, branchKey, deviceId, tenantId, branchKey]
+    );
+
+    await pool.query(
+        `UPDATE scale_bridge_sales_item
+         SET item_quantity = CASE
+                WHEN COALESCE(grams, 0) > 0 THEN ROUND(COALESCE(grams, 0) / 1000, 3)
+                ELSE COALESCE(units, 0)
+             END,
+             item_quantity_unit = CASE
+                WHEN COALESCE(grams, 0) > 0 THEN 'kg'
+                ELSE 'un'
+             END,
+             synced_at = NOW()
+         WHERE device_id = ?
+           AND tenant_id = ?
+           AND COALESCE(branch_id, 0) = COALESCE(?, 0)
+           AND (
+                ABS(COALESCE(item_quantity, 0) - CASE
+                    WHEN COALESCE(grams, 0) > 0 THEN ROUND(COALESCE(grams, 0) / 1000, 3)
+                    ELSE COALESCE(units, 0)
+                END) >= 0.001
+                OR COALESCE(item_quantity_unit, '') <> CASE
+                    WHEN COALESCE(grams, 0) > 0 THEN 'kg'
+                    ELSE 'un'
+                END
+           )`,
+        [deviceId, tenantId, branchKey]
+    );
+
+    await pool.query(
+        `UPDATE scale_bridge_ticket_map t
+         LEFT JOIN scale_users u
+           ON u.\`${TENANT_COLUMN}\` = t.tenant_id
+          AND COALESCE(u.active, 1) = 1
+          AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
+         SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
+         WHERE t.device_id = ?
+           AND t.tenant_id = ?
+           AND COALESCE(t.branch_id, 0) = COALESCE(?, 0)
+           AND (t.vendor_name IS NULL OR t.vendor_name = '')`,
+        [deviceId, tenantId, branchKey]
+    );
+
+    await pool.query(
+        `UPDATE scale_bridge_sales_item s
+         LEFT JOIN scale_users u
+           ON u.\`${TENANT_COLUMN}\` = s.tenant_id
+          AND COALESCE(u.active, 1) = 1
+          AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
+         SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
+             s.synced_at   = NOW()
+         WHERE s.device_id = ?
+           AND s.tenant_id = ?
+           AND COALESCE(s.branch_id, 0) = COALESCE(?, 0)
+           AND (s.vendor_name IS NULL OR s.vendor_name = '')`,
+        [deviceId, tenantId, branchKey]
+    );
+}
+
+app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const { deviceId } = resolveBridgeScaleDeviceId(req, req.body?.scaleId);
+        const scaleAddress = Number.parseInt(req.body?.scaleAddress, 10);
+        const tickets = Array.isArray(req.body?.tickets) ? req.body.tickets : [];
+        const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const branchId = req.bridge.branchId || null;
+
+        if (tickets.length === 0) {
+            return res.json({ ok: true, ticketsUpserted: 0, itemsUpserted: 0 });
+        }
+
+        let ticketsUpserted = 0;
+        let itemsUpserted = 0;
+
+        for (const ticket of tickets) {
+            const ticketId = String(ticket?.ticketId || '').trim();
+            if (!ticketId) continue;
+            const fingerprint = String(ticket?.fingerprint || '').slice(0, 128);
+            const ticketBarcode = String(ticket?.ticketBarcode || '').slice(0, 64);
+            const printedTicketBarcode = ticket?.printedTicketBarcode ? String(ticket.printedTicketBarcode).slice(0, 32) : null;
+            const vendorCode = ticket?.vendorCode != null ? String(ticket.vendorCode).slice(0, 16) : null;
+            const vendorName = ticket?.vendorName ? String(ticket.vendorName).slice(0, 100) : null;
+            const saleAt = ticket?.saleAt ? new Date(ticket.saleAt) : new Date();
+            const totalAmount = Number(ticket?.totalAmount) || 0;
+            const itemCount = Number.parseInt(ticket?.itemCount, 10) || 0;
+            const effectiveScaleAddress = Number.isFinite(scaleAddress) ? scaleAddress : null;
+
+            if (!fingerprint || !ticketBarcode) {
+                continue;
+            }
+
+            await pool.query(
+                `INSERT INTO scale_bridge_ticket_map
+                    (device_id, tenant_id, branch_id, scale_address, ticket_id, ticket_barcode, printed_ticket_barcode,
+                     vendor_code, vendor_name, sale_at, total_amount, item_count, fingerprint, synced_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                 ON DUPLICATE KEY UPDATE
+                    scale_address          = VALUES(scale_address),
+                    ticket_barcode         = VALUES(ticket_barcode),
+                    printed_ticket_barcode = VALUES(printed_ticket_barcode),
+                    vendor_code            = VALUES(vendor_code),
+                    vendor_name            = VALUES(vendor_name),
+                    sale_at                = VALUES(sale_at),
+                    total_amount           = VALUES(total_amount),
+                    item_count             = VALUES(item_count),
+                    fingerprint            = VALUES(fingerprint),
+                    synced_at              = VALUES(synced_at)`,
+                [
+                    deviceId, tenantId, branchId, effectiveScaleAddress, ticketId, ticketBarcode, printedTicketBarcode,
+                    vendorCode, vendorName, saleAt, totalAmount, itemCount, fingerprint,
+                ]
+            );
+
+            await pool.query(
+                `UPDATE scale_bridge_sales_item
+                 SET ticket_barcode         = ?,
+                     printed_ticket_barcode = ?,
+                     vendor_name            = ?,
+                     synced_at              = NOW()
+                 WHERE device_id = ?
+                   AND tenant_id = ?
+                   AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
+                   AND ticket_id = ?`,
+                [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId]
+            );
+
+            ticketsUpserted += 1;
+
+            const lines = Array.isArray(ticket?.lines) ? ticket.lines : [];
+            for (const line of lines) {
+                const lineNo = Number.parseInt(line?.lineNo, 10);
+                if (!Number.isFinite(lineNo)) continue;
+                const plu = String(line?.plu || '').slice(0, 16);
+                const sector = String(line?.sector || '').slice(0, 8);
+                const units = Number.parseInt(line?.units, 10) || 0;
+                const grams = Number.parseInt(line?.grams, 10) || 0;
+                const drainedGrams = Number.parseInt(line?.drainedGrams, 10) || 0;
+                const amount = Number(line?.amount) || 0;
+                const itemQuantity = Number(line?.itemQuantity) || 0;
+                const itemQuantityUnit = String(line?.itemQuantityUnit || 'un').slice(0, 8);
+                const lineSaleAt = line?.saleAt ? new Date(line.saleAt) : saleAt;
+                const rawPayload = line?.rawPayload != null ? JSON.stringify(line.rawPayload) : null;
+                const lineVendorCode = line?.vendorCode != null ? String(line.vendorCode).slice(0, 8) : (vendorCode || '');
+                const lineVendorName = line?.vendorName ? String(line.vendorName).slice(0, 100) : vendorName;
+
+                await pool.query(
+                    `INSERT INTO scale_bridge_sales_item
+                        (device_id, tenant_id, branch_id, ticket_id, ticket_barcode, printed_ticket_barcode,
+                         line_no, sale_at, vendor_code, vendor_name, plu_code, sector_code,
+                         units, grams, drained_grams, amount,
+                         ticket_total_amount, ticket_item_count, item_quantity, item_quantity_unit,
+                         raw_payload, synced_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                     ON DUPLICATE KEY UPDATE
+                        ticket_barcode         = VALUES(ticket_barcode),
+                        printed_ticket_barcode = VALUES(printed_ticket_barcode),
+                        sale_at                = VALUES(sale_at),
+                        vendor_code            = VALUES(vendor_code),
+                        vendor_name            = VALUES(vendor_name),
+                        plu_code               = VALUES(plu_code),
+                        sector_code            = VALUES(sector_code),
+                        units                  = VALUES(units),
+                        grams                  = VALUES(grams),
+                        drained_grams          = VALUES(drained_grams),
+                        amount                 = VALUES(amount),
+                        ticket_total_amount    = VALUES(ticket_total_amount),
+                        ticket_item_count      = VALUES(ticket_item_count),
+                        item_quantity          = VALUES(item_quantity),
+                        item_quantity_unit     = VALUES(item_quantity_unit),
+                        raw_payload            = VALUES(raw_payload),
+                        synced_at              = VALUES(synced_at)`,
+                    [
+                        deviceId, tenantId, branchId, ticketId, ticketBarcode, printedTicketBarcode,
+                        lineNo, lineSaleAt, lineVendorCode, lineVendorName, plu, sector,
+                        units, grams, drainedGrams, amount,
+                        totalAmount, itemCount, itemQuantity, itemQuantityUnit,
+                        rawPayload,
+                    ]
+                );
+                itemsUpserted += 1;
+            }
+        }
+
+        await runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId });
+
+        return res.json({ ok: true, ticketsUpserted, itemsUpserted });
+    } catch (error) {
+        const statusCode = error?.statusCode || 500;
+        if (statusCode >= 500) console.error('[BRIDGE SALES ERROR]', error?.message || error);
+        return res.status(statusCode).json({ error: error?.message || 'No se pudieron persistir las ventas' });
+    }
+});
+
+app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
+    // El middleware ya actualizó lastSeenAt. Aceptamos info de balanzas para
+    // forward-compat (próxima fase: persistir un registro por balanza).
+    const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
+    return res.json({ ok: true, scales, lastSeenAt: new Date().toISOString() });
+});
+
+app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
+    try {
+        const pool = getOperationalPool();
+        const [rows] = await pool.query(
+            `SELECT id, slot_no, display_name, active
+             FROM scale_users
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND COALESCE(active, 1) = 1
+             ORDER BY slot_no ASC, id ASC
+             LIMIT 4`,
+            [req.bridge.tenantId]
+        );
+        const bySlot = [];
+        for (let slot = 1; slot <= 4; slot += 1) {
+            const row = rows.find((entry) => Number(entry.slot_no) === slot) || null;
+            bySlot.push({
+                slot,
+                id: row ? Number(row.id) : null,
+                displayName: row ? String(row.display_name || '').trim() : `VENDEDOR ${slot}`,
+            });
+        }
+        return res.json({ vendors: bySlot });
+    } catch (error) {
+        console.error('[BRIDGE VENDORS ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudieron leer los vendedores' });
     }
 });
 

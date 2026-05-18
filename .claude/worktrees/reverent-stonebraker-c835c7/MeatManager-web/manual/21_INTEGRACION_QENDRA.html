@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manual - Integración QENDRA (Balanza)</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.7;
+        }
+        .container { max-width: 900px; margin: 0 auto; padding: 30px 20px; }
+        header {
+            background: linear-gradient(135deg, #7c3aed 0%, #4f46e5 100%);
+            color: white;
+            padding: 40px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            text-align: center;
+        }
+        header h1 { font-size: 2em; margin-bottom: 10px; }
+        header p { opacity: 0.9; font-size: 1.05em; }
+        .breadcrumb {
+            background: white;
+            padding: 15px 20px;
+            margin-bottom: 20px;
+            border-radius: 5px;
+            font-size: 0.9em;
+        }
+        .breadcrumb a { color: #667eea; text-decoration: none; }
+        .section {
+            background: white;
+            padding: 25px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #7c3aed;
+            margin-bottom: 15px;
+            border-bottom: 2px solid #7c3aed;
+            padding-bottom: 10px;
+        }
+        .section h3 {
+            color: #4f46e5;
+            margin-top: 20px;
+            margin-bottom: 10px;
+        }
+        .step {
+            background: #f9f7ff;
+            border-left: 4px solid #7c3aed;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .step-number {
+            display: inline-block;
+            background: #7c3aed;
+            color: white;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 30px;
+            font-weight: bold;
+            margin-right: 10px;
+            flex-shrink: 0;
+        }
+        .highlight {
+            background: #ede9fe;
+            padding: 2px 7px;
+            border-radius: 3px;
+            font-weight: bold;
+            color: #5b21b6;
+        }
+        .warning {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .info {
+            background: #e0e7ff;
+            border-left: 4px solid #4f46e5;
+            padding: 15px;
+            margin: 15px 0;
+            border-radius: 5px;
+        }
+        .prereq {
+            background: #fdf4ff;
+            border: 2px solid #d8b4fe;
+            border-radius: 8px;
+            padding: 18px 22px;
+            margin: 15px 0;
+        }
+        .prereq h4 { color: #7c3aed; margin-bottom: 8px; font-size: 1em; }
+        .btn-label {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 0.92em;
+        }
+        .btn-purple { background: #ede9fe; color: #5b21b6; border: 1px solid #a78bfa; }
+        .btn-green  { background: #dcfce7; color: #15803d; border: 1px solid #34d399; }
+        .btn-blue   { background: #dbeafe; color: #1d4ed8; border: 1px solid #60a5fa; }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background: #f0ebff;
+            color: #7c3aed;
+            font-weight: bold;
+        }
+        tr:hover { background: #faf8ff; }
+        ul, ol { margin-left: 20px; }
+        li { margin-bottom: 8px; }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+            margin: 16px 0;
+        }
+        .feature-card {
+            background: #faf8ff;
+            border: 1px solid #d8b4fe;
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+        }
+        .feature-card .icon { font-size: 2em; margin-bottom: 8px; }
+        .feature-card h4 { color: #5b21b6; margin-bottom: 6px; }
+        .feature-card p  { font-size: 0.88em; color: #666; }
+        .tab-demo {
+            border: 1px solid #d8b4fe;
+            border-radius: 8px;
+            overflow: hidden;
+            margin: 16px 0;
+        }
+        .tab-demo .tab-bar {
+            display: flex;
+            background: #f0ebff;
+            border-bottom: 1px solid #d8b4fe;
+        }
+        .tab-demo .tab-bar span {
+            padding: 8px 18px;
+            font-size: 0.9em;
+            font-weight: 600;
+        }
+        .tab-demo .tab-bar .active { background: #7c3aed; color: #fff; }
+        .tab-demo .tab-bar .inactive { color: #888; }
+        .tab-demo .tab-body { padding: 14px 18px; font-size: 0.92em; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>⚖️ Integración con QENDRA</h1>
+            <p>Importar productos, ver y cobrar tickets de la balanza directamente desde MeatManager</p>
+        </header>
+
+        <div class="breadcrumb">
+            <a href="00_INDICE.html">← Volver al Índice</a>
+        </div>
+
+        <!-- RESUMEN -->
+        <div class="section">
+            <h2>¿Qué es la integración QENDRA?</h2>
+            <p>
+                QENDRA es el software de balanza Systel. MeatManager puede conectarse directamente
+                a su base de datos para <strong>tres funciones clave</strong>:
+            </p>
+            <div class="feature-grid">
+                <div class="feature-card">
+                    <div class="icon">📥</div>
+                    <h4>Importar PLU</h4>
+                    <p>Traer todos los productos de la balanza al stock de MeatManager con un clic</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🎫</div>
+                    <h4>Visor de Tickets</h4>
+                    <p>Ver los tickets emitidos por la balanza y cargarlos al POS para cobrarlos</p>
+                </div>
+                <div class="feature-card">
+                    <div class="icon">🔄</div>
+                    <h4>Sync de Ventas</h4>
+                    <p>Importar el historial de ventas de la balanza al registro de MeatManager</p>
+                </div>
+            </div>
+            <div class="info">
+                ℹ️ Los botones de integración QENDRA <strong>solo aparecen si la PC tiene QENDRA instalado</strong>.
+                En computadoras sin balanza Systel, la pantalla no cambia.
+            </div>
+        </div>
+
+        <!-- REQUISITOS -->
+        <div class="section">
+            <h2>⚙️ Requisitos Previos</h2>
+            <div class="prereq">
+                <h4>✔ Para que funcione la integración necesitás:</h4>
+                <ul>
+                    <li><strong>QENDRA instalado</strong> en la PC (normalmente en <code>C:\Qendra\</code>)</li>
+                    <li><strong>Firebird Server 2.5</strong> instalado como servicio de Windows</li>
+                    <li>El servicio Firebird <strong>activo y corriendo</strong> (puerto TCP 3050)</li>
+                    <li>El archivo de base de datos <code>C:\Qendra\qendra.fdb</code> accesible</li>
+                </ul>
+            </div>
+            <div class="warning">
+                ⚠️ <strong>Si no ves los botones QENDRA</strong> en MeatManager, significa que el archivo
+                <code>qendra.fdb</code> no fue encontrado en esta PC. La integración no está disponible.
+            </div>
+            <h3>Verificar el servicio Firebird</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                Abrí el menú Inicio → escribe <strong>"Servicios"</strong> → Enter
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Buscá <strong>"Firebird Server"</strong> en la lista
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                El estado debe decir <strong>"En ejecución"</strong>. Si no, clic derecho → Iniciar
+            </div>
+            <div class="success">✓ Con Firebird corriendo, MeatManager se conecta automáticamente</div>
+        </div>
+
+        <!-- FUNCIÓN 1: IMPORTAR PLU -->
+        <div class="section">
+            <h2>📥 Función 1: Importar Productos (PLU) desde QENDRA</h2>
+            <p>
+                Esta función copia los productos configurados en la balanza al stock de MeatManager,
+                evitando tener que cargarlos manualmente uno por uno.
+            </p>
+
+            <h3>¿Dónde está el botón?</h3>
+            <div class="info">
+                El botón <span class="btn-label btn-purple">📥 Importar desde Qendra</span> aparece
+                en la página de <strong>Stock</strong>, en la barra de herramientas superior.
+                Solo es visible si QENDRA está instalado.
+            </div>
+
+            <h3>Pasos para importar</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                Ir a <strong>Stock</strong> desde el menú lateral
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                Hacer clic en <span class="btn-label btn-purple">📥 Importar desde Qendra</span>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                El sistema se conecta automáticamente a Firebird y lee los productos PLU
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Aparece un <strong>modal de previsualización</strong> con todos los productos encontrados:
+                <ul>
+                    <li>Nombre del producto (de QENDRA)</li>
+                    <li>Sección → Categoría MeatManager (vaca, pollo, cerdo, pescado, otros)</li>
+                    <li>Precio por kg</li>
+                    <li>Código PLU</li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                Revisá los productos y hacer clic en <strong>"Confirmar Importación"</strong>
+            </div>
+            <div class="success">✓ Los productos se crean en Stock y Precios automáticamente</div>
+
+            <h3>Mapeo de categorías</h3>
+            <table>
+                <tr><th>Sección en QENDRA</th><th>Categoría en MeatManager</th></tr>
+                <tr><td>Vacuno, Res, Bife, Cuarto, etc.</td><td>🐄 Vaca</td></tr>
+                <tr><td>Pollo, Ave, Gallina</td><td>🐔 Pollo</td></tr>
+                <tr><td>Cerdo, Chancho, Porcino</td><td>🐖 Cerdo</td></tr>
+                <tr><td>Pescado, Merluza, Trucha, Mar</td><td>🐟 Pescado</td></tr>
+                <tr><td>Cualquier otra sección</td><td>📦 Otros</td></tr>
+            </table>
+
+            <div class="warning">
+                ⚠️ Si un producto ya existe en MeatManager (mismo nombre), no se duplica.
+                Solo se importan productos nuevos.
+            </div>
+        </div>
+
+        <!-- FUNCIÓN 2: VISOR DE TICKETS -->
+        <div class="section">
+            <h2>🎫 Función 2: Visor de Tickets (Cobrar ventas de la balanza)</h2>
+            <p>
+                Cuando la balanza imprime un ticket, ese ticket queda registrado en QENDRA con
+                todos sus productos y montos. El Visor de Tickets te permite <strong>verlo y cargarlo
+                al POS de MeatManager</strong> para procesarlo en la caja.
+            </p>
+
+            <h3>¿Dónde está el botón?</h3>
+            <div class="info">
+                El botón <span class="btn-label btn-green">🎫 Tickets</span> aparece en la página
+                de <strong>Ventas</strong>, en la barra de herramientas (al lado del 📦 escáner).
+                Solo es visible si QENDRA está instalado.
+            </div>
+
+            <h3>Cómo cobrar un ticket de la balanza</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                El cliente llega a la caja con su ticket impreso de la balanza
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                En MeatManager (Ventas), hacer clic en <span class="btn-label btn-green">🎫 Tickets</span>
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Se abre el <strong>Visor de Tickets</strong> con los tickets de las últimas 8 horas
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Buscar el ticket por número o comparar la hora/total con el del cliente
+            </div>
+            <div class="step">
+                <span class="step-number">5</span>
+                Hacer clic en <span class="btn-label btn-purple">📤 Cargar</span> en el ticket correcto
+            </div>
+            <div class="step">
+                <span class="step-number">6</span>
+                Los productos del ticket se cargan automáticamente al carrito del POS
+            </div>
+            <div class="step">
+                <span class="step-number">7</span>
+                Seleccionar el método de pago y hacer clic en <strong>Cobrar</strong>
+            </div>
+            <div class="success">✓ El ticket queda registrado en MeatManager como cobrado y no vuelve a aparecer en Pendientes</div>
+
+            <h3>El Visor tiene dos pestañas</h3>
+            <div class="tab-demo">
+                <div class="tab-bar">
+                    <span class="active">⏳ Pendientes (3)</span>
+                    <span class="inactive">✅ Cobrados hoy (7)</span>
+                </div>
+                <div class="tab-body">
+                    <strong>⏳ Pendientes:</strong> Tickets emitidos por la balanza en las últimas 8 horas
+                    que <em>todavía no fueron cobrados</em> en MeatManager. Hacé clic en uno para cargarlo al carrito.<br><br>
+                    <strong>✅ Cobrados hoy:</strong> Tickets ya procesados hoy. Muestra hora, método de pago
+                    y total. Útil para verificar si un ticket ya fue cobrado.
+                </div>
+            </div>
+
+            <h3>Badge de ticket activo</h3>
+            <div class="info">
+                Cuando cargás un ticket al carrito, aparece una barra verde en el panel del ticket:
+                <br><br>
+                <code style="background:#dcfce7;padding:4px 10px;border-radius:5px;color:#15803d;font-weight:700;">
+                    🎫 Ticket QENDRA #1234  &nbsp;&nbsp; [✕]
+                </code>
+                <br><br>
+                El <strong>[✕]</strong> cancela el ticket activo y vacía el carrito si necesitás empezar de nuevo.
+            </div>
+
+            <h3>Si Firebird no está disponible en ese momento</h3>
+            <div class="warning">
+                ⚠️ Si el servicio Firebird se cae o hay un problema de red, el visor mostrará
+                un mensaje de error. En ese caso podés usar el scanner de código de barras del
+                ticket impreso por QENDRA como método alternativo.
+            </div>
+        </div>
+
+        <!-- FUNCIÓN 3: SYNC VENTAS -->
+        <div class="section">
+            <h2>🔄 Función 3: Sincronizar Ventas Históricas</h2>
+            <p>
+                Esta función importa el <strong>historial de ventas de los últimos 7 días</strong>
+                de QENDRA al registro de ventas de MeatManager. Útil para tener todos los movimientos
+                de la balanza en los informes y el cierre de caja.
+            </p>
+
+            <h3>¿Dónde está el botón?</h3>
+            <div class="info">
+                El botón <span class="btn-label btn-purple">🔄 QENDRA</span> aparece en la página
+                de <strong>Ventas</strong>, al lado del botón 🎫 Tickets.
+            </div>
+
+            <h3>Cómo sincronizar</h3>
+            <div class="step">
+                <span class="step-number">1</span>
+                En la página de <strong>Ventas</strong>, hacer clic en <span class="btn-label btn-purple">🔄 QENDRA</span>
+            </div>
+            <div class="step">
+                <span class="step-number">2</span>
+                El bot se conecta a Firebird y trae los tickets de los últimos 7 días
+            </div>
+            <div class="step">
+                <span class="step-number">3</span>
+                Para cada ticket:
+                <ul>
+                    <li>Si <strong>ya fue importado</strong> antes → lo saltea (sin duplicados)</li>
+                    <li>Si es <strong>nuevo</strong> → lo agrega a Ventas con <em>source: Balanza QENDRA</em></li>
+                </ul>
+            </div>
+            <div class="step">
+                <span class="step-number">4</span>
+                Al terminar aparece un banner con el resultado:<br>
+                <code style="background:#d1fae5;padding:4px 10px;border-radius:5px;color:#065f46;display:inline-block;margin-top:6px;">
+                    ✅ 12 ventas importadas · 3 ya existían (de 15 en QENDRA)
+                </code>
+            </div>
+            <div class="success">✓ Las ventas importadas aparecen en el historial y en los informes marcadas como "Balanza QENDRA"</div>
+
+            <h3>Diferencia entre Función 2 y Función 3</h3>
+            <table>
+                <tr>
+                    <th></th>
+                    <th>🎫 Visor de Tickets (F2)</th>
+                    <th>🔄 Sync Ventas (F3)</th>
+                </tr>
+                <tr>
+                    <td><strong>¿Cuándo usarlo?</strong></td>
+                    <td>En tiempo real, al cobrar cada cliente en caja</td>
+                    <td>Al final del día o para poner al día el historial</td>
+                </tr>
+                <tr>
+                    <td><strong>¿Qué hace?</strong></td>
+                    <td>Carga un ticket al POS para cobrarlo con pago</td>
+                    <td>Registra tickets ya vendidos como ventas históricas</td>
+                </tr>
+                <tr>
+                    <td><strong>¿Requiere acción?</strong></td>
+                    <td>Sí: el cajero elige el ticket y procesa el pago</td>
+                    <td>No: automático, sin intervención</td>
+                </tr>
+                <tr>
+                    <td><strong>Método de pago</strong></td>
+                    <td>El cajero selecciona (efectivo, tarjeta, etc.)</td>
+                    <td>Se registra como "Balanza QENDRA" (sin método específico)</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- ERRORES -->
+        <div class="section">
+            <h2>🔧 Solución de Problemas</h2>
+            <table>
+                <tr>
+                    <th>Problema</th>
+                    <th>Causa probable</th>
+                    <th>Solución</th>
+                </tr>
+                <tr>
+                    <td>No aparecen los botones QENDRA</td>
+                    <td>QENDRA no está instalado en esta PC o el archivo .fdb no está en C:\Qendra\</td>
+                    <td>Verificar que exista <code>C:\Qendra\qendra.fdb</code></td>
+                </tr>
+                <tr>
+                    <td>"Error de conexión" al abrir el visor</td>
+                    <td>El servicio Firebird no está corriendo</td>
+                    <td>Abrir <em>Servicios de Windows</em> → iniciar <em>Firebird Server</em></td>
+                </tr>
+                <tr>
+                    <td>No aparecen tickets recientes</td>
+                    <td>Los tickets son de más de 8 horas atrás</td>
+                    <td>Usar 🔄 Sync Ventas para traer hasta 7 días atrás</td>
+                </tr>
+                <tr>
+                    <td>El visor muestra 0 tickets pendientes</td>
+                    <td>Todos los tickets del día ya fueron cobrados o no se vendió nada</td>
+                    <td>Revisar la pestaña "✅ Cobrados hoy" para verificar</td>
+                </tr>
+                <tr>
+                    <td>Los pesos aparecen en 0</td>
+                    <td>Productos vendidos por unidad (no por peso)</td>
+                    <td>Normal para productos con precio fijo. Se importan igual.</td>
+                </tr>
+                <tr>
+                    <td>Producto importado sin nombre</td>
+                    <td>El PLU no tiene descripción en QENDRA</td>
+                    <td>Editar el producto en QENDRA y volver a importar</td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- FLUJO RECOMENDADO -->
+        <div class="section">
+            <h2>💡 Flujo de Trabajo Recomendado</h2>
+            <h3>Durante el día (caja)</h3>
+            <ol>
+                <li>El cliente pesa sus productos en la balanza QENDRA → se imprime el ticket</li>
+                <li>El cajero en MeatManager hace clic en <span class="btn-label btn-green">🎫 Tickets</span></li>
+                <li>Selecciona el ticket del cliente → clic en 📤 Cargar → el total se carga al carrito</li>
+                <li>El cajero cobra el pago (efectivo, tarjeta, etc.) y confirma la venta</li>
+                <li>El ticket pasa automáticamente a la pestaña ✅ Cobrados hoy</li>
+            </ol>
+
+            <h3>Al final del día</h3>
+            <ol>
+                <li>Hacer clic en <span class="btn-label btn-purple">🔄 QENDRA</span> para importar cualquier ticket que haya quedado sin cobrar a través del visor</li>
+                <li>Revisar el Cierre de Caja → las ventas QENDRA aparecen listadas</li>
+                <li>Exportar informes si es necesario</li>
+            </ol>
+
+            <div class="success">
+                ✓ Con este flujo, <strong>ningún ticket de la balanza queda sin registrar</strong> en MeatManager
+            </div>
+        </div>
+    </div>
+</body>
+</html>
