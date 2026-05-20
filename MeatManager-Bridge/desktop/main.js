@@ -9,7 +9,12 @@ const APP_NAME = 'MeatManager Bridge';
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4046', 10);
 const STATUS_POLL_MS = 4000;
 const UPDATE_POLL_MS = 6 * 60 * 60 * 1000; // 6h
-const DEFAULT_API_BASE_URL = process.env.BRIDGE_API_BASE_URL || 'https://meatmanager.demo.def-software.com/api';
+// El cliente opera en produccion (meatmanager.def-software.com). El demo
+// (meatmanager.demo.def-software.com) es solo para QA antes de release. El
+// instalador tiene que apuntar por default a produccion — si lo dejamos en
+// demo, cualquier onboarding nuevo manda ventas y consulta catalogo del
+// tenant equivocado.
+const DEFAULT_API_BASE_URL = process.env.BRIDGE_API_BASE_URL || 'https://meatmanager.def-software.com/api';
 
 let mainWindow = null;
 let tray = null;
