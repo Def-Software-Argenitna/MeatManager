@@ -58,6 +58,48 @@ export const getAuthToken = async () => {
     return getStoredAuthToken();
 };
 
+export const reportClientError = async ({
+    source = 'frontend',
+    message,
+    stack = null,
+    path = null,
+    statusCode = null,
+    metadata = null,
+} = {}) => {
+    const safeMessage = String(message || '').trim();
+    if (!safeMessage || !hasTenantSession()) return;
+
+    try {
+        const tenant = getStoredTenantSession();
+        const token = await getCachedToken();
+        if (!token) return;
+
+        const headers = {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+        };
+        if (isSupportSession(tenant) && tenant?.clientId) {
+            headers['X-MM-Target-Client-Id'] = String(tenant.clientId);
+        }
+
+        await fetch(buildApiUrl('/api/error-logs'), {
+            method: 'POST',
+            headers,
+            body: JSON.stringify({
+                source,
+                message: safeMessage.slice(0, 4000),
+                stack: stack ? String(stack).slice(0, 20000) : null,
+                path: path || `${window.location.pathname}${window.location.hash || ''}`,
+                statusCode,
+                metadata,
+            }),
+            keepalive: true,
+        });
+    } catch {
+        // No interrumpir la app si el reporte de errores falla.
+    }
+};
+
 // ── Token in-flight cache ────────────────────────────────────────────────────
 // Evita llamar getIdToken() N veces en paralelo (una por cada fetchTable).
 // Si ya hay una Promise de token en curso se reutiliza la misma.
@@ -161,6 +203,18 @@ export const apiFetch = async (path, options = {}) => {
 
     if (response.status === 401 && isSupportSession(tenant)) {
         notifySupportSessionExpired();
+    }
+
+    if (response.status >= 500 && scopedPath !== '/api/error-logs') {
+        reportClientError({
+            message: `HTTP ${response.status} en ${scopedPath}`,
+            path: scopedPath,
+            statusCode: response.status,
+            metadata: {
+                method: options.method || 'GET',
+                statusText: response.statusText,
+            },
+        });
     }
 
     return response;

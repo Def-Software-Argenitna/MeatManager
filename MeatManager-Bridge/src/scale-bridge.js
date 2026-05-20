@@ -576,28 +576,17 @@ class ScaleBridge {
             };
         }
 
-        // Auto-reset en primer arranque exitoso contra una balanza. Esto cubre
-        // el caso de balanza usada que viene con PLUs cargados por otro bridge
-        // o programados a mano — sin esto los PLUs viejos quedarian para siempre
-        // porque cleanupOrphanPluCodes solo conoce los que este bridge sincronizo.
-        if (!this.state.firstScaleResetDoneAt) {
-            this.logger.info('Primera conexion exitosa a la balanza: ejecutando reset completo antes del sync inicial');
-            try {
-                await this.resetScaleAll({ reason: 'first-connection' });
-            } catch (error) {
-                this.logger.error('Reset inicial fallo, sync de productos omitido este ciclo', { error: error.message });
-                return {
-                    ok: true,
-                    scaleReachable: true,
-                    processed: 0,
-                    written: 0,
-                    skipped: 0,
-                    deleted: 0,
-                    failed: 0,
-                    error: `Reset inicial fallo: ${error.message}`,
-                };
-            }
-        }
+        // El reset masivo de los 8000 PLUs (fn5 sobre cada slot) solo debe correr
+        // cuando el usuario lo pide explicitamente desde el boton "Resetear balanza"
+        // del desktop (POST /api/scale/reset → resetScaleAll). Hacerlo automatico
+        // tenia dos costos:
+        //   1) Cada reinicio del bridge se comia varios minutos del puerto serie,
+        //      bloqueando lectura de ventas y la propagacion de cambios de precio.
+        //   2) Si state.json se borraba (o RESET_STATE_ON_START quedaba en true),
+        //      `firstScaleResetDoneAt` reaparecia como null y el ciclo se repetia
+        //      en cada arranque.
+        // Si la balanza es heredada o tiene PLUs huerfanos, cleanupOrphanPluCodes
+        // los detecta y los borra incrementalmente, sin parar el flujo normal.
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
         const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
@@ -1007,15 +996,46 @@ class ScaleBridge {
             });
         }
 
+        // Dedupe: balanzas con firmware viejo (Systel CUORA MAX S0060) ignoran
+        // el filtro de fecha en fn 72 y devuelven *todas* las ventas en memoria
+        // en cada pulso. Sin esto el bridge re-postea 100+ tickets ya conocidos
+        // cada ~1.5s, ocupando el puerto serie y atrasando la deteccion del
+        // ticket nuevo. Trackeamos {ticketId → fingerprint} en state.json y solo
+        // mandamos al API tickets nuevos o modificados.
+        const knownFingerprints = (this.state.knownTicketFingerprints && typeof this.state.knownTicketFingerprints === 'object')
+            ? { ...this.state.knownTicketFingerprints }
+            : {};
+
+        const ticketsToSend = ticketsPayload.filter((ticket) => {
+            const stored = knownFingerprints[ticket.ticketId];
+            return !stored || stored !== ticket.fingerprint;
+        });
+
         let stored = 0;
-        if (ticketsPayload.length > 0) {
+        if (ticketsToSend.length > 0) {
             const apiResult = await this.api.postSales({
                 scaleId: this.scaleId,
                 scaleAddress: this.config.scale.address,
-                tickets: ticketsPayload,
+                tickets: ticketsToSend,
             });
             stored = Number(apiResult?.itemsUpserted || 0);
+
+            for (const ticket of ticketsToSend) {
+                knownFingerprints[ticket.ticketId] = ticket.fingerprint;
+            }
         }
+
+        // Podamos: nos quedamos solo con ticketIds que la balanza todavia tiene
+        // en memoria. Si la balanza purgo un ticket viejo, lo olvidamos tambien
+        // (el API ya lo tiene almacenado). Esto evita que knownTicketFingerprints
+        // crezca sin limite.
+        const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketId));
+        const prunedFingerprints = {};
+        for (const ticketId of presentTicketIds) {
+            if (knownFingerprints[ticketId]) prunedFingerprints[ticketId] = knownFingerprints[ticketId];
+        }
+        this.state.knownTicketFingerprints = prunedFingerprints;
+        this.stateStore.save(this.state);
 
         if (closeAfter && rows.length > 0) {
             const close = await this.scale.send(32, '', { timeoutMs: 60000 });
@@ -1029,11 +1049,20 @@ class ScaleBridge {
             fetched: rows.length,
             stored,
             tickets: tickets.size,
+            newTickets: ticketsToSend.length,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
     }
 
     async consolidatePluCatalogOnStartup() {
+        // En arranque solo validamos que el catalogo no tenga PLUs duplicados:
+        // si los hay, no hay forma sana de sincronizar con la balanza (un slot
+        // PLU representa un producto unico). Antes esta funcion ademas borraba
+        // todo el sync-state del API en cada arranque, lo que forzaba al bridge
+        // a reescribir el catalogo entero — esto bloqueaba el puerto serie por
+        // minutos y atrasaba lectura de ventas y cambios de precio. Ahora los
+        // fingerprints persisten entre reinicios y solo se reescribe lo que
+        // realmente cambio (precio, nombre, categoria, etc.).
         const { pluDuplicates = [] } = await this.loadSyncCatalogEntries();
 
         if (pluDuplicates.length > 0) {
@@ -1041,24 +1070,10 @@ class ScaleBridge {
             throw new Error(`PLU duplicados detectados al iniciar: ${sample.join(', ')}`);
         }
 
-        let removedMappings = 0;
-        try {
-            const result = await this.api.deleteSyncState(this.scaleId, { resetAll: true });
-            removedMappings = Number(result?.deleted || 0);
-        } catch (error) {
-            this.logger.warn('No se pudo resetear sync-state al iniciar', { error: error.message });
-        }
-
-        this.logger.info('Consolidado general de PLU ejecutado al iniciar', {
-            tenantId: this.config.tenantId,
-            deviceId: this.config.deviceId,
-            removedMappings,
-        });
-
         this.state.startupPluConsolidatedAt = new Date().toISOString();
         this.stateStore.save(this.state);
 
-        return { ok: true, removedMappings, forceProductRewrite: true };
+        return { ok: true, removedMappings: 0, forceProductRewrite: false };
     }
 
     async runOnce(options = {}) {

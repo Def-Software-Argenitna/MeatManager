@@ -165,6 +165,7 @@ const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
 const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
 const INTERNAL_ADMIN_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
+const ERROR_LOG_RETENTION_DAYS = 30;
 const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SKIP_SCHEMA_BOOT || '').trim().toLowerCase()
 );
@@ -173,6 +174,7 @@ const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
 );
 
 let smtpTransport = null;
+let lastErrorLogPruneAt = 0;
 
 const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.REDIS_TLS || '').trim().toLowerCase()
@@ -2129,6 +2131,93 @@ async function ensureOperationalTenantIsolation() {
     }
 }
 
+const ERROR_LOG_SENSITIVE_KEYS = ['password', 'passwordhash', 'token', 'authorization', 'cookie', 'secret'];
+
+function redactErrorLogMetadata(value) {
+    if (Array.isArray(value)) {
+        return value.map((item) => redactErrorLogMetadata(item));
+    }
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+        key,
+        ERROR_LOG_SENSITIVE_KEYS.some((sensitiveKey) => key.toLowerCase().includes(sensitiveKey))
+            ? '[redacted]'
+            : redactErrorLogMetadata(item),
+    ]));
+}
+
+function serializeErrorLogMetadata(metadata) {
+    if (!metadata || typeof metadata !== 'object') return null;
+    try {
+        return JSON.stringify(redactErrorLogMetadata(metadata)).slice(0, 20000);
+    } catch {
+        return null;
+    }
+}
+
+async function pruneOldAppErrorLogs(conn, force = false) {
+    const now = Date.now();
+    if (!force && now - lastErrorLogPruneAt < 60 * 60 * 1000) {
+        return;
+    }
+    lastErrorLogPruneAt = now;
+    await conn.query(
+        `DELETE FROM \`${CLIENTS_DB_NAME}\`.app_error_logs
+         WHERE created_at < DATE_SUB(NOW(), INTERVAL ${ERROR_LOG_RETENTION_DAYS} DAY)`
+    );
+}
+
+function getErrorLogSnapshot(accessContext) {
+    return {
+        clientId: accessContext?.client?.id || null,
+        clientBusinessName: accessContext?.client?.businessName || null,
+        clientTaxId: accessContext?.client?.taxId || null,
+        clientBillingEmail: accessContext?.client?.billingEmail || null,
+        userId: Number.isFinite(Number(accessContext?.user?.id)) ? Number(accessContext.user.id) : null,
+        userEmail: accessContext?.user?.email || null,
+        branchId: accessContext?.user?.branchId == null ? null : Number(accessContext.user.branchId),
+        branchName: accessContext?.user?.branchName || null,
+    };
+}
+
+async function createAppErrorLog({ req, accessContext, source = 'backend', message, stack = null, statusCode = null, metadata = null }) {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const snapshot = getErrorLogSnapshot(accessContext);
+        await conn.query(
+            `INSERT INTO \`${CLIENTS_DB_NAME}\`.app_error_logs
+             (source, level, client_id, client_business_name, client_tax_id, client_billing_email,
+              user_id, user_email, branch_id, branch_name, method, path, status_code, message,
+              stack, metadata, user_agent, ip_address)
+             VALUES (?, 'error', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                source,
+                snapshot.clientId,
+                snapshot.clientBusinessName,
+                snapshot.clientTaxId,
+                snapshot.clientBillingEmail,
+                snapshot.userId,
+                snapshot.userEmail,
+                snapshot.branchId,
+                snapshot.branchName,
+                req?.method || null,
+                String(req?.body?.path || req?.originalUrl || req?.url || '').slice(0, 500) || null,
+                statusCode == null ? null : Number(statusCode),
+                String(message || 'Error desconocido').slice(0, 4000),
+                stack ? String(stack).slice(0, 20000) : null,
+                serializeErrorLogMetadata(metadata),
+                String(req?.headers?.['user-agent'] || '').slice(0, 500) || null,
+                String(req?.ip || '').slice(0, 45) || null,
+            ]
+        );
+        await pruneOldAppErrorLogs(conn);
+    } finally {
+        conn.release();
+    }
+}
+
 async function ensureClientsControlStore() {
     const conn = await clientsControlPool.getConnection();
     try {
@@ -2161,6 +2250,34 @@ async function ensureClientsControlStore() {
                 INDEX idx_client_user_permissions_user (userId)
             )
         `);
+        await conn.query(`
+            CREATE TABLE IF NOT EXISTS \`${CLIENTS_DB_NAME}\`.app_error_logs (
+                id BIGINT NOT NULL AUTO_INCREMENT,
+                source VARCHAR(30) NOT NULL DEFAULT 'backend',
+                level VARCHAR(20) NOT NULL DEFAULT 'error',
+                client_id INT NULL,
+                client_business_name VARCHAR(255) NULL,
+                client_tax_id VARCHAR(50) NULL,
+                client_billing_email VARCHAR(150) NULL,
+                user_id INT NULL,
+                user_email VARCHAR(150) NULL,
+                branch_id INT NULL,
+                branch_name VARCHAR(150) NULL,
+                method VARCHAR(10) NULL,
+                path VARCHAR(500) NULL,
+                status_code INT NULL,
+                message TEXT NOT NULL,
+                stack MEDIUMTEXT NULL,
+                metadata JSON NULL,
+                user_agent VARCHAR(500) NULL,
+                ip_address VARCHAR(45) NULL,
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (id),
+                KEY idx_app_error_logs_client_created (client_id, created_at),
+                KEY idx_app_error_logs_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        `);
+        await pruneOldAppErrorLogs(conn, true);
         if (!(await hasColumn(conn, CLIENTS_DB_NAME, CLIENTS_TABLE, 'cashAuthorizationEmail'))) {
             await conn.query(`
                 ALTER TABLE \`${CLIENTS_DB_NAME}\`.\`${CLIENTS_TABLE}\`
@@ -4020,6 +4137,39 @@ async function handleProvision(req, res) {
 
 app.post('/provision', verifyFirebaseToken, handleProvision);
 app.post('/api/provision', verifyFirebaseToken, handleProvision);
+
+app.post('/api/error-logs', verifyFirebaseToken, async (req, res) => {
+    try {
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext, { allowDeliveryOnly: true });
+
+        const source = req.body?.source === 'mobile' ? 'mobile' : 'frontend';
+        const message = String(req.body?.message || '').trim();
+        if (!message) {
+            return res.status(400).json({ error: 'message es obligatorio' });
+        }
+
+        await createAppErrorLog({
+            req,
+            accessContext,
+            source,
+            message,
+            stack: req.body?.stack || null,
+            statusCode: req.body?.statusCode == null ? null : Number(req.body.statusCode),
+            metadata: req.body?.metadata || null,
+        });
+
+        return res.status(201).json({ ok: true });
+    } catch (err) {
+        console.error('[ERROR LOG WRITE ERROR]', err?.message || err);
+        return res.status(err?.statusCode || 500).json({ error: err?.message || 'No se pudo guardar el log de error' });
+    }
+});
 
 // ── Tenant cache & lazy pools ──────────────────────────────────────────────
 const tenantInfoCache = new Map();   // uid  → { value, expiresAt }

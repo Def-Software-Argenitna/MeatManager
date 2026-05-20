@@ -1,0 +1,16 @@
+$kind: http-request
+name: '03 - Vendors (GET /api/bridge/vendors)'
+method: GET
+url: '{{baseUrl}}/bridge/vendors'
+order: 4000
+headers:
+  - key: Authorization
+    value: 'Bearer {{deviceToken}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test('status 200', () => pm.response.to.have.status(200));
+      const data = pm.response.json();
+      pm.test('vendors is array', () => pm.expect(data.vendors).to.be.an('array'));
+      pm.test('vendors not empty', () => pm.expect(data.vendors).to.have.length.above(0));
