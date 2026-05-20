@@ -24,6 +24,14 @@ let lastStatus = {
     bridgeHttp: { reachable: false, running: false, lastRunStatus: null, lastError: null, lastRunAt: null },
     updatedAt: new Date().toISOString(),
 };
+// El bridge tarda ~600ms desde el fork hasta que ata el puerto HTTP local. El
+// desktop polea cada 4s y el primer poll cae siempre en esa ventana, generando
+// ECONNREFUSED ruidosos en desktop.log. Silenciamos las primeras N fallas de
+// red despues de cada arranque/restart — si la conexion se restablece en ese
+// rango, ni siquiera figuran. Si persisten mas alla del grace, recien ahi
+// logeamos (porque ya no es startup, es un problema real).
+const STARTUP_GRACE_POLLS = 4; // ~16s a STATUS_POLL_MS=4000
+let startupGracePollsRemaining = 0;
 
 function runtimeDir() {
     return path.join(app.getPath('userData'), 'runtime');
@@ -188,8 +196,17 @@ async function fetchBridgeStatus() {
             updatedAt: new Date().toISOString(),
         };
     } catch (error) {
-        const detail = `${error?.name || 'Error'}: ${error?.message || String(error)}${error?.cause ? ` | cause=${error.cause?.code || error.cause?.message || error.cause}` : ''}`;
-        logDesktop(`fetchBridgeStatus FAILED → ${detail}`);
+        const causeCode = error?.cause?.code || null;
+        const detail = `${error?.name || 'Error'}: ${error?.message || String(error)}${error?.cause ? ` | cause=${causeCode || error.cause?.message || error.cause}` : ''}`;
+        // Silenciamos ECONNREFUSED durante el grace period inicial — es la race
+        // normal entre el desktop levantando el polling y el bridge atando el
+        // puerto. Solo logeamos si persiste (problema real) o si es otro error.
+        const isStartupRace = causeCode === 'ECONNREFUSED' && startupGracePollsRemaining > 0;
+        if (isStartupRace) {
+            startupGracePollsRemaining -= 1;
+        } else {
+            logDesktop(`fetchBridgeStatus FAILED → ${detail}`);
+        }
         lastStatus = {
             ...lastStatus,
             bridgeHttp: {
@@ -233,6 +250,10 @@ function bridgeScriptPath() {
 
 function startBridgeProcess() {
     if (bridgeProc && !bridgeProc.killed) return;
+    // Cada vez que (re)arrancamos el bridge hay una ventana ~600ms-2s donde el
+    // puerto HTTP local no esta atado. Reseteamos el grace para no llenar
+    // desktop.log con ECONNREFUSED esperables.
+    startupGracePollsRemaining = STARTUP_GRACE_POLLS;
     const scriptPath = bridgeScriptPath();
     bridgeProc = fork(scriptPath, [], {
         env: {
@@ -407,6 +428,9 @@ function checkForUpdatesNow(manual = false) {
 
 function startStatusPolling() {
     logDesktop(`startStatusPolling called (interval=${STATUS_POLL_MS}ms, bridgePort=${BRIDGE_PORT})`);
+    // Reset del grace period: cualquier ECONNREFUSED en las primeras N pollings
+    // queda silenciado (es la race normal del bridge atando el puerto HTTP).
+    startupGracePollsRemaining = STARTUP_GRACE_POLLS;
     fetchBridgeStatus();
     if (statusTimer) clearInterval(statusTimer);
     statusTimer = setInterval(fetchBridgeStatus, STATUS_POLL_MS);
