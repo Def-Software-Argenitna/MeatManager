@@ -576,28 +576,17 @@ class ScaleBridge {
             };
         }
 
-        // Auto-reset en primer arranque exitoso contra una balanza. Esto cubre
-        // el caso de balanza usada que viene con PLUs cargados por otro bridge
-        // o programados a mano — sin esto los PLUs viejos quedarian para siempre
-        // porque cleanupOrphanPluCodes solo conoce los que este bridge sincronizo.
-        if (!this.state.firstScaleResetDoneAt) {
-            this.logger.info('Primera conexion exitosa a la balanza: ejecutando reset completo antes del sync inicial');
-            try {
-                await this.resetScaleAll({ reason: 'first-connection' });
-            } catch (error) {
-                this.logger.error('Reset inicial fallo, sync de productos omitido este ciclo', { error: error.message });
-                return {
-                    ok: true,
-                    scaleReachable: true,
-                    processed: 0,
-                    written: 0,
-                    skipped: 0,
-                    deleted: 0,
-                    failed: 0,
-                    error: `Reset inicial fallo: ${error.message}`,
-                };
-            }
-        }
+        // El reset masivo de los 8000 PLUs (fn5 sobre cada slot) solo debe correr
+        // cuando el usuario lo pide explicitamente desde el boton "Resetear balanza"
+        // del desktop (POST /api/scale/reset → resetScaleAll). Hacerlo automatico
+        // tenia dos costos:
+        //   1) Cada reinicio del bridge se comia varios minutos del puerto serie,
+        //      bloqueando lectura de ventas y la propagacion de cambios de precio.
+        //   2) Si state.json se borraba (o RESET_STATE_ON_START quedaba en true),
+        //      `firstScaleResetDoneAt` reaparecia como null y el ciclo se repetia
+        //      en cada arranque.
+        // Si la balanza es heredada o tiene PLUs huerfanos, cleanupOrphanPluCodes
+        // los detecta y los borra incrementalmente, sin parar el flujo normal.
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
         const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
@@ -1034,6 +1023,14 @@ class ScaleBridge {
     }
 
     async consolidatePluCatalogOnStartup() {
+        // En arranque solo validamos que el catalogo no tenga PLUs duplicados:
+        // si los hay, no hay forma sana de sincronizar con la balanza (un slot
+        // PLU representa un producto unico). Antes esta funcion ademas borraba
+        // todo el sync-state del API en cada arranque, lo que forzaba al bridge
+        // a reescribir el catalogo entero — esto bloqueaba el puerto serie por
+        // minutos y atrasaba lectura de ventas y cambios de precio. Ahora los
+        // fingerprints persisten entre reinicios y solo se reescribe lo que
+        // realmente cambio (precio, nombre, categoria, etc.).
         const { pluDuplicates = [] } = await this.loadSyncCatalogEntries();
 
         if (pluDuplicates.length > 0) {
@@ -1041,24 +1038,10 @@ class ScaleBridge {
             throw new Error(`PLU duplicados detectados al iniciar: ${sample.join(', ')}`);
         }
 
-        let removedMappings = 0;
-        try {
-            const result = await this.api.deleteSyncState(this.scaleId, { resetAll: true });
-            removedMappings = Number(result?.deleted || 0);
-        } catch (error) {
-            this.logger.warn('No se pudo resetear sync-state al iniciar', { error: error.message });
-        }
-
-        this.logger.info('Consolidado general de PLU ejecutado al iniciar', {
-            tenantId: this.config.tenantId,
-            deviceId: this.config.deviceId,
-            removedMappings,
-        });
-
         this.state.startupPluConsolidatedAt = new Date().toISOString();
         this.stateStore.save(this.state);
 
-        return { ok: true, removedMappings, forceProductRewrite: true };
+        return { ok: true, removedMappings: 0, forceProductRewrite: false };
     }
 
     async runOnce(options = {}) {
