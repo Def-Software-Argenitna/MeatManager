@@ -996,15 +996,46 @@ class ScaleBridge {
             });
         }
 
+        // Dedupe: balanzas con firmware viejo (Systel CUORA MAX S0060) ignoran
+        // el filtro de fecha en fn 72 y devuelven *todas* las ventas en memoria
+        // en cada pulso. Sin esto el bridge re-postea 100+ tickets ya conocidos
+        // cada ~1.5s, ocupando el puerto serie y atrasando la deteccion del
+        // ticket nuevo. Trackeamos {ticketId → fingerprint} en state.json y solo
+        // mandamos al API tickets nuevos o modificados.
+        const knownFingerprints = (this.state.knownTicketFingerprints && typeof this.state.knownTicketFingerprints === 'object')
+            ? { ...this.state.knownTicketFingerprints }
+            : {};
+
+        const ticketsToSend = ticketsPayload.filter((ticket) => {
+            const stored = knownFingerprints[ticket.ticketId];
+            return !stored || stored !== ticket.fingerprint;
+        });
+
         let stored = 0;
-        if (ticketsPayload.length > 0) {
+        if (ticketsToSend.length > 0) {
             const apiResult = await this.api.postSales({
                 scaleId: this.scaleId,
                 scaleAddress: this.config.scale.address,
-                tickets: ticketsPayload,
+                tickets: ticketsToSend,
             });
             stored = Number(apiResult?.itemsUpserted || 0);
+
+            for (const ticket of ticketsToSend) {
+                knownFingerprints[ticket.ticketId] = ticket.fingerprint;
+            }
         }
+
+        // Podamos: nos quedamos solo con ticketIds que la balanza todavia tiene
+        // en memoria. Si la balanza purgo un ticket viejo, lo olvidamos tambien
+        // (el API ya lo tiene almacenado). Esto evita que knownTicketFingerprints
+        // crezca sin limite.
+        const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketId));
+        const prunedFingerprints = {};
+        for (const ticketId of presentTicketIds) {
+            if (knownFingerprints[ticketId]) prunedFingerprints[ticketId] = knownFingerprints[ticketId];
+        }
+        this.state.knownTicketFingerprints = prunedFingerprints;
+        this.stateStore.save(this.state);
 
         if (closeAfter && rows.length > 0) {
             const close = await this.scale.send(32, '', { timeoutMs: 60000 });
@@ -1018,6 +1049,7 @@ class ScaleBridge {
             fetched: rows.length,
             stored,
             tickets: tickets.size,
+            newTickets: ticketsToSend.length,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
     }
