@@ -127,6 +127,15 @@ jobs:
           docker compose -f docker-compose.cloud.yml --env-file .env pull web-dev api-dev
           docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-dev api-dev
 
+      - name: Refresh nginx-proxy-manager upstream DNS
+        run: |
+          # Despues de --force-recreate los containers tienen IPs nuevas. nginx
+          # dentro de NPM cachea la resolucion DNS de proxy_pass de forma
+          # indefinida y queda sirviendo 502s al IP viejo. Reload graceful
+          # (~50ms, sin downtime) re-resuelve los upstream sin afectar a
+          # BarManager/KioskManager/admin/portainer que tambien estan detras.
+          docker exec nginx-proxy-manager nginx -s reload
+
       - name: Debug deploy failure (containers + logs)
         if: failure()
         env:
