@@ -110,3 +110,31 @@ jobs:
           echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
           docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main
           docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-main api-main
+
+      - name: Refresh nginx-proxy-manager upstream DNS
+        run: |
+          # Despues de --force-recreate los containers tienen IPs nuevas. nginx
+          # dentro de NPM cachea la resolucion DNS de proxy_pass de forma
+          # indefinida y queda sirviendo 502s al IP viejo. Reload graceful
+          # (~50ms, sin downtime) re-resuelve los upstream sin afectar a
+          # BarManager/KioskManager/admin/portainer que tambien estan detras.
+          docker exec nginx-proxy-manager nginx -s reload
+
+      - name: Post-deploy diagnostics
+        if: always()
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          set +e
+          echo "=== docker ps -a (filtered) ==="
+          docker ps -a --filter "name=meatmanager-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo "=== docker compose ps ==="
+          cd "${DEPLOY_PATH}"
+          docker compose -f docker-compose.cloud.yml --env-file .env ps
+          echo "=== api-main logs (last 80) ==="
+          docker logs --tail 80 meatmanager-api-main 2>&1
+          echo "=== api-main HTTP check from host ==="
+          curl -sS -o /dev/null -w "host→api-main: HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4101/health
+          echo "=== nginx-proxy-manager container status ==="
+          docker ps -a --filter "name=nginx-proxy-manager" --format "table {{.Names}}\t{{.Status}}"
+          true
