@@ -215,6 +215,22 @@ const ProductosCompra = () => {
 
     const handleDelete = async (id) => {
         if (window.confirm('¿Eliminar este producto del catálogo de compras?')) {
+            const item = items.find((entry) => Number(entry.id) === Number(id)) || null;
+            const productId = Number(item?.product_id || 0);
+            if (productId > 0) {
+                await saveTableRecord('products', 'delete', null, productId);
+
+                const stockRows = await fetchTable('stock').catch(() => []);
+                const emptyStockRows = (Array.isArray(stockRows) ? stockRows : []).filter((row) => (
+                    Number(row?.product_id || 0) === productId
+                    && Math.abs(Number(row?.quantity || 0)) <= 0.000001
+                ));
+                for (const row of emptyStockRows) {
+                    if (row?.id) {
+                        await saveTableRecord('stock', 'delete', null, row.id);
+                    }
+                }
+            }
             await saveTableRecord('purchase_items', 'delete', null, id);
             await loadData();
         }

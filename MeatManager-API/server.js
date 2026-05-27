@@ -154,7 +154,7 @@ const BRIDGE_SESSION_TOKEN_EXPIRES_IN = process.env.BRIDGE_SESSION_TOKEN_EXPIRES
 const BRIDGE_DEVICE_TOKEN_BYTES = Math.max(16, Number.parseInt(process.env.BRIDGE_DEVICE_TOKEN_BYTES || '32', 10) || 32);
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
-const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
+const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4046')
     .trim()
     .replace(/\/+$/, '');
 const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
@@ -1789,6 +1789,14 @@ async function ensureTenantScopedForeignKeys(conn) {
            AND TRIM(CAST(plu AS CHAR)) = ''`
     );
 
+    await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET archived_plu = COALESCE(archived_plu, plu),
+             plu = NULL
+         WHERE COALESCE(active, 1) = 0
+           AND plu IS NOT NULL`
+    );
+
     if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_plu'))) {
         try {
             await conn.query(
@@ -1862,6 +1870,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
             await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
+            await ensureColumn(conn, 'products', 'archived_plu', '`archived_plu` VARCHAR(20) NULL AFTER `deleted_at`');
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
@@ -3559,6 +3568,7 @@ function getSchemaTables() {
             plu             VARCHAR(20),
             active          TINYINT(1) NOT NULL DEFAULT 1,
             deleted_at      DATETIME NULL,
+            archived_plu    VARCHAR(20) NULL,
             source          VARCHAR(50),
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -4812,6 +4822,7 @@ async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
     let sql = `SELECT id, name, plu
                FROM products
                WHERE tenant_id = ?
+                 AND COALESCE(active, 1) = 1
                  AND (
                     plu = ?
                     OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
@@ -5211,11 +5222,26 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                 if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
                     const scope = tenantWhereClause(table, tenantId);
                     const [existingRows] = await pool.query(
-                        `SELECT id FROM \`${table}\` WHERE canonical_key = ? AND ${scope.sql} LIMIT 1`,
+                        `SELECT id, active FROM \`${table}\` WHERE canonical_key = ? AND ${scope.sql} LIMIT 1`,
                         [filtered.canonical_key, ...scope.params]
                     );
-                    const existingId = existingRows?.[0]?.id;
+                    const existing = existingRows?.[0] || null;
+                    const existingId = existing?.id;
                     if (existingId) {
+                        if (Number(existing.active ?? 1) === 0) {
+                            const restorePayload = {
+                                ...filtered,
+                                active: 1,
+                                deleted_at: null,
+                                archived_plu: null,
+                                updated_at: new Date(),
+                            };
+                            await pool.query(
+                                `UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`,
+                                [restorePayload, existingId, ...scope.params]
+                            );
+                            return res.json({ ok: true, insertId: existingId, restored: true });
+                        }
                         return res.json({ ok: true, insertId: existingId, existed: true });
                     }
                 }
@@ -5248,6 +5274,8 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     `UPDATE \`${table}\`
                      SET active = 0,
                          deleted_at = NOW(),
+                         archived_plu = COALESCE(archived_plu, plu),
+                         plu = NULL,
                          updated_at = NOW()
                      WHERE id = ? AND ${scope.sql}`,
                     [numId, ...scope.params]
