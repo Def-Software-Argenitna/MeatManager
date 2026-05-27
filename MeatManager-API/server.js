@@ -395,13 +395,31 @@ async function findBridgeDeviceByToken(token) {
     const tokenString = String(token || '').trim();
     if (!tokenString) return null;
     const hash = hashBridgeDeviceToken(tokenString);
-    const [rows] = await clientsControlPool.query(
+
+    const runQuery = async () => clientsControlPool.query(
         `SELECT id, tenantId, clientId, branchId, deviceId, hostname, status, lastSeenAt
          FROM \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
          WHERE deviceTokenHash = ?
          LIMIT 1`,
         [hash]
     );
+
+    let rows;
+    try {
+        [rows] = await runQuery();
+    } catch (error) {
+        // Self-heal: si la tabla no existe (puede pasar si el deploy se
+        // restauro desde un backup viejo, o si ensureClientsControlStore no
+        // alcanzo a correr en este host), la creamos al vuelo y reintentamos.
+        const code = error?.code || '';
+        const message = String(error?.message || '');
+        const noTable = code === 'ER_NO_SUCH_TABLE' || /Table .* doesn'?t exist/i.test(message);
+        if (!noTable) throw error;
+        console.warn('[BRIDGE AUTH] bridge_devices ausente, recreando schema y reintentando');
+        await ensureClientsControlStore();
+        [rows] = await runQuery();
+    }
+
     const row = rows?.[0] || null;
     if (!row) return null;
     if (String(row.status || '').toUpperCase() !== 'ACTIVE') return null;
@@ -3404,8 +3422,13 @@ async function verifyBridgeDeviceToken(req, res, next) {
             });
         return next();
     } catch (error) {
-        console.error('[BRIDGE AUTH ERROR]', error?.message || error);
-        return res.status(500).json({ error: 'Error al validar token de bridge' });
+        console.error('[BRIDGE AUTH ERROR]', error?.code || '', error?.message || error, error?.stack || '');
+        const code = error?.code || error?.errno || null;
+        return res.status(500).json({
+            error: 'Error al validar token de bridge',
+            detail: error?.message || String(error),
+            code,
+        });
     }
 }
 

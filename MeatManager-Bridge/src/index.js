@@ -144,11 +144,14 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
         if (result.ok && Number(result.fetched || 0) > 0) {
             state.lastTicketSyncAt = result.latestSaleAt || new Date().toISOString();
             stateStore.save(state);
-            logger.info('Pulso de ventas: registros detectados y sincronizados', {
-                reason,
-                fetched: result.fetched,
-                tickets: result.tickets,
-            });
+            if (Number(result.newTickets || 0) > 0) {
+                logger.info('Pulso de ventas: tickets nuevos sincronizados', {
+                    reason,
+                    fetched: result.fetched,
+                    tickets: result.tickets,
+                    newTickets: result.newTickets,
+                });
+            }
         }
 
         return { ok: true, result };

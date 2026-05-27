@@ -71,7 +71,13 @@ const config = {
     installationFile,
     stateFile: path.resolve(runtimeRootDir, strEnv('STATE_FILE', './data/state.json')),
     logFile: path.resolve(runtimeRootDir, strEnv('LOG_FILE', './logs/bridge.log')),
-    resetStateOnStart: boolEnv('RESET_STATE_ON_START', true),
+    // Preservamos el state.json entre reinicios: ahi vive `firstScaleResetDoneAt`
+    // y los fingerprints por producto. Si se borra en cada arranque, el bridge
+    // cree que la balanza esta virgen y reintenta el reset completo de 8000 PLUs
+    // + reescritura total del catalogo, ocupando el puerto serie por minutos y
+    // bloqueando la lectura de ventas. El reset masivo solo debe correr cuando
+    // el usuario lo pide explicitamente via el boton "Resetear balanza".
+    resetStateOnStart: boolEnv('RESET_STATE_ON_START', false),
     apiBaseUrl,
     deviceToken,
     deviceId: installationDeviceId || strEnv('BRIDGE_DEVICE_ID', 'CUORA-LOCAL-01'),
@@ -103,8 +109,8 @@ const config = {
     },
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
     salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
-    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 2000),
-    productSyncIntervalMs: intEnv('PRODUCT_SYNC_INTERVAL_MS', 30000),
+    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 1500),
+    productSyncIntervalMs: intEnv('PRODUCT_SYNC_INTERVAL_MS', 10000),
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
