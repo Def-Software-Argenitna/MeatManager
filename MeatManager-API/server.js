@@ -8878,6 +8878,8 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                 SELECT COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
                 FROM products
                 WHERE \`${TENANT_COLUMN}\` = ?
+                  AND COALESCE(active, 1) = 1
+                  AND deleted_at IS NULL
                   AND COALESCE(current_price, 0) > 0
                 UNION ALL
                 SELECT TRIM(CAST(promo_plu AS CHAR)) AS effective_plu_code
@@ -8897,6 +8899,8 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                     COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
              FROM products
              WHERE \`${TENANT_COLUMN}\` = ?
+               AND COALESCE(active, 1) = 1
+               AND deleted_at IS NULL
                AND COALESCE(current_price, 0) > 0
              ORDER BY updated_at ASC, id ASC`,
             [tenantId]
@@ -9008,6 +9012,8 @@ app.get('/api/bridge/catalog/removed', verifyBridgeDeviceToken, async (req, res)
                AND (
                     (m.product_id > 0 AND (
                         p.id IS NULL
+                        OR COALESCE(p.active, 1) <> 1
+                        OR p.deleted_at IS NOT NULL
                         OR COALESCE(p.current_price, 0) <= 0
                         OR COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR)) <> CAST(m.plu_code AS CHAR)
                     ))
