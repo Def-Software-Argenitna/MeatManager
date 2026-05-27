@@ -154,7 +154,7 @@ const BRIDGE_SESSION_TOKEN_EXPIRES_IN = process.env.BRIDGE_SESSION_TOKEN_EXPIRES
 const BRIDGE_DEVICE_TOKEN_BYTES = Math.max(16, Number.parseInt(process.env.BRIDGE_DEVICE_TOKEN_BYTES || '32', 10) || 32);
 const MEATMANAGER_DB_NAME = process.env.MEATMANAGER_DB_NAME || 'meatmanager';
 const OPERATIONAL_DB_NAME = process.env.OPERATIONAL_DB_NAME || MEATMANAGER_DB_NAME;
-const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4045')
+const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE_URL || 'http://127.0.0.1:4046')
     .trim()
     .replace(/\/+$/, '');
 const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
