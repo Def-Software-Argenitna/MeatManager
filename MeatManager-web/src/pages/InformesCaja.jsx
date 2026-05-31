@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx-js-style';
+import ExcelJS from 'exceljs';
 import {
     AlertTriangle,
     ArrowDownRight,
@@ -32,147 +32,168 @@ const REPORT_MODES = {
 const toNumber = (value) => Number(value) || 0;
 const round2 = (value) => Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 const formatCurrency = (value) => `$${round2(value).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-const excelCurrencyFormat = '$ #,##0.00;[Red]-$ #,##0.00';
-const excelNumberFormat = '#,##0.00';
-const excelIntegerFormat = '#,##0';
-const excelPalette = {
+const excelTheme = {
     navy: '123047',
     blue: '2563EB',
-    cyan: 'DDF4FF',
+    cyan: '06B6D4',
     green: '16A34A',
-    greenLight: 'DCFCE7',
     red: 'DC2626',
-    redLight: 'FEE2E2',
     amber: 'F59E0B',
-    amberLight: 'FEF3C7',
     gray: '64748B',
-    grayLight: 'F1F5F9',
+    softGray: 'F1F5F9',
     white: 'FFFFFF',
 };
-const excelColumns = {
-    money: new Set(['Ingresos', 'Egresos', 'Neto', 'Valor', 'Actual', 'Anterior', 'Diferencia', 'Saldo inicial', 'Saldo final', 'Ingreso', 'Egreso', 'Saldo caja', 'Saldo total', 'Diferencias de cierre', 'Delta conciliación', 'Transf. recibidas', 'Transf. enviadas']),
-    integer: new Set(['Movimientos', 'ID', 'Venta ID', 'Compra ID', 'Cliente ID', 'Sucursal ID', 'Ticket']),
+const downloadWorkbook = async (workbook, filename) => {
+    const buffer = await workbook.xlsx.writeBuffer();
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
 };
-const excelFill = (fgColor) => ({ patternType: 'solid', fgColor: { rgb: fgColor } });
-const excelBorder = (color = 'CBD5E1') => ({
-    top: { style: 'thin', color: { rgb: color } },
-    right: { style: 'thin', color: { rgb: color } },
-    bottom: { style: 'thin', color: { rgb: color } },
-    left: { style: 'thin', color: { rgb: color } },
-});
-const excelStyles = {
-    title: { font: { bold: true, sz: 18, color: { rgb: excelPalette.white } }, fill: excelFill(excelPalette.navy), alignment: { horizontal: 'left', vertical: 'center' } },
-    subtitle: { font: { bold: true, color: { rgb: excelPalette.gray } }, fill: excelFill(excelPalette.grayLight), alignment: { horizontal: 'left', vertical: 'center' } },
-    header: { font: { bold: true, color: { rgb: excelPalette.white } }, fill: excelFill(excelPalette.blue), alignment: { horizontal: 'center', vertical: 'center' }, border: excelBorder('1D4ED8') },
-    chartHeader: { font: { bold: true, color: { rgb: excelPalette.navy } }, fill: excelFill(excelPalette.cyan), alignment: { horizontal: 'center' }, border: excelBorder() },
-    body: { border: excelBorder(), alignment: { vertical: 'top', wrapText: true } },
-    muted: { font: { color: { rgb: excelPalette.gray } }, border: excelBorder(), alignment: { vertical: 'top', wrapText: true } },
-    income: { font: { bold: true, color: { rgb: excelPalette.green } }, fill: excelFill(excelPalette.greenLight), border: excelBorder(), numFmt: excelCurrencyFormat },
-    expense: { font: { bold: true, color: { rgb: excelPalette.red } }, fill: excelFill(excelPalette.redLight), border: excelBorder(), numFmt: excelCurrencyFormat },
-    warning: { font: { bold: true, color: { rgb: '92400E' } }, fill: excelFill(excelPalette.amberLight), border: excelBorder() },
-    chartBar: { font: { bold: true, color: { rgb: excelPalette.blue } }, border: excelBorder(), alignment: { vertical: 'center' } },
+const styleExcelSheet = (worksheet) => {
+    worksheet.views = [{ state: 'frozen', ySplit: 1 }];
+    worksheet.getRow(1).height = 24;
+    worksheet.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: excelTheme.white } };
+        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: excelTheme.navy } };
+        cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+    });
+    worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        row.eachCell((cell) => {
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'D8DEE9' } },
+                left: { style: 'thin', color: { argb: 'D8DEE9' } },
+                bottom: { style: 'thin', color: { argb: 'D8DEE9' } },
+                right: { style: 'thin', color: { argb: 'D8DEE9' } },
+            };
+            cell.alignment = { vertical: 'top', wrapText: true };
+        });
+    });
+    worksheet.columns.forEach((column) => {
+        let max = 12;
+        column.eachCell({ includeEmpty: true }, (cell) => {
+            max = Math.max(max, Math.min(42, String(cell.value ?? '').length + 2));
+        });
+        column.width = max;
+    });
 };
-const getExcelCell = (sheet, row, col) => sheet[XLSX.utils.encode_cell({ r: row, c: col })];
-const setExcelStyle = (sheet, row, col, style) => {
-    const cell = getExcelCell(sheet, row, col);
-    if (cell) cell.s = style;
-};
-const compactSheetName = (name) => String(name).replace(/[\\/?*[\]:]/g, '').slice(0, 31);
-const getExcelColumns = (rows, preferred = []) => {
-    const keys = new Set(preferred);
-    rows.forEach((row) => Object.keys(row || {}).forEach((key) => keys.add(key)));
-    return Array.from(keys);
-};
-const makeBar = (value, maxValue, size = 22, formatter = formatCurrency) => {
-    const ratio = maxValue > 0 ? Math.max(0, Math.abs(toNumber(value)) / maxValue) : 0;
-    const filled = Math.max(1, Math.round(ratio * size));
-    return `${'█'.repeat(filled)} ${formatter(value)}`;
-};
-const topChartRows = (rows, labelKey, valueKey, limit = 8, formatter = formatCurrency) => {
-    const validRows = rows
-        .map((row) => ({ label: row[labelKey], value: toNumber(row[valueKey]) }))
-        .filter((row) => row.label && row.value !== 0)
-        .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
-        .slice(0, limit);
-    const maxValue = Math.max(0, ...validRows.map((row) => Math.abs(row.value)));
-    return validRows.map((row) => ({
-        Concepto: row.label,
-        Valor: row.value,
-        Gráfico: makeBar(row.value, maxValue, 22, formatter),
-        Formato: formatter === formatCurrency ? 'money' : 'number',
+const addRowsSheet = (workbook, name, rows, columns) => {
+    const worksheet = workbook.addWorksheet(name);
+    worksheet.columns = columns.map((column) => ({
+        header: column.header,
+        key: column.key,
+        width: column.width || 16,
     }));
-};
-const buildStyledSheet = ({ title, subtitle, rows, preferredColumns = [], chartRows = [] }) => {
-    const dataRows = rows.length ? rows : [{ Info: 'Sin datos para este período' }];
-    const columns = getExcelColumns(dataRows, preferredColumns);
-    const body = [
-        [title],
-        [subtitle],
-        [],
-        columns,
-        ...dataRows.map((row) => columns.map((column) => row[column] ?? '')),
-    ];
-    const chartStart = body.length + 2;
-    if (chartRows.length) {
-        body.push([]);
-        body.push(['Gráfico rápido', 'Valor', 'Barra']);
-        chartRows.forEach((row) => body.push([row.Concepto, row.Valor, row.Gráfico]));
-    }
-
-    const sheet = XLSX.utils.aoa_to_sheet(body);
-    const lastColumn = Math.max(columns.length, chartRows.length ? 3 : 1) - 1;
-    sheet['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
-    ];
-    sheet['!cols'] = Array.from({ length: lastColumn + 1 }, (_, index) => {
-        const header = columns[index] || '';
-        if (['Descripción', 'Detalle', 'Hallazgo', 'Email autorizado'].includes(header)) return { wch: 42 };
-        if (['Fecha', 'Período'].includes(header)) return { wch: 22 };
-        if (excelColumns.money.has(header)) return { wch: 16 };
-        return { wch: Math.max(14, Math.min(28, String(header).length + 5)) };
-    });
-    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: Math.max(3, dataRows.length + 3), c: columns.length - 1 } }) };
-
-    for (let c = 0; c <= lastColumn; c += 1) {
-        setExcelStyle(sheet, 0, c, excelStyles.title);
-        setExcelStyle(sheet, 1, c, excelStyles.subtitle);
-    }
-    columns.forEach((column, c) => {
-        setExcelStyle(sheet, 3, c, excelStyles.header);
-        dataRows.forEach((row, index) => {
-            const value = row[column];
-            const rowIndex = 4 + index;
-            const isMoney = excelColumns.money.has(column);
-            const isInteger = excelColumns.integer.has(column);
-            const numericValue = toNumber(value);
-            let style = excelStyles.body;
-            if (isMoney) {
-                style = numericValue < 0 || column === 'Egresos' || column === 'Egreso' ? excelStyles.expense : excelStyles.income;
-            } else if (column === 'Estado' && ['danger', 'warning'].includes(String(value).toLowerCase())) {
-                style = excelStyles.warning;
-            } else if (['Descripción', 'Detalle', 'Hallazgo'].includes(column)) {
-                style = excelStyles.muted;
+    rows.forEach((row) => worksheet.addRow(row));
+    styleExcelSheet(worksheet);
+    worksheet.autoFilter = {
+        from: { row: 1, column: 1 },
+        to: { row: Math.max(1, rows.length + 1), column: columns.length },
+    };
+    worksheet.eachRow((row, rowNumber) => {
+        if (rowNumber === 1) return;
+        columns.forEach((column, index) => {
+            const cell = row.getCell(index + 1);
+            if (column.money && typeof cell.value === 'number') {
+                cell.numFmt = '$ #,##0.00;[Red]-$ #,##0.00';
+                cell.alignment = { horizontal: 'right', vertical: 'top' };
+                cell.font = { color: { argb: cell.value < 0 || column.negative ? excelTheme.red : excelTheme.green }, bold: true };
             }
-            setExcelStyle(sheet, rowIndex, c, {
-                ...style,
-                numFmt: isMoney ? excelCurrencyFormat : (isInteger ? excelIntegerFormat : style.numFmt),
-            });
         });
     });
+    return worksheet;
+};
+const drawRoundedRect = (ctx, x, y, width, height, radius) => {
+    const r = Math.min(radius, width / 2, height / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + width, y, x + width, y + height, r);
+    ctx.arcTo(x + width, y + height, x, y + height, r);
+    ctx.arcTo(x, y + height, x, y, r);
+    ctx.arcTo(x, y, x + width, y, r);
+    ctx.closePath();
+};
+const createChartImage = ({ type, title, rows, width = 760, height = 360 }) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d');
+    const colors = [excelTheme.green, excelTheme.red, excelTheme.blue, excelTheme.cyan, excelTheme.amber, '8B5CF6', '14B8A6'];
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, width, height);
+    ctx.fillStyle = `#${excelTheme.navy}`;
+    ctx.font = '700 22px Arial';
+    ctx.fillText(title, 28, 38);
+    ctx.font = '12px Arial';
 
-    if (chartRows.length) {
-        for (let c = 0; c < 3; c += 1) setExcelStyle(sheet, chartStart, c, excelStyles.chartHeader);
-        chartRows.forEach((row, index) => {
-            const rowIndex = chartStart + 1 + index;
-            const valueFormat = row.Formato === 'number' ? excelIntegerFormat : excelCurrencyFormat;
-            setExcelStyle(sheet, rowIndex, 0, excelStyles.body);
-            setExcelStyle(sheet, rowIndex, 1, { ...excelStyles.income, numFmt: valueFormat });
-            setExcelStyle(sheet, rowIndex, 2, excelStyles.chartBar);
-            if (toNumber(row.Valor) < 0) setExcelStyle(sheet, rowIndex, 1, { ...excelStyles.expense, numFmt: valueFormat });
-        });
+    const data = rows.filter((row) => Math.abs(toNumber(row.value)) > 0).slice(0, 8);
+    if (data.length === 0) {
+        ctx.fillStyle = `#${excelTheme.gray}`;
+        ctx.fillText('Sin datos para graficar en este período.', 28, 82);
+        return canvas.toDataURL('image/png');
     }
-    return sheet;
+
+    if (type === 'pie') {
+        const total = data.reduce((sum, row) => sum + Math.abs(toNumber(row.value)), 0);
+        let angle = -Math.PI / 2;
+        const cx = 205;
+        const cy = 190;
+        const radius = 118;
+        data.forEach((row, index) => {
+            const slice = (Math.abs(toNumber(row.value)) / total) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, radius, angle, angle + slice);
+            ctx.closePath();
+            ctx.fillStyle = `#${colors[index % colors.length]}`;
+            ctx.fill();
+            angle += slice;
+        });
+        data.forEach((row, index) => {
+            const y = 88 + index * 30;
+            ctx.fillStyle = `#${colors[index % colors.length]}`;
+            drawRoundedRect(ctx, 390, y - 12, 16, 16, 4);
+            ctx.fill();
+            ctx.fillStyle = '#111827';
+            ctx.font = '700 13px Arial';
+            ctx.fillText(row.label, 416, y);
+            ctx.fillStyle = `#${excelTheme.gray}`;
+            ctx.font = '12px Arial';
+            ctx.fillText(`${formatCurrency(row.value)} (${Math.round((Math.abs(toNumber(row.value)) / total) * 100)}%)`, 416, y + 17);
+        });
+        return canvas.toDataURL('image/png');
+    }
+
+    const max = Math.max(...data.map((row) => Math.abs(toNumber(row.value))));
+    const left = 210;
+    const top = 78;
+    const barWidth = width - left - 55;
+    const barHeight = 24;
+    data.forEach((row, index) => {
+        const y = top + index * 34;
+        const value = toNumber(row.value);
+        const length = Math.max(6, (Math.abs(value) / max) * barWidth);
+        ctx.fillStyle = '#111827';
+        ctx.font = '700 12px Arial';
+        ctx.fillText(String(row.label).slice(0, 28), 28, y + 17);
+        ctx.fillStyle = value < 0 ? `#${excelTheme.red}` : `#${colors[index % colors.length]}`;
+        drawRoundedRect(ctx, left, y, length, barHeight, 6);
+        ctx.fill();
+        ctx.fillStyle = value < 0 ? `#${excelTheme.red}` : `#${excelTheme.blue}`;
+        ctx.font = '700 12px Arial';
+        ctx.fillText(formatCurrency(value), left + length + 8, y + 17);
+    });
+    return canvas.toDataURL('image/png');
+};
+const addDashboardImage = (workbook, worksheet, base64, range) => {
+    const imageId = workbook.addImage({ base64, extension: 'png' });
+    worksheet.addImage(imageId, range);
 };
 const formatDateInput = (date) => {
     const d = date instanceof Date ? date : new Date(date);
@@ -706,7 +727,7 @@ const InformesCaja = () => {
         'Diferencia cierre': row.diferenciaCierre,
     }));
 
-    const exportExcel = () => {
+    const exportExcel = async () => {
         if (report.current.rows.length === 0) {
             setFeedback({ type: 'warning', text: 'No hay movimientos para exportar en este informe.' });
             return;
@@ -775,100 +796,128 @@ const InformesCaja = () => {
             'Transferencia ID': row.transferenciaId,
         }));
         const findingsForExport = problemRows.length ? problemRows : [{ Estado: 'ok', Hallazgo: 'Sin alertas', Detalle: 'No se detectaron diferencias relevantes en este período.' }];
-        const findingCounts = findingsForExport.reduce((acc, row) => {
-            const key = row.Estado || 'ok';
-            acc[key] = (acc[key] || 0) + 1;
-            return acc;
-        }, {});
-        const maxFindings = Math.max(1, ...Object.values(findingCounts));
-        const findingChartRows = Object.entries(findingCounts).map(([label, value]) => ({
-            Concepto: label,
-            Valor: value,
-            Gráfico: makeBar(value, maxFindings, 22, (count) => String(count)),
-            Formato: 'number',
-        }));
-        const detailChartRows = topChartRows(
-            detailRowsForExport.map((row) => ({ ...row, Movimiento: `${row.Fecha} - ${row.Operación} #${row.ID}` })),
-            'Movimiento',
-            'Neto',
-            10,
-        );
-        const summaryChartRows = topChartRows(summaryRows, 'Concepto', 'Valor', 8);
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'MeatManager';
+        workbook.created = new Date();
 
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen ejecutivo de caja',
-            subtitle: reportSubtitle,
-            rows: summaryRows,
-            preferredColumns: ['Concepto', 'Valor'],
-            chartRows: summaryChartRows,
-        }), compactSheetName('Resumen'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Informe final',
-            subtitle: 'Hallazgos, alertas y puntos de conciliación',
-            rows: findingsForExport,
-            preferredColumns: ['Estado', 'Hallazgo', 'Detalle'],
-            chartRows: findingChartRows,
-        }), compactSheetName('Informe final'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Detalle centavo por centavo',
-            subtitle: reportSubtitle,
-            rows: detailRowsForExport,
-            preferredColumns: ['Origen', 'ID', 'Fecha', 'Caja', 'Operación', 'Clasificación', 'Movimiento entre cajas', 'Ruta transferencia', 'Caja contraparte', 'Tipo', 'Categoría', 'Medio de pago', 'Descripción', 'Detalle clasificación', 'Ingreso', 'Egreso', 'Neto', 'Saldo caja', 'Saldo total'],
-            chartRows: detailChartRows,
-        }), compactSheetName('Detalle centavo por centavo'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Transferencias entre cajas',
-            subtitle: 'Movimientos internos: no son gastos, consumos, ventas ni ajustes',
-            rows: transferRows,
-            preferredColumns: ['Fecha', 'Caja', 'Movimiento', 'Ruta', 'Contraparte', 'Medio', 'Ingreso', 'Egreso', 'Neto', 'Detalle', 'Transferencia ID'],
-            chartRows: topChartRows(transferRows, 'Ruta', 'Neto'),
-        }), compactSheetName('Transferencias cajas'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen por caja',
-            subtitle: reportSubtitle,
-            rows: accountRows,
-            preferredColumns: ['Caja', 'Saldo inicial', 'Ingresos', 'Egresos', 'Transf. recibidas', 'Transf. enviadas', 'Neto', 'Saldo final', 'Movimientos'],
-            chartRows: topChartRows(accountRows, 'Caja', 'Neto'),
-        }), compactSheetName('Por caja'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen por operación',
-            subtitle: reportSubtitle,
-            rows: operationRows,
-            preferredColumns: ['Operación', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
-            chartRows: topChartRows(operationRows, 'Operación', 'Neto'),
-        }), compactSheetName('Por operación'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen por medio de pago',
-            subtitle: reportSubtitle,
-            rows: methodRows,
-            preferredColumns: ['Medio de pago', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
-            chartRows: topChartRows(methodRows, 'Medio de pago', 'Neto'),
-        }), compactSheetName('Por medio'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen por categoría',
-            subtitle: reportSubtitle,
-            rows: categoryRows,
-            preferredColumns: ['Categoría', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
-            chartRows: topChartRows(categoryRows, 'Categoría', 'Neto'),
-        }), compactSheetName('Por categoría'));
-        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-            title: 'Resumen por clasificación',
-            subtitle: reportSubtitle,
-            rows: classificationRows,
-            preferredColumns: ['Clasificación', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
-            chartRows: topChartRows(classificationRows, 'Clasificación', 'Neto'),
-        }), compactSheetName('Por clasificación'));
+        const dashboard = workbook.addWorksheet('Dashboard');
+        dashboard.columns = Array.from({ length: 12 }, () => ({ width: 13 }));
+        dashboard.mergeCells('A1:L1');
+        dashboard.getCell('A1').value = 'Informe de caja';
+        dashboard.getCell('A1').font = { bold: true, size: 22, color: { argb: excelTheme.white } };
+        dashboard.getCell('A1').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: excelTheme.navy } };
+        dashboard.getCell('A1').alignment = { vertical: 'middle', horizontal: 'center' };
+        dashboard.getRow(1).height = 34;
+        dashboard.mergeCells('A2:L2');
+        dashboard.getCell('A2').value = reportSubtitle;
+        dashboard.getCell('A2').font = { bold: true, color: { argb: excelTheme.gray } };
+        dashboard.getCell('A2').alignment = { horizontal: 'center' };
+
+        const metricRows = [
+            ['Ingresos', report.current.totals.ingresos, 'Egresos', report.current.totals.egresos],
+            ['Neto', report.current.totals.neto, 'Diferencias cierre', report.current.closureDifference],
+            ['Transf. recibidas', report.current.totals.transferenciasRecibidas, 'Transf. enviadas', report.current.totals.transferenciasEnviadas],
+        ];
+        metricRows.forEach((row, index) => {
+            const excelRow = 4 + index;
+            dashboard.getCell(`A${excelRow}`).value = row[0];
+            dashboard.getCell(`B${excelRow}`).value = row[1];
+            dashboard.getCell(`D${excelRow}`).value = row[2];
+            dashboard.getCell(`E${excelRow}`).value = row[3];
+            ['A', 'D'].forEach((col) => {
+                dashboard.getCell(`${col}${excelRow}`).font = { bold: true, color: { argb: excelTheme.navy } };
+                dashboard.getCell(`${col}${excelRow}`).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: excelTheme.softGray } };
+            });
+            ['B', 'E'].forEach((col) => {
+                const cell = dashboard.getCell(`${col}${excelRow}`);
+                cell.numFmt = '$ #,##0.00;[Red]-$ #,##0.00';
+                cell.font = { bold: true, color: { argb: toNumber(cell.value) < 0 ? excelTheme.red : excelTheme.green } };
+            });
+        });
+
+        const flowChart = createChartImage({
+            type: 'pie',
+            title: 'Composición del movimiento',
+            rows: [
+                { label: 'Ingresos', value: report.current.totals.ingresos },
+                { label: 'Egresos', value: report.current.totals.egresos },
+                { label: 'Transf. recibidas', value: report.current.totals.transferenciasRecibidas },
+                { label: 'Transf. enviadas', value: report.current.totals.transferenciasEnviadas },
+            ],
+        });
+        const accountChart = createChartImage({
+            type: 'bar',
+            title: 'Neto por caja',
+            rows: accountRows.map((row) => ({ label: row.Caja, value: row.Neto })),
+        });
+        const classificationChart = createChartImage({
+            type: 'bar',
+            title: 'Neto por clasificación',
+            rows: classificationRows.map((row) => ({ label: row.Clasificación, value: row.Neto })),
+        });
+        addDashboardImage(workbook, dashboard, flowChart, { tl: { col: 0, row: 8 }, ext: { width: 570, height: 270 } });
+        addDashboardImage(workbook, dashboard, accountChart, { tl: { col: 6, row: 8 }, ext: { width: 570, height: 270 } });
+        addDashboardImage(workbook, dashboard, classificationChart, { tl: { col: 0, row: 24 }, ext: { width: 760, height: 300 } });
+
+        addRowsSheet(workbook, 'Resumen', summaryRows, [
+            { header: 'Concepto', key: 'Concepto', width: 34 },
+            { header: 'Valor', key: 'Valor', money: true, width: 18 },
+        ]);
+        addRowsSheet(workbook, 'Informe final', findingsForExport, [
+            { header: 'Estado', key: 'Estado', width: 14 },
+            { header: 'Hallazgo', key: 'Hallazgo', width: 34 },
+            { header: 'Detalle', key: 'Detalle', width: 80 },
+        ]);
+        addRowsSheet(workbook, 'Por caja', accountRows, [
+            { header: 'Caja', key: 'Caja', width: 22 },
+            { header: 'Saldo inicial', key: 'Saldo inicial', money: true },
+            { header: 'Ingresos', key: 'Ingresos', money: true },
+            { header: 'Egresos', key: 'Egresos', money: true, negative: true },
+            { header: 'Transf. recibidas', key: 'Transf. recibidas', money: true },
+            { header: 'Transf. enviadas', key: 'Transf. enviadas', money: true, negative: true },
+            { header: 'Neto', key: 'Neto', money: true },
+            { header: 'Saldo final', key: 'Saldo final', money: true },
+            { header: 'Movimientos', key: 'Movimientos', width: 14 },
+        ]);
+        addRowsSheet(workbook, 'Transferencias cajas', transferRows, [
+            { header: 'Fecha', key: 'Fecha', width: 20 },
+            { header: 'Caja', key: 'Caja', width: 18 },
+            { header: 'Movimiento', key: 'Movimiento', width: 28 },
+            { header: 'Ruta', key: 'Ruta', width: 34 },
+            { header: 'Contraparte', key: 'Contraparte', width: 18 },
+            { header: 'Medio', key: 'Medio', width: 16 },
+            { header: 'Ingreso', key: 'Ingreso', money: true },
+            { header: 'Egreso', key: 'Egreso', money: true, negative: true },
+            { header: 'Neto', key: 'Neto', money: true },
+            { header: 'Detalle', key: 'Detalle', width: 62 },
+            { header: 'Transferencia ID', key: 'Transferencia ID', width: 24 },
+        ]);
+        addRowsSheet(workbook, 'Por clasificación', classificationRows, [
+            { header: 'Clasificación', key: 'Clasificación', width: 30 },
+            { header: 'Movimientos', key: 'Movimientos', width: 14 },
+            { header: 'Ingresos', key: 'Ingresos', money: true },
+            { header: 'Egresos', key: 'Egresos', money: true, negative: true },
+            { header: 'Neto', key: 'Neto', money: true },
+        ]);
+        addRowsSheet(workbook, 'Detalle completo', detailRowsForExport, [
+            ...Object.keys(detailRowsForExport[0] || {}).map((key) => ({
+                header: key,
+                key,
+                width: ['Descripción', 'Detalle clasificación'].includes(key) ? 46 : 18,
+                money: ['Ingreso', 'Egreso', 'Neto', 'Saldo caja', 'Saldo total'].includes(key),
+                negative: ['Egreso'].includes(key),
+            })),
+        ]);
         if (comparisonRows.length) {
-            XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
-                title: 'Comparativa contra período anterior',
-                subtitle: `${report.modeLabel} actual vs. ${REPORT_MODES[mode]?.previousLabel || 'período anterior'}`,
-                rows: comparisonRows,
-                preferredColumns: ['Métrica', 'Actual', 'Anterior', 'Diferencia'],
-                chartRows: topChartRows(comparisonRows, 'Métrica', 'Diferencia'),
-            }), compactSheetName('Comparativa'));
+            addRowsSheet(workbook, 'Comparativa', comparisonRows, [
+                { header: 'Métrica', key: 'Métrica', width: 28 },
+                { header: 'Actual', key: 'Actual', money: true },
+                { header: 'Anterior', key: 'Anterior', money: true },
+                { header: 'Diferencia', key: 'Diferencia', money: true },
+            ]);
         }
-        XLSX.writeFile(workbook, `informe_caja_${mode}_${selectedValueForFile}_${cashAccount}.xlsx`);
+
+        await downloadWorkbook(workbook, `informe_caja_${mode}_${selectedValueForFile}_${cashAccount}.xlsx`);
     };
 
     const exportPdf = () => {
