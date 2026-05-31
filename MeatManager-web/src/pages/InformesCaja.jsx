@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
+import * as XLSX from 'xlsx-js-style';
 import {
     AlertTriangle,
     ArrowDownRight,
@@ -31,6 +31,148 @@ const REPORT_MODES = {
 const toNumber = (value) => Number(value) || 0;
 const round2 = (value) => Math.round((toNumber(value) + Number.EPSILON) * 100) / 100;
 const formatCurrency = (value) => `$${round2(value).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const excelCurrencyFormat = '$ #,##0.00;[Red]-$ #,##0.00';
+const excelNumberFormat = '#,##0.00';
+const excelIntegerFormat = '#,##0';
+const excelPalette = {
+    navy: '123047',
+    blue: '2563EB',
+    cyan: 'DDF4FF',
+    green: '16A34A',
+    greenLight: 'DCFCE7',
+    red: 'DC2626',
+    redLight: 'FEE2E2',
+    amber: 'F59E0B',
+    amberLight: 'FEF3C7',
+    gray: '64748B',
+    grayLight: 'F1F5F9',
+    white: 'FFFFFF',
+};
+const excelColumns = {
+    money: new Set(['Ingresos', 'Egresos', 'Neto', 'Valor', 'Actual', 'Anterior', 'Diferencia', 'Saldo inicial', 'Saldo final', 'Ingreso', 'Egreso', 'Saldo caja', 'Saldo total', 'Diferencias de cierre', 'Delta conciliación']),
+    integer: new Set(['Movimientos', 'ID', 'Venta ID', 'Compra ID', 'Cliente ID', 'Sucursal ID', 'Ticket']),
+};
+const excelFill = (fgColor) => ({ patternType: 'solid', fgColor: { rgb: fgColor } });
+const excelBorder = (color = 'CBD5E1') => ({
+    top: { style: 'thin', color: { rgb: color } },
+    right: { style: 'thin', color: { rgb: color } },
+    bottom: { style: 'thin', color: { rgb: color } },
+    left: { style: 'thin', color: { rgb: color } },
+});
+const excelStyles = {
+    title: { font: { bold: true, sz: 18, color: { rgb: excelPalette.white } }, fill: excelFill(excelPalette.navy), alignment: { horizontal: 'left', vertical: 'center' } },
+    subtitle: { font: { bold: true, color: { rgb: excelPalette.gray } }, fill: excelFill(excelPalette.grayLight), alignment: { horizontal: 'left', vertical: 'center' } },
+    header: { font: { bold: true, color: { rgb: excelPalette.white } }, fill: excelFill(excelPalette.blue), alignment: { horizontal: 'center', vertical: 'center' }, border: excelBorder('1D4ED8') },
+    chartHeader: { font: { bold: true, color: { rgb: excelPalette.navy } }, fill: excelFill(excelPalette.cyan), alignment: { horizontal: 'center' }, border: excelBorder() },
+    body: { border: excelBorder(), alignment: { vertical: 'top', wrapText: true } },
+    muted: { font: { color: { rgb: excelPalette.gray } }, border: excelBorder(), alignment: { vertical: 'top', wrapText: true } },
+    income: { font: { bold: true, color: { rgb: excelPalette.green } }, fill: excelFill(excelPalette.greenLight), border: excelBorder(), numFmt: excelCurrencyFormat },
+    expense: { font: { bold: true, color: { rgb: excelPalette.red } }, fill: excelFill(excelPalette.redLight), border: excelBorder(), numFmt: excelCurrencyFormat },
+    warning: { font: { bold: true, color: { rgb: '92400E' } }, fill: excelFill(excelPalette.amberLight), border: excelBorder() },
+    chartBar: { font: { bold: true, color: { rgb: excelPalette.blue } }, border: excelBorder(), alignment: { vertical: 'center' } },
+};
+const getExcelCell = (sheet, row, col) => sheet[XLSX.utils.encode_cell({ r: row, c: col })];
+const setExcelStyle = (sheet, row, col, style) => {
+    const cell = getExcelCell(sheet, row, col);
+    if (cell) cell.s = style;
+};
+const compactSheetName = (name) => String(name).replace(/[\\/?*[\]:]/g, '').slice(0, 31);
+const getExcelColumns = (rows, preferred = []) => {
+    const keys = new Set(preferred);
+    rows.forEach((row) => Object.keys(row || {}).forEach((key) => keys.add(key)));
+    return Array.from(keys);
+};
+const makeBar = (value, maxValue, size = 22, formatter = formatCurrency) => {
+    const ratio = maxValue > 0 ? Math.max(0, Math.abs(toNumber(value)) / maxValue) : 0;
+    const filled = Math.max(1, Math.round(ratio * size));
+    return `${'█'.repeat(filled)} ${formatter(value)}`;
+};
+const topChartRows = (rows, labelKey, valueKey, limit = 8, formatter = formatCurrency) => {
+    const validRows = rows
+        .map((row) => ({ label: row[labelKey], value: toNumber(row[valueKey]) }))
+        .filter((row) => row.label && row.value !== 0)
+        .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
+        .slice(0, limit);
+    const maxValue = Math.max(0, ...validRows.map((row) => Math.abs(row.value)));
+    return validRows.map((row) => ({
+        Concepto: row.label,
+        Valor: row.value,
+        Gráfico: makeBar(row.value, maxValue, 22, formatter),
+        Formato: formatter === formatCurrency ? 'money' : 'number',
+    }));
+};
+const buildStyledSheet = ({ title, subtitle, rows, preferredColumns = [], chartRows = [] }) => {
+    const dataRows = rows.length ? rows : [{ Info: 'Sin datos para este período' }];
+    const columns = getExcelColumns(dataRows, preferredColumns);
+    const body = [
+        [title],
+        [subtitle],
+        [],
+        columns,
+        ...dataRows.map((row) => columns.map((column) => row[column] ?? '')),
+    ];
+    const chartStart = body.length + 2;
+    if (chartRows.length) {
+        body.push([]);
+        body.push(['Gráfico rápido', 'Valor', 'Barra']);
+        chartRows.forEach((row) => body.push([row.Concepto, row.Valor, row.Gráfico]));
+    }
+
+    const sheet = XLSX.utils.aoa_to_sheet(body);
+    const lastColumn = Math.max(columns.length, chartRows.length ? 3 : 1) - 1;
+    sheet['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: lastColumn } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: lastColumn } },
+    ];
+    sheet['!cols'] = Array.from({ length: lastColumn + 1 }, (_, index) => {
+        const header = columns[index] || '';
+        if (['Descripción', 'Detalle', 'Hallazgo', 'Email autorizado'].includes(header)) return { wch: 42 };
+        if (['Fecha', 'Período'].includes(header)) return { wch: 22 };
+        if (excelColumns.money.has(header)) return { wch: 16 };
+        return { wch: Math.max(14, Math.min(28, String(header).length + 5)) };
+    });
+    sheet['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 3, c: 0 }, e: { r: Math.max(3, dataRows.length + 3), c: columns.length - 1 } }) };
+
+    for (let c = 0; c <= lastColumn; c += 1) {
+        setExcelStyle(sheet, 0, c, excelStyles.title);
+        setExcelStyle(sheet, 1, c, excelStyles.subtitle);
+    }
+    columns.forEach((column, c) => {
+        setExcelStyle(sheet, 3, c, excelStyles.header);
+        dataRows.forEach((row, index) => {
+            const value = row[column];
+            const rowIndex = 4 + index;
+            const isMoney = excelColumns.money.has(column);
+            const isInteger = excelColumns.integer.has(column);
+            const numericValue = toNumber(value);
+            let style = excelStyles.body;
+            if (isMoney) {
+                style = numericValue < 0 || column === 'Egresos' || column === 'Egreso' ? excelStyles.expense : excelStyles.income;
+            } else if (column === 'Estado' && ['danger', 'warning'].includes(String(value).toLowerCase())) {
+                style = excelStyles.warning;
+            } else if (['Descripción', 'Detalle', 'Hallazgo'].includes(column)) {
+                style = excelStyles.muted;
+            }
+            setExcelStyle(sheet, rowIndex, c, {
+                ...style,
+                numFmt: isMoney ? excelCurrencyFormat : (isInteger ? excelIntegerFormat : style.numFmt),
+            });
+        });
+    });
+
+    if (chartRows.length) {
+        for (let c = 0; c < 3; c += 1) setExcelStyle(sheet, chartStart, c, excelStyles.chartHeader);
+        chartRows.forEach((row, index) => {
+            const rowIndex = chartStart + 1 + index;
+            const valueFormat = row.Formato === 'number' ? excelIntegerFormat : excelCurrencyFormat;
+            setExcelStyle(sheet, rowIndex, 0, excelStyles.body);
+            setExcelStyle(sheet, rowIndex, 1, { ...excelStyles.income, numFmt: valueFormat });
+            setExcelStyle(sheet, rowIndex, 2, excelStyles.chartBar);
+            if (toNumber(row.Valor) < 0) setExcelStyle(sheet, rowIndex, 1, { ...excelStyles.expense, numFmt: valueFormat });
+        });
+    }
+    return sheet;
+};
 const formatDateInput = (date) => {
     const d = date instanceof Date ? date : new Date(date);
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -500,16 +642,90 @@ const InformesCaja = () => {
             Egresos: row.egresos,
             Neto: row.neto,
         }));
+        const reportSubtitle = `${report.modeLabel} - ${report.bounds.label} - ${report.cashAccountLabel} - generado ${formatDateTime(new Date())}`;
+        const operationRows = groupSheet(report.current.byOperation, 'Operación');
+        const methodRows = groupSheet(report.current.byMethod, 'Medio de pago');
+        const categoryRows = groupSheet(report.current.byCategory, 'Categoría');
+        const findingsForExport = problemRows.length ? problemRows : [{ Estado: 'ok', Hallazgo: 'Sin alertas', Detalle: 'No se detectaron diferencias relevantes en este período.' }];
+        const findingCounts = findingsForExport.reduce((acc, row) => {
+            const key = row.Estado || 'ok';
+            acc[key] = (acc[key] || 0) + 1;
+            return acc;
+        }, {});
+        const maxFindings = Math.max(1, ...Object.values(findingCounts));
+        const findingChartRows = Object.entries(findingCounts).map(([label, value]) => ({
+            Concepto: label,
+            Valor: value,
+            Gráfico: makeBar(value, maxFindings, 22, (count) => String(count)),
+            Formato: 'number',
+        }));
+        const detailChartRows = topChartRows(
+            detailRowsForExport.map((row) => ({ ...row, Movimiento: `${row.Fecha} - ${row.Operación} #${row.ID}` })),
+            'Movimiento',
+            'Neto',
+            10,
+        );
+        const summaryChartRows = topChartRows(summaryRows, 'Concepto', 'Valor', 8);
 
         const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Resumen');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(problemRows), 'Informe final');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRowsForExport), 'Detalle centavo por centavo');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(accountRows), 'Por caja');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(groupSheet(report.current.byOperation, 'Operación')), 'Por operación');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(groupSheet(report.current.byMethod, 'Medio de pago')), 'Por medio');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(groupSheet(report.current.byCategory, 'Categoría')), 'Por categoría');
-        if (comparisonRows.length) XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(comparisonRows), 'Comparativa');
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen ejecutivo de caja',
+            subtitle: reportSubtitle,
+            rows: summaryRows,
+            preferredColumns: ['Concepto', 'Valor'],
+            chartRows: summaryChartRows,
+        }), compactSheetName('Resumen'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Informe final',
+            subtitle: 'Hallazgos, alertas y puntos de conciliación',
+            rows: findingsForExport,
+            preferredColumns: ['Estado', 'Hallazgo', 'Detalle'],
+            chartRows: findingChartRows,
+        }), compactSheetName('Informe final'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Detalle centavo por centavo',
+            subtitle: reportSubtitle,
+            rows: detailRowsForExport,
+            preferredColumns: ['Origen', 'ID', 'Fecha', 'Caja', 'Operación', 'Tipo', 'Categoría', 'Medio de pago', 'Descripción', 'Ingreso', 'Egreso', 'Neto', 'Saldo caja', 'Saldo total'],
+            chartRows: detailChartRows,
+        }), compactSheetName('Detalle centavo por centavo'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen por caja',
+            subtitle: reportSubtitle,
+            rows: accountRows,
+            preferredColumns: ['Caja', 'Saldo inicial', 'Ingresos', 'Egresos', 'Neto', 'Saldo final', 'Movimientos'],
+            chartRows: topChartRows(accountRows, 'Caja', 'Neto'),
+        }), compactSheetName('Por caja'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen por operación',
+            subtitle: reportSubtitle,
+            rows: operationRows,
+            preferredColumns: ['Operación', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
+            chartRows: topChartRows(operationRows, 'Operación', 'Neto'),
+        }), compactSheetName('Por operación'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen por medio de pago',
+            subtitle: reportSubtitle,
+            rows: methodRows,
+            preferredColumns: ['Medio de pago', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
+            chartRows: topChartRows(methodRows, 'Medio de pago', 'Neto'),
+        }), compactSheetName('Por medio'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen por categoría',
+            subtitle: reportSubtitle,
+            rows: categoryRows,
+            preferredColumns: ['Categoría', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
+            chartRows: topChartRows(categoryRows, 'Categoría', 'Neto'),
+        }), compactSheetName('Por categoría'));
+        if (comparisonRows.length) {
+            XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+                title: 'Comparativa contra período anterior',
+                subtitle: `${report.modeLabel} actual vs. ${REPORT_MODES[mode]?.previousLabel || 'período anterior'}`,
+                rows: comparisonRows,
+                preferredColumns: ['Métrica', 'Actual', 'Anterior', 'Diferencia'],
+                chartRows: topChartRows(comparisonRows, 'Métrica', 'Diferencia'),
+            }), compactSheetName('Comparativa'));
+        }
         XLSX.writeFile(workbook, `informe_caja_${mode}_${selectedValue}_${cashAccount}.xlsx`);
     };
 
