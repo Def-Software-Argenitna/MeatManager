@@ -166,6 +166,8 @@ const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE
 const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
 const INTERNAL_ADMIN_JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '12h';
 const ERROR_LOG_RETENTION_DAYS = 30;
+const SCALE_LATENCY_LOG_DIR = process.env.SCALE_LATENCY_LOG_DIR || path.join(__dirname, 'logs');
+const SCALE_LATENCY_LOG_FILE = process.env.SCALE_LATENCY_LOG_FILE || path.join(SCALE_LATENCY_LOG_DIR, 'scale-ticket-latency.log');
 const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SKIP_SCHEMA_BOOT || '').trim().toLowerCase()
 );
@@ -175,6 +177,34 @@ const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
 
 let smtpTransport = null;
 let lastErrorLogPruneAt = 0;
+
+function toIsoSafe(value) {
+    if (!value) return null;
+    const date = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function diffMs(fromValue, toValue = Date.now()) {
+    if (!fromValue) return null;
+    const from = fromValue instanceof Date ? fromValue.getTime() : new Date(fromValue).getTime();
+    const to = toValue instanceof Date ? toValue.getTime() : Number(toValue);
+    if (!Number.isFinite(from) || !Number.isFinite(to)) return null;
+    return Math.max(0, Math.round(to - from));
+}
+
+function appendScaleLatencyLog(event, payload = {}) {
+    const entry = {
+        ts: new Date().toISOString(),
+        event,
+        ...payload,
+    };
+
+    fs.promises.mkdir(SCALE_LATENCY_LOG_DIR, { recursive: true })
+        .then(() => fs.promises.appendFile(SCALE_LATENCY_LOG_FILE, `${JSON.stringify(entry)}\n`, 'utf8'))
+        .catch((error) => {
+            console.warn('[SCALE LATENCY LOG] No se pudo escribir el log:', error?.message || error);
+        });
+}
 
 const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.REDIS_TLS || '').trim().toLowerCase()
@@ -3102,6 +3132,37 @@ async function listClientBranches(clientId) {
     }
 }
 
+function getRequestedActiveBranchId(req) {
+    const rawValue = req?.headers?.['x-mm-active-branch-id'] ?? req?.query?.activeBranchId ?? req?.body?.activeBranchId;
+    const branchId = Number(rawValue);
+    return Number.isFinite(branchId) && branchId > 0 ? branchId : null;
+}
+
+async function resolveRequestedActiveBranch(accessContext, req) {
+    const requestedBranchId = getRequestedActiveBranchId(req);
+    if (!requestedBranchId || !accessContext?.client?.id) return null;
+
+    const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+    if (Number.isFinite(userBranchId) && userBranchId > 0) {
+        return Number(userBranchId) === Number(requestedBranchId)
+            ? {
+                id: userBranchId,
+                name: accessContext?.user?.branchName || '',
+                internalCode: accessContext?.user?.branchInternalCode || null,
+                address: accessContext?.user?.branchAddress || null,
+                status: accessContext?.user?.branchStatus || 'ACTIVE',
+            }
+            : null;
+    }
+
+    if (accessContext?.user?.role !== 'admin' && !accessContext?.user?.isGlobalSuperAdmin) {
+        return null;
+    }
+
+    const branches = await listClientBranches(accessContext.client.id);
+    return branches.find((branch) => Number(branch.id) === Number(requestedBranchId)) || null;
+}
+
 async function getTenantBranchCode(pool, tenantId) {
     const [rows] = await pool.query(
         'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
@@ -3131,15 +3192,20 @@ async function resolveClientBranchId(clientId, { branchId, branchCode, receiptCo
 async function resolveOperationalBranchId({ pool, tenantId, accessContext, record }) {
     if (!accessContext?.client?.id) return null;
 
-    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
-    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
-        return explicitBranchId;
-    }
-
-    // Si el usuario está atado a una sucursal, priorizar ese alcance.
+    // Si el usuario está atado a una sucursal, ese alcance manda sobre cualquier payload.
     const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
     if (Number.isFinite(userBranchId) && userBranchId > 0) {
         return userBranchId;
+    }
+
+    const activeBranchId = Number(accessContext?.activeBranch?.id);
+    if (Number.isFinite(activeBranchId) && activeBranchId > 0) {
+        return activeBranchId;
+    }
+
+    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
+    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
+        return explicitBranchId;
     }
 
     const branchCodeFromRecord =
@@ -5140,6 +5206,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             _internalAdmin: req.firebaseUser?._internalAdmin || null,
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const normalizedRecord = table === 'products'
             ? await resolveProductRecordCategory(pool, tenantId, record)
             : record;
@@ -5613,11 +5680,16 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 _internalAdmin: req.firebaseUser?._internalAdmin || null,
                 _supportClientId: req.firebaseUser?._supportClientId || null,
             });
-            const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
-            if (Number.isFinite(userBranchId) && userBranchId > 0) {
-                // Empleado/sesión atada a sucursal: devuelve esa sucursal + filas globales.
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+            const scopedBranchId = Number(
+                accessContext?.activeBranch?.id
+                ?? accessContext?.user?.branchRecordId
+                ?? accessContext?.user?.branchId
+            );
+            if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+                // Sucursal activa o empleado atado a sucursal: devuelve esa sucursal + filas globales.
                 extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
-                extraParams.push(userBranchId);
+                extraParams.push(scopedBranchId);
             }
         }
 
@@ -5887,10 +5959,17 @@ async function triggerScaleBridgePullSales({
     barcode = '',
     lookbackMinutes = SCALE_BRIDGE_PULL_LOOKBACK_MINUTES,
 } = {}) {
+    const pullStartedAt = Date.now();
     const now = new Date();
     const fromDate = new Date(now.getTime() - (Math.max(1, Number(lookbackMinutes) || 1) * 60 * 1000));
     const controller = new AbortController();
     const timeoutHandle = setTimeout(() => controller.abort(), SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS);
+    appendScaleLatencyLog('pull_sales_start', {
+        reason,
+        barcode,
+        bridgeBaseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+        lookbackMinutes,
+    });
     try {
         const response = await fetch(`${SCALE_BRIDGE_DIRECT_BASE_URL}/api/scale/pull-sales`, {
             method: 'POST',
@@ -5910,14 +5989,39 @@ async function triggerScaleBridgePullSales({
                 status: response.status,
                 message: payload?.error || null,
             });
+            appendScaleLatencyLog('pull_sales_error', {
+                reason,
+                barcode,
+                status: response.status,
+                elapsedMs: Date.now() - pullStartedAt,
+                message: payload?.error || null,
+            });
             return false;
         }
+        appendScaleLatencyLog('pull_sales_done', {
+            reason,
+            barcode,
+            status: response.status,
+            elapsedMs: Date.now() - pullStartedAt,
+            fetched: payload?.fetched ?? null,
+            stored: payload?.stored ?? null,
+            tickets: payload?.tickets ?? null,
+            newTickets: payload?.newTickets ?? null,
+            latestSaleAt: payload?.latestSaleAt || null,
+        });
         return true;
     } catch (error) {
         console.warn('[SCALE LOOKUP] pull-sales no disponible', {
             reason,
             barcode,
             baseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+            error: error?.name === 'AbortError' ? 'timeout' : (error?.message || String(error)),
+        });
+        appendScaleLatencyLog('pull_sales_failed', {
+            reason,
+            barcode,
+            bridgeBaseUrl: SCALE_BRIDGE_DIRECT_BASE_URL,
+            elapsedMs: Date.now() - pullStartedAt,
             error: error?.name === 'AbortError' ? 'timeout' : (error?.message || String(error)),
         });
         return false;
@@ -5927,18 +6031,29 @@ async function triggerScaleBridgePullSales({
 }
 
 app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (req, res) => {
+    const lookupStartedAt = Date.now();
+    let lookupTenantId = null;
+    let lookupBarcode = '';
     try {
         const barcode = String(req.params.barcode || '').trim();
         if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
+        lookupBarcode = barcode;
         const barcodeDigits = barcode.replace(/\D/g, '');
         const isScaleSummaryBarcode = barcodeDigits.length >= 12 && barcodeDigits.startsWith('22');
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        lookupTenantId = tenantId;
         const pool = getTenantPool(dbName);
         const scaleSchema = await getScaleTicketLookupSchema(pool);
         const ticketSelect = buildScaleTicketLookupSelect(scaleSchema);
         const itemSelect = buildScaleTicketItemSelect(scaleSchema);
         const openTicketFilter = scaleSchema.ticketStatus ? " AND ticket_status = 'open'" : '';
+        appendScaleLatencyLog('lookup_start', {
+            tenantId,
+            barcode,
+            barcodeDigitsLength: barcodeDigits.length,
+            isScaleSummaryBarcode,
+        });
 
         let [ticketRows] = await pool.query(
             `SELECT ${ticketSelect}
@@ -5966,8 +6081,10 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 barcode,
             });
             const retryUntil = Date.now() + 15000;
+            let retryCount = 0;
             while (!ticketRows.length && Date.now() < retryUntil) {
                 await new Promise((resolve) => setTimeout(resolve, 500));
+                retryCount += 1;
                 [ticketRows] = await pool.query(
                     `SELECT ${ticketSelect}
                      FROM scale_bridge_ticket_map
@@ -5984,6 +6101,13 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                         : [tenantId, barcode]
                 );
             }
+            appendScaleLatencyLog('lookup_retry_window_done', {
+                tenantId,
+                barcode,
+                retryCount,
+                found: ticketRows.length > 0,
+                elapsedMs: Date.now() - lookupStartedAt,
+            });
             if (!ticketRows.length) {
                 await pullPromise.catch(() => false);
                 [ticketRows] = await pool.query(
@@ -6019,6 +6143,12 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 statusParams
             );
             if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
+                appendScaleLatencyLog('lookup_ticket_not_open', {
+                    tenantId,
+                    barcode,
+                    status: String(anyStatusRows[0].ticket_status || '').toLowerCase(),
+                    elapsedMs: Date.now() - lookupStartedAt,
+                });
                 return res.status(409).json({
                     ok: false,
                     error: `Ese ticket ya fue ${String(anyStatusRows[0].ticket_status || '').toLowerCase()} y no debe reutilizarse`,
@@ -6063,9 +6193,25 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 );
                 if (amountMatches.length === 1) {
                     ticketRows = [amountMatches[0]];
+                    appendScaleLatencyLog('lookup_amount_fallback_match', {
+                        tenantId,
+                        barcode,
+                        ticketId: amountMatches[0]?.ticket_id || null,
+                        ticketBarcode: amountMatches[0]?.ticket_barcode || null,
+                        printedTicketBarcode: amountMatches[0]?.printed_ticket_barcode || null,
+                        totalAmount,
+                        elapsedMs: Date.now() - lookupStartedAt,
+                    });
                     break;
                 }
                 if (amountMatches.length > 1) {
+                    appendScaleLatencyLog('lookup_amount_fallback_conflict', {
+                        tenantId,
+                        barcode,
+                        totalAmount,
+                        candidates: amountMatches.length,
+                        elapsedMs: Date.now() - lookupStartedAt,
+                    });
                     return res.status(409).json({
                         ok: false,
                         error: 'Hay mas de un ticket posible para ese codigo resumen. Reimprima ticket con codigo unico o escanee codigo MM.',
@@ -6108,6 +6254,15 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                      ORDER BY vi.id ASC`,
                     [tenantId, venta.id]
                 );
+                appendScaleLatencyLog('lookup_existing_sale_found', {
+                    tenantId,
+                    barcode,
+                    ventaId: venta.id,
+                    ticketBarcode: venta.ticket_barcode,
+                    saleAt: toIsoSafe(venta.date),
+                    elapsedMs: Date.now() - lookupStartedAt,
+                    items: itemsVenta.length,
+                });
                 return res.json({
                     ok: true,
                     ticket: {
@@ -6142,10 +6297,26 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         }
 
         if (!ticketRows.length) {
+            appendScaleLatencyLog('lookup_not_found', {
+                tenantId,
+                barcode,
+                elapsedMs: Date.now() - lookupStartedAt,
+            });
             return res.status(404).json({ ok: false, error: 'Ticket no encontrado para ese barcode' });
         }
 
         const ticket = ticketRows[0];
+        appendScaleLatencyLog('lookup_ticket_found', {
+            tenantId,
+            barcode,
+            deviceId: ticket.device_id,
+            ticketId: ticket.ticket_id,
+            ticketBarcode: ticket.ticket_barcode,
+            printedTicketBarcode: ticket.printed_ticket_barcode || null,
+            saleAt: toIsoSafe(ticket.sale_at),
+            saleToLookupMs: diffMs(ticket.sale_at, lookupStartedAt),
+            elapsedMs: Date.now() - lookupStartedAt,
+        });
         const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN scale_bridge_product_map m
@@ -6244,6 +6415,19 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             };
         });
 
+        appendScaleLatencyLog('lookup_response_ready', {
+            tenantId,
+            barcode,
+            deviceId: ticket.device_id,
+            ticketId: ticket.ticket_id,
+            ticketBarcode: ticket.ticket_barcode,
+            printedTicketBarcode: ticket.printed_ticket_barcode || null,
+            saleAt: toIsoSafe(ticket.sale_at),
+            saleToLookupMs: diffMs(ticket.sale_at, lookupStartedAt),
+            elapsedMs: Date.now() - lookupStartedAt,
+            itemRows: itemRows.length,
+            mappedItems: items.length,
+        });
         return res.json({
             ok: true,
             ticket: {
@@ -6261,6 +6445,12 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             items,
         });
     } catch (err) {
+        appendScaleLatencyLog('lookup_error', {
+            tenantId: lookupTenantId,
+            barcode: lookupBarcode,
+            elapsedMs: Date.now() - lookupStartedAt,
+            error: err?.message || String(err),
+        });
         if (
             String(err?.message || '').includes('scale_bridge_ticket_map')
             || String(err?.message || '').includes('scale_bridge_sales_item')
@@ -6301,6 +6491,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
         });
         if (accessContext) {
             assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
         const {
@@ -6427,13 +6618,14 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             const desc = `${String(supplier || '').trim()}${invoice_num ? ` · Comprobante ${invoice_num}` : ''}`;
             await conn.query(
                 `INSERT INTO caja_movimientos
-                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id)
-                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?)`,
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id, branch_id)
+                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?, ?)`,
                 [
                     tenantId, parseFloat(cash_amount) || 0, desc,
                     payment_method || 'Efectivo',
                     payment_method_type || 'cash',
                     purchaseDate, purchaseId,
+                    resolvedBranchId || null,
                 ]
             );
         }
@@ -6561,6 +6753,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         });
         if (accessContext) {
             assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
         const {
@@ -7193,10 +7386,22 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
 
         const conn = await clientsControlPool.getConnection();
         let rows;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND (cu.branchId = ? OR cu.id = ?)'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId, accessContext.user.id]
+                : [];
             [rows] = await conn.query(
                 `SELECT
                     cu.id AS id,
@@ -7213,8 +7418,9 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                  LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
                     ON b.id = cu.branchId
                  WHERE cu.clientId = ?
+                 ${branchScopedWhere}
                  ORDER BY cu.id ASC`,
-                [accessContext.client.id]
+                [accessContext.client.id, ...branchScopedParams]
             );
             const [licenseRows] = await conn.query(
                 `SELECT
@@ -7353,6 +7559,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const requestedRole = String(role || 'employee').trim().toLowerCase();
         const effectiveRole = isRequesterAdmin ? 'employee' : requestedRole;
@@ -7363,6 +7570,14 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         let job;
         const normalizedRole = effectiveRole === 'admin' ? 'admin' : 'employee';
         const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
+        const newUserBranchId = normalizedRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
+            ? scopedBranchId
+            : null;
         try {
             const [existingRows] = await conn.query(
                 `SELECT id FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE clientId = ? AND LOWER(email) = ? LIMIT 1`,
@@ -7375,9 +7590,10 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             const [result] = await conn.query(
                 `INSERT INTO \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  (clientId, branchId, firebaseUid, name, lastname, email, role, status, isSynced, createdAt, updatedAt)
-                 VALUES (?, NULL, NULL, ?, '', ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                 VALUES (?, ?, NULL, ?, '', ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
                 [
                     ownerData.clientId,
+                    newUserBranchId,
                     String(username).trim(),
                     normalizeEmail(email),
                     normalizedRole,
@@ -7436,6 +7652,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 role: normalizedRole,
                 active: Number(active) === 1 ? 1 : 0,
                 perms: userPerms,
+                branchId: newUserBranchId,
             },
         });
     } catch (err) {
@@ -7463,14 +7680,26 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const ownerData = await getTenantClientData(req.firebaseUser);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const conn = await clientsControlPool.getConnection();
         let currentData;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND (branchId = ? OR id = ?)'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId, accessContext.user.id]
+                : [];
             const [rows] = await conn.query(
-                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             currentData = rows[0];
         } finally {
@@ -7490,15 +7719,18 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
         const nextActive = active === undefined ? currentData.status === 'ACTIVE' : Number(active) === 1;
         const nextPerms = nextRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
+        const nextBranchId = nextRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
+            ? scopedBranchId
+            : currentData.branchId;
 
         const writeConn = await clientsControlPool.getConnection();
         let job;
         try {
             await writeConn.query(
                 `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 SET name = ?, email = ?, role = ?, status = ?, isSynced = 0, updatedAt = CURRENT_TIMESTAMP
+                 SET name = ?, email = ?, role = ?, branchId = ?, status = ?, isSynced = 0, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = ?`,
-                [nextUsername, nextEmail, nextRole, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
+                [nextUsername, nextEmail, nextRole, nextBranchId ?? null, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
             );
             const assignedLicenses = await syncClientUserPerUserLicenses(writeConn, {
                 clientId: ownerData.clientId,
@@ -7564,14 +7796,33 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'No podés eliminar tu propio usuario' });
         }
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let user;
         let job;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND branchId = ?'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId]
+                : [];
             const [rows] = await conn.query(
-                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             user = rows[0];
             if (!user) {
@@ -7638,15 +7889,34 @@ app.post('/api/users/:id/permissions', verifyFirebaseToken, async (req, res) => 
             ? req.body.paths.map((pathValue) => String(pathValue || '').trim()).filter(Boolean)
             : [];
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let user;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND branchId = ?'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId]
+                : [];
             const [rows] = await conn.query(
                 `SELECT id, firebaseUid, email, name, role, status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                 WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             user = rows[0];
         } finally {
@@ -9370,6 +9640,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
 }
 
 app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
+    const bridgeRequestStartedAt = Date.now();
     try {
         const { deviceId } = resolveBridgeScaleDeviceId(req, req.body?.scaleId);
         const scaleAddress = Number.parseInt(req.body?.scaleAddress, 10);
@@ -9378,7 +9649,22 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
         const tenantId = req.bridge.tenantId;
         const branchId = req.bridge.branchId || null;
 
+        appendScaleLatencyLog('bridge_sales_received', {
+            tenantId,
+            branchId,
+            deviceId,
+            scaleId: req.body?.scaleId ?? null,
+            scaleAddress: Number.isFinite(scaleAddress) ? scaleAddress : null,
+            ticketCount: tickets.length,
+        });
+
         if (tickets.length === 0) {
+            appendScaleLatencyLog('bridge_sales_empty', {
+                tenantId,
+                branchId,
+                deviceId,
+                elapsedMs: Date.now() - bridgeRequestStartedAt,
+            });
             return res.json({ ok: true, ticketsUpserted: 0, itemsUpserted: 0 });
         }
 
@@ -9386,6 +9672,7 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
         let itemsUpserted = 0;
 
         for (const ticket of tickets) {
+            const ticketPersistStartedAt = Date.now();
             const ticketId = String(ticket?.ticketId || '').trim();
             if (!ticketId) continue;
             const fingerprint = String(ticket?.fingerprint || '').slice(0, 128);
@@ -9401,6 +9688,20 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
             if (!fingerprint || !ticketBarcode) {
                 continue;
             }
+
+            appendScaleLatencyLog('bridge_ticket_persist_start', {
+                tenantId,
+                branchId,
+                deviceId,
+                ticketId,
+                ticketBarcode,
+                printedTicketBarcode,
+                saleAt: toIsoSafe(saleAt),
+                saleToBridgeReceiveMs: diffMs(saleAt, bridgeRequestStartedAt),
+                totalAmount,
+                itemCount,
+                lineCount: Array.isArray(ticket?.lines) ? ticket.lines.length : 0,
+            });
 
             await pool.query(
                 `INSERT INTO scale_bridge_ticket_map
@@ -9423,6 +9724,7 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                     vendorCode, vendorName, saleAt, totalAmount, itemCount, fingerprint,
                 ]
             );
+            const ticketHeaderPersistedAt = Date.now();
 
             await pool.query(
                 `UPDATE scale_bridge_sales_item
@@ -9492,12 +9794,47 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                 );
                 itemsUpserted += 1;
             }
+            const ticketItemsPersistedAt = Date.now();
+            appendScaleLatencyLog('bridge_ticket_persist_done', {
+                tenantId,
+                branchId,
+                deviceId,
+                ticketId,
+                ticketBarcode,
+                printedTicketBarcode,
+                saleAt: toIsoSafe(saleAt),
+                saleToBridgeReceiveMs: diffMs(saleAt, bridgeRequestStartedAt),
+                saleToDbHeaderMs: diffMs(saleAt, ticketHeaderPersistedAt),
+                saleToDbItemsMs: diffMs(saleAt, ticketItemsPersistedAt),
+                headerPersistMs: ticketHeaderPersistedAt - ticketPersistStartedAt,
+                itemsPersistMs: ticketItemsPersistedAt - ticketHeaderPersistedAt,
+                totalPersistMs: ticketItemsPersistedAt - ticketPersistStartedAt,
+                lineCount: lines.length,
+                totalAmount,
+                itemCount,
+            });
         }
 
+        const normalizationStartedAt = Date.now();
         await runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId });
+        const finishedAt = Date.now();
+
+        appendScaleLatencyLog('bridge_sales_done', {
+            tenantId,
+            branchId,
+            deviceId,
+            ticketsUpserted,
+            itemsUpserted,
+            normalizationMs: finishedAt - normalizationStartedAt,
+            totalElapsedMs: finishedAt - bridgeRequestStartedAt,
+        });
 
         return res.json({ ok: true, ticketsUpserted, itemsUpserted });
     } catch (error) {
+        appendScaleLatencyLog('bridge_sales_error', {
+            totalElapsedMs: Date.now() - bridgeRequestStartedAt,
+            error: error?.message || String(error),
+        });
         const statusCode = error?.statusCode || 500;
         if (statusCode >= 500) console.error('[BRIDGE SALES ERROR]', error?.message || error);
         return res.status(statusCode).json({ error: error?.message || 'No se pudieron persistir las ventas' });

@@ -376,12 +376,6 @@ const DespostadaBase = ({
                         </div>
                     </div>
 
-                    <div className="despostada-hero-art">
-                        <div className="despostada-hero-art-badge">
-                            <ScanLine size={14} />
-                            {isSessionStarted ? 'Lote en proceso' : 'Panel operativo'}
-                        </div>
-                    </div>
                 </div>
             </DirectionalReveal>
 

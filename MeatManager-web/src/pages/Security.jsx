@@ -102,7 +102,7 @@ const formatLicenseLabel = (license) => (
 );
 
 /* ── User modal ─────────────────────────── */
-const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [] }) => {
+const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [], activeBranch = null }) => {
     const [form, setForm] = useState(() => {
         if (!user) return EMPTY_FORM;
         return {
@@ -191,6 +191,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                     password: form.password,
                     role: normalizedRole,
                     active: 1,
+                    branchId: activeBranch?.id || null,
                     perms: normalizedPerms,
                     assignedClientLicenseIds: form.assignedClientLicenseIds.map((licenseId) => Number(licenseId)),
                 });
@@ -447,6 +448,9 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             Resumen de acceso
                         </label>
                         <div className="security-summary-box">
+                            {activeBranch?.name && (
+                                <span>El usuario quedará asignado a la sucursal: {activeBranch.name}.</span>
+                            )}
                             {false && (
                                 <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
                             )}
@@ -495,7 +499,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, accessProfile, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const { currentUser, accessProfile, activeBranch, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
     const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
@@ -1259,6 +1263,7 @@ const Security = () => {
                     saveRecord={saveRecord}
                     replacePermissions={replaceUserPermissions}
                     licensePool={licensePool}
+                    activeBranch={activeBranch || accessProfile?.branch || null}
                 />
             )}
 

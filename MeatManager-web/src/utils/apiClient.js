@@ -14,6 +14,14 @@ const getStoredTenantSession = () => {
     }
 };
 const isSupportSession = (tenant) => tenant?.authMode === 'support';
+const getStoredActiveBranch = () => {
+    try {
+        const raw = sessionStorage.getItem('mm_active_branch');
+        return raw ? JSON.parse(raw) : null;
+    } catch {
+        return null;
+    }
+};
 const appendSupportClientIdToPath = (path, clientId) => {
     if (!clientId) return path;
     const separator = path.includes('?') ? '&' : '?';
@@ -182,6 +190,11 @@ export const apiFetch = async (path, options = {}) => {
         }
         if (isSupportSession(tenant) && tenant?.clientId) {
             headers['X-MM-Target-Client-Id'] = String(tenant.clientId);
+        }
+        const activeBranch = getStoredActiveBranch();
+        const activeBranchId = Number(activeBranch?.id || activeBranch?.branchId || 0);
+        if (Number.isFinite(activeBranchId) && activeBranchId > 0) {
+            headers['X-MM-Active-Branch-Id'] = String(activeBranchId);
         }
 
         return headers;
