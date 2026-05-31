@@ -615,7 +615,7 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
 
 const InformesCaja = () => {
     const now = new Date();
-    const [mode, setMode] = useState('day');
+    const [mode, setMode] = useState('range');
     const [dayValue, setDayValue] = useState(formatDateInput(now));
     const [weekValue, setWeekValue] = useState(formatDateInput(now));
     const [monthValue, setMonthValue] = useState(formatMonthInput(now));
@@ -1067,7 +1067,7 @@ const InformesCaja = () => {
                     ))}
                 </div>
                 <label>
-                    <span>Período</span>
+                    <span>{mode === 'range' ? 'Desde / Hasta' : 'Período'}</span>
                     {renderPeriodInput()}
                 </label>
                 <label>
