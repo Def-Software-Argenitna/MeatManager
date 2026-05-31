@@ -1058,7 +1058,7 @@ const InformesCaja = () => {
                     {Object.entries(REPORT_MODES).map(([key, item]) => (
                         <button
                             key={key}
-                            className={mode === key ? 'active' : ''}
+                            className={`ic-mode-btn ${mode === key ? 'active' : ''}`}
                             onClick={() => setMode(key)}
                             type="button"
                         >
