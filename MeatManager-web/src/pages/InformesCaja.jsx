@@ -22,9 +22,10 @@ const CASH_ACCOUNTS = [
 ];
 
 const REPORT_MODES = {
-    day: { label: 'Informe por día', compareLabel: 'Comparar con día anterior' },
-    month: { label: 'Informe por mes', compareLabel: 'Comparar con mes anterior' },
-    year: { label: 'Informe por año', compareLabel: 'Comparar con año anterior' },
+    day: { label: 'Informe por día', previousLabel: 'día anterior' },
+    week: { label: 'Informe por semana', previousLabel: 'semana anterior' },
+    month: { label: 'Informe por mes', previousLabel: 'mes anterior' },
+    year: { label: 'Informe por año', previousLabel: 'año anterior' },
 };
 
 const toNumber = (value) => Number(value) || 0;
@@ -98,6 +99,23 @@ const getPeriodBounds = (mode, value) => {
             label: `${String(month).padStart(2, '0')}/${year}`,
         };
     }
+    if (mode === 'week') {
+        const [year, month, day] = String(value || formatDateInput(new Date())).split('-').map(Number);
+        const selected = new Date(year, month - 1, day, 0, 0, 0, 0);
+        const dayOfWeek = selected.getDay();
+        const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+        const start = new Date(selected);
+        start.setDate(selected.getDate() + mondayOffset);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+        return {
+            start,
+            end,
+            label: `${formatDateInput(start).split('-').reverse().join('/')} al ${formatDateInput(end).split('-').reverse().join('/')}`,
+        };
+    }
     const [year, month, day] = String(value || formatDateInput(new Date())).split('-').map(Number);
     return {
         start: new Date(year, month - 1, day, 0, 0, 0, 0),
@@ -115,6 +133,11 @@ const getPreviousPeriodBounds = (mode, bounds) => {
         const prev = new Date(bounds.start);
         prev.setMonth(prev.getMonth() - 1);
         return getPeriodBounds('month', formatMonthInput(prev));
+    }
+    if (mode === 'week') {
+        const prev = new Date(bounds.start);
+        prev.setDate(prev.getDate() - 7);
+        return getPeriodBounds('week', formatDateInput(prev));
     }
     const prev = new Date(bounds.start);
     prev.setDate(prev.getDate() - 1);
@@ -360,6 +383,7 @@ const InformesCaja = () => {
     const now = new Date();
     const [mode, setMode] = useState('day');
     const [dayValue, setDayValue] = useState(formatDateInput(now));
+    const [weekValue, setWeekValue] = useState(formatDateInput(now));
     const [monthValue, setMonthValue] = useState(formatMonthInput(now));
     const [yearValue, setYearValue] = useState(String(now.getFullYear()));
     const [cashAccount, setCashAccount] = useState('all');
@@ -369,7 +393,7 @@ const InformesCaja = () => {
     const [loading, setLoading] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
-    const selectedValue = mode === 'day' ? dayValue : mode === 'month' ? monthValue : yearValue;
+    const selectedValue = mode === 'day' ? dayValue : mode === 'week' ? weekValue : mode === 'month' ? monthValue : yearValue;
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -596,6 +620,16 @@ const InformesCaja = () => {
                 />
             );
         }
+        if (mode === 'week') {
+            return (
+                <input
+                    type="date"
+                    className="neo-input"
+                    value={weekValue}
+                    onChange={(event) => setWeekValue(event.target.value)}
+                />
+            );
+        }
         return (
             <input
                 type="date"
@@ -606,11 +640,12 @@ const InformesCaja = () => {
         );
     };
 
+    const previousLabel = REPORT_MODES[mode].previousLabel;
     const comparisonCards = report.comparison ? [
-        { label: 'Ingresos vs anterior', value: report.comparison.totals.ingresos, positiveGood: true },
-        { label: 'Egresos vs anterior', value: report.comparison.totals.egresos, positiveGood: false },
-        { label: 'Neto vs anterior', value: report.comparison.totals.neto, positiveGood: true },
-        { label: 'Compras internas vs anterior', value: report.comparison.totals.comprasInternas, positiveGood: false },
+        { label: `Ingresos vs ${previousLabel}`, value: report.comparison.totals.ingresos, positiveGood: true },
+        { label: `Egresos vs ${previousLabel}`, value: report.comparison.totals.egresos, positiveGood: false },
+        { label: `Neto vs ${previousLabel}`, value: report.comparison.totals.neto, positiveGood: true },
+        { label: `Compras internas vs ${previousLabel}`, value: report.comparison.totals.comprasInternas, positiveGood: false },
     ] : [];
 
     return (
@@ -658,9 +693,16 @@ const InformesCaja = () => {
                         ))}
                     </select>
                 </label>
-                <label className="ic-check">
-                    <input type="checkbox" checked={compareEnabled} onChange={(event) => setCompareEnabled(event.target.checked)} />
-                    <span>{REPORT_MODES[mode].compareLabel}</span>
+                <label>
+                    <span>Comparativa</span>
+                    <select
+                        className="neo-input"
+                        value={compareEnabled ? 'previous' : 'none'}
+                        onChange={(event) => setCompareEnabled(event.target.value === 'previous')}
+                    >
+                        <option value="previous">Comparar con {previousLabel}</option>
+                        <option value="none">Sin comparar</option>
+                    </select>
                 </label>
                 <div className="ic-export-actions">
                     <button type="button" onClick={exportExcel}><FileSpreadsheet size={16} /> Excel</button>

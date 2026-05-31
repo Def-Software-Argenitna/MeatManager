@@ -65,7 +65,7 @@
 
 .ic-controls {
     display: grid;
-    grid-template-columns: 1.4fr minmax(145px, 0.6fr) minmax(180px, 0.7fr) minmax(220px, 0.9fr) auto;
+    grid-template-columns: 1.5fr minmax(145px, 0.55fr) minmax(180px, 0.7fr) minmax(220px, 0.85fr) auto;
     align-items: end;
     gap: 1rem;
     padding: 1rem;
@@ -74,7 +74,7 @@
 
 .ic-control-group.mode {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 0.5rem;
 }
 
@@ -102,19 +102,6 @@
     font-size: 0.78rem;
     color: var(--color-text-muted);
     font-weight: 800;
-}
-
-.ic-controls .ic-check {
-    flex-direction: row;
-    align-items: center;
-    gap: 0.55rem;
-    min-height: 40px;
-    color: var(--color-text-main);
-}
-
-.ic-check input {
-    width: 16px;
-    height: 16px;
 }
 
 .ic-export-actions {
