@@ -496,6 +496,57 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
 
+    const cashBalanceExplanation = useMemo(() => {
+        const cashMethodNames = new Set(methodCards.filter((method) => method.type === 'cash').map((method) => method.name));
+        const parts = {
+            previous: 0,
+            openings: 0,
+            sales: 0,
+            incomes: 0,
+            outflows: 0,
+            reversals: 0,
+            adjustments: 0,
+        };
+
+        allMovements.forEach((movement) => {
+            const date = parseDate(movement.date);
+            if (!date || date > end) return;
+            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
+            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
+
+            const methodName = movement.payment_method || 'Efectivo';
+            if (!cashMethodNames.has(methodName)) return;
+
+            const signedAmount = toNumber(movement.amount) * getMovementSign(movement);
+            if (date < start) {
+                parts.previous += signedAmount;
+                return;
+            }
+
+            if (movement.type === 'apertura') parts.openings += signedAmount;
+            else if (movement.type === 'venta') parts.sales += signedAmount;
+            else if (movement.type === 'ingreso') parts.incomes += signedAmount;
+            else if (movement.type === 'egreso' || movement.type === 'retiro') parts.outflows += Math.abs(signedAmount);
+            else if (movement.type === 'anulacion_venta') parts.reversals += Math.abs(signedAmount);
+            else parts.adjustments += signedAmount;
+        });
+
+        const available = parts.previous + parts.openings + parts.sales + parts.incomes + Math.max(parts.adjustments, 0);
+        const deductions = parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
+        const reason = cashInDrawer < 0
+            ? `Está en negativo porque las salidas de efectivo superan los fondos disponibles por ${formatCurrency(Math.abs(cashInDrawer))}.`
+            : cashInDrawer > 0
+                ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
+                : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
+
+        return {
+            ...parts,
+            available,
+            deductions,
+            reason,
+        };
+    }, [allMovements, cashInDrawer, end, methodCards, selectedCashAccount, start]);
+
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
 
@@ -685,9 +736,20 @@ const CierreCaja = () => {
             )}
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
-                <div className="stat-box result">
+                <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
                     <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
+                    <div className="cash-result-breakdown">
+                        <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
+                        <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
+                        <span>Saldo previo: {formatCurrency(cashBalanceExplanation.previous)}</span>
+                        <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
+                        <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
+                        <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>
+                        <span>Retiros/gastos: -{formatCurrency(cashBalanceExplanation.outflows)}</span>
+                        <span>Anulaciones: -{formatCurrency(cashBalanceExplanation.reversals)}</span>
+                    </div>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
