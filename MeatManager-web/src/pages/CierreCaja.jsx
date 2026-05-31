@@ -381,12 +381,17 @@ const CierreCaja = () => {
     const totalIncomes = manualMovements
         .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalTransfersOut = manualMovements
-        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro')
+    const transferOutMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
+    const transferInMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso');
+    const totalTransfersOut = transferOutMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalTransfersIn = manualMovements
-        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso')
+    const totalTransfersIn = transferInMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
+    const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
+    const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = useMemo(() => (
         sales.reduce((sum, sale) => {
             const currentAccountParts = buildSaleParts(sale, { includeCurrentAccount: true })
@@ -767,7 +772,7 @@ const CierreCaja = () => {
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
-                    <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
+                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
                     <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
                     <div className="cash-result-breakdown">
@@ -792,12 +797,14 @@ const CierreCaja = () => {
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box transfer-out">
-                    <span className="label">Transferido a otra caja</span>
+                    <span className="label">Transferido a {counterpartCashAccountLabel}</span>
                     <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
                 </div>
                 <div className="stat-box transfer-in">
-                    <span className="label">Recibido de otra caja</span>
+                    <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
                     <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
@@ -878,12 +885,14 @@ const CierreCaja = () => {
                             <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                         </div>
                         <div className="stat-box transfer-out">
-                            <span className="label">Transferido a otra caja</span>
+                            <span className="label">Transferido a {counterpartCashAccountLabel}</span>
                             <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
                         </div>
                         <div className="stat-box transfer-in">
-                            <span className="label">Recibido de otra caja</span>
+                            <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
                             <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                         </div>
                     </div>
 
