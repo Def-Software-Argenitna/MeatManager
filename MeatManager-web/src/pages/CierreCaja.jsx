@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import * as XLSX from 'xlsx';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import {
     Save,
@@ -11,8 +10,6 @@ import {
     AlertCircle,
     Wallet,
     ArrowRightLeft,
-    FileSpreadsheet,
-    FileText,
 } from 'lucide-react';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -53,11 +50,6 @@ const CASH_ACCOUNTS = [
     { value: 'secondary', label: 'Caja Secundaria' },
 ];
 
-const REPORT_CASH_ACCOUNTS = [
-    { value: 'all', label: 'Todas las cajas' },
-    ...CASH_ACCOUNTS,
-];
-
 const normalizeCashAccount = (value) => {
     const token = String(value || '').trim().toLowerCase();
     if (['secundaria', 'secondary', 'caja_secundaria'].includes(token)) return 'secondary';
@@ -90,24 +82,6 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
-const getDateRangeBounds = (fromDate, toDate) => {
-    const from = getDayBounds(fromDate).start;
-    const to = getDayBounds(toDate).end;
-    return from <= to ? { start: from, end: to } : { start: to, end: from };
-};
-
-const formatDateTime = (value) => {
-    const date = value instanceof Date ? value : new Date(value);
-    if (!Number.isFinite(date.getTime())) return '';
-    return date.toLocaleString('es-AR', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-};
-
 const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -116,26 +90,6 @@ const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
 const getCashAccountLabel = (value) => (
     CASH_ACCOUNTS.find((item) => item.value === normalizeCashAccount(value))?.label || 'Caja Principal'
 );
-
-const getMovementOperation = (movement) => {
-    const type = String(movement?.type || '').toLowerCase();
-    const category = String(movement?.category || '').toLowerCase();
-    if (type === 'apertura') return 'APERTURA DE CAJA';
-    if (type === 'venta') return 'COBRO DE VENTA';
-    if (type === 'anulacion_venta') return 'ANULACION DE VENTA';
-    if (category.includes('transferencia')) return type === 'ingreso' ? 'TRANSFERENCIA RECIBIDA' : 'TRANSFERENCIA ENVIADA';
-    if (category.includes('compra interna')) return 'COMPRA INTERNA';
-    if (type === 'ingreso') return 'INGRESO MANUAL';
-    if (type === 'retiro' || type === 'egreso') return 'RETIRO / GASTO';
-    return String(movement?.category || movement?.type || 'MOVIMIENTO').toUpperCase();
-};
-
-const escapeHtml = (value) => String(value ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 
 const getSalePaymentBreakdown = (sale) => {
     if (!sale?.payment_breakdown) return [];
@@ -181,10 +135,6 @@ const CierreCaja = () => {
     const [selectedDate, setSelectedDate] = useState(
         `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
     );
-    const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
-    const [reportFromDate, setReportFromDate] = useState(todayKey);
-    const [reportToDate, setReportToDate] = useState(todayKey);
-    const [reportCashAccount, setReportCashAccount] = useState('all');
     const [showMovementForm, setShowMovementForm] = useState(false);
     const [showOpeningForm, setShowOpeningForm] = useState(false);
     const [movementType, setMovementType] = useState('retiro');
@@ -204,7 +154,6 @@ const CierreCaja = () => {
 
     const [allSales, setAllSales] = useState([]);
     const [allMovements, setAllMovements] = useState([]);
-    const [allClosures, setAllClosures] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [loading, setLoading] = useState(false);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
@@ -212,15 +161,13 @@ const CierreCaja = () => {
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [salesRows, movRows, closureRows, pmRows] = await Promise.all([
+            const [salesRows, movRows, pmRows] = await Promise.all([
                 fetchTable('ventas', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
                 fetchTable('caja_movimientos', { limit: 20000, orderBy: 'id', direction: 'DESC' }),
-                fetchTable('cash_closures', { limit: 5000, orderBy: 'closed_at', direction: 'DESC' }).catch(() => []),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
             ]);
             setAllSales(Array.isArray(salesRows) ? salesRows : []);
             setAllMovements(Array.isArray(movRows) ? movRows : []);
-            setAllClosures(Array.isArray(closureRows) ? closureRows : []);
             setPaymentMethods(Array.isArray(pmRows) ? pmRows : []);
         } catch (err) {
             console.error('[CierreCaja] loadData error', err);
@@ -700,357 +647,6 @@ const CierreCaja = () => {
         setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
     };
 
-    const buildCashReport = useCallback(() => {
-        const range = getDateRangeBounds(reportFromDate, reportToDate);
-        const selectedAccountLabel = REPORT_CASH_ACCOUNTS.find((item) => item.value === reportCashAccount)?.label || 'Todas las cajas';
-        const includesAccount = (account) => reportCashAccount === 'all' || normalizeCashAccount(account) === reportCashAccount;
-        const initialByAccount = { principal: 0, secondary: 0 };
-
-        (allMovements || []).forEach((movement) => {
-            const date = parseDate(movement.date);
-            const account = normalizeCashAccount(movement.cash_account);
-            if (!date || date >= range.start || !includesAccount(account)) return;
-            const sign = getMovementSign(movement);
-            initialByAccount[account] = (initialByAccount[account] || 0) + (Math.abs(toNumber(movement.amount)) * sign);
-        });
-
-        const balancesByAccount = { ...initialByAccount };
-        let runningTotal = Object.values(initialByAccount).reduce((sum, value) => sum + toNumber(value), 0);
-
-        const movementRows = (allMovements || [])
-            .map((movement) => ({ movement, date: parseDate(movement.date), account: normalizeCashAccount(movement.cash_account) }))
-            .filter(({ account, date }) => date && date >= range.start && date <= range.end && includesAccount(account))
-            .sort((a, b) => (a.date - b.date) || (toNumber(a.movement.id) - toNumber(b.movement.id)))
-            .map(({ movement, date }) => {
-                const sign = getMovementSign(movement);
-                const amount = Math.abs(toNumber(movement.amount));
-                const account = normalizeCashAccount(movement.cash_account);
-                const net = amount * sign;
-                balancesByAccount[account] = (balancesByAccount[account] || 0) + net;
-                runningTotal += net;
-                return {
-                    source: 'MOVIMIENTO',
-                    id: movement.id,
-                    date,
-                    fecha: formatDateTime(date),
-                    caja: getCashAccountLabel(account),
-                    cuentaCaja: account,
-                    operacion: getMovementOperation(movement),
-                    tipo: movement.type || '',
-                    categoria: movement.category || '',
-                    medioPago: movement.payment_method || 'Efectivo',
-                    tipoMedioPago: movement.payment_method_type || '',
-                    ingreso: sign > 0 ? amount : 0,
-                    egreso: sign < 0 ? amount : 0,
-                    importeNeto: net,
-                    sentido: sign > 0 ? 'ENTRADA' : 'SALIDA',
-                    saldoCaja: balancesByAccount[account],
-                    saldoTotal: runningTotal,
-                    descripcion: movement.description || '',
-                    proveedor: movement.supplier || '',
-                    ticket: movement.receipt_code || (movement.receipt_number ? String(movement.receipt_number) : ''),
-                    ventaId: movement.sale_id || '',
-                    compraId: movement.purchase_id || '',
-                    clienteId: movement.client_id || '',
-                    sucursalId: movement.branch_id || '',
-                    transferenciaId: movement.transfer_group_id || '',
-                    autorizacionId: movement.authorization_id || '',
-                    autorizado: movement.authorization_verified ? 'Si' : 'No',
-                    emailAutorizado: movement.authorized_recipient_email || '',
-                };
-            });
-
-        const closureRows = (allClosures || [])
-            .map((closure) => ({ closure, date: parseDate(closure.closed_at || closure.closure_date) }))
-            .filter(({ date }) => date && date >= range.start && date <= range.end)
-            .sort((a, b) => (a.date - b.date) || (toNumber(a.closure.id) - toNumber(b.closure.id)))
-            .map(({ closure, date }) => ({
-                source: 'CIERRE',
-                id: closure.id,
-                date,
-                fecha: formatDateTime(date),
-                caja: closure.branch_id ? `Sucursal ${closure.branch_id}` : selectedAccountLabel,
-                cuentaCaja: '',
-                operacion: 'CIERRE DE CAJA',
-                tipo: 'cierre',
-                categoria: 'Cierre de caja',
-                medioPago: '',
-                tipoMedioPago: '',
-                ingreso: 0,
-                egreso: 0,
-                importeNeto: 0,
-                sentido: 'CONTROL',
-                saldoCaja: '',
-                saldoTotal: '',
-                saldoPeriodo: '',
-                descripcion: closure.notes || '',
-                proveedor: '',
-                ticket: '',
-                ventaId: '',
-                compraId: '',
-                clienteId: '',
-                sucursalId: closure.branch_id || '',
-                transferenciaId: '',
-                autorizacionId: '',
-                autorizado: '',
-                emailAutorizado: '',
-                cierreTeorico: toNumber(closure.theoretical_cash),
-                cierreContado: toNumber(closure.counted_cash),
-                diferenciaCierre: toNumber(closure.difference),
-                ventasCierre: toNumber(closure.total_sales),
-                ingresosCierre: toNumber(closure.total_incomes),
-                egresosCierre: toNumber(closure.total_expenses),
-            }));
-
-        const detailedRows = [...movementRows, ...closureRows]
-            .sort((a, b) => (a.date - b.date) || String(a.source).localeCompare(String(b.source)));
-
-        const totals = detailedRows.reduce((acc, row) => ({
-            ingresos: acc.ingresos + row.ingreso,
-            egresos: acc.egresos + row.egreso,
-            neto: acc.neto + row.importeNeto,
-        }), { ingresos: 0, egresos: 0, neto: 0 });
-
-        const byMethod = detailedRows.reduce((acc, row) => {
-            const key = row.medioPago || 'Sin medio';
-            if (!acc[key]) acc[key] = { medioPago: key, ingresos: 0, egresos: 0, neto: 0 };
-            acc[key].ingresos += row.ingreso;
-            acc[key].egresos += row.egreso;
-            acc[key].neto += row.importeNeto;
-            return acc;
-        }, {});
-
-        const byAccount = Object.entries({ principal: 0, secondary: 0 }).map(([account]) => {
-            const rowsForAccount = movementRows.filter((row) => row.cuentaCaja === account);
-            const ingresos = rowsForAccount.reduce((sum, row) => sum + row.ingreso, 0);
-            const egresos = rowsForAccount.reduce((sum, row) => sum + row.egreso, 0);
-            return {
-                cuentaCaja: account,
-                caja: getCashAccountLabel(account),
-                saldoInicial: initialByAccount[account] || 0,
-                ingresos,
-                egresos,
-                neto: ingresos - egresos,
-                saldoFinal: balancesByAccount[account] || 0,
-            };
-        }).filter((row) => reportCashAccount === 'all' || row.cuentaCaja === reportCashAccount);
-
-        return {
-            range,
-            from: reportFromDate,
-            to: reportToDate,
-            selectedAccountLabel,
-            initialByAccount,
-            rows: detailedRows,
-            movementRows,
-            closureRows,
-            totals,
-            byMethod: Object.values(byMethod),
-            byAccount,
-        };
-    }, [allClosures, allMovements, parseDate, reportCashAccount, reportFromDate, reportToDate]);
-
-    const handleExportCashExcel = () => {
-        const report = buildCashReport();
-        if (report.rows.length === 0) {
-            setFeedback({ type: 'warning', text: 'No hay movimientos de caja para exportar en ese período.' });
-            return;
-        }
-
-        const summaryRows = [
-            { Concepto: 'Desde', Valor: report.from },
-            { Concepto: 'Hasta', Valor: report.to },
-            { Concepto: 'Caja', Valor: report.selectedAccountLabel },
-            { Concepto: 'Saldo inicial Principal', Valor: report.initialByAccount.principal || 0 },
-            { Concepto: 'Saldo inicial Secundaria', Valor: report.initialByAccount.secondary || 0 },
-            { Concepto: 'Total ingresos', Valor: report.totals.ingresos },
-            { Concepto: 'Total egresos', Valor: report.totals.egresos },
-            { Concepto: 'Neto del período', Valor: report.totals.neto },
-            { Concepto: 'Cantidad de movimientos', Valor: report.movementRows.length },
-            { Concepto: 'Cantidad de cierres', Valor: report.closureRows.length },
-        ];
-
-        const detailRows = report.rows.map((row) => ({
-            Origen: row.source,
-            ID: row.id,
-            Fecha: row.fecha,
-            Caja: row.caja,
-            Operación: row.operacion,
-            Tipo: row.tipo,
-            Categoria: row.categoria,
-            'Medio de pago': row.medioPago,
-            'Tipo medio': row.tipoMedioPago,
-            Sentido: row.sentido,
-            Ingreso: row.ingreso,
-            Egreso: row.egreso,
-            Neto: row.importeNeto,
-            'Saldo caja': row.saldoCaja,
-            'Saldo total cajas': row.saldoTotal,
-            Descripción: row.descripcion,
-            Proveedor: row.proveedor,
-            Ticket: row.ticket,
-            'Venta ID': row.ventaId,
-            'Compra ID': row.compraId,
-            'Cliente ID': row.clienteId,
-            'Sucursal ID': row.sucursalId,
-            'Transferencia ID': row.transferenciaId,
-            'Autorización ID': row.autorizacionId,
-            Autorizado: row.autorizado,
-            'Email autorizado': row.emailAutorizado,
-            'Cierre teórico': row.cierreTeorico,
-            'Cierre contado': row.cierreContado,
-            'Diferencia cierre': row.diferenciaCierre,
-            'Ventas cierre': row.ventasCierre,
-            'Ingresos cierre': row.ingresosCierre,
-            'Egresos cierre': row.egresosCierre,
-        }));
-
-        const methodRows = report.byMethod.map((row) => ({
-            'Medio de pago': row.medioPago,
-            Ingresos: row.ingresos,
-            Egresos: row.egresos,
-            Neto: row.neto,
-        }));
-
-        const accountRows = report.byAccount.map((row) => ({
-            Caja: row.caja,
-            'Saldo inicial': row.saldoInicial,
-            Ingresos: row.ingresos,
-            Egresos: row.egresos,
-            Neto: row.neto,
-            'Saldo final': row.saldoFinal,
-        }));
-
-        const workbook = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(summaryRows), 'Resumen');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(detailRows), 'Auditoria completa');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(accountRows), 'Por caja');
-        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(methodRows), 'Por medio de pago');
-        XLSX.writeFile(workbook, `auditoria_caja_${reportCashAccount}_${report.from}_a_${report.to}.xlsx`);
-    };
-
-    const handleExportCashPdf = () => {
-        const report = buildCashReport();
-        if (report.rows.length === 0) {
-            setFeedback({ type: 'warning', text: 'No hay movimientos de caja para exportar en ese período.' });
-            return;
-        }
-
-        const printWindow = window.open('', '_blank', 'width=1200,height=900');
-        if (!printWindow) {
-            setFeedback({ type: 'warning', text: 'El navegador bloqueó la ventana del reporte. Permití popups para descargar el PDF.' });
-            return;
-        }
-
-        const rowsHtml = report.rows.map((row) => `
-            <tr>
-                <td>${escapeHtml(row.fecha)}</td>
-                <td>${escapeHtml(row.caja)}</td>
-                <td>${escapeHtml(row.operacion)}</td>
-                <td>${escapeHtml(row.categoria)}</td>
-                <td>${escapeHtml(row.medioPago)}</td>
-                <td>${escapeHtml([
-                    row.descripcion,
-                    row.proveedor ? `Proveedor: ${row.proveedor}` : '',
-                    row.ticket ? `Ticket: ${row.ticket}` : '',
-                    row.ventaId ? `Venta ID: ${row.ventaId}` : '',
-                    row.compraId ? `Compra ID: ${row.compraId}` : '',
-                    row.transferenciaId ? `Transferencia: ${row.transferenciaId}` : '',
-                    row.cierreTeorico != null ? `Teórico: ${formatCurrency(row.cierreTeorico)} / Contado: ${formatCurrency(row.cierreContado)} / Dif: ${formatCurrency(row.diferenciaCierre)}` : '',
-                ].filter(Boolean).join(' · '))}</td>
-                <td class="num income">${row.ingreso ? escapeHtml(formatCurrency(row.ingreso)) : ''}</td>
-                <td class="num expense">${row.egreso ? escapeHtml(formatCurrency(row.egreso)) : ''}</td>
-                <td class="num">${row.saldoCaja !== '' ? escapeHtml(formatCurrency(row.saldoCaja)) : ''}</td>
-                <td class="num">${row.saldoTotal !== '' ? escapeHtml(formatCurrency(row.saldoTotal)) : ''}</td>
-            </tr>
-        `).join('');
-
-        const methodsHtml = report.byMethod.map((row) => `
-            <tr>
-                <td>${escapeHtml(row.medioPago)}</td>
-                <td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td>
-                <td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td>
-                <td class="num">${escapeHtml(formatCurrency(row.neto))}</td>
-            </tr>
-        `).join('');
-
-        const accountsHtml = report.byAccount.map((row) => `
-            <tr>
-                <td>${escapeHtml(row.caja)}</td>
-                <td class="num">${escapeHtml(formatCurrency(row.saldoInicial))}</td>
-                <td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td>
-                <td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td>
-                <td class="num">${escapeHtml(formatCurrency(row.neto))}</td>
-                <td class="num">${escapeHtml(formatCurrency(row.saldoFinal))}</td>
-            </tr>
-        `).join('');
-
-        printWindow.document.write(`
-            <!doctype html>
-            <html>
-                <head>
-                    <meta charset="utf-8" />
-                    <title>Reporte de caja ${escapeHtml(report.from)} a ${escapeHtml(report.to)}</title>
-                    <style>
-                        * { box-sizing: border-box; }
-                        body { font-family: Arial, sans-serif; color: #111827; margin: 24px; }
-                        h1 { margin: 0 0 6px; font-size: 22px; }
-                        h2 { margin: 22px 0 10px; font-size: 16px; }
-                        .muted { color: #6b7280; font-size: 12px; }
-                        .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
-                        .box { border: 1px solid #d1d5db; border-radius: 8px; padding: 10px; }
-                        .box span { display: block; color: #6b7280; font-size: 11px; text-transform: uppercase; }
-                        .box strong { display: block; margin-top: 5px; font-size: 16px; }
-                        table { width: 100%; border-collapse: collapse; font-size: 11px; }
-                        th, td { border: 1px solid #d1d5db; padding: 6px; vertical-align: top; }
-                        th { background: #f3f4f6; text-align: left; }
-                        .num { text-align: right; white-space: nowrap; }
-                        .income { color: #166534; }
-                        .expense { color: #b91c1c; }
-                        @media print {
-                            body { margin: 12mm; }
-                            .no-print { display: none; }
-                            table { page-break-inside: auto; }
-                            tr { page-break-inside: avoid; page-break-after: auto; }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <button class="no-print" onclick="window.print()" style="margin-bottom:16px;padding:8px 12px;">Imprimir / Guardar PDF</button>
-                    <h1>Reporte detallado de caja</h1>
-                    <div class="muted">Período: ${escapeHtml(report.from)} a ${escapeHtml(report.to)} · Caja: ${escapeHtml(report.selectedAccountLabel)} · Generado: ${escapeHtml(formatDateTime(new Date()))}</div>
-                    <div class="summary">
-                        <div class="box"><span>Ingresos</span><strong class="income">${escapeHtml(formatCurrency(report.totals.ingresos))}</strong></div>
-                        <div class="box"><span>Egresos</span><strong class="expense">${escapeHtml(formatCurrency(report.totals.egresos))}</strong></div>
-                        <div class="box"><span>Neto</span><strong>${escapeHtml(formatCurrency(report.totals.neto))}</strong></div>
-                        <div class="box"><span>Movimientos</span><strong>${report.movementRows.length}</strong></div>
-                    </div>
-                    <h2>Resumen por caja</h2>
-                    <table>
-                        <thead><tr><th>Caja</th><th>Saldo inicial</th><th>Ingresos</th><th>Egresos</th><th>Neto</th><th>Saldo final</th></tr></thead>
-                        <tbody>${accountsHtml}</tbody>
-                    </table>
-                    <h2>Resumen por medio de pago</h2>
-                    <table>
-                        <thead><tr><th>Medio de pago</th><th>Ingresos</th><th>Egresos</th><th>Neto</th></tr></thead>
-                        <tbody>${methodsHtml}</tbody>
-                    </table>
-                    <h2>Detalle de movimientos</h2>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Fecha</th><th>Caja</th><th>Operación</th><th>Categoría</th><th>Medio</th><th>Detalle completo</th><th>Ingreso</th><th>Egreso</th><th>Saldo caja</th><th>Saldo total</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rowsHtml}</tbody>
-                    </table>
-                    <script>window.onload = () => window.print();</script>
-                </body>
-            </html>
-        `);
-        printWindow.document.close();
-    };
-
     return (
         <div className="cierre-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
@@ -1087,52 +683,6 @@ const CierreCaja = () => {
                     <span>{feedback.text}</span>
                 </div>
             )}
-
-            <DirectionalReveal className="cash-report-panel neo-card" from="up" delay={0.08}>
-                <div className="cash-report-copy">
-                    <span className="cash-report-eyebrow">Reporte detallado</span>
-                    <strong>Exportar movimientos de caja</strong>
-                    <small>Incluye aperturas, ventas, anulaciones, ingresos, retiros, gastos y transferencias de la caja seleccionada.</small>
-                </div>
-                <div className="cash-report-controls">
-                    <label>
-                        Caja
-                        <select
-                            className="neo-input"
-                            value={reportCashAccount}
-                            onChange={(e) => setReportCashAccount(e.target.value)}
-                        >
-                            {REPORT_CASH_ACCOUNTS.map((cashbox) => (
-                                <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
-                            ))}
-                        </select>
-                    </label>
-                    <label>
-                        Desde
-                        <input
-                            type="date"
-                            className="neo-input"
-                            value={reportFromDate}
-                            onChange={(e) => setReportFromDate(e.target.value)}
-                        />
-                    </label>
-                    <label>
-                        Hasta
-                        <input
-                            type="date"
-                            className="neo-input"
-                            value={reportToDate}
-                            onChange={(e) => setReportToDate(e.target.value)}
-                        />
-                    </label>
-                    <button type="button" className="cash-report-btn excel" onClick={handleExportCashExcel}>
-                        <FileSpreadsheet size={17} /> Excel
-                    </button>
-                    <button type="button" className="cash-report-btn pdf" onClick={handleExportCashPdf}>
-                        <FileText size={17} /> PDF
-                    </button>
-                </div>
-            </DirectionalReveal>
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className="stat-box result">
