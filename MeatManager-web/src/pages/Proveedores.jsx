@@ -6,6 +6,20 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
+const CASH_ACCOUNTS = [
+    { value: 'principal', label: 'Caja Principal' },
+    { value: 'secondary', label: 'Caja Secundaria' },
+];
+const isMixedPaymentMethod = (method) => (
+    normalizeText(method?.type) === 'mixed'
+    || normalizeText(method?.type) === 'mixto'
+    || normalizeText(method?.name).includes('mixto')
+    || normalizeText(method?.name).includes('mixed')
+);
+const isCurrentAccountMethod = (method) => (
+    normalizeText(method?.type) === 'cuenta_corriente'
+    || normalizeText(method?.name).includes('cuenta corriente')
+);
 const isCurrentAccountPurchase = (purchase) => (
     Boolean(purchase?.is_account)
     || ['cta_cte', 'cuenta corriente'].includes(normalizeText(purchase?.payment_method))
@@ -29,7 +43,9 @@ const Proveedores = () => {
         payment_method: '',
         description: '',
         date: new Date().toISOString().slice(0, 10),
+        cash_account: 'principal',
     });
+    const [supplierPaymentSplits, setSupplierPaymentSplits] = useState([]);
 
     const [formData, setFormData] = useState({
         name: '',
@@ -147,9 +163,28 @@ const Proveedores = () => {
             { name: 'Transferencia', type: 'transfer' },
             { name: 'Mercado Pago', type: 'wallet' },
             { name: 'Posnet', type: 'card' },
+            { name: 'Mixto', type: 'mixed' },
             { name: 'Cuenta Corriente', type: 'cuenta_corriente' },
         ];
     }, [paymentMethods]);
+
+    const supplierPaymentMethods = useMemo(
+        () => activePaymentMethods.filter((method) => !isCurrentAccountMethod(method)),
+        [activePaymentMethods]
+    );
+
+    const splitPaymentMethods = useMemo(
+        () => supplierPaymentMethods.filter((method) => !isMixedPaymentMethod(method)),
+        [supplierPaymentMethods]
+    );
+
+    const selectedPaymentMethod = useMemo(
+        () => supplierPaymentMethods.find((method) => method.name === paymentForm.payment_method) || null,
+        [supplierPaymentMethods, paymentForm.payment_method]
+    );
+    const isMixedSupplierPayment = isMixedPaymentMethod(selectedPaymentMethod);
+    const supplierSplitTotal = supplierPaymentSplits.reduce((sum, row) => sum + Number(row.amount || 0), 0);
+    const supplierSplitPending = Math.max(0, Number(paymentForm.amount || 0) - supplierSplitTotal);
 
     const getSupplierLedger = React.useCallback((supplierName) => {
         const supplierKey = normalizeText(supplierName);
@@ -198,14 +233,41 @@ const Proveedores = () => {
     };
 
     const openPayment = (supplier) => {
+        const defaultMethod = supplierPaymentMethods.find((method) => !isMixedPaymentMethod(method)) || supplierPaymentMethods[0];
         setPaymentSupplier(supplier);
         setPaymentForm({
             amount: '',
-            payment_method: activePaymentMethods[0]?.name || '',
+            payment_method: defaultMethod?.name || '',
             description: '',
             date: new Date().toISOString().slice(0, 10),
+            cash_account: 'principal',
         });
+        setSupplierPaymentSplits([]);
         setShowPaymentModal(true);
+    };
+
+    const seedSupplierSplitPayments = React.useCallback((amountValue = paymentForm.amount) => {
+        const defaultMethod = splitPaymentMethods.find((method) => method.type === 'cash') || splitPaymentMethods[0];
+        setSupplierPaymentSplits(defaultMethod ? [{
+            methodName: defaultMethod.name,
+            amount: amountValue ? String(amountValue) : '',
+        }] : []);
+    }, [paymentForm.amount, splitPaymentMethods]);
+
+    const updateSupplierSplit = (index, field, value) => {
+        setSupplierPaymentSplits((prev) => prev.map((row, rowIndex) => (
+            rowIndex === index ? { ...row, [field]: value } : row
+        )));
+    };
+
+    const addSupplierSplit = () => {
+        const defaultMethod = splitPaymentMethods.find((method) => method.type === 'cash') || splitPaymentMethods[0];
+        if (!defaultMethod) return;
+        setSupplierPaymentSplits((prev) => [...prev, { methodName: defaultMethod.name, amount: '' }]);
+    };
+
+    const removeSupplierSplit = (index) => {
+        setSupplierPaymentSplits((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
     };
 
     const openPurchaseDetailFromLedger = React.useCallback((row) => {
@@ -254,25 +316,63 @@ const Proveedores = () => {
             alert('Ingrese un monto valido para registrar el pago.');
             return;
         }
-        const selectedMethod = activePaymentMethods.find((m) => m.name === paymentForm.payment_method) || activePaymentMethods[0];
+        const selectedMethod = supplierPaymentMethods.find((m) => m.name === paymentForm.payment_method) || supplierPaymentMethods[0];
+        if (!selectedMethod) {
+            alert('No hay medios de pago reales configurados para registrar el pago.');
+            return;
+        }
         const supplierName = String(paymentSupplier.name || '').trim();
         const userDescription = String(paymentForm.description || '').trim();
         const description = userDescription
             ? `[PROVEEDOR:${supplierName}] ${userDescription}`
             : `Pago a proveedor ${supplierName}`;
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: 'egreso',
-            amount,
-            category: 'Pago Proveedor',
-            description,
-            supplier: supplierName,
-            payment_method: selectedMethod?.name || 'Efectivo',
-            payment_method_type: selectedMethod?.type || 'cash',
-            date: new Date(`${paymentForm.date}T12:00:00`).toISOString(),
-        });
+        const cashAccount = paymentForm.cash_account || 'principal';
+        const paymentDate = new Date(`${paymentForm.date}T12:00:00`).toISOString();
+        const rowsToSave = isMixedPaymentMethod(selectedMethod)
+            ? supplierPaymentSplits.map((row) => {
+                const method = splitPaymentMethods.find((item) => item.name === row.methodName) || splitPaymentMethods[0];
+                return {
+                    method,
+                    amount: Number(row.amount || 0),
+                };
+            }).filter((row) => row.method && Number.isFinite(row.amount) && row.amount > 0)
+            : [{ method: selectedMethod, amount }];
+
+        if (isMixedPaymentMethod(selectedMethod)) {
+            const total = rowsToSave.reduce((sum, row) => sum + row.amount, 0);
+            if (rowsToSave.length === 0) {
+                alert('Agregue al menos un medio de pago para el pago mixto.');
+                return;
+            }
+            if (Math.abs(total - amount) > 0.009) {
+                alert(`El detalle del pago mixto debe sumar exactamente $${amount.toLocaleString('es-AR')}. Falta o sobra $${Math.abs(amount - total).toLocaleString('es-AR')}.`);
+                return;
+            }
+        }
+
+        const groupId = isMixedPaymentMethod(selectedMethod)
+            ? `prov_mix_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            : null;
+
+        for (const row of rowsToSave) {
+            await saveTableRecord('caja_movimientos', 'insert', {
+                type: 'egreso',
+                amount: row.amount,
+                category: 'Pago Proveedor',
+                description: groupId
+                    ? `${description} · Pago mixto (${row.method?.name})`
+                    : description,
+                supplier: supplierName,
+                payment_method: row.method?.name || 'Efectivo',
+                payment_method_type: row.method?.type || 'cash',
+                cash_account: cashAccount,
+                date: paymentDate,
+            });
+        }
         await loadSuppliersData();
         setShowPaymentModal(false);
         setPaymentSupplier(null);
+        setSupplierPaymentSplits([]);
     };
 
     return (
@@ -610,7 +710,7 @@ const Proveedores = () => {
 
             {showPaymentModal && paymentSupplier && createPortal(
                 <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
-                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '560px', width: '92%', padding: '1.5rem' }}>
+                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '720px', width: '92%', padding: '1.5rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                             <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Registrar Pago · {paymentSupplier.name}</h2>
                             <button onClick={() => setShowPaymentModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
@@ -625,7 +725,15 @@ const Proveedores = () => {
                                         step="0.01"
                                         className="neo-input"
                                         value={paymentForm.amount}
-                                        onChange={(e) => setPaymentForm((prev) => ({ ...prev, amount: e.target.value }))}
+                                        onChange={(e) => {
+                                            const nextAmount = e.target.value;
+                                            setPaymentForm((prev) => ({ ...prev, amount: nextAmount }));
+                                            if (isMixedSupplierPayment && supplierPaymentSplits.length === 1 && !supplierPaymentSplits[0].amount) {
+                                                setSupplierPaymentSplits((prev) => prev.map((row, index) => (
+                                                    index === 0 ? { ...row, amount: nextAmount } : row
+                                                )));
+                                            }
+                                        }}
                                         required
                                     />
                                 </div>
@@ -645,14 +753,98 @@ const Proveedores = () => {
                                 <select
                                     className="neo-input"
                                     value={paymentForm.payment_method}
-                                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, payment_method: e.target.value }))}
+                                    onChange={(e) => {
+                                        const nextMethodName = e.target.value;
+                                        const nextMethod = supplierPaymentMethods.find((method) => method.name === nextMethodName);
+                                        setPaymentForm((prev) => ({ ...prev, payment_method: nextMethodName }));
+                                        if (isMixedPaymentMethod(nextMethod)) seedSupplierSplitPayments();
+                                        else setSupplierPaymentSplits([]);
+                                    }}
                                     required
                                 >
-                                    {activePaymentMethods.map((method) => (
+                                    {supplierPaymentMethods.map((method) => (
                                         <option key={method.name} value={method.name}>{method.name}</option>
                                     ))}
                                 </select>
                             </div>
+                            <div style={{ marginTop: '1rem' }}>
+                                <label style={{ display: 'block', marginBottom: '0.4rem' }}>Caja origen</label>
+                                <select
+                                    className="neo-input"
+                                    value={paymentForm.cash_account}
+                                    onChange={(e) => setPaymentForm((prev) => ({ ...prev, cash_account: e.target.value }))}
+                                    required
+                                >
+                                    {CASH_ACCOUNTS.map((cashbox) => (
+                                        <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            {isMixedSupplierPayment && (
+                                <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+                                        <div>
+                                            <strong>Detalle del pago mixto</strong>
+                                            <div style={{ color: 'var(--color-text-muted)', fontSize: '0.82rem', marginTop: '0.2rem' }}>
+                                                Total cargado: ${supplierSplitTotal.toLocaleString('es-AR')} · Pendiente: ${supplierSplitPending.toLocaleString('es-AR')}
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="neo-button"
+                                            onClick={addSupplierSplit}
+                                            style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
+                                        >
+                                            Agregar medio
+                                        </button>
+                                    </div>
+                                    {supplierPaymentSplits.map((row, index) => (
+                                        <div key={`${row.methodName}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: '0.6rem', alignItems: 'center', marginTop: '0.55rem' }}>
+                                            <select
+                                                className="neo-input"
+                                                value={row.methodName}
+                                                onChange={(e) => updateSupplierSplit(index, 'methodName', e.target.value)}
+                                                required
+                                            >
+                                                {splitPaymentMethods.map((method) => (
+                                                    <option key={method.name} value={method.name}>{method.name}</option>
+                                                ))}
+                                            </select>
+                                            <input
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                className="neo-input"
+                                                value={row.amount}
+                                                onChange={(e) => updateSupplierSplit(index, 'amount', e.target.value)}
+                                                placeholder="0.00"
+                                                required
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={() => removeSupplierSplit(index)}
+                                                disabled={supplierPaymentSplits.length === 1}
+                                                style={{
+                                                    border: '1px solid var(--color-border)',
+                                                    borderRadius: 'var(--radius-md)',
+                                                    background: 'transparent',
+                                                    color: 'var(--color-text-main)',
+                                                    padding: '0.65rem 0.75rem',
+                                                    cursor: supplierPaymentSplits.length === 1 ? 'not-allowed' : 'pointer',
+                                                    opacity: supplierPaymentSplits.length === 1 ? 0.45 : 1,
+                                                }}
+                                            >
+                                                Quitar
+                                            </button>
+                                        </div>
+                                    ))}
+                                    {splitPaymentMethods.length === 0 && (
+                                        <div style={{ color: '#ef4444', fontSize: '0.85rem', marginTop: '0.6rem' }}>
+                                            No hay medios de pago disponibles para detallar el pago mixto.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                             <div style={{ marginTop: '1rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.4rem' }}>Descripcion (opcional)</label>
                                 <input
