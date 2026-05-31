@@ -33,6 +33,88 @@
     margin-bottom: 1.5rem;
 }
 
+.cash-report-panel {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.cash-report-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 220px;
+}
+
+.cash-report-eyebrow {
+    color: var(--color-primary);
+    font-size: 0.72rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.cash-report-copy strong {
+    color: var(--color-text-main);
+    font-size: 1rem;
+}
+
+.cash-report-copy small {
+    color: var(--color-text-muted);
+    line-height: 1.35;
+}
+
+.cash-report-controls {
+    display: flex;
+    align-items: flex-end;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+}
+
+.cash-report-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 700;
+}
+
+.cash-report-controls input,
+.cash-report-controls select {
+    min-width: 145px;
+}
+
+.cash-report-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    min-height: 39px;
+    padding: 0.55rem 0.9rem;
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.cash-report-btn.excel {
+    background: #15803d;
+}
+
+.cash-report-btn.pdf {
+    background: #b91c1c;
+}
+
+.cash-report-btn:hover {
+    filter: brightness(1.08);
+}
+
 .cierre-header {
     display: flex;
     justify-content: space-between;
@@ -391,6 +473,11 @@
     display: flex;
     flex-direction: column;
     gap: 0.75rem;
+    max-height: 360px;
+    overflow-y: auto;
+    padding-right: 0.35rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
 
 .sales-detail-list {
@@ -398,6 +485,27 @@
     flex-direction: column;
     gap: 0.75rem;
     margin-top: 0.9rem;
+    max-height: 420px;
+    overflow-y: auto;
+    padding-right: 0.35rem;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
+}
+
+.movements-list::-webkit-scrollbar,
+.sales-detail-list::-webkit-scrollbar {
+    width: 8px;
+}
+
+.movements-list::-webkit-scrollbar-track,
+.sales-detail-list::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.movements-list::-webkit-scrollbar-thumb,
+.sales-detail-list::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.22);
+    border-radius: 999px;
 }
 
 .sale-detail-item {
@@ -561,9 +669,19 @@
     }
 
     .cierre-header,
-    .expenses-section .section-header {
+    .expenses-section .section-header,
+    .cash-report-panel {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .cash-report-controls {
+        justify-content: stretch;
+    }
+
+    .cash-report-controls label,
+    .cash-report-btn {
+        flex: 1 1 145px;
     }
 
     .form-grid {
@@ -586,5 +704,10 @@
     .sale-detail-top {
         flex-direction: column;
         align-items: flex-start;
+    }
+
+    .movements-list,
+    .sales-detail-list {
+        max-height: 320px;
     }
 }

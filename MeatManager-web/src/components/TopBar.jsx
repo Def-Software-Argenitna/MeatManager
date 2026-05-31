@@ -11,6 +11,7 @@ const TopBar = ({ onToggleSidebar }) => {
         let name = "";
         
         if (path.includes("ventas")) name = "CENTRO DE VENTAS";
+        else if (path.includes("informes-caja")) name = "INFORMES DE CAJA";
         else if (path.includes("cierre") || path.includes("caja")) name = "CIERRE DE CAJA";
         else if (path.includes("compras")) name = "GESTIÓN DE COMPRAS";
         else if (path.includes("productos-compra") || path.includes("catalogo")) name = "ARTÍCULOS";
