@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
 import DirectionalReveal from '../DirectionalReveal';
 import ModuleLicenseGate from '../ModuleLicenseGate';
@@ -492,6 +492,14 @@ const DespostadaBase = ({
                     <div className="despostada-helper" style={{ marginBottom: '0.55rem' }}>
                         {isSessionStarted ? 'El lote ya está activo y listo para registrar cortes.' : 'Ajustá el peso o elegí un lote para habilitar el trabajo.'}
                     </div>
+                    {isSessionStarted && (
+                        <div className="despostada-finish-warning">
+                            <AlertTriangle size={16} />
+                            <span>
+                                Los cortes cargados quedan como stock provisorio. Para crear/actualizar productos, precios y que figuren correctamente en Ventas, tenés que tocar Finalizar.
+                            </span>
+                        </div>
+                    )}
                     <div className="despostada-meter">
                         <span style={{ width: `${Math.min(Number(yieldPercentage) || 0, 100)}%` }} />
                     </div>
