@@ -1066,7 +1066,7 @@ const InformesCaja = () => {
                         </button>
                     ))}
                 </div>
-                <label>
+                <label className={mode === 'range' ? 'ic-range-label' : ''}>
                     <span>{mode === 'range' ? 'Desde / Hasta' : 'Período'}</span>
                     {renderPeriodInput()}
                 </label>
