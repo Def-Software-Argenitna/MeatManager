@@ -49,7 +49,7 @@ const excelPalette = {
     white: 'FFFFFF',
 };
 const excelColumns = {
-    money: new Set(['Ingresos', 'Egresos', 'Neto', 'Valor', 'Actual', 'Anterior', 'Diferencia', 'Saldo inicial', 'Saldo final', 'Ingreso', 'Egreso', 'Saldo caja', 'Saldo total', 'Diferencias de cierre', 'Delta conciliación']),
+    money: new Set(['Ingresos', 'Egresos', 'Neto', 'Valor', 'Actual', 'Anterior', 'Diferencia', 'Saldo inicial', 'Saldo final', 'Ingreso', 'Egreso', 'Saldo caja', 'Saldo total', 'Diferencias de cierre', 'Delta conciliación', 'Transf. recibidas', 'Transf. enviadas']),
     integer: new Set(['Movimientos', 'ID', 'Venta ID', 'Compra ID', 'Cliente ID', 'Sucursal ID', 'Ticket']),
 };
 const excelFill = (fgColor) => ({ patternType: 'solid', fgColor: { rgb: fgColor } });
@@ -205,17 +205,29 @@ const getMovementSign = (movement) => {
     if (movement.type === 'egreso' || movement.type === 'retiro' || movement.type === 'anulacion_venta') return -1;
     return toNumber(movement.amount) >= 0 ? 1 : -1;
 };
+const isTransferMovement = (movement) => (
+    Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
+);
 const getMovementOperation = (movement) => {
     const type = String(movement?.type || '').toLowerCase();
     const category = String(movement?.category || '').toLowerCase();
     if (type === 'apertura') return 'Apertura de caja';
     if (type === 'venta') return 'Cobro de venta';
     if (type === 'anulacion_venta') return 'Anulación de venta';
-    if (category.includes('transferencia')) return type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada';
+    if (isTransferMovement(movement)) return type === 'ingreso' ? 'Transferencia recibida entre cajas' : 'Transferencia enviada entre cajas';
     if (category.includes('compra interna')) return 'Compra interna';
     if (type === 'ingreso') return 'Ingreso manual';
     if (type === 'retiro' || type === 'egreso') return 'Retiro / gasto';
     return movement?.category || movement?.type || 'Movimiento';
+};
+const getMovementClassification = (movement) => {
+    if (isTransferMovement(movement)) return 'Transferencia entre cajas';
+    if (movement.type === 'retiro' || movement.type === 'egreso') return 'Retiro / gasto / consumo';
+    if (movement.type === 'ingreso') return 'Ingreso manual';
+    if (movement.type === 'venta') return 'Cobro de venta';
+    if (movement.type === 'anulacion_venta') return 'Anulación de venta';
+    if (movement.type === 'apertura') return 'Apertura';
+    return 'Otro movimiento';
 };
 const escapeHtml = (value) => String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -302,6 +314,38 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
 
         const balancesByAccount = { ...initialByAccount };
         let totalBalance = round2(Object.values(initialByAccount).reduce((sum, value) => sum + value, 0));
+        const transferContextById = new Map();
+
+        Object.values((movements || []).reduce((acc, movement) => {
+            if (!isTransferMovement(movement)) return acc;
+            const groupId = movement.transfer_group_id || `single-${movement.id}`;
+            if (!acc[groupId]) acc[groupId] = [];
+            acc[groupId].push(movement);
+            return acc;
+        }, {})).forEach((groupRows) => {
+            const outgoing = groupRows.find((item) => getMovementSign(item) < 0) || null;
+            const incoming = groupRows.find((item) => getMovementSign(item) > 0) || null;
+            const fromAccount = outgoing ? normalizeCashAccount(outgoing.cash_account) : '';
+            const toAccount = incoming ? normalizeCashAccount(incoming.cash_account) : '';
+            const route = fromAccount && toAccount
+                ? `${getCashAccountLabel(fromAccount)} -> ${getCashAccountLabel(toAccount)}`
+                : 'Transferencia entre cajas';
+
+            groupRows.forEach((movement) => {
+                const sign = getMovementSign(movement);
+                const ownAccount = normalizeCashAccount(movement.cash_account);
+                const counterpart = sign < 0 ? toAccount : fromAccount;
+                transferContextById.set(Number(movement.id), {
+                    route,
+                    counterpartLabel: counterpart ? getCashAccountLabel(counterpart) : '',
+                    movementLabel: sign < 0 ? 'Salida interna hacia otra caja' : 'Entrada interna desde otra caja',
+                    detail: sign < 0
+                        ? `Transferencia enviada. No es gasto ni consumo. Destino: ${counterpart ? getCashAccountLabel(counterpart) : 'otra caja'}.`
+                        : `Transferencia recibida. No es venta ni ajuste. Origen: ${counterpart ? getCashAccountLabel(counterpart) : 'otra caja'}.`,
+                    ownAccount,
+                });
+            });
+        });
 
         const movementRows = (movements || [])
             .map((movement) => ({ movement, date: new Date(movement.date), account: normalizeCashAccount(movement.cash_account) }))
@@ -313,6 +357,7 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
                 const net = round2(amount * sign);
                 balancesByAccount[account] = round2((balancesByAccount[account] || 0) + net);
                 totalBalance = round2(totalBalance + net);
+                const transferContext = transferContextById.get(Number(movement.id));
                 return {
                     source: 'Movimiento',
                     id: movement.id,
@@ -322,7 +367,12 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
                     cuentaCaja: account,
                     operacion: getMovementOperation(movement),
                     tipo: movement.type || '',
-                    categoria: movement.category || '',
+                    categoria: transferContext ? 'Transferencia entre cajas' : (movement.category || ''),
+                    clasificacion: getMovementClassification(movement),
+                    movimientoEntreCajas: transferContext?.movementLabel || '',
+                    rutaTransferencia: transferContext?.route || '',
+                    cajaContraparte: transferContext?.counterpartLabel || '',
+                    detalleClasificacion: transferContext?.detail || '',
                     medioPago: movement.payment_method || 'Efectivo',
                     tipoMedioPago: movement.payment_method_type || '',
                     proveedor: movement.supplier || '',
@@ -382,8 +432,8 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
             neto: round2(acc.neto + row.neto),
             ventas: round2(acc.ventas + (row.operacion === 'Cobro de venta' ? row.ingreso : 0)),
             comprasInternas: round2(acc.comprasInternas + (row.operacion === 'Compra interna' ? row.egreso : 0)),
-            transferenciasEnviadas: round2(acc.transferenciasEnviadas + (row.operacion === 'Transferencia enviada' ? row.egreso : 0)),
-            transferenciasRecibidas: round2(acc.transferenciasRecibidas + (row.operacion === 'Transferencia recibida' ? row.ingreso : 0)),
+            transferenciasEnviadas: round2(acc.transferenciasEnviadas + (row.operacion === 'Transferencia enviada entre cajas' ? row.egreso : 0)),
+            transferenciasRecibidas: round2(acc.transferenciasRecibidas + (row.operacion === 'Transferencia recibida entre cajas' ? row.ingreso : 0)),
         }), { ingresos: 0, egresos: 0, neto: 0, ventas: 0, comprasInternas: 0, transferenciasEnviadas: 0, transferenciasRecibidas: 0 });
 
         const groupRows = (keyFn) => Object.values(movementRows.reduce((acc, row) => {
@@ -401,12 +451,16 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
                 const rows = movementRows.filter((row) => row.cuentaCaja === account);
                 const ingresos = round2(rows.reduce((sum, row) => sum + row.ingreso, 0));
                 const egresos = round2(rows.reduce((sum, row) => sum + row.egreso, 0));
+                const transferenciasRecibidas = round2(rows.reduce((sum, row) => sum + (row.operacion === 'Transferencia recibida entre cajas' ? row.ingreso : 0), 0));
+                const transferenciasEnviadas = round2(rows.reduce((sum, row) => sum + (row.operacion === 'Transferencia enviada entre cajas' ? row.egreso : 0), 0));
                 return {
                     key: account,
                     caja: getCashAccountLabel(account),
                     saldoInicial: initialByAccount[account] || 0,
                     ingresos,
                     egresos,
+                    transferenciasRecibidas,
+                    transferenciasEnviadas,
                     neto: round2(ingresos - egresos),
                     saldoFinal: balancesByAccount[account] || 0,
                     count: rows.length,
@@ -429,6 +483,8 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
             byMethod: groupRows((row) => row.medioPago),
             byOperation: groupRows((row) => row.operacion),
             byCategory: groupRows((row) => row.categoria),
+            byClassification: groupRows((row) => row.clasificacion),
+            transfers: movementRows.filter((row) => row.clasificacion === 'Transferencia entre cajas'),
             closureDifference,
             reconciliationDelta,
         };
@@ -460,11 +516,14 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
             neto: round2(current.totals.neto - previous.totals.neto),
             comprasInternas: round2(current.totals.comprasInternas - previous.totals.comprasInternas),
             ventas: round2(current.totals.ventas - previous.totals.ventas),
+            transferenciasEnviadas: round2(current.totals.transferenciasEnviadas - previous.totals.transferenciasEnviadas),
+            transferenciasRecibidas: round2(current.totals.transferenciasRecibidas - previous.totals.transferenciasRecibidas),
             closureDifference: round2(current.closureDifference - previous.closureDifference),
         },
         byOperation: compareGroups(current.byOperation, previous.byOperation),
         byCategory: compareGroups(current.byCategory, previous.byCategory),
         byMethod: compareGroups(current.byMethod, previous.byMethod),
+        byClassification: compareGroups(current.byClassification, previous.byClassification),
     } : null;
 
     const problemFindings = [];
@@ -575,6 +634,11 @@ const InformesCaja = () => {
         Operación: row.operacion,
         Tipo: row.tipo,
         Categoría: row.categoria,
+        Clasificación: row.clasificacion,
+        'Movimiento entre cajas': row.movimientoEntreCajas,
+        'Ruta transferencia': row.rutaTransferencia,
+        'Caja contraparte': row.cajaContraparte,
+        'Detalle clasificación': row.detalleClasificacion,
         'Medio de pago': row.medioPago,
         'Tipo medio': row.tipoMedioPago,
         Proveedor: row.proveedor,
@@ -611,6 +675,8 @@ const InformesCaja = () => {
             { Concepto: 'Ingresos', Valor: report.current.totals.ingresos },
             { Concepto: 'Egresos', Valor: report.current.totals.egresos },
             { Concepto: 'Neto', Valor: report.current.totals.neto },
+            { Concepto: 'Transferencias enviadas entre cajas', Valor: report.current.totals.transferenciasEnviadas },
+            { Concepto: 'Transferencias recibidas entre cajas', Valor: report.current.totals.transferenciasRecibidas },
             { Concepto: 'Diferencias de cierre', Valor: report.current.closureDifference },
             { Concepto: 'Delta conciliación', Valor: report.current.reconciliationDelta },
         ];
@@ -625,12 +691,16 @@ const InformesCaja = () => {
             { Métrica: 'Neto', Actual: report.current.totals.neto, Anterior: report.previous.totals.neto, Diferencia: report.comparison.totals.neto },
             { Métrica: 'Compras internas', Actual: report.current.totals.comprasInternas, Anterior: report.previous.totals.comprasInternas, Diferencia: report.comparison.totals.comprasInternas },
             { Métrica: 'Ventas', Actual: report.current.totals.ventas, Anterior: report.previous.totals.ventas, Diferencia: report.comparison.totals.ventas },
+            { Métrica: 'Transferencias enviadas', Actual: report.current.totals.transferenciasEnviadas, Anterior: report.previous.totals.transferenciasEnviadas, Diferencia: report.comparison.totals.transferenciasEnviadas },
+            { Métrica: 'Transferencias recibidas', Actual: report.current.totals.transferenciasRecibidas, Anterior: report.previous.totals.transferenciasRecibidas, Diferencia: report.comparison.totals.transferenciasRecibidas },
         ] : [];
         const accountRows = report.current.byAccount.map((row) => ({
             Caja: row.caja,
             'Saldo inicial': row.saldoInicial,
             Ingresos: row.ingresos,
             Egresos: row.egresos,
+            'Transf. recibidas': row.transferenciasRecibidas,
+            'Transf. enviadas': row.transferenciasEnviadas,
             Neto: row.neto,
             'Saldo final': row.saldoFinal,
             Movimientos: row.count,
@@ -646,6 +716,20 @@ const InformesCaja = () => {
         const operationRows = groupSheet(report.current.byOperation, 'Operación');
         const methodRows = groupSheet(report.current.byMethod, 'Medio de pago');
         const categoryRows = groupSheet(report.current.byCategory, 'Categoría');
+        const classificationRows = groupSheet(report.current.byClassification, 'Clasificación');
+        const transferRows = report.current.transfers.map((row) => ({
+            Fecha: row.fecha,
+            Caja: row.caja,
+            Movimiento: row.movimientoEntreCajas,
+            Ruta: row.rutaTransferencia,
+            Contraparte: row.cajaContraparte,
+            Medio: row.medioPago,
+            Ingreso: row.ingreso,
+            Egreso: row.egreso,
+            Neto: row.neto,
+            Detalle: row.detalleClasificacion,
+            'Transferencia ID': row.transferenciaId,
+        }));
         const findingsForExport = problemRows.length ? problemRows : [{ Estado: 'ok', Hallazgo: 'Sin alertas', Detalle: 'No se detectaron diferencias relevantes en este período.' }];
         const findingCounts = findingsForExport.reduce((acc, row) => {
             const key = row.Estado || 'ok';
@@ -686,14 +770,21 @@ const InformesCaja = () => {
             title: 'Detalle centavo por centavo',
             subtitle: reportSubtitle,
             rows: detailRowsForExport,
-            preferredColumns: ['Origen', 'ID', 'Fecha', 'Caja', 'Operación', 'Tipo', 'Categoría', 'Medio de pago', 'Descripción', 'Ingreso', 'Egreso', 'Neto', 'Saldo caja', 'Saldo total'],
+            preferredColumns: ['Origen', 'ID', 'Fecha', 'Caja', 'Operación', 'Clasificación', 'Movimiento entre cajas', 'Ruta transferencia', 'Caja contraparte', 'Tipo', 'Categoría', 'Medio de pago', 'Descripción', 'Detalle clasificación', 'Ingreso', 'Egreso', 'Neto', 'Saldo caja', 'Saldo total'],
             chartRows: detailChartRows,
         }), compactSheetName('Detalle centavo por centavo'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Transferencias entre cajas',
+            subtitle: 'Movimientos internos: no son gastos, consumos, ventas ni ajustes',
+            rows: transferRows,
+            preferredColumns: ['Fecha', 'Caja', 'Movimiento', 'Ruta', 'Contraparte', 'Medio', 'Ingreso', 'Egreso', 'Neto', 'Detalle', 'Transferencia ID'],
+            chartRows: topChartRows(transferRows, 'Ruta', 'Neto'),
+        }), compactSheetName('Transferencias cajas'));
         XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
             title: 'Resumen por caja',
             subtitle: reportSubtitle,
             rows: accountRows,
-            preferredColumns: ['Caja', 'Saldo inicial', 'Ingresos', 'Egresos', 'Neto', 'Saldo final', 'Movimientos'],
+            preferredColumns: ['Caja', 'Saldo inicial', 'Ingresos', 'Egresos', 'Transf. recibidas', 'Transf. enviadas', 'Neto', 'Saldo final', 'Movimientos'],
             chartRows: topChartRows(accountRows, 'Caja', 'Neto'),
         }), compactSheetName('Por caja'));
         XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
@@ -717,6 +808,13 @@ const InformesCaja = () => {
             preferredColumns: ['Categoría', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
             chartRows: topChartRows(categoryRows, 'Categoría', 'Neto'),
         }), compactSheetName('Por categoría'));
+        XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
+            title: 'Resumen por clasificación',
+            subtitle: reportSubtitle,
+            rows: classificationRows,
+            preferredColumns: ['Clasificación', 'Movimientos', 'Ingresos', 'Egresos', 'Neto'],
+            chartRows: topChartRows(classificationRows, 'Clasificación', 'Neto'),
+        }), compactSheetName('Por clasificación'));
         if (comparisonRows.length) {
             XLSX.utils.book_append_sheet(workbook, buildStyledSheet({
                 title: 'Comparativa contra período anterior',
@@ -741,7 +839,7 @@ const InformesCaja = () => {
         }
 
         const summaryHtml = report.current.byAccount.map((row) => `
-            <tr><td>${escapeHtml(row.caja)}</td><td class="num">${escapeHtml(formatCurrency(row.saldoInicial))}</td><td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td><td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td><td class="num">${escapeHtml(formatCurrency(row.saldoFinal))}</td></tr>
+            <tr><td>${escapeHtml(row.caja)}</td><td class="num">${escapeHtml(formatCurrency(row.saldoInicial))}</td><td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td><td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td><td class="num income">${escapeHtml(formatCurrency(row.transferenciasRecibidas))}</td><td class="num expense">${escapeHtml(formatCurrency(row.transferenciasEnviadas))}</td><td class="num">${escapeHtml(formatCurrency(row.saldoFinal))}</td></tr>
         `).join('');
         const findingsHtml = report.problemFindings.map((finding) => `
             <div class="finding ${escapeHtml(finding.severity)}"><strong>${escapeHtml(finding.title)}</strong><span>${escapeHtml(finding.detail)}</span></div>
@@ -751,9 +849,11 @@ const InformesCaja = () => {
                 <td>${escapeHtml(row.fecha)}</td>
                 <td>${escapeHtml(row.caja)}</td>
                 <td>${escapeHtml(row.operacion)}</td>
+                <td>${escapeHtml(row.clasificacion)}</td>
+                <td>${escapeHtml(row.rutaTransferencia || row.movimientoEntreCajas || '')}</td>
                 <td>${escapeHtml(row.categoria)}</td>
                 <td>${escapeHtml(row.medioPago)}</td>
-                <td>${escapeHtml([row.descripcion, row.proveedor ? `Proveedor: ${row.proveedor}` : '', row.ticket ? `Ticket: ${row.ticket}` : '', row.ventaId ? `Venta: ${row.ventaId}` : '', row.compraId ? `Compra: ${row.compraId}` : '', row.transferenciaId ? `Transferencia: ${row.transferenciaId}` : '', row.cierreTeorico != null ? `Cierre teórico ${formatCurrency(row.cierreTeorico)} contado ${formatCurrency(row.cierreContado)} diferencia ${formatCurrency(row.diferenciaCierre)}` : ''].filter(Boolean).join(' · '))}</td>
+                <td>${escapeHtml([row.descripcion, row.detalleClasificacion, row.proveedor ? `Proveedor: ${row.proveedor}` : '', row.ticket ? `Ticket: ${row.ticket}` : '', row.ventaId ? `Venta: ${row.ventaId}` : '', row.compraId ? `Compra: ${row.compraId}` : '', row.transferenciaId ? `Transferencia: ${row.transferenciaId}` : '', row.cierreTeorico != null ? `Cierre teórico ${formatCurrency(row.cierreTeorico)} contado ${formatCurrency(row.cierreContado)} diferencia ${formatCurrency(row.diferenciaCierre)}` : ''].filter(Boolean).join(' · '))}</td>
                 <td class="num income">${row.ingreso ? escapeHtml(formatCurrency(row.ingreso)) : ''}</td>
                 <td class="num expense">${row.egreso ? escapeHtml(formatCurrency(row.egreso)) : ''}</td>
                 <td class="num">${row.saldoCaja !== '' ? escapeHtml(formatCurrency(row.saldoCaja)) : ''}</td>
@@ -799,13 +899,15 @@ const InformesCaja = () => {
                         <div class="metric"><span>Egresos</span><strong class="expense">${escapeHtml(formatCurrency(report.current.totals.egresos))}</strong></div>
                         <div class="metric"><span>Neto</span><strong>${escapeHtml(formatCurrency(report.current.totals.neto))}</strong></div>
                         <div class="metric"><span>Diferencias cierre</span><strong>${escapeHtml(formatCurrency(report.current.closureDifference))}</strong></div>
+                        <div class="metric"><span>Transf. recibidas</span><strong class="income">${escapeHtml(formatCurrency(report.current.totals.transferenciasRecibidas))}</strong></div>
+                        <div class="metric"><span>Transf. enviadas</span><strong class="expense">${escapeHtml(formatCurrency(report.current.totals.transferenciasEnviadas))}</strong></div>
                     </div>
                     <h2>Informe final</h2>
                     ${findingsHtml}
                     <h2>Resumen por caja</h2>
-                    <table><thead><tr><th>Caja</th><th>Saldo inicial</th><th>Ingresos</th><th>Egresos</th><th>Saldo final</th></tr></thead><tbody>${summaryHtml}</tbody></table>
+                    <table><thead><tr><th>Caja</th><th>Saldo inicial</th><th>Ingresos</th><th>Egresos</th><th>Transf. recibidas</th><th>Transf. enviadas</th><th>Saldo final</th></tr></thead><tbody>${summaryHtml}</tbody></table>
                     <h2>Detalle completo</h2>
-                    <table><thead><tr><th>Fecha</th><th>Caja</th><th>Operación</th><th>Categoría</th><th>Medio</th><th>Detalle</th><th>Ingreso</th><th>Egreso</th><th>Saldo caja</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+                    <table><thead><tr><th>Fecha</th><th>Caja</th><th>Operación</th><th>Clasificación</th><th>Movimiento entre cajas</th><th>Categoría</th><th>Medio</th><th>Detalle</th><th>Ingreso</th><th>Egreso</th><th>Saldo caja</th></tr></thead><tbody>${rowsHtml}</tbody></table>
                     <script>window.onload = () => window.print();</script>
                 </body>
             </html>
@@ -862,6 +964,8 @@ const InformesCaja = () => {
         { label: `Egresos vs ${previousLabel}`, value: report.comparison.totals.egresos, positiveGood: false },
         { label: `Neto vs ${previousLabel}`, value: report.comparison.totals.neto, positiveGood: true },
         { label: `Compras internas vs ${previousLabel}`, value: report.comparison.totals.comprasInternas, positiveGood: false },
+        { label: `Transf. enviadas vs ${previousLabel}`, value: report.comparison.totals.transferenciasEnviadas, positiveGood: false },
+        { label: `Transf. recibidas vs ${previousLabel}`, value: report.comparison.totals.transferenciasRecibidas, positiveGood: true },
     ] : [];
 
     return (
@@ -931,6 +1035,8 @@ const InformesCaja = () => {
                 <MetricCard label="Egresos del período" value={formatCurrency(report.current.totals.egresos)} tone="expense" />
                 <MetricCard label="Neto del período" value={formatCurrency(report.current.totals.neto)} tone={report.current.totals.neto >= 0 ? 'income' : 'expense'} />
                 <MetricCard label="Diferencias de cierre" value={formatCurrency(report.current.closureDifference)} tone={report.current.closureDifference > 0 ? 'danger' : 'neutral'} />
+                <MetricCard label="Transferencias recibidas" value={formatCurrency(report.current.totals.transferenciasRecibidas)} tone="income" />
+                <MetricCard label="Transferencias enviadas" value={formatCurrency(report.current.totals.transferenciasEnviadas)} tone="expense" />
             </DirectionalReveal>
 
             {report.comparison && (
@@ -994,6 +1100,8 @@ const InformesCaja = () => {
                                     <span>Inicial {formatCurrency(row.saldoInicial)}</span>
                                     <span>Ingresos +{formatCurrency(row.ingresos)}</span>
                                     <span>Egresos -{formatCurrency(row.egresos)}</span>
+                                    <span>Transf. recibidas +{formatCurrency(row.transferenciasRecibidas)}</span>
+                                    <span>Transf. enviadas -{formatCurrency(row.transferenciasEnviadas)}</span>
                                     <strong>Final {formatCurrency(row.saldoFinal)}</strong>
                                 </div>
                             </div>
@@ -1014,6 +1122,8 @@ const InformesCaja = () => {
                                 <th>Fecha</th>
                                 <th>Caja</th>
                                 <th>Operación</th>
+                                <th>Clasificación</th>
+                                <th>Mov. entre cajas</th>
                                 <th>Categoría</th>
                                 <th>Medio</th>
                                 <th>Detalle</th>
@@ -1025,7 +1135,7 @@ const InformesCaja = () => {
                         <tbody>
                             {report.current.rows.length === 0 && (
                                 <tr>
-                                    <td colSpan="9" className="ic-empty">No hay movimientos en el período seleccionado.</td>
+                                    <td colSpan="11" className="ic-empty">No hay movimientos en el período seleccionado.</td>
                                 </tr>
                             )}
                             {report.current.rows.map((row, index) => (
@@ -1033,6 +1143,8 @@ const InformesCaja = () => {
                                     <td>{row.fecha}</td>
                                     <td>{row.caja}</td>
                                     <td>{row.operacion}</td>
+                                    <td>{row.clasificacion}</td>
+                                    <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
                                     <td>{row.categoria}</td>
                                     <td>{row.medioPago}</td>
                                     <td>
@@ -1040,6 +1152,7 @@ const InformesCaja = () => {
                                             <span>{row.descripcion || row.proveedor || 'Sin detalle'}</span>
                                             <small>
                                                 {[
+                                                    row.detalleClasificacion || '',
                                                     row.ticket ? `Ticket ${row.ticket}` : '',
                                                     row.ventaId ? `Venta ${row.ventaId}` : '',
                                                     row.compraId ? `Compra ${row.compraId}` : '',

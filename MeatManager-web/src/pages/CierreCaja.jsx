@@ -74,6 +74,25 @@ const isAutoSaleMovement = (movement) => (
     movement?.type === 'venta' || movement?.type === 'anulacion_venta'
 );
 
+const isTransferMovement = (movement) => (
+    Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
+);
+
+const getManualMovementPresentation = (movement) => {
+    if (isTransferMovement(movement)) {
+        return {
+            label: movement.type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada',
+            note: movement.type === 'ingreso'
+                ? 'Ingreso interno desde otra caja. No es venta ni ajuste.'
+                : 'Salida interna hacia otra caja. No es gasto ni consumo.',
+        };
+    }
+    if (movement.type === 'ingreso') {
+        return { label: movement.category || 'Ingreso manual', note: 'Ingreso manual de caja.' };
+    }
+    return { label: movement.category || 'Retiro / gasto', note: 'Retiro, gasto o consumo de caja.' };
+};
+
 const getDayBounds = (selectedDate) => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     return {
@@ -357,10 +376,16 @@ const CierreCaja = () => {
         .filter((movement) => movement.type === 'venta')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalExpenses = manualMovements
-        .filter((movement) => movement.type === 'egreso' || movement.type === 'retiro')
+        .filter((movement) => !isTransferMovement(movement) && (movement.type === 'egreso' || movement.type === 'retiro'))
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalIncomes = manualMovements
-        .filter((movement) => movement.type === 'ingreso')
+        .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalTransfersOut = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalTransfersIn = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const currentAccountSales = useMemo(() => (
         sales.reduce((sum, sale) => {
@@ -503,6 +528,8 @@ const CierreCaja = () => {
             openings: 0,
             sales: 0,
             incomes: 0,
+            transfersIn: 0,
+            transfersOut: 0,
             outflows: 0,
             reversals: 0,
             adjustments: 0,
@@ -523,16 +550,19 @@ const CierreCaja = () => {
                 return;
             }
 
+            const isTransfer = Boolean(movement.transfer_group_id) || String(movement.category || '').toLowerCase().includes('transferencia');
             if (movement.type === 'apertura') parts.openings += signedAmount;
             else if (movement.type === 'venta') parts.sales += signedAmount;
+            else if (movement.type === 'ingreso' && isTransfer) parts.transfersIn += Math.abs(signedAmount);
+            else if (movement.type === 'retiro' && isTransfer) parts.transfersOut += Math.abs(signedAmount);
             else if (movement.type === 'ingreso') parts.incomes += signedAmount;
             else if (movement.type === 'egreso' || movement.type === 'retiro') parts.outflows += Math.abs(signedAmount);
             else if (movement.type === 'anulacion_venta') parts.reversals += Math.abs(signedAmount);
             else parts.adjustments += signedAmount;
         });
 
-        const available = parts.previous + parts.openings + parts.sales + parts.incomes + Math.max(parts.adjustments, 0);
-        const deductions = parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
+        const available = parts.previous + parts.openings + parts.sales + parts.incomes + parts.transfersIn + Math.max(parts.adjustments, 0);
+        const deductions = parts.transfersOut + parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
         const reason = cashInDrawer < 0
             ? `Está en negativo porque las salidas de efectivo superan los fondos disponibles por ${formatCurrency(Math.abs(cashInDrawer))}.`
             : cashInDrawer > 0
@@ -670,7 +700,7 @@ const CierreCaja = () => {
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'retiro',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia enviada entre cajas',
             description: transferDesc || `Transferencia a ${toLabel}`,
             payment_method: transferPaymentMethod,
             payment_method_type: selectedMethod?.type || 'cash',
@@ -682,7 +712,7 @@ const CierreCaja = () => {
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'ingreso',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia recibida entre cajas',
             description: transferDesc || `Transferencia desde ${fromLabel}`,
             payment_method: transferPaymentMethod,
             payment_method_type: selectedMethod?.type || 'cash',
@@ -747,6 +777,8 @@ const CierreCaja = () => {
                         <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
                         <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
                         <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>
+                        <span>Transf. recibidas: {formatCurrency(cashBalanceExplanation.transfersIn)}</span>
+                        <span>Transf. enviadas: -{formatCurrency(cashBalanceExplanation.transfersOut)}</span>
                         <span>Retiros/gastos: -{formatCurrency(cashBalanceExplanation.outflows)}</span>
                         <span>Anulaciones: -{formatCurrency(cashBalanceExplanation.reversals)}</span>
                     </div>
@@ -758,6 +790,14 @@ const CierreCaja = () => {
                 <div className="stat-box expense">
                     <span className="label">Retiros / gastos del día</span>
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="stat-box transfer-out">
+                    <span className="label">Transferido a otra caja</span>
+                    <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="stat-box transfer-in">
+                    <span className="label">Recibido de otra caja</span>
+                    <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
@@ -836,6 +876,14 @@ const CierreCaja = () => {
                         <div className="stat-box expense">
                             <span className="label">Retiros y gastos</span>
                             <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="stat-box transfer-out">
+                            <span className="label">Transferido a otra caja</span>
+                            <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="stat-box transfer-in">
+                            <span className="label">Recibido de otra caja</span>
+                            <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
 
@@ -1065,21 +1113,23 @@ const CierreCaja = () => {
                             {manualMovements.length === 0 && (
                                 <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
-                            {manualMovements.map((movement) => (
-                                <div key={movement.id} className={`movement-item ${movement.type}`}>
-                                    <div className="m-info">
-                                        <span className="m-cat">{movement.category}</span>
-                                        <span className="m-desc">
-                                            {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
-                                            {movement.transfer_group_id ? ' · transferencia interna' : ''}
+                            {manualMovements.map((movement) => {
+                                const presentation = getManualMovementPresentation(movement);
+                                return (
+                                    <div key={movement.id} className={`movement-item ${movement.type} ${isTransferMovement(movement) ? 'transfer' : ''}`}>
+                                        <div className="m-info">
+                                            <span className="m-cat">{presentation.label}</span>
+                                            <span className="m-desc">
+                                                {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'} · {presentation.note}
+                                            </span>
+                                        </div>
+                                        <span className="m-amount">
+                                            {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                         </span>
+                                        <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
                                     </div>
-                                    <span className="m-amount">
-                                        {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
-                                    </span>
-                                    <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         <div className="section-header section-header-secondary">

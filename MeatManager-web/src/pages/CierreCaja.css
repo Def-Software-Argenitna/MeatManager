@@ -209,6 +209,14 @@
     color: #ef4444;
 }
 
+.stat-box.transfer-out .val {
+    color: #f97316;
+}
+
+.stat-box.transfer-in .val {
+    color: #06b6d4;
+}
+
 .stat-box.result .val {
     color: #22c55e;
 }
@@ -417,6 +425,16 @@
 .movement-item.egreso .m-cat,
 .movement-item.egreso .m-amount {
     color: #ef4444;
+}
+
+.movement-item.transfer {
+    background: rgba(6, 182, 212, 0.06);
+    border: 1px solid rgba(6, 182, 212, 0.18);
+}
+
+.movement-item.transfer .m-cat,
+.movement-item.transfer .m-amount {
+    color: #06b6d4;
 }
 
 .movements-list {
