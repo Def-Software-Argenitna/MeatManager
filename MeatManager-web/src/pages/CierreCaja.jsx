@@ -58,7 +58,8 @@ const normalizeCashAccount = (value) => {
 
 const isCurrentAccount = (name, type) => {
     const normalizedName = String(name || '').trim().toLowerCase();
-    return type === 'cuenta_corriente' || normalizedName === 'cuenta corriente';
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
 };
 
 const toNumber = (value) => Number(value) || 0;
@@ -73,6 +74,25 @@ const isAutoSaleMovement = (movement) => (
     movement?.type === 'venta' || movement?.type === 'anulacion_venta'
 );
 
+const isTransferMovement = (movement) => (
+    Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
+);
+
+const getManualMovementPresentation = (movement) => {
+    if (isTransferMovement(movement)) {
+        return {
+            label: movement.type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada',
+            note: movement.type === 'ingreso'
+                ? 'Ingreso interno desde otra caja. No es venta ni ajuste.'
+                : 'Salida interna hacia otra caja. No es gasto ni consumo.',
+        };
+    }
+    if (movement.type === 'ingreso') {
+        return { label: movement.category || 'Ingreso manual', note: 'Ingreso manual de caja.' };
+    }
+    return { label: movement.category || 'Retiro / gasto', note: 'Retiro, gasto o consumo de caja.' };
+};
+
 const getDayBounds = (selectedDate) => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     return {
@@ -80,6 +100,15 @@ const getDayBounds = (selectedDate) => {
         end: new Date(y, m - 1, d, 23, 59, 59, 999),
     };
 };
+
+const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
+
+const getCashAccountLabel = (value) => (
+    CASH_ACCOUNTS.find((item) => item.value === normalizeCashAccount(value))?.label || 'Caja Principal'
+);
 
 const getSalePaymentBreakdown = (sale) => {
     if (!sale?.payment_breakdown) return [];
@@ -153,7 +182,7 @@ const CierreCaja = () => {
         try {
             const [salesRows, movRows, pmRows] = await Promise.all([
                 fetchTable('ventas', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
-                fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+                fetchTable('caja_movimientos', { limit: 20000, orderBy: 'id', direction: 'DESC' }),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
             ]);
             setAllSales(Array.isArray(salesRows) ? salesRows : []);
@@ -347,12 +376,29 @@ const CierreCaja = () => {
         .filter((movement) => movement.type === 'venta')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalExpenses = manualMovements
-        .filter((movement) => movement.type === 'egreso' || movement.type === 'retiro')
+        .filter((movement) => !isTransferMovement(movement) && (movement.type === 'egreso' || movement.type === 'retiro'))
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalIncomes = manualMovements
-        .filter((movement) => movement.type === 'ingreso')
+        .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const currentAccountSales = 0;
+    const transferOutMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
+    const transferInMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso');
+    const totalTransfersOut = transferOutMovements
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalTransfersIn = transferInMovements
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
+    const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
+    const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
+    const currentAccountSales = useMemo(() => (
+        sales.reduce((sum, sale) => {
+            const currentAccountParts = buildSaleParts(sale, { includeCurrentAccount: true })
+                .filter((part) => isCurrentAccount(part.name, part.type));
+            return sum + currentAccountParts.reduce((partSum, part) => partSum + toNumber(part.amount), 0);
+        }, 0)
+    ), [sales]);
 
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
@@ -396,6 +442,7 @@ const CierreCaja = () => {
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
+        const salesById = new Map((sales || []).map((sale) => [Number(sale.id), sale]));
 
         salesMovements.forEach((movement) => {
             const key = movement.sale_id
@@ -426,15 +473,40 @@ const CierreCaja = () => {
             if (movement.type === 'anulacion_venta') group.hasReversal = true;
         });
 
+        (sales || []).forEach((sale) => {
+            const parts = buildSaleParts(sale, { includeCurrentAccount: true });
+            if (!parts.some((part) => isCurrentAccount(part.name, part.type))) return;
+
+            const key = `sale-${sale.id}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    id: sale.id,
+                    receiptCode: sale.receipt_code || (sale.receipt_number ? `0001-${String(sale.receipt_number).padStart(6, '0')}` : `Venta #${sale.id}`),
+                    date: sale.date ? new Date(sale.date) : null,
+                    fullParts: parts,
+                    total: toNumber(sale.total),
+                    hasReversal: false,
+                });
+            }
+        });
+
         const mappedSales = Array.from(groups.values())
             .map((sale) => {
-                const cajaParts = sale.fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
-                const cuentaCorrienteParts = sale.fullParts.filter((part) => isCurrentAccount(part.name, part.type));
-                const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+                const saleRecord = salesById.get(Number(sale.id));
+                const fullParts = saleRecord
+                    ? buildSaleParts(saleRecord, { includeCurrentAccount: true })
+                    : sale.fullParts;
+                const cajaParts = fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
+                const cuentaCorrienteParts = fullParts.filter((part) => isCurrentAccount(part.name, part.type));
+                const cajaAmount = sale.fullParts
+                    .filter((part) => !isCurrentAccount(part.name, part.type))
+                    .reduce((sum, part) => sum + toNumber(part.amount), 0);
                 const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
                 return {
                     ...sale,
-                    isMixed: sale.fullParts.length > 1,
+                    fullParts,
+                    total: saleRecord ? toNumber(saleRecord.total) : sale.total,
+                    isMixed: fullParts.length > 1,
                     cajaParts,
                     cuentaCorrienteParts,
                     cajaAmount,
@@ -445,7 +517,7 @@ const CierreCaja = () => {
             .sort((a, b) => (b.date?.getTime?.() || 0) - (a.date?.getTime?.() || 0));
 
         return mappedSales;
-    }, [hiddenDigitalPaymentsOnly, salesMovements]);
+    }, [hiddenDigitalPaymentsOnly, sales, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
     const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);
@@ -453,6 +525,62 @@ const CierreCaja = () => {
     const cashInDrawer = methodCards
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
+
+    const cashBalanceExplanation = useMemo(() => {
+        const cashMethodNames = new Set(methodCards.filter((method) => method.type === 'cash').map((method) => method.name));
+        const parts = {
+            previous: 0,
+            openings: 0,
+            sales: 0,
+            incomes: 0,
+            transfersIn: 0,
+            transfersOut: 0,
+            outflows: 0,
+            reversals: 0,
+            adjustments: 0,
+        };
+
+        allMovements.forEach((movement) => {
+            const date = parseDate(movement.date);
+            if (!date || date > end) return;
+            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
+            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
+
+            const methodName = movement.payment_method || 'Efectivo';
+            if (!cashMethodNames.has(methodName)) return;
+
+            const signedAmount = toNumber(movement.amount) * getMovementSign(movement);
+            if (date < start) {
+                parts.previous += signedAmount;
+                return;
+            }
+
+            const isTransfer = Boolean(movement.transfer_group_id) || String(movement.category || '').toLowerCase().includes('transferencia');
+            if (movement.type === 'apertura') parts.openings += signedAmount;
+            else if (movement.type === 'venta') parts.sales += signedAmount;
+            else if (movement.type === 'ingreso' && isTransfer) parts.transfersIn += Math.abs(signedAmount);
+            else if (movement.type === 'retiro' && isTransfer) parts.transfersOut += Math.abs(signedAmount);
+            else if (movement.type === 'ingreso') parts.incomes += signedAmount;
+            else if (movement.type === 'egreso' || movement.type === 'retiro') parts.outflows += Math.abs(signedAmount);
+            else if (movement.type === 'anulacion_venta') parts.reversals += Math.abs(signedAmount);
+            else parts.adjustments += signedAmount;
+        });
+
+        const available = parts.previous + parts.openings + parts.sales + parts.incomes + parts.transfersIn + Math.max(parts.adjustments, 0);
+        const deductions = parts.transfersOut + parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
+        const reason = cashInDrawer < 0
+            ? `Está en negativo porque las salidas de efectivo superan los fondos disponibles por ${formatCurrency(Math.abs(cashInDrawer))}.`
+            : cashInDrawer > 0
+                ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
+                : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
+
+        return {
+            ...parts,
+            available,
+            deductions,
+            reason,
+        };
+    }, [allMovements, cashInDrawer, end, methodCards, selectedCashAccount, start]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
@@ -577,7 +705,7 @@ const CierreCaja = () => {
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'retiro',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia enviada entre cajas',
             description: transferDesc || `Transferencia a ${toLabel}`,
             payment_method: transferPaymentMethod,
             payment_method_type: selectedMethod?.type || 'cash',
@@ -589,7 +717,7 @@ const CierreCaja = () => {
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'ingreso',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia recibida entre cajas',
             description: transferDesc || `Transferencia desde ${fromLabel}`,
             payment_method: transferPaymentMethod,
             payment_method_type: selectedMethod?.type || 'cash',
@@ -643,9 +771,22 @@ const CierreCaja = () => {
             )}
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
-                <div className="stat-box result">
-                    <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
+                <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
+                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
+                    <div className="cash-result-breakdown">
+                        <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
+                        <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
+                        <span>Saldo previo: {formatCurrency(cashBalanceExplanation.previous)}</span>
+                        <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
+                        <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
+                        <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>
+                        <span>Transf. recibidas: {formatCurrency(cashBalanceExplanation.transfersIn)}</span>
+                        <span>Transf. enviadas: -{formatCurrency(cashBalanceExplanation.transfersOut)}</span>
+                        <span>Retiros/gastos: -{formatCurrency(cashBalanceExplanation.outflows)}</span>
+                        <span>Anulaciones: -{formatCurrency(cashBalanceExplanation.reversals)}</span>
+                    </div>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
@@ -654,6 +795,16 @@ const CierreCaja = () => {
                 <div className="stat-box expense">
                     <span className="label">Retiros / gastos del día</span>
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="stat-box transfer-out">
+                    <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                    <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                </div>
+                <div className="stat-box transfer-in">
+                    <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                    <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
@@ -732,6 +883,16 @@ const CierreCaja = () => {
                         <div className="stat-box expense">
                             <span className="label">Retiros y gastos</span>
                             <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                        </div>
+                        <div className="stat-box transfer-out">
+                            <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                            <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                        </div>
+                        <div className="stat-box transfer-in">
+                            <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                            <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                         </div>
                     </div>
 
@@ -961,21 +1122,23 @@ const CierreCaja = () => {
                             {manualMovements.length === 0 && (
                                 <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
-                            {manualMovements.map((movement) => (
-                                <div key={movement.id} className={`movement-item ${movement.type}`}>
-                                    <div className="m-info">
-                                        <span className="m-cat">{movement.category}</span>
-                                        <span className="m-desc">
-                                            {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
-                                            {movement.transfer_group_id ? ' · transferencia interna' : ''}
+                            {manualMovements.map((movement) => {
+                                const presentation = getManualMovementPresentation(movement);
+                                return (
+                                    <div key={movement.id} className={`movement-item ${movement.type} ${isTransferMovement(movement) ? 'transfer' : ''}`}>
+                                        <div className="m-info">
+                                            <span className="m-cat">{presentation.label}</span>
+                                            <span className="m-desc">
+                                                {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'} · {presentation.note}
+                                            </span>
+                                        </div>
+                                        <span className="m-amount">
+                                            {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                         </span>
+                                        <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
                                     </div>
-                                    <span className="m-amount">
-                                        {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
-                                    </span>
-                                    <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         <div className="section-header section-header-secondary">
