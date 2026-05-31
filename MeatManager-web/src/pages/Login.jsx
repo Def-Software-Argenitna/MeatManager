@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Beef, LogIn, AlertCircle, ShieldCheck, Search } from 'lucide-react';
+import { Beef, LogIn, AlertCircle, ShieldCheck, Search, MapPin } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
 import { useUser } from '../context/UserContext';
 import '../styles/Login.css';
@@ -17,7 +17,13 @@ const Login = () => {
         loading: tenantLoading,
         isSupportSession,
     } = useTenant();
-    const { currentUser, loadingUser } = useUser();
+    const {
+        currentUser,
+        loadingUser,
+        activeBranch,
+        selectActiveBranch,
+        refreshClientBranches,
+    } = useUser();
     const [mode, setMode] = useState('tenant');
     const [tenantEmail, setTenantEmail] = useState('');
     const [tenantPassword, setTenantPassword] = useState('');
@@ -30,14 +36,76 @@ const Login = () => {
     const [supportClients, setSupportClients] = useState([]);
     const [supportSearch, setSupportSearch] = useState('');
     const [selectedClientId, setSelectedClientId] = useState('');
+    const [clientBranches, setClientBranches] = useState([]);
+    const [branchLoading, setBranchLoading] = useState(false);
+    const [branchCheckComplete, setBranchCheckComplete] = useState(false);
+    const [branchError, setBranchError] = useState('');
+    const [selectedBranchId, setSelectedBranchId] = useState('');
     const [loading, setLoading] = useState(false);
     const from = location.state?.from?.pathname || '/';
+    const isAdminUser = currentUser?.role === 'admin';
+    const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !activeBranch?.id;
+    const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
+    const hasBranchBlockingError = tenant && currentUser && isAdminUser && branchCheckComplete && Boolean(branchError);
 
     useEffect(() => {
-        if (tenant && currentUser && !loadingUser) {
+        if (tenant && currentUser && !loadingUser && !waitingForBranchCheck && !requiresBranchSelection && !hasBranchBlockingError) {
             navigate(from, { replace: true });
         }
-    }, [tenant, currentUser, loadingUser, navigate, from]);
+    }, [tenant, currentUser, loadingUser, waitingForBranchCheck, requiresBranchSelection, hasBranchBlockingError, navigate, from]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadBranches = async () => {
+            if (!tenant || !currentUser || !isAdminUser || loadingUser) {
+                setClientBranches([]);
+                setSelectedBranchId('');
+                setBranchCheckComplete(!tenant || !currentUser || !isAdminUser);
+                return;
+            }
+
+            setBranchLoading(true);
+            setBranchCheckComplete(false);
+            setBranchError('');
+            try {
+                const branches = await refreshClientBranches();
+                if (cancelled) return;
+                setClientBranches(branches);
+
+                const savedBranchStillExists = activeBranch?.id
+                    ? branches.some((branch) => String(branch.id) === String(activeBranch.id))
+                    : false;
+
+                if (activeBranch?.id && !savedBranchStillExists) {
+                    selectActiveBranch(null);
+                }
+
+                if (branches.length === 1 && !activeBranch?.id) {
+                    selectActiveBranch(branches[0]);
+                } else if (branches.length > 1) {
+                    setSelectedBranchId(String(
+                        savedBranchStillExists ? activeBranch.id : branches[0]?.id || ''
+                    ));
+                }
+            } catch (error) {
+                if (!cancelled) {
+                    setBranchError(error?.message || 'No se pudieron leer las sucursales del cliente');
+                }
+            } finally {
+                if (!cancelled) {
+                    setBranchLoading(false);
+                    setBranchCheckComplete(true);
+                }
+            }
+        };
+
+        loadBranches();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [tenant, currentUser, isAdminUser, loadingUser, activeBranch?.id, refreshClientBranches, selectActiveBranch]);
 
     const handleTenantSubmit = async (e) => {
         e.preventDefault();
@@ -99,6 +167,16 @@ const Login = () => {
         }
     };
 
+    const handleBranchAccess = () => {
+        const selectedBranch = clientBranches.find((branch) => String(branch.id) === String(selectedBranchId));
+        if (!selectedBranch) {
+            setBranchError('Seleccioná una sucursal para continuar');
+            return;
+        }
+        selectActiveBranch(selectedBranch);
+        navigate(from, { replace: true });
+    };
+
     const filteredSupportClients = supportClients.filter((client) => {
         const query = String(supportSearch || '').trim().toLowerCase();
         if (!query) return true;
@@ -125,18 +203,67 @@ const Login = () => {
                         </p>
                     </div>
 
-                    <div style={{ marginTop: '2rem', color: '#9ca3af', fontSize: '0.95rem', lineHeight: 1.6 }}>
-                        {loadingUser ? 'Cargando usuario...' : 'Ya estás conectado con esta empresa.'}
-                    </div>
-                    <div className="login-form" style={{ marginTop: '1.5rem' }}>
-                        <button
-                            type="button"
-                            className="login-button"
-                            onClick={() => navigate(from, { replace: true })}
-                            disabled={loadingUser}
-                        >
-                            Ingresar al sistema
-                        </button>
+                    {requiresBranchSelection || hasBranchBlockingError ? (
+                        <div className="login-form" style={{ marginTop: '1.5rem', textAlign: 'left' }}>
+                            <div className="login-support-note">
+                                <MapPin size={16} />
+                                Seleccioná la sucursal con la que vas a operar.
+                            </div>
+                            {requiresBranchSelection && (
+                                <div className="form-group">
+                                    <label>Sucursal</label>
+                                    <select
+                                        className="form-input"
+                                        value={selectedBranchId}
+                                        onChange={(e) => setSelectedBranchId(e.target.value)}
+                                        disabled={branchLoading}
+                                    >
+                                        {clientBranches.map((branch) => (
+                                            <option key={branch.id} value={branch.id}>
+                                                {branch.name}{branch.internalCode ? ` (${branch.internalCode})` : ''}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+                            )}
+                            {branchError && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#ef4444', fontSize: '0.85rem', background: 'rgba(239,68,68,0.1)', padding: '0.6rem 0.8rem', borderRadius: '8px' }}>
+                                    <AlertCircle size={16} />
+                                    {branchError}
+                                </div>
+                            )}
+                            <button
+                                type="button"
+                                className="login-button"
+                                onClick={handleBranchAccess}
+                                disabled={branchLoading || !selectedBranchId || hasBranchBlockingError}
+                                style={{ opacity: branchLoading || !selectedBranchId || hasBranchBlockingError ? 0.7 : 1 }}
+                            >
+                                <LogIn size={18} /> Entrar a la sucursal
+                            </button>
+                        </div>
+                    ) : (
+                        <>
+                            <div style={{ marginTop: '2rem', color: '#9ca3af', fontSize: '0.95rem', lineHeight: 1.6 }}>
+                                {loadingUser || branchLoading
+                                    ? 'Cargando usuario...'
+                                    : activeBranch?.name
+                                        ? `Vas a operar en ${activeBranch.name}.`
+                                        : 'Ya estás conectado con esta empresa.'}
+                            </div>
+                            <div className="login-form" style={{ marginTop: '1.5rem' }}>
+                                <button
+                                    type="button"
+                                    className="login-button"
+                                    onClick={() => navigate(from, { replace: true })}
+                                    disabled={loadingUser || branchLoading}
+                                >
+                                    Ingresar al sistema
+                                </button>
+                            </div>
+                        </>
+                    )}
+                    <div className="login-form" style={{ marginTop: requiresBranchSelection ? '1rem' : 0 }}>
                         <button
                             type="button"
                             onClick={async () => { await tenantLogout(); }}

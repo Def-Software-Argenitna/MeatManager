@@ -5,6 +5,7 @@ import {
     createFirebaseUser,
     deleteFirebaseUser,
     fetchCurrentFirebaseUser,
+    fetchClientBranches,
     fetchFirebaseUsers,
     replaceUserPermissions as replaceFirebaseUserPermissions,
     updateFirebaseUser,
@@ -47,6 +48,7 @@ export const ALL_ROUTES = [
 const ALL_PATHS = ALL_ROUTES.map(r => r.path);
 
 const UserContext = createContext(null);
+const ACTIVE_BRANCH_KEY = 'mm_active_branch';
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
 const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
@@ -102,13 +104,15 @@ const restoreSession = () => {
         const u = sessionStorage.getItem('mm_user');
         const p = sessionStorage.getItem('mm_perms');
         const a = sessionStorage.getItem('mm_access_profile');
+        const b = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
         return {
             user: u ? JSON.parse(u) : null,
             perms: p ? JSON.parse(p) : [],
             accessProfile: a ? JSON.parse(a) : null,
+            activeBranch: b ? JSON.parse(b) : null,
         };
     } catch {
-        return { user: null, perms: [], accessProfile: null };
+        return { user: null, perms: [], accessProfile: null, activeBranch: null };
     }
 };
 
@@ -116,10 +120,11 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const UserProvider = ({ children }) => {
     const { tenant, loading: loadingTenant, authToken } = useTenant();
-    const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile } = restoreSession();
+    const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile, activeBranch: savedActiveBranch } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
+    const [activeBranch, setActiveBranch] = useState(savedActiveBranch);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
     const [licensePool, setLicensePool] = useState([]);
@@ -127,19 +132,39 @@ export const UserProvider = ({ children }) => {
 
     const applyResolvedUser = useCallback((userData) => {
         const perms = (userData?.role === 'admin') ? ALL_PATHS : (userData?.perms || []);
+        const savedBranch = (() => {
+            try {
+                const raw = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch {
+                return null;
+            }
+        })();
+        const canUseSavedBranch = (
+            userData?.role === 'admin'
+            && savedBranch?.id
+            && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
+        );
+        const effectiveUserData = canUseSavedBranch
+            ? { ...userData, branch: savedBranch }
+            : userData;
         const sessionUser = {
-            id: userData?.id || userData?.uid || userData?.email,
-            uid: userData?.uid || null,
-            email: userData?.email,
-            username: userData?.username || userData?.empresa || userData?.email,
-            role: userData?.role || 'employee',
+            id: effectiveUserData?.id || effectiveUserData?.uid || effectiveUserData?.email,
+            uid: effectiveUserData?.uid || null,
+            email: effectiveUserData?.email,
+            username: effectiveUserData?.username || effectiveUserData?.empresa || effectiveUserData?.email,
+            role: effectiveUserData?.role || 'employee',
         };
         setCurrentUser(sessionUser);
         setUserPerms(perms);
-        setAccessProfile(userData);
+        setAccessProfile(effectiveUserData);
+        setActiveBranch(canUseSavedBranch ? savedBranch : null);
+        if (!canUseSavedBranch && userData?.role !== 'admin') {
+            sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
+        }
         sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
         sessionStorage.setItem('mm_perms', JSON.stringify(perms));
-        sessionStorage.setItem('mm_access_profile', JSON.stringify(userData));
+        sessionStorage.setItem('mm_access_profile', JSON.stringify(effectiveUserData));
         return { ok: true };
     }, []);
 
@@ -160,6 +185,8 @@ export const UserProvider = ({ children }) => {
         setCurrentUser(ownerSession);
         setUserPerms(ALL_PATHS);
         setAccessProfile(fallbackProfile);
+        setActiveBranch(null);
+        sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
         sessionStorage.setItem('mm_user', JSON.stringify(ownerSession));
         sessionStorage.setItem('mm_perms', JSON.stringify(ALL_PATHS));
         sessionStorage.setItem('mm_access_profile', JSON.stringify(fallbackProfile));
@@ -225,11 +252,43 @@ export const UserProvider = ({ children }) => {
         setCurrentUser(null);
         setUserPerms([]);
         setAccessProfile(null);
+        setActiveBranch(null);
         setUsers([]);
         setLicensePool([]);
         sessionStorage.removeItem('mm_user');
         sessionStorage.removeItem('mm_perms');
         sessionStorage.removeItem('mm_access_profile');
+        sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
+    }, []);
+
+    const selectActiveBranch = useCallback((branch) => {
+        const normalizedBranch = branch?.id ? {
+            id: Number(branch.id),
+            clientId: branch.clientId ?? accessProfile?.clientId ?? null,
+            name: branch.name || `Sucursal ${branch.id}`,
+            internalCode: branch.internalCode || null,
+            address: branch.address || null,
+            status: branch.status || 'ACTIVE',
+        } : null;
+
+        setActiveBranch(normalizedBranch);
+        setAccessProfile((currentProfile) => {
+            if (!currentProfile) return currentProfile;
+            const nextProfile = { ...currentProfile, branch: normalizedBranch };
+            sessionStorage.setItem('mm_access_profile', JSON.stringify(nextProfile));
+            return nextProfile;
+        });
+
+        if (normalizedBranch) {
+            sessionStorage.setItem(ACTIVE_BRANCH_KEY, JSON.stringify(normalizedBranch));
+        } else {
+            sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
+        }
+    }, [accessProfile?.clientId]);
+
+    const refreshClientBranches = useCallback(async () => {
+        const data = await fetchClientBranches();
+        return Array.isArray(data?.branches) ? data.branches : [];
     }, []);
 
     useEffect(() => {
@@ -418,6 +477,9 @@ export const UserProvider = ({ children }) => {
             loadingUser,
             users,
             licensePool,
+            activeBranch,
+            selectActiveBranch,
+            refreshClientBranches,
             refreshUsers,
             saveTableRecord: saveUserRecord,
             replaceUserPermissions,

@@ -3102,6 +3102,37 @@ async function listClientBranches(clientId) {
     }
 }
 
+function getRequestedActiveBranchId(req) {
+    const rawValue = req?.headers?.['x-mm-active-branch-id'] ?? req?.query?.activeBranchId ?? req?.body?.activeBranchId;
+    const branchId = Number(rawValue);
+    return Number.isFinite(branchId) && branchId > 0 ? branchId : null;
+}
+
+async function resolveRequestedActiveBranch(accessContext, req) {
+    const requestedBranchId = getRequestedActiveBranchId(req);
+    if (!requestedBranchId || !accessContext?.client?.id) return null;
+
+    const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
+    if (Number.isFinite(userBranchId) && userBranchId > 0) {
+        return Number(userBranchId) === Number(requestedBranchId)
+            ? {
+                id: userBranchId,
+                name: accessContext?.user?.branchName || '',
+                internalCode: accessContext?.user?.branchInternalCode || null,
+                address: accessContext?.user?.branchAddress || null,
+                status: accessContext?.user?.branchStatus || 'ACTIVE',
+            }
+            : null;
+    }
+
+    if (accessContext?.user?.role !== 'admin' && !accessContext?.user?.isGlobalSuperAdmin) {
+        return null;
+    }
+
+    const branches = await listClientBranches(accessContext.client.id);
+    return branches.find((branch) => Number(branch.id) === Number(requestedBranchId)) || null;
+}
+
 async function getTenantBranchCode(pool, tenantId) {
     const [rows] = await pool.query(
         'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
@@ -3131,15 +3162,20 @@ async function resolveClientBranchId(clientId, { branchId, branchCode, receiptCo
 async function resolveOperationalBranchId({ pool, tenantId, accessContext, record }) {
     if (!accessContext?.client?.id) return null;
 
-    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
-    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
-        return explicitBranchId;
-    }
-
-    // Si el usuario está atado a una sucursal, priorizar ese alcance.
+    // Si el usuario está atado a una sucursal, ese alcance manda sobre cualquier payload.
     const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
     if (Number.isFinite(userBranchId) && userBranchId > 0) {
         return userBranchId;
+    }
+
+    const activeBranchId = Number(accessContext?.activeBranch?.id);
+    if (Number.isFinite(activeBranchId) && activeBranchId > 0) {
+        return activeBranchId;
+    }
+
+    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
+    if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
+        return explicitBranchId;
     }
 
     const branchCodeFromRecord =
@@ -5140,6 +5176,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             _internalAdmin: req.firebaseUser?._internalAdmin || null,
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const normalizedRecord = table === 'products'
             ? await resolveProductRecordCategory(pool, tenantId, record)
             : record;
@@ -5613,11 +5650,16 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 _internalAdmin: req.firebaseUser?._internalAdmin || null,
                 _supportClientId: req.firebaseUser?._supportClientId || null,
             });
-            const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
-            if (Number.isFinite(userBranchId) && userBranchId > 0) {
-                // Empleado/sesión atada a sucursal: devuelve esa sucursal + filas globales.
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+            const scopedBranchId = Number(
+                accessContext?.activeBranch?.id
+                ?? accessContext?.user?.branchRecordId
+                ?? accessContext?.user?.branchId
+            );
+            if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+                // Sucursal activa o empleado atado a sucursal: devuelve esa sucursal + filas globales.
                 extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
-                extraParams.push(userBranchId);
+                extraParams.push(scopedBranchId);
             }
         }
 
@@ -6301,6 +6343,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
         });
         if (accessContext) {
             assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
         const {
@@ -6427,13 +6470,14 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             const desc = `${String(supplier || '').trim()}${invoice_num ? ` · Comprobante ${invoice_num}` : ''}`;
             await conn.query(
                 `INSERT INTO caja_movimientos
-                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id)
-                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?)`,
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, purchase_id, branch_id)
+                 VALUES (?, 'egreso', ?, 'Compra interna', ?, ?, ?, 'principal', ?, ?, ?)`,
                 [
                     tenantId, parseFloat(cash_amount) || 0, desc,
                     payment_method || 'Efectivo',
                     payment_method_type || 'cash',
                     purchaseDate, purchaseId,
+                    resolvedBranchId || null,
                 ]
             );
         }
@@ -6561,6 +6605,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         });
         if (accessContext) {
             assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
         const {
@@ -7158,10 +7203,22 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
 
         const conn = await clientsControlPool.getConnection();
         let rows;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND (cu.branchId = ? OR cu.id = ?)'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId, accessContext.user.id]
+                : [];
             [rows] = await conn.query(
                 `SELECT
                     cu.id AS id,
@@ -7178,8 +7235,9 @@ app.get('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                  LEFT JOIN \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\` b
                     ON b.id = cu.branchId
                  WHERE cu.clientId = ?
+                 ${branchScopedWhere}
                  ORDER BY cu.id ASC`,
-                [accessContext.client.id]
+                [accessContext.client.id, ...branchScopedParams]
             );
             const [licenseRows] = await conn.query(
                 `SELECT
@@ -7318,6 +7376,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const requestedRole = String(role || 'employee').trim().toLowerCase();
         const effectiveRole = isRequesterAdmin ? 'employee' : requestedRole;
@@ -7328,6 +7387,14 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         let job;
         const normalizedRole = effectiveRole === 'admin' ? 'admin' : 'employee';
         const userPerms = normalizedRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
+        const newUserBranchId = normalizedRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
+            ? scopedBranchId
+            : null;
         try {
             const [existingRows] = await conn.query(
                 `SELECT id FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE clientId = ? AND LOWER(email) = ? LIMIT 1`,
@@ -7340,9 +7407,10 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             const [result] = await conn.query(
                 `INSERT INTO \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  (clientId, branchId, firebaseUid, name, lastname, email, role, status, isSynced, createdAt, updatedAt)
-                 VALUES (?, NULL, NULL, ?, '', ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                 VALUES (?, ?, NULL, ?, '', ?, ?, ?, 0, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
                 [
                     ownerData.clientId,
+                    newUserBranchId,
                     String(username).trim(),
                     normalizeEmail(email),
                     normalizedRole,
@@ -7401,6 +7469,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 role: normalizedRole,
                 active: Number(active) === 1 ? 1 : 0,
                 perms: userPerms,
+                branchId: newUserBranchId,
             },
         });
     } catch (err) {
@@ -7428,14 +7497,26 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             _supportClientId: req.firebaseUser?._supportClientId || null,
         });
         assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const ownerData = await getTenantClientData(req.firebaseUser);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const conn = await clientsControlPool.getConnection();
         let currentData;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND (branchId = ? OR id = ?)'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId, accessContext.user.id]
+                : [];
             const [rows] = await conn.query(
-                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             currentData = rows[0];
         } finally {
@@ -7455,15 +7536,18 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
         const nextActive = active === undefined ? currentData.status === 'ACTIVE' : Number(active) === 1;
         const nextPerms = nextRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
+        const nextBranchId = nextRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
+            ? scopedBranchId
+            : currentData.branchId;
 
         const writeConn = await clientsControlPool.getConnection();
         let job;
         try {
             await writeConn.query(
                 `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 SET name = ?, email = ?, role = ?, status = ?, isSynced = 0, updatedAt = CURRENT_TIMESTAMP
+                 SET name = ?, email = ?, role = ?, branchId = ?, status = ?, isSynced = 0, updatedAt = CURRENT_TIMESTAMP
                  WHERE id = ?`,
-                [nextUsername, nextEmail, nextRole, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
+                [nextUsername, nextEmail, nextRole, nextBranchId ?? null, nextActive ? 'ACTIVE' : 'INACTIVE', userId]
             );
             const assignedLicenses = await syncClientUserPerUserLicenses(writeConn, {
                 clientId: ownerData.clientId,
@@ -7529,14 +7613,33 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'No podés eliminar tu propio usuario' });
         }
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let user;
         let job;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND branchId = ?'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId]
+                : [];
             const [rows] = await conn.query(
-                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                `SELECT * FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             user = rows[0];
             if (!user) {
@@ -7603,15 +7706,34 @@ app.post('/api/users/:id/permissions', verifyFirebaseToken, async (req, res) => 
             ? req.body.paths.map((pathValue) => String(pathValue || '').trim()).filter(Boolean)
             : [];
 
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const scopedBranchId = Number(
+            accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+            ?? accessContext?.activeBranch?.id
+        );
         const ownerData = await getTenantClientData(req.firebaseUser);
         const conn = await clientsControlPool.getConnection();
         let user;
         try {
+            const branchScopedWhere = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? 'AND branchId = ?'
+                : '';
+            const branchScopedParams = Number.isFinite(scopedBranchId) && scopedBranchId > 0
+                ? [scopedBranchId]
+                : [];
             const [rows] = await conn.query(
                 `SELECT id, firebaseUid, email, name, role, status
                  FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
-                 WHERE id = ? AND clientId = ? LIMIT 1`,
-                [userId, ownerData.clientId]
+                 WHERE id = ? AND clientId = ? ${branchScopedWhere} LIMIT 1`,
+                [userId, ownerData.clientId, ...branchScopedParams]
             );
             user = rows[0];
         } finally {
