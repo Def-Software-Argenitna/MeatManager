@@ -22,6 +22,7 @@ const CASH_ACCOUNTS = [
 ];
 
 const REPORT_MODES = {
+    range: { label: 'Rango exacto', previousLabel: 'rango anterior' },
     day: { label: 'Informe por día', previousLabel: 'día anterior' },
     week: { label: 'Informe por semana', previousLabel: 'semana anterior' },
     month: { label: 'Informe por mes', previousLabel: 'mes anterior' },
@@ -237,6 +238,24 @@ const escapeHtml = (value) => String(value ?? '')
     .replace(/'/g, '&#039;');
 
 const getPeriodBounds = (mode, value) => {
+    if (mode === 'range') {
+        const parseInputDate = (input, fallback) => {
+            const [year, month, day] = String(input || fallback).split('-').map(Number);
+            const parsed = new Date(year, month - 1, day, 0, 0, 0, 0);
+            return Number.isFinite(parsed.getTime()) ? parsed : new Date(fallback);
+        };
+        const today = formatDateInput(new Date());
+        const from = parseInputDate(value?.from, today);
+        const to = parseInputDate(value?.to, value?.from || today);
+        const start = from <= to ? from : to;
+        const end = from <= to ? to : from;
+        end.setHours(23, 59, 59, 999);
+        return {
+            start,
+            end,
+            label: `${formatDateInput(start).split('-').reverse().join('/')} al ${formatDateInput(end).split('-').reverse().join('/')}`,
+        };
+    }
     if (mode === 'year') {
         const year = Number(value) || new Date().getFullYear();
         return {
@@ -279,6 +298,20 @@ const getPeriodBounds = (mode, value) => {
 };
 
 const getPreviousPeriodBounds = (mode, bounds) => {
+    if (mode === 'range') {
+        const days = Math.max(1, Math.round((bounds.end - bounds.start) / 86400000) + 1);
+        const end = new Date(bounds.start);
+        end.setDate(bounds.start.getDate() - 1);
+        end.setHours(23, 59, 59, 999);
+        const start = new Date(end);
+        start.setDate(end.getDate() - days + 1);
+        start.setHours(0, 0, 0, 0);
+        return {
+            start,
+            end,
+            label: `${formatDateInput(start).split('-').reverse().join('/')} al ${formatDateInput(end).split('-').reverse().join('/')}`,
+        };
+    }
     if (mode === 'year') {
         const year = bounds.start.getFullYear() - 1;
         return getPeriodBounds('year', String(year));
@@ -587,6 +620,8 @@ const InformesCaja = () => {
     const [weekValue, setWeekValue] = useState(formatDateInput(now));
     const [monthValue, setMonthValue] = useState(formatMonthInput(now));
     const [yearValue, setYearValue] = useState(String(now.getFullYear()));
+    const [rangeFromValue, setRangeFromValue] = useState(formatDateInput(now));
+    const [rangeToValue, setRangeToValue] = useState(formatDateInput(now));
     const [cashAccount, setCashAccount] = useState('all');
     const [compareEnabled, setCompareEnabled] = useState(true);
     const [movements, setMovements] = useState([]);
@@ -594,7 +629,16 @@ const InformesCaja = () => {
     const [loading, setLoading] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
-    const selectedValue = mode === 'day' ? dayValue : mode === 'week' ? weekValue : mode === 'month' ? monthValue : yearValue;
+    const selectedValue = mode === 'range'
+        ? { from: rangeFromValue, to: rangeToValue }
+        : mode === 'day'
+            ? dayValue
+            : mode === 'week'
+                ? weekValue
+                : mode === 'month'
+                    ? monthValue
+                    : yearValue;
+    const selectedValueForFile = mode === 'range' ? `${rangeFromValue}_a_${rangeToValue}` : selectedValue;
 
     const loadData = useCallback(async () => {
         setLoading(true);
@@ -824,7 +868,7 @@ const InformesCaja = () => {
                 chartRows: topChartRows(comparisonRows, 'Métrica', 'Diferencia'),
             }), compactSheetName('Comparativa'));
         }
-        XLSX.writeFile(workbook, `informe_caja_${mode}_${selectedValue}_${cashAccount}.xlsx`);
+        XLSX.writeFile(workbook, `informe_caja_${mode}_${selectedValueForFile}_${cashAccount}.xlsx`);
     };
 
     const exportPdf = () => {
@@ -916,6 +960,27 @@ const InformesCaja = () => {
     };
 
     const renderPeriodInput = () => {
+        if (mode === 'range') {
+            return (
+                <div className="ic-range-inputs">
+                    <input
+                        type="date"
+                        className="neo-input"
+                        value={rangeFromValue}
+                        onChange={(event) => setRangeFromValue(event.target.value)}
+                        aria-label="Desde"
+                    />
+                    <span>hasta</span>
+                    <input
+                        type="date"
+                        className="neo-input"
+                        value={rangeToValue}
+                        onChange={(event) => setRangeToValue(event.target.value)}
+                        aria-label="Hasta"
+                    />
+                </div>
+            );
+        }
         if (mode === 'year') {
             return (
                 <input
