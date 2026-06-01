@@ -5705,6 +5705,124 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const amount = Number(req.body?.amount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            return res.status(400).json({ error: 'Monto de transferencia inválido' });
+        }
+
+        const fromCashAccount = normalizeCashAccountToken(req.body?.fromCashAccount || req.body?.from_cash_account);
+        const toCashAccount = normalizeCashAccountToken(req.body?.toCashAccount || req.body?.to_cash_account);
+        if (fromCashAccount === toCashAccount) {
+            return res.status(400).json({ error: 'Elegí cajas diferentes para transferir' });
+        }
+
+        const paymentMethod = String(req.body?.paymentMethod || req.body?.payment_method || 'Efectivo').trim() || 'Efectivo';
+        const paymentMethodType = String(req.body?.paymentMethodType || req.body?.payment_method_type || 'cash').trim() || 'cash';
+        const description = String(req.body?.description || '').trim();
+        const transferGroupId = String(req.body?.transferGroupId || req.body?.transfer_group_id || `tr_${Date.now()}`).trim();
+        const requestedDate = req.body?.date ? new Date(req.body.date) : new Date();
+        const transferDate = Number.isFinite(requestedDate.getTime()) ? requestedDate : new Date();
+
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+
+        const branchId = accessContext
+            ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: req.body || {} })
+            : null;
+        if (!Number.isFinite(Number(branchId)) || Number(branchId) <= 0) {
+            return res.status(400).json({ error: 'No se pudo resolver la sucursal para la transferencia' });
+        }
+
+        conn = await pool.getConnection();
+        await conn.beginTransaction();
+
+        const [balanceRows] = await conn.query(
+            `SELECT SUM(CASE
+                WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
+                WHEN type IN ('egreso', 'retiro', 'anulacion_venta') THEN -COALESCE(amount, 0)
+                ELSE COALESCE(amount, 0)
+            END) AS balance
+             FROM caja_movimientos
+             WHERE tenant_id = ?
+               AND date IS NOT NULL
+               AND date <= ?
+               AND (branch_id = ? OR branch_id IS NULL)
+               AND CASE
+                    WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                    ELSE 'principal'
+               END = ?
+               AND LOWER(COALESCE(payment_method_type, '')) = 'cash'`,
+            [tenantId, transferDate, Number(branchId), fromCashAccount]
+        );
+
+        const available = Number(balanceRows?.[0]?.balance || 0);
+        if (amount > available + 0.0001) {
+            const error = new Error(`Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}`);
+            error.statusCode = 409;
+            throw error;
+        }
+
+        const fromLabel = fromCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
+        const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
+        const common = {
+            tenant_id: tenantId,
+            branch_id: Number(branchId),
+            amount,
+            payment_method: paymentMethod,
+            payment_method_type: paymentMethodType,
+            transfer_group_id: transferGroupId,
+            date: transferDate,
+        };
+
+        const [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+            ...common,
+            type: 'retiro',
+            category: 'Transferencia enviada entre cajas',
+            description: description || `Transferencia a ${toLabel}`,
+            cash_account: fromCashAccount,
+        }]);
+
+        const [inResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+            ...common,
+            type: 'ingreso',
+            category: 'Transferencia recibida entre cajas',
+            description: description || `Transferencia desde ${fromLabel}`,
+            cash_account: toCashAccount,
+        }]);
+
+        await conn.commit();
+        return res.json({
+            ok: true,
+            transferGroupId,
+            branchId: Number(branchId),
+            fromMovementId: outResult.insertId,
+            toMovementId: inResult.insertId,
+        });
+    } catch (err) {
+        if (conn) {
+            try { await conn.rollback(); } catch {}
+        }
+        const statusCode = err?.statusCode || 500;
+        console.error('[CAJA TRANSFER ERROR]', err.message);
+        return res.status(statusCode).json({ error: err.message || 'No se pudo registrar la transferencia entre cajas' });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
     try {
         const settingKey = String(req.params.key || '').trim();

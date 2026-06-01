@@ -293,6 +293,20 @@ export const fetchCajaSummary = async (options = {}) => {
     return res.json();
 };
 
+export const createCashboxTransfer = async (payload = {}) => {
+    const res = await apiFetch('/api/caja/transfer', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo registrar la transferencia entre cajas');
+    }
+
+    return res.json();
+};
+
 export const saveTableRecord = async (table, operation, record, id) => {
     const res = await apiFetch('/api/data', {
         method: 'POST',

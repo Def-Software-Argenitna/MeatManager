@@ -11,7 +11,7 @@ import {
     Wallet,
     ArrowRightLeft,
 } from 'lucide-react';
-import { fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
+import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -130,6 +130,7 @@ const CierreCaja = () => {
     const [transferAmount, setTransferAmount] = useState('');
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
+    const [transferSubmitting, setTransferSubmitting] = useState(false);
 
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
@@ -587,6 +588,7 @@ const CierreCaja = () => {
 
     const handleTransferBetweenCashboxes = async (e) => {
         e.preventDefault();
+        if (transferSubmitting) return;
         const amount = parseFloat(transferAmount);
         if (!Number.isFinite(amount) || amount <= 0) {
             setFeedback({ type: 'warning', text: 'Ingresá un monto válido para transferir.' });
@@ -607,35 +609,29 @@ const CierreCaja = () => {
         const toLabel = CASH_ACCOUNTS.find((item) => item.value === transferToAccount)?.label || 'Caja destino';
         const selectedMethod = cashPaymentMethods.find((method) => method.name === transferPaymentMethod) || primaryCashMethod;
 
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: 'retiro',
-            amount,
-            category: 'Transferencia enviada entre cajas',
-            description: transferDesc || `Transferencia a ${toLabel}`,
-            payment_method: selectedMethod.name,
-            payment_method_type: 'cash',
-            cash_account: transferFromAccount,
-            transfer_group_id: transferGroupId,
-            date: new Date().toISOString(),
-        });
+        try {
+            setTransferSubmitting(true);
+            await createCashboxTransfer({
+                amount,
+                fromCashAccount: transferFromAccount,
+                toCashAccount: transferToAccount,
+                paymentMethod: selectedMethod.name,
+                paymentMethodType: 'cash',
+                description: transferDesc,
+                transferGroupId,
+                date: new Date().toISOString(),
+            });
 
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: 'ingreso',
-            amount,
-            category: 'Transferencia recibida entre cajas',
-            description: transferDesc || `Transferencia desde ${fromLabel}`,
-            payment_method: selectedMethod.name,
-            payment_method_type: 'cash',
-            cash_account: transferToAccount,
-            transfer_group_id: transferGroupId,
-            date: new Date().toISOString(),
-        });
-
-        await loadData();
-        setTransferAmount('');
-        setTransferDesc('');
-        setShowTransferForm(false);
-        setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
+            await loadData();
+            setTransferAmount('');
+            setTransferDesc('');
+            setShowTransferForm(false);
+            setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
+        } catch (error) {
+            setFeedback({ type: 'error', text: error?.message || 'No se pudo registrar la transferencia entre cajas.' });
+        } finally {
+            setTransferSubmitting(false);
+        }
     };
 
     return (
@@ -931,8 +927,8 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="save-btn">
-                                    <ArrowRightLeft size={16} /> Confirmar transferencia
+                                <button type="submit" className="save-btn" disabled={transferSubmitting}>
+                                    <ArrowRightLeft size={16} /> {transferSubmitting ? 'Transfiriendo...' : 'Confirmar transferencia'}
                                 </button>
                             </form>
                         )}
