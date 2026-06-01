@@ -1,10 +1,22 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { onAuthStateChanged, onIdTokenChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { auth } from '../firebase';
 import { SUPPORT_SESSION_EXPIRED_EVENT, clearTokenCache, fetchInternalAdminClients, loginInternalAdmin } from '../utils/apiClient';
 
 const SESSION_KEY = 'mm_tenant';
 const TOKEN_KEY = 'mm_auth_token';
+const LOCAL_SESSION_KEYS = [
+    SESSION_KEY,
+    TOKEN_KEY,
+    'mm_user',
+    'mm_perms',
+    'mm_access_profile',
+    'mm_active_branch',
+];
+
+const clearStoredSession = () => {
+    LOCAL_SESSION_KEYS.forEach((key) => sessionStorage.removeItem(key));
+};
 
 const TenantContext = createContext(null);
 
@@ -37,8 +49,7 @@ export const TenantProvider = ({ children }) => {
                     if (isSupportSessionTenant(currentTenant)) {
                         return currentTenant;
                     }
-                    sessionStorage.removeItem(SESSION_KEY);
-                    sessionStorage.removeItem(TOKEN_KEY);
+                    clearStoredSession();
                     setAuthToken('');
                     return null;
                 });
@@ -72,7 +83,7 @@ export const TenantProvider = ({ children }) => {
         const unsubscribe = onIdTokenChanged(auth, async (user) => {
             if (!user) {
                 if (!isSupportSessionTenant(tenant)) {
-                    sessionStorage.removeItem(TOKEN_KEY);
+                    clearStoredSession();
                     setAuthToken('');
                 }
                 return;
@@ -97,11 +108,7 @@ export const TenantProvider = ({ children }) => {
             clearTokenCache();
             setTenant(null);
             setAuthToken('');
-            sessionStorage.removeItem(SESSION_KEY);
-            sessionStorage.removeItem(TOKEN_KEY);
-            sessionStorage.removeItem('mm_user');
-            sessionStorage.removeItem('mm_perms');
-            sessionStorage.removeItem('mm_access_profile');
+            clearStoredSession();
 
             if (window.location.hash !== '#/login') {
                 window.location.hash = '#/login';
@@ -112,7 +119,7 @@ export const TenantProvider = ({ children }) => {
         return () => window.removeEventListener(SUPPORT_SESSION_EXPIRED_EVENT, handleSupportSessionExpired);
     }, []);
 
-    const login = async (email, password) => {
+    const login = useCallback(async (email, password) => {
         try {
             await signInWithEmailAndPassword(auth, email.trim(), password);
             return { ok: true };
@@ -134,9 +141,9 @@ export const TenantProvider = ({ children }) => {
             }
             return { ok: false, error: err?.message || 'No se pudo iniciar sesión' };
         }
-    };
+    }, []);
 
-    const loginSupport = async (identifier, password) => {
+    const loginSupport = useCallback(async (identifier, password) => {
         try {
             const result = await loginInternalAdmin(identifier.trim(), password);
             const token = result?.token || '';
@@ -150,9 +157,9 @@ export const TenantProvider = ({ children }) => {
         } catch (error) {
             return { ok: false, error: error?.message || 'No se pudo iniciar sesión como SuperAdmin' };
         }
-    };
+    }, []);
 
-    const activateSupportSession = async ({ token, admin, client }) => {
+    const activateSupportSession = useCallback(async ({ token, admin, client }) => {
         if (!token || !admin || !client?.id) {
             return { ok: false, error: 'Faltan datos para ingresar al tenant' };
         }
@@ -178,12 +185,13 @@ export const TenantProvider = ({ children }) => {
 
         setTenant(nextTenant);
         setAuthToken(token);
+        sessionStorage.removeItem('mm_active_branch');
         sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
         sessionStorage.setItem(TOKEN_KEY, token);
         return { ok: true };
-    };
+    }, []);
 
-    const logout = async () => {
+    const logout = useCallback(async () => {
         try {
             if (!isSupportSessionTenant(tenant)) {
                 await signOut(auth);
@@ -192,10 +200,9 @@ export const TenantProvider = ({ children }) => {
             clearTokenCache();
             setTenant(null);
             setAuthToken('');
-            sessionStorage.removeItem(SESSION_KEY);
-            sessionStorage.removeItem(TOKEN_KEY);
+            clearStoredSession();
         }
-    };
+    }, [tenant]);
 
     const value = useMemo(() => ({
         tenant,
@@ -206,7 +213,7 @@ export const TenantProvider = ({ children }) => {
         loading,
         authToken,
         isSupportSession: isSupportSessionTenant(tenant),
-    }), [tenant, loading, authToken]);
+    }), [tenant, login, loginSupport, activateSupportSession, logout, loading, authToken]);
 
     return (
         <TenantContext.Provider value={value}>

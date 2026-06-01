@@ -127,6 +127,7 @@ const clearLocalSessionState = () => {
     sessionStorage.removeItem('mm_user');
     sessionStorage.removeItem('mm_perms');
     sessionStorage.removeItem('mm_access_profile');
+    sessionStorage.removeItem('mm_active_branch');
 };
 
 const notifySupportSessionExpired = () => {
