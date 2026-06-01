@@ -127,6 +127,7 @@ const clearLocalSessionState = () => {
     sessionStorage.removeItem('mm_user');
     sessionStorage.removeItem('mm_perms');
     sessionStorage.removeItem('mm_access_profile');
+    sessionStorage.removeItem('mm_active_branch');
 };
 
 const notifySupportSessionExpired = () => {
@@ -275,6 +276,21 @@ export const fetchTable = async (table, options = {}) => {
     }
     const data = await res.json();
     return data?.rows || [];
+};
+
+export const fetchCajaSummary = async (options = {}) => {
+    const query = new URLSearchParams();
+    if (options.date) query.set('date', String(options.date));
+    if (options.branchId) query.set('branch_id', String(options.branchId));
+    if (options.cashAccount) query.set('cash_account', String(options.cashAccount));
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/caja/summary${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo calcular el resumen de caja');
+    }
+    return res.json();
 };
 
 export const saveTableRecord = async (table, operation, record, id) => {
