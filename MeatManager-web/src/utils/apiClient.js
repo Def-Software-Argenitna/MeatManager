@@ -264,6 +264,21 @@ export const fetchTable = async (table, options = {}) => {
     return data?.rows || [];
 };
 
+export const fetchCajaSummary = async (options = {}) => {
+    const query = new URLSearchParams();
+    if (options.date) query.set('date', String(options.date));
+    if (options.branchId) query.set('branch_id', String(options.branchId));
+    if (options.cashAccount) query.set('cash_account', String(options.cashAccount));
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/caja/summary${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo calcular el resumen de caja');
+    }
+    return res.json();
+};
+
 export const saveTableRecord = async (table, operation, record, id) => {
     const res = await apiFetch('/api/data', {
         method: 'POST',

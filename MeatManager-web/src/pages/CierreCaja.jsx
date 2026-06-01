@@ -11,7 +11,7 @@ import {
     Wallet,
     ArrowRightLeft,
 } from 'lucide-react';
-import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -81,45 +81,6 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
-const getSalePaymentBreakdown = (sale) => {
-    if (!sale?.payment_breakdown) return [];
-    if (Array.isArray(sale.payment_breakdown)) return sale.payment_breakdown;
-    if (typeof sale.payment_breakdown === 'string') {
-        try {
-            const parsed = JSON.parse(sale.payment_breakdown);
-            return Array.isArray(parsed) ? parsed : [];
-        } catch {
-            return [];
-        }
-    }
-    return [];
-};
-
-const buildSaleParts = (sale, { includeCurrentAccount = false } = {}) => {
-    const breakdown = getSalePaymentBreakdown(sale);
-    if (breakdown.length > 0) {
-        return breakdown
-            .map((part) => ({
-                name: part?.method_name || 'Efectivo',
-                type: part?.method_type || 'cash',
-                amount: toNumber(part?.amount_charged ?? part?.amount ?? 0),
-            }))
-            .filter((part) => (
-                includeCurrentAccount
-                    ? part.amount > 0
-                    : (part.amount > 0 && !isCurrentAccount(part.name, part.type))
-            ));
-    }
-
-    const fallback = {
-        name: sale?.payment_method || 'Efectivo',
-        type: 'cash',
-        amount: toNumber(sale?.total),
-    };
-    if (!includeCurrentAccount && isCurrentAccount(fallback.name, fallback.type)) return [];
-    return fallback.amount > 0 ? [fallback] : [];
-};
-
 const CierreCaja = () => {
     const now = new Date();
     const [selectedDate, setSelectedDate] = useState(
@@ -142,29 +103,25 @@ const CierreCaja = () => {
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
 
-    const [allSales, setAllSales] = useState([]);
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
 
     const loadData = useCallback(async () => {
-        setLoading(true);
         try {
-            const [salesRows, movRows, pmRows] = await Promise.all([
-                fetchTable('ventas', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+            const [movRows, pmRows, summaryRows] = await Promise.all([
                 fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+                fetchCajaSummary({ date: selectedDate }),
             ]);
-            setAllSales(Array.isArray(salesRows) ? salesRows : []);
             setAllMovements(Array.isArray(movRows) ? movRows : []);
             setPaymentMethods(Array.isArray(pmRows) ? pmRows : []);
+            setCashSummary(summaryRows || null);
         } catch (err) {
             console.error('[CierreCaja] loadData error', err);
-        } finally {
-            setLoading(false);
         }
-    }, []);
+    }, [selectedDate]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -176,25 +133,10 @@ const CierreCaja = () => {
         return Number.isFinite(d.getTime()) ? d : null;
     };
 
-    const sales = useMemo(() => allSales.filter((s) => {
-        const d = parseDate(s.date);
-        return d && d >= start && d <= end;
-    }), [allSales, start, end]);
-
-    const allSalesUntilDate = useMemo(() => allSales.filter((s) => {
-        const d = parseDate(s.date);
-        return d && d <= end;
-    }), [allSales, end]);
-
     const movements = useMemo(() => allMovements.filter((m) => {
         const d = parseDate(m.date);
         return d && d >= start && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
     }), [allMovements, start, end, selectedCashAccount]);
-
-    const allMovementsUntilDate = useMemo(() => allMovements.filter((m) => {
-        const d = parseDate(m.date);
-        return d && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
-    }), [allMovements, end, selectedCashAccount]);
 
     const salesMovements = useMemo(() => (
         (movements || []).filter((movement) => {
@@ -207,18 +149,10 @@ const CierreCaja = () => {
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
 
-    const cashBalanceByAccount = useMemo(() => {
-        const balances = { principal: 0, secondary: 0 };
-        allMovements.forEach((movement) => {
-            const d = parseDate(movement.date);
-            if (!d || d > end) return;
-            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
-            const account = normalizeCashAccount(movement.cash_account);
-            const sign = getMovementSign(movement);
-            balances[account] = (balances[account] || 0) + (toNumber(movement.amount) * sign);
-        });
-        return balances;
-    }, [allMovements, end]);
+    const cashBalanceByAccount = useMemo(() => ({
+        principal: toNumber(cashSummary?.byCashAccount?.principal?.accumulated),
+        secondary: toNumber(cashSummary?.byCashAccount?.secondary?.accumulated),
+    }), [cashSummary]);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -264,25 +198,25 @@ const CierreCaja = () => {
         });
     }, [activePaymentMethods]);
 
-    const salesByMethod = useMemo(() => {
-        const totals = {};
-        salesMovements.forEach((movement) => {
-            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
-            const sign = movement.type === 'anulacion_venta' ? -1 : 1;
-            const methodName = movement.payment_method || 'Efectivo';
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
-        });
+    const summaryRowsForSelectedAccount = useMemo(() => (
+        (cashSummary?.byPaymentMethod || [])
+            .filter((row) => normalizeCashAccount(row.cashAccount) === selectedCashAccount)
+    ), [cashSummary, selectedCashAccount]);
 
-        return Object.entries(totals).map(([name, total]) => {
-            const method = activePaymentMethods.find((item) => item.name === name);
-            return {
-                name,
-                total,
-                method: method || { name, type: 'cash' },
-                type: method?.type || 'cash',
-            };
+    const summaryByMethod = useMemo(() => {
+        const totals = {};
+        summaryRowsForSelectedAccount.forEach((row) => {
+            const methodName = row.name || 'Efectivo';
+            const existing = totals[methodName] || { ...row, accumulated: 0, opening: 0, sales: 0, manualNet: 0, dailyNet: 0 };
+            existing.accumulated += toNumber(row.accumulated);
+            existing.opening += toNumber(row.opening);
+            existing.sales += toNumber(row.sales);
+            existing.manualNet += toNumber(row.manualIncomes) - toNumber(row.manualExpenses);
+            existing.dailyNet += toNumber(row.dailyNet);
+            totals[methodName] = existing;
         });
-    }, [salesMovements, activePaymentMethods]);
+        return totals;
+    }, [summaryRowsForSelectedAccount]);
 
     const salesCountByMethod = useMemo(() => {
         const totals = {};
@@ -300,12 +234,11 @@ const CierreCaja = () => {
 
     const openingByMethod = useMemo(() => {
         const totals = {};
-        openingMovements.forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            totals[methodName] = (totals[methodName] || 0) + toNumber(movement.amount);
+        Object.entries(summaryByMethod).forEach(([methodName, row]) => {
+            totals[methodName] = toNumber(row.opening);
         });
         return totals;
-    }, [openingMovements]);
+    }, [summaryByMethod]);
 
     const lastClosingByMethod = useMemo(() => {
         const totals = {};
@@ -316,21 +249,13 @@ const CierreCaja = () => {
                 totals[method.name] = 0;
             });
 
-        allMovements.forEach((movement) => {
-            const movementDate = parseDate(movement.date);
-            if (!movementDate || movementDate >= start) return;
-            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
-
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+        Object.entries(summaryByMethod).forEach(([methodName, row]) => {
             if (!(methodName in totals)) return;
-
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            totals[methodName] = toNumber(row.accumulated) - toNumber(row.dailyNet);
         });
 
         return totals;
-    }, [activePaymentMethods, allMovements, selectedCashAccount, start]);
+    }, [activePaymentMethods, summaryByMethod]);
 
     const manualMovements = useMemo(() => (
         (movements || []).filter((movement) => {
@@ -343,43 +268,29 @@ const CierreCaja = () => {
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
 
-    const totalSales = salesMovements
-        .filter((movement) => movement.type === 'venta')
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalExpenses = manualMovements
-        .filter((movement) => movement.type === 'egreso' || movement.type === 'retiro')
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalIncomes = manualMovements
-        .filter((movement) => movement.type === 'ingreso')
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const selectedAccountSummary = cashSummary?.byCashAccount?.[selectedCashAccount] || {};
+    const totalSales = toNumber(selectedAccountSummary.sales);
+    const totalExpenses = toNumber(selectedAccountSummary.manualExpenses);
+    const totalIncomes = toNumber(selectedAccountSummary.manualIncomes);
     const currentAccountSales = 0;
 
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = 0;
-        });
-
-        (allMovementsUntilDate || []).forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.accumulated);
         });
 
         return totals;
-    }, [activePaymentMethods, allMovementsUntilDate]);
+    }, [activePaymentMethods, summaryByMethod]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
-        manualMovements.forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+        activePaymentMethods.forEach((method) => {
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.manualNet);
         });
         return totals;
-    }, [manualMovements]);
+    }, [activePaymentMethods, summaryByMethod]);
 
     const methodCards = useMemo(() => (
         activePaymentMethods
@@ -387,12 +298,12 @@ const CierreCaja = () => {
             .map((method) => ({
             ...method,
             opening: openingByMethod[method.name] || 0,
-            sales: salesByMethod.find((item) => item.name === method.name)?.total || 0,
+            sales: toNumber(summaryByMethod[method.name]?.sales),
             salesCount: salesCountByMethod[method.name] || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesByMethod, salesCountByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -448,7 +359,7 @@ const CierreCaja = () => {
     }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
-    const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);
+    const totalSalesIntoCashbox = totalSales - toNumber(selectedAccountSummary.reversals);
 
     const cashInDrawer = methodCards
         .filter((method) => method.type === 'cash')

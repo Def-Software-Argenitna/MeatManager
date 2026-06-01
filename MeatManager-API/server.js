@@ -1074,6 +1074,23 @@ async function ensureTableTenantIndexes(conn, tableName) {
     }
 }
 
+async function ensureIndex(conn, tableName, indexName, columnsSql) {
+    if (await hasIndex(conn, OPERATIONAL_DB_NAME, tableName, indexName)) {
+        return;
+    }
+
+    try {
+        await conn.query(
+            `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+             ADD INDEX \`${indexName}\` (${columnsSql})`
+        );
+    } catch (error) {
+        if (error?.code !== 'ER_DUP_KEYNAME') {
+            throw error;
+        }
+    }
+}
+
 async function ensureCompositePrimaryKey(conn, tableName) {
     const primaryColumns = await getPrimaryKeyColumns(conn, OPERATIONAL_DB_NAME, tableName);
     if (primaryColumns.length === 2 && primaryColumns[0] === 'id' && primaryColumns[1] === TENANT_COLUMN) {
@@ -2060,6 +2077,12 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
             await ensureColumnType(conn, 'prices', 'product_id', '`product_id` VARCHAR(191) NULL', ['varchar']);
+            await ensureIndex(
+                conn,
+                'caja_movimientos',
+                'idx_caja_summary',
+                '`tenant_id`, `branch_id`, `cash_account`, `payment_method`, `date`'
+            );
 
             // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
             await conn.query(
@@ -5191,12 +5214,36 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             return out;
         };
 
+        const assertCashMovementBranch = async (filtered, recordId = null) => {
+            if (table !== 'caja_movimientos') return;
+            const branchId = Number(filtered?.branch_id);
+            if (Number.isFinite(branchId) && branchId > 0) return;
+            if (!accessContext?.client?.id) return;
+            if (recordId) {
+                const scope = tenantWhereClause(table, tenantId);
+                const [existingRows] = await pool.query(
+                    `SELECT branch_id FROM \`${table}\` WHERE id = ? AND ${scope.sql} LIMIT 1`,
+                    [recordId, ...scope.params]
+                );
+                const existingBranchId = Number(existingRows?.[0]?.branch_id);
+                if (Number.isFinite(existingBranchId) && existingBranchId > 0) return;
+            }
+
+            const activeBranches = await listClientBranches(accessContext.client.id);
+            if (activeBranches.length > 1) {
+                const error = new Error('Debe especificar branch_id para movimientos de caja');
+                error.statusCode = 400;
+                throw error;
+            }
+        };
+
         if (operation === 'insert') {
             if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
             const filtered = await filterRecord(normalizedRecord, false); // incluir id si viene (Dexie lo manda)
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
+            await assertCashMovementBranch(filtered);
             if (table === 'products') {
                 filtered.plu = normalizePluValue(filtered.plu);
                 await assertUniqueProductPlu(pool, tenantId, filtered.plu);
@@ -5256,6 +5303,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para actualizar' });
             }
+            await assertCashMovementBranch(filtered, numId);
             if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
                 filtered.plu = normalizePluValue(filtered.plu);
                 await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId);
@@ -5328,6 +5376,221 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
 
 // ── RUTA: GET /api/settings/:key ───────────────────────────────────────────
 // Devuelve una setting puntual desde la BD MySQL del tenant autenticado.
+const normalizeCashSummaryDate = (value) => {
+    const raw = String(value || '').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const d = raw ? new Date(raw) : new Date();
+    if (!Number.isFinite(d.getTime())) {
+        const error = new Error('date invalida. Use YYYY-MM-DD');
+        error.statusCode = 400;
+        throw error;
+    }
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+};
+
+const normalizeCashAccountToken = (value) => {
+    const token = String(value || '').trim().toLowerCase();
+    if (['secundaria', 'secondary', 'caja_secundaria'].includes(token)) return 'secondary';
+    return 'principal';
+};
+
+const emptyCashSummaryTotals = () => ({
+    accumulated: 0,
+    opening: 0,
+    sales: 0,
+    manualIncomes: 0,
+    manualExpenses: 0,
+    reversals: 0,
+    dailyNet: 0,
+});
+
+const addCashSummaryTotals = (target, source) => {
+    target.accumulated += Number(source.accumulated || 0);
+    target.opening += Number(source.opening || 0);
+    target.sales += Number(source.sales || 0);
+    target.manualIncomes += Number(source.manualIncomes || 0);
+    target.manualExpenses += Number(source.manualExpenses || 0);
+    target.reversals += Number(source.reversals || 0);
+    target.dailyNet += Number(source.dailyNet || 0);
+};
+
+// Resumen contable de caja: el saldo sale del backend y no de la lista paginada.
+app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+        }
+
+        const selectedDate = normalizeCashSummaryDate(req.query.date);
+        const start = `${selectedDate} 00:00:00`;
+        const end = `${selectedDate} 23:59:59`;
+        const requestedCashAccount = String(req.query.cash_account || '').trim();
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: {
+                    branch_id: req.query.branch_id,
+                    branchId: req.query.branchId,
+                    receipt_code: req.query.receipt_code,
+                },
+            })
+            : null;
+
+        const where = [
+            '`tenant_id` = ?',
+            '`date` IS NOT NULL',
+            '`date` <= ?',
+            `NOT (
+                LOWER(COALESCE(payment_method_type, '')) = 'cuenta_corriente'
+                OR LOWER(COALESCE(payment_method, '')) = 'cuenta corriente'
+            )`,
+        ];
+        const params = [tenantId, end];
+
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            where.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+            params.push(resolvedBranchId);
+        }
+
+        if (requestedCashAccount) {
+            where.push(`CASE
+                WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                ELSE 'principal'
+            END = ?`);
+            params.push(normalizeCashAccountToken(requestedCashAccount));
+        }
+
+        const [rows] = await pool.query(
+            `SELECT
+                CASE
+                    WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                    ELSE 'principal'
+                END AS cash_account,
+                COALESCE(NULLIF(TRIM(payment_method), ''), 'Efectivo') AS payment_method,
+                COALESCE(NULLIF(TRIM(payment_method_type), ''), 'cash') AS payment_method_type,
+                SUM(CASE
+                    WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
+                    WHEN type IN ('egreso', 'retiro', 'anulacion_venta') THEN -COALESCE(amount, 0)
+                    ELSE COALESCE(amount, 0)
+                END) AS accumulated,
+                SUM(CASE WHEN date >= ? AND date <= ? AND type = 'apertura' THEN COALESCE(amount, 0) ELSE 0 END) AS opening,
+                SUM(CASE WHEN date >= ? AND date <= ? AND type = 'venta' THEN COALESCE(amount, 0) ELSE 0 END) AS sales,
+                SUM(CASE WHEN date >= ? AND date <= ? AND type = 'ingreso' THEN COALESCE(amount, 0) ELSE 0 END) AS manual_incomes,
+                SUM(CASE WHEN date >= ? AND date <= ? AND type IN ('egreso', 'retiro') THEN COALESCE(amount, 0) ELSE 0 END) AS manual_expenses,
+                SUM(CASE WHEN date >= ? AND date <= ? AND type = 'anulacion_venta' THEN COALESCE(amount, 0) ELSE 0 END) AS reversals,
+                SUM(CASE
+                    WHEN date >= ? AND date <= ? AND type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
+                    WHEN date >= ? AND date <= ? AND type IN ('egreso', 'retiro', 'anulacion_venta') THEN -COALESCE(amount, 0)
+                    ELSE 0
+                END) AS daily_net
+             FROM caja_movimientos
+             WHERE ${where.join(' AND ')}
+             GROUP BY cash_account, payment_method, payment_method_type
+             ORDER BY cash_account ASC, payment_method ASC`,
+            [
+                start, end,
+                start, end,
+                start, end,
+                start, end,
+                start, end,
+                start, end,
+                start, end,
+                ...params,
+            ]
+        );
+
+        const byCashAccount = {};
+        const groupedRows = new Map();
+        rows.forEach((row) => {
+            const totals = {
+                accumulated: Number(row.accumulated || 0),
+                opening: Number(row.opening || 0),
+                sales: Number(row.sales || 0),
+                manualIncomes: Number(row.manual_incomes || 0),
+                manualExpenses: Number(row.manual_expenses || 0),
+                reversals: Number(row.reversals || 0),
+                dailyNet: Number(row.daily_net || 0),
+            };
+            const cashAccount = normalizeCashAccountToken(row.cash_account);
+            const name = String(row.payment_method || 'Efectivo').trim() || 'Efectivo';
+            const type = String(row.payment_method_type || 'cash').trim() || 'cash';
+            const key = `${cashAccount}|${name.toLowerCase()}|${type.toLowerCase()}`;
+            if (!groupedRows.has(key)) {
+                groupedRows.set(key, {
+                    cashAccount,
+                    name,
+                    type,
+                    ...emptyCashSummaryTotals(),
+                });
+            }
+            addCashSummaryTotals(groupedRows.get(key), totals);
+        });
+
+        const byPaymentMethod = Array.from(groupedRows.values()).map((row) => {
+            const totals = {
+                accumulated: Number(row.accumulated || 0),
+                opening: Number(row.opening || 0),
+                sales: Number(row.sales || 0),
+                manualIncomes: Number(row.manualIncomes || 0),
+                manualExpenses: Number(row.manualExpenses || 0),
+                reversals: Number(row.reversals || 0),
+                dailyNet: Number(row.dailyNet || 0),
+            };
+            if (!byCashAccount[row.cashAccount]) byCashAccount[row.cashAccount] = emptyCashSummaryTotals();
+            addCashSummaryTotals(byCashAccount[row.cashAccount], totals);
+            return {
+                cashAccount: row.cashAccount,
+                name: row.name,
+                type: row.type,
+                ...totals,
+                today: {
+                    opening: totals.opening,
+                    sales: totals.sales,
+                    manualIncomes: totals.manualIncomes,
+                    manualExpenses: totals.manualExpenses,
+                    reversals: totals.reversals,
+                    net: totals.dailyNet,
+                },
+            };
+        });
+
+        const totals = emptyCashSummaryTotals();
+        Object.values(byCashAccount).forEach((cashTotals) => addCashSummaryTotals(totals, cashTotals));
+
+        return res.json({
+            ok: true,
+            date: selectedDate,
+            branchId: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null,
+            includesLegacyGlobalMovements: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0,
+            accumulatedBalance: totals.accumulated,
+            dailyBalance: {
+                opening: totals.opening,
+                sales: totals.sales,
+                manualIncomes: totals.manualIncomes,
+                manualExpenses: totals.manualExpenses,
+                reversals: totals.reversals,
+                net: totals.dailyNet,
+            },
+            byCashAccount,
+            byPaymentMethod,
+        });
+    } catch (err) {
+        const statusCode = err?.statusCode || 500;
+        console.error('[CAJA SUMMARY ERROR]', err.message);
+        res.status(statusCode).json({ error: err.message || 'No se pudo calcular el resumen de caja' });
+    }
+});
+
 app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
     try {
         const settingKey = String(req.params.key || '').trim();
