@@ -58,7 +58,8 @@ const normalizeCashAccount = (value) => {
 
 const isCurrentAccount = (name, type) => {
     const normalizedName = String(name || '').trim().toLowerCase();
-    return type === 'cuenta_corriente' || normalizedName === 'cuenta corriente';
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
 };
 
 const toNumber = (value) => Number(value) || 0;
@@ -73,6 +74,25 @@ const isAutoSaleMovement = (movement) => (
     movement?.type === 'venta' || movement?.type === 'anulacion_venta'
 );
 
+const isTransferMovement = (movement) => (
+    Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
+);
+
+const getManualMovementPresentation = (movement) => {
+    if (isTransferMovement(movement)) {
+        return {
+            label: movement.type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada',
+            note: movement.type === 'ingreso'
+                ? 'Ingreso interno desde otra caja. No es venta ni ajuste.'
+                : 'Salida interna hacia otra caja. No es gasto ni consumo.',
+        };
+    }
+    if (movement.type === 'ingreso') {
+        return { label: movement.category || 'Ingreso manual', note: 'Ingreso manual de caja.' };
+    }
+    return { label: movement.category || 'Retiro / gasto', note: 'Retiro, gasto o consumo de caja.' };
+};
+
 const getDayBounds = (selectedDate) => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     return {
@@ -81,6 +101,14 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
+const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
+
+const getCashAccountLabel = (value) => (
+    CASH_ACCOUNTS.find((item) => item.value === normalizeCashAccount(value))?.label || 'Caja Principal'
+);
 const CierreCaja = () => {
     const now = new Date();
     const [selectedDate, setSelectedDate] = useState(
@@ -149,11 +177,6 @@ const CierreCaja = () => {
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
 
-    const cashBalanceByAccount = useMemo(() => ({
-        principal: toNumber(cashSummary?.byCashAccount?.principal?.accumulated),
-        secondary: toNumber(cashSummary?.byCashAccount?.secondary?.accumulated),
-    }), [cashSummary]);
-
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
             .filter((method) => method.enabled && !isCurrentAccount(method.name, method.type));
@@ -170,6 +193,29 @@ const CierreCaja = () => {
         return methods;
     }, [paymentMethods]);
 
+    const cashPaymentMethods = useMemo(() => {
+        const methods = activePaymentMethods.filter((method) => method.type === 'cash');
+        return methods.length > 0 ? methods : [{ id: 'cash-fallback', name: 'Efectivo', type: 'cash', enabled: true }];
+    }, [activePaymentMethods]);
+
+    const primaryCashMethod = cashPaymentMethods[0] || { name: 'Efectivo', type: 'cash' };
+
+    const cashboxCashBalanceByAccount = useMemo(() => {
+        const cashMethodNames = new Set(cashPaymentMethods.map((method) => method.name));
+        const balances = { principal: 0, secondary: 0 };
+
+        (cashSummary?.byPaymentMethod || []).forEach((row) => {
+            const methodName = row.name || 'Efectivo';
+            const methodType = String(row.type || '').trim().toLowerCase();
+            if (methodType !== 'cash' && !cashMethodNames.has(methodName)) return;
+
+            const account = normalizeCashAccount(row.cashAccount);
+            balances[account] = (balances[account] || 0) + toNumber(row.accumulated);
+        });
+
+        return balances;
+    }, [cashPaymentMethods, cashSummary]);
+
     useEffect(() => {
         setMovementPaymentMethod((prev) => (
             activePaymentMethods.some((method) => method.name === prev)
@@ -177,11 +223,11 @@ const CierreCaja = () => {
                 : activePaymentMethods[0]?.name || 'Efectivo'
         ));
         setTransferPaymentMethod((prev) => (
-            activePaymentMethods.some((method) => method.name === prev)
+            cashPaymentMethods.some((method) => method.name === prev)
                 ? prev
-                : activePaymentMethods[0]?.name || 'Efectivo'
+                : primaryCashMethod.name
         ));
-    }, [activePaymentMethods]);
+    }, [activePaymentMethods, cashPaymentMethods, primaryCashMethod.name]);
 
     useEffect(() => {
         setTransferFromAccount(selectedCashAccount);
@@ -191,12 +237,12 @@ const CierreCaja = () => {
     useEffect(() => {
         setOpeningDraft((prev) => {
             const next = {};
-            activePaymentMethods.filter((method) => method.type === 'cash').forEach((method) => {
+            cashPaymentMethods.forEach((method) => {
                 next[method.name] = prev[method.name] || '';
             });
             return next;
         });
-    }, [activePaymentMethods]);
+    }, [cashPaymentMethods]);
 
     const summaryRowsForSelectedAccount = useMemo(() => (
         (cashSummary?.byPaymentMethod || [])
@@ -243,11 +289,9 @@ const CierreCaja = () => {
     const lastClosingByMethod = useMemo(() => {
         const totals = {};
 
-        activePaymentMethods
-            .filter((method) => method.type === 'cash')
-            .forEach((method) => {
-                totals[method.name] = 0;
-            });
+        cashPaymentMethods.forEach((method) => {
+            totals[method.name] = 0;
+        });
 
         Object.entries(summaryByMethod).forEach(([methodName, row]) => {
             if (!(methodName in totals)) return;
@@ -255,7 +299,7 @@ const CierreCaja = () => {
         });
 
         return totals;
-    }, [activePaymentMethods, summaryByMethod]);
+    }, [cashPaymentMethods, summaryByMethod]);
 
     const manualMovements = useMemo(() => (
         (movements || []).filter((movement) => {
@@ -268,10 +312,23 @@ const CierreCaja = () => {
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
 
-    const selectedAccountSummary = cashSummary?.byCashAccount?.[selectedCashAccount] || {};
+    const selectedAccountSummary = useMemo(() => (
+        cashSummary?.byCashAccount?.[selectedCashAccount] || {}
+    ), [cashSummary, selectedCashAccount]);
     const totalSales = toNumber(selectedAccountSummary.sales);
-    const totalExpenses = toNumber(selectedAccountSummary.manualExpenses);
-    const totalIncomes = toNumber(selectedAccountSummary.manualIncomes);
+    const transferOutMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
+    const transferInMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso');
+    const totalTransfersOut = transferOutMovements
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalTransfersIn = transferInMovements
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalExpenses = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
+    const totalIncomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
+    const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
+    const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
+    const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = 0;
 
     const accumulatedByMethod = useMemo(() => {
@@ -341,7 +398,9 @@ const CierreCaja = () => {
             .map((sale) => {
                 const cajaParts = sale.fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
                 const cuentaCorrienteParts = sale.fullParts.filter((part) => isCurrentAccount(part.name, part.type));
-                const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+                const cajaAmount = sale.fullParts
+                    .filter((part) => !isCurrentAccount(part.name, part.type))
+                    .reduce((sum, part) => sum + toNumber(part.amount), 0);
                 const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
                 return {
                     ...sale,
@@ -365,18 +424,51 @@ const CierreCaja = () => {
         .filter((method) => method.type === 'cash')
         .reduce((sum, method) => sum + method.accumulated, 0);
 
+    const cashBalanceExplanation = useMemo(() => {
+        const previous = toNumber(selectedAccountSummary.accumulated) - toNumber(selectedAccountSummary.dailyNet);
+        const openings = toNumber(selectedAccountSummary.opening);
+        const sales = toNumber(selectedAccountSummary.sales);
+        const incomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
+        const outflows = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
+        const reversals = toNumber(selectedAccountSummary.reversals);
+        const parts = {
+            previous,
+            openings,
+            sales,
+            incomes,
+            transfersIn: totalTransfersIn,
+            transfersOut: totalTransfersOut,
+            outflows,
+            reversals,
+            adjustments: 0,
+        };
+
+        const available = parts.previous + parts.openings + parts.sales + parts.incomes + parts.transfersIn + Math.max(parts.adjustments, 0);
+        const deductions = parts.transfersOut + parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
+        const reason = cashInDrawer < 0
+            ? `Está en negativo porque las salidas de efectivo superan los fondos disponibles por ${formatCurrency(Math.abs(cashInDrawer))}.`
+            : cashInDrawer > 0
+                ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
+                : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
+
+        return {
+            ...parts,
+            available,
+            deductions,
+            reason,
+        };
+    }, [cashInDrawer, selectedAccountSummary, totalTransfersIn, totalTransfersOut]);
+
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
 
-        activePaymentMethods
-            .filter((method) => method.type === 'cash')
-            .forEach((method) => {
-                const amount = toNumber(source[method.name]);
-                next[method.name] = amount > 0 ? String(amount) : '';
-            });
+        cashPaymentMethods.forEach((method) => {
+            const amount = toNumber(source[method.name]);
+            next[method.name] = amount > 0 ? String(amount) : '';
+        });
 
         return next;
-    }, [activePaymentMethods]);
+    }, [cashPaymentMethods]);
 
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
@@ -474,24 +566,24 @@ const CierreCaja = () => {
             setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
             return;
         }
-        const available = toNumber(cashBalanceByAccount[transferFromAccount]);
+        const available = toNumber(cashboxCashBalanceByAccount[transferFromAccount]);
         if (amount > available) {
-            setFeedback({ type: 'warning', text: `Saldo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
+            setFeedback({ type: 'warning', text: `Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
             return;
         }
 
         const transferGroupId = `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const fromLabel = CASH_ACCOUNTS.find((item) => item.value === transferFromAccount)?.label || 'Caja origen';
         const toLabel = CASH_ACCOUNTS.find((item) => item.value === transferToAccount)?.label || 'Caja destino';
-        const selectedMethod = activePaymentMethods.find((method) => method.name === transferPaymentMethod);
+        const selectedMethod = cashPaymentMethods.find((method) => method.name === transferPaymentMethod) || primaryCashMethod;
 
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'retiro',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia enviada entre cajas',
             description: transferDesc || `Transferencia a ${toLabel}`,
-            payment_method: transferPaymentMethod,
-            payment_method_type: selectedMethod?.type || 'cash',
+            payment_method: selectedMethod.name,
+            payment_method_type: 'cash',
             cash_account: transferFromAccount,
             transfer_group_id: transferGroupId,
             date: new Date().toISOString(),
@@ -500,10 +592,10 @@ const CierreCaja = () => {
         await saveTableRecord('caja_movimientos', 'insert', {
             type: 'ingreso',
             amount,
-            category: 'Transferencia entre cajas',
+            category: 'Transferencia recibida entre cajas',
             description: transferDesc || `Transferencia desde ${fromLabel}`,
-            payment_method: transferPaymentMethod,
-            payment_method_type: selectedMethod?.type || 'cash',
+            payment_method: selectedMethod.name,
+            payment_method_type: 'cash',
             cash_account: transferToAccount,
             transfer_group_id: transferGroupId,
             date: new Date().toISOString(),
@@ -554,9 +646,22 @@ const CierreCaja = () => {
             )}
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
-                <div className="stat-box result">
-                    <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
+                <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
+                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
+                    <div className="cash-result-breakdown">
+                        <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
+                        <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
+                        <span>Saldo previo: {formatCurrency(cashBalanceExplanation.previous)}</span>
+                        <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
+                        <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
+                        <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>
+                        <span>Transf. recibidas: {formatCurrency(cashBalanceExplanation.transfersIn)}</span>
+                        <span>Transf. enviadas: -{formatCurrency(cashBalanceExplanation.transfersOut)}</span>
+                        <span>Retiros/gastos: -{formatCurrency(cashBalanceExplanation.outflows)}</span>
+                        <span>Anulaciones: -{formatCurrency(cashBalanceExplanation.reversals)}</span>
+                    </div>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
@@ -565,6 +670,16 @@ const CierreCaja = () => {
                 <div className="stat-box expense">
                     <span className="label">Retiros / gastos del día</span>
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
+                </div>
+                <div className="stat-box transfer-out">
+                    <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                    <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                </div>
+                <div className="stat-box transfer-in">
+                    <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                    <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
@@ -644,6 +759,16 @@ const CierreCaja = () => {
                             <span className="label">Retiros y gastos</span>
                             <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                         </div>
+                        <div className="stat-box transfer-out">
+                            <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                            <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                        </div>
+                        <div className="stat-box transfer-in">
+                            <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                            <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
+                        </div>
                     </div>
 
                     <div className="expenses-section">
@@ -677,7 +802,7 @@ const CierreCaja = () => {
                         {showOpeningForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleSaveOpening}>
                                 <div className="form-grid">
-                                    {activePaymentMethods.filter(m => m.type === 'cash').map((method) => (
+                                    {cashPaymentMethods.map((method) => (
                                         <div className="form-group full" key={method.name}>
                                             <label>{method.name} inicial (Apertura)</label>
                                             <input
@@ -725,7 +850,7 @@ const CierreCaja = () => {
                                             ))}
                                         </select>
                                         <small style={{ color: 'var(--color-text-muted)' }}>
-                                            Disponible: ${toNumber(cashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
+                                            Disponible efectivo: ${toNumber(cashboxCashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
                                         </small>
                                     </div>
                                     <div className="form-group">
@@ -747,7 +872,7 @@ const CierreCaja = () => {
                                             value={transferPaymentMethod}
                                             onChange={(e) => setTransferPaymentMethod(e.target.value)}
                                         >
-                                            {activePaymentMethods.map((method) => (
+                                            {cashPaymentMethods.map((method) => (
                                                 <option key={method.name} value={method.name}>{method.name}</option>
                                             ))}
                                         </select>
@@ -872,21 +997,23 @@ const CierreCaja = () => {
                             {manualMovements.length === 0 && (
                                 <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
-                            {manualMovements.map((movement) => (
-                                <div key={movement.id} className={`movement-item ${movement.type}`}>
-                                    <div className="m-info">
-                                        <span className="m-cat">{movement.category}</span>
-                                        <span className="m-desc">
-                                            {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
-                                            {movement.transfer_group_id ? ' · transferencia interna' : ''}
+                            {manualMovements.map((movement) => {
+                                const presentation = getManualMovementPresentation(movement);
+                                return (
+                                    <div key={movement.id} className={`movement-item ${movement.type} ${isTransferMovement(movement) ? 'transfer' : ''}`}>
+                                        <div className="m-info">
+                                            <span className="m-cat">{presentation.label}</span>
+                                            <span className="m-desc">
+                                                {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'} · {presentation.note}
+                                            </span>
+                                        </div>
+                                        <span className="m-amount">
+                                            {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                         </span>
+                                        <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
                                     </div>
-                                    <span className="m-amount">
-                                        {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
-                                    </span>
-                                    <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         <div className="section-header section-header-secondary">

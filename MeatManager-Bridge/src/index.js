@@ -81,6 +81,8 @@ function runtimeSnapshot() {
         scalePort: config.scale.port,
         scaleAddress: config.scale.address,
         syncIntervalMs: config.syncIntervalMs,
+        autoGeneralSyncEnabled: config.autoGeneralSyncEnabled,
+        heartbeatIntervalMs: config.heartbeatIntervalMs,
         productSyncIntervalMs: config.productSyncIntervalMs,
         salesResyncSkewMinutes: config.salesResyncSkewMinutes,
         lastRunStatus: state.lastRunStatus,
@@ -165,9 +167,55 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
     }
 }
 
+async function runProductSync(reason = 'on-demand') {
+    if (cycleRunning) return { ok: false, skipped: true, busy: true };
+    cycleRunning = true;
+    logger.info('Iniciando sincronizacion de productos/configuracion por demanda', { reason });
+    try {
+        const runtimeSettings = await bridge.syncRuntimeSettings();
+        await bridge.syncVendors().catch((error) => {
+            logger.warn('No se pudieron sincronizar vendedores en balanza por demanda', { error: error.message });
+        });
+        const result = await bridge.syncProducts({
+            runtimeScaleConfig: runtimeSettings.runtimeScaleConfig,
+            priceFormat: runtimeSettings.priceFormat,
+            forceProductRewrite: runtimeSettings.forceProductRewrite,
+        });
+        state.lastProductSyncAt = new Date().toISOString();
+        stateStore.save(state);
+        logger.info('Sincronizacion de productos/configuracion por demanda finalizada', { reason, result });
+        return { ok: true, result };
+    } catch (error) {
+        state.lastRunAt = new Date().toISOString();
+        state.lastRunStatus = 'error';
+        state.lastRunMessage = error.message;
+        state.lastError = error.message;
+        stateStore.save(state);
+        logger.error('Sincronizacion de productos/configuracion por demanda con error', { reason, error: error.message });
+        return { ok: false, error: error.message };
+    } finally {
+        cycleRunning = false;
+    }
+}
+
+async function processHeartbeatCommands(payload) {
+    const commands = Array.isArray(payload?.commands) ? payload.commands : [];
+    for (const command of commands) {
+        if (command?.type !== 'sync_products') continue;
+        const seq = Number(command.seq || 0) || 0;
+        if (!seq || Number(state.lastProductSyncCommandSeq || 0) >= seq) continue;
+
+        const result = await runProductSync(`heartbeat-command:${seq}`);
+        if (result.ok) {
+            state.lastProductSyncCommandSeq = seq;
+            stateStore.save(state);
+        }
+    }
+}
+
 async function sendHeartbeat() {
     try {
-        await apiClient.postHeartbeat({
+        const payload = await apiClient.postHeartbeat({
             scales: [{
                 scaleId: config.scaleId,
                 port: config.scale.port,
@@ -175,6 +223,7 @@ async function sendHeartbeat() {
                 lastPingOk: state.lastRunStatus === 'ok',
             }],
         });
+        await processHeartbeatCommands(payload);
     } catch (error) {
         logger.warn('No se pudo enviar heartbeat', { error: error.message });
     }
@@ -231,8 +280,8 @@ function startHttpServer() {
 
         if (pathname === '/api/scale/sync-products' && req.method === 'POST') {
             try {
-                const result = await bridge.syncProducts();
-                return sendJson(res, 200, { ok: true, result });
+                const result = await runProductSync('http-sync-products');
+                return sendJson(res, result.ok ? 200 : (result.skipped ? 202 : 500), result);
             } catch (error) {
                 return sendJson(res, 500, { ok: false, error: error.message });
             }
@@ -277,16 +326,24 @@ async function main() {
     await runCycle('startup');
 
     schedulerActive = true;
-    const scheduleNext = (delayMs = config.syncIntervalMs) => {
-        if (!schedulerActive) return;
-        const nextDelay = Math.max(2000, Number(delayMs) || 2000);
-        timer = setTimeout(async () => {
-            timer = null;
-            await runCycle('interval');
-            scheduleNext(config.syncIntervalMs);
-        }, nextDelay);
-    };
-    scheduleNext(config.syncIntervalMs);
+    if (config.autoGeneralSyncEnabled) {
+        const scheduleNext = (delayMs = config.syncIntervalMs) => {
+            if (!schedulerActive) return;
+            const nextDelay = Math.max(2000, Number(delayMs) || 2000);
+            timer = setTimeout(async () => {
+                timer = null;
+                await runCycle('interval');
+                scheduleNext(config.syncIntervalMs);
+            }, nextDelay);
+        };
+        scheduleNext(config.syncIntervalMs);
+    } else {
+        logger.info('Sincronizacion general automatica deshabilitada; ventas quedan en pulso y productos/configuracion por demanda', {
+            salesPulseEnabled: config.salesPulseEnabled,
+            salesPulseIntervalMs: config.salesPulseIntervalMs,
+            syncProductsEndpoint: `http://127.0.0.1:${config.httpPort}/api/scale/sync-products`,
+        });
+    }
 
     if (config.salesPulseEnabled) {
         const scheduleSalesPulse = (delayMs = config.salesPulseIntervalMs) => {
@@ -301,8 +358,8 @@ async function main() {
         scheduleSalesPulse(config.salesPulseIntervalMs);
     }
 
-    // Heartbeat al API cada 60s para que el server sepa que el bridge esta vivo.
-    const heartbeatIntervalMs = 60_000;
+    // Heartbeat liviano al API; tambien trae comandos pendientes para la balanza.
+    const heartbeatIntervalMs = Math.max(5000, Number(config.heartbeatIntervalMs || 10000));
     const scheduleHeartbeat = () => {
         if (!schedulerActive) return;
         heartbeatTimer = setTimeout(async () => {

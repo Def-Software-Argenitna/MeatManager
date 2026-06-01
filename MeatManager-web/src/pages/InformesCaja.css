@@ -1,0 +1,438 @@
+.informes-caja-container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1.5rem;
+}
+
+.informes-caja-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.informes-caja-header h1 {
+    margin: 0;
+    font-size: 1.8rem;
+}
+
+.informes-caja-header p {
+    margin: 0.35rem 0 0;
+    color: var(--color-text-muted);
+}
+
+.ic-refresh-btn,
+.ic-export-actions button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    background: var(--color-primary);
+    padding: 0.65rem 0.95rem;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.ic-refresh-btn:disabled {
+    opacity: 0.65;
+    cursor: wait;
+}
+
+.spin {
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+.ic-feedback {
+    margin-bottom: 1rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.08);
+    border: 1px solid rgba(245, 158, 11, 0.24);
+    font-weight: 700;
+}
+
+.ic-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 1.25rem 1rem;
+    padding: 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.ic-control-group.mode {
+    display: flex;
+    gap: 0.35rem;
+    flex: 2 1 480px;
+    min-width: 290px;
+}
+
+.ic-control-group.mode .ic-mode-btn {
+    flex: 1;
+    border: 1px solid var(--color-border) !important;
+    background: rgba(255, 255, 255, 0.03) !important;
+    color: var(--color-text-muted) !important;
+    border-radius: var(--radius-md) !important;
+    min-height: 42px !important;
+    padding: 0.4rem 0.5rem !important;
+    font-weight: 800 !important;
+    font-size: 0.72rem !important;
+    cursor: pointer !important;
+    text-transform: uppercase !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    line-height: 1.2 !important;
+    word-break: break-word !important;
+    transition: all 0.2s ease !important;
+}
+
+.ic-control-group.mode .ic-mode-btn.active {
+    border-color: var(--color-primary) !important;
+    color: var(--color-primary) !important;
+    background: rgba(var(--color-primary-rgb), 0.12) !important;
+    box-shadow: 0 0 12px rgba(var(--color-primary-rgb), 0.15) !important;
+}
+
+.ic-controls label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+    font-weight: 800;
+    flex: 1 1 180px;
+    min-width: 140px;
+}
+
+.ic-controls label.ic-range-label {
+    flex: 2 1 320px;
+    min-width: 290px;
+}
+
+.ic-range-inputs {
+    display: grid;
+    grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr);
+    align-items: center;
+    gap: 0.45rem;
+}
+
+.ic-range-inputs span {
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    font-weight: 800;
+}
+
+.ic-export-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex: 1 1 auto;
+}
+
+.ic-export-actions button {
+    flex: 1;
+}
+
+.ic-export-actions button:first-child {
+    background: #15803d;
+}
+
+.ic-export-actions button:last-child {
+    background: #b91c1c;
+}
+
+.ic-metrics-grid,
+.ic-comparison-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+}
+
+.ic-metric,
+.ic-compare-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-bg-card);
+    padding: 1rem;
+}
+
+.ic-metric span,
+.ic-compare-card span {
+    display: block;
+    font-size: 0.75rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    font-weight: 800;
+    margin-bottom: 0.45rem;
+}
+
+.ic-metric strong,
+.ic-compare-card strong {
+    display: block;
+    font-size: 1.45rem;
+    color: var(--color-text-main);
+}
+
+.ic-metric.income strong,
+.ic-compare-card.good strong {
+    color: #22c55e;
+}
+
+.ic-metric.expense strong,
+.ic-metric.danger strong,
+.ic-compare-card.bad strong {
+    color: #ef4444;
+}
+
+.ic-compare-card {
+    position: relative;
+}
+
+.ic-compare-card svg {
+    position: absolute;
+    right: 1rem;
+    top: 1rem;
+}
+
+.ic-grid {
+    display: grid;
+    grid-template-columns: 1fr 1.1fr;
+    gap: 1.25rem;
+    margin-bottom: 1.25rem;
+}
+
+.ic-card {
+    padding: 1.25rem;
+}
+
+.ic-card-header {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 1rem;
+    padding-bottom: 0.9rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.ic-card-header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+}
+
+.ic-findings {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.ic-finding {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.85rem 0.95rem;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.ic-finding strong,
+.ic-finding span {
+    display: block;
+}
+
+.ic-finding span {
+    margin-top: 0.35rem;
+    color: var(--color-text-muted);
+    font-size: 0.9rem;
+    line-height: 1.4;
+}
+
+.ic-finding.success {
+    border-color: rgba(34, 197, 94, 0.35);
+    background: rgba(34, 197, 94, 0.08);
+}
+
+.ic-finding.warning {
+    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(245, 158, 11, 0.08);
+}
+
+.ic-finding.danger {
+    border-color: rgba(239, 68, 68, 0.35);
+    background: rgba(239, 68, 68, 0.08);
+}
+
+.ic-reconciliation {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+    margin-top: 1rem;
+}
+
+.ic-reconciliation div {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.75rem;
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.ic-reconciliation span {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    font-weight: 800;
+}
+
+.ic-reconciliation strong {
+    display: block;
+    margin-top: 0.35rem;
+}
+
+.ic-account-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.ic-account-row {
+    display: grid;
+    grid-template-columns: minmax(160px, 0.65fr) 1fr;
+    gap: 0.9rem;
+    padding: 0.85rem;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: rgba(255, 255, 255, 0.025);
+}
+
+.ic-account-row strong,
+.ic-account-row span {
+    display: block;
+}
+
+.ic-account-row span {
+    color: var(--color-text-muted);
+    font-size: 0.82rem;
+}
+
+.ic-account-values {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem 0.75rem;
+}
+
+.ic-table-wrap {
+    overflow: auto;
+    max-height: 620px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+}
+
+.ic-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 1120px;
+}
+
+.ic-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-bg-card);
+    color: var(--color-text-muted);
+    font-size: 0.75rem;
+    text-align: left;
+    text-transform: uppercase;
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.ic-table td {
+    padding: 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    vertical-align: top;
+    font-size: 0.88rem;
+}
+
+.ic-table .num {
+    text-align: right;
+    white-space: nowrap;
+    font-weight: 800;
+}
+
+.ic-table .income {
+    color: #22c55e;
+}
+
+.ic-table .expense {
+    color: #ef4444;
+}
+
+.ic-detail-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    min-width: 260px;
+}
+
+.ic-detail-cell small {
+    color: var(--color-text-muted);
+}
+
+.ic-empty {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 2rem !important;
+}
+
+@media (max-width: 1100px) {
+    .ic-controls {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ic-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .ic-metrics-grid,
+    .ic-comparison-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .informes-caja-container {
+        padding: 1rem;
+    }
+
+    .informes-caja-header,
+    .ic-export-actions,
+    .ic-account-row {
+        flex-direction: column;
+        display: flex;
+        align-items: stretch;
+    }
+
+    .ic-control-group.mode {
+        flex-direction: column;
+    }
+
+    .ic-metrics-grid,
+    .ic-comparison-grid,
+    .ic-reconciliation,
+    .ic-account-values {
+        grid-template-columns: 1fr;
+    }
+}
