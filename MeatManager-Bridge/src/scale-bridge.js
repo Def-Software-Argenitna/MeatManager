@@ -1,3 +1,5 @@
+const fs = require('fs');
+const path = require('path');
 const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode } = require('./helpers');
 const { CuoraClient } = require('./cuora-client');
 const {
@@ -42,6 +44,14 @@ function normalizeToken(value) {
     return normalizeAscii(String(value || '')).toLowerCase().trim();
 }
 
+function nowIso() {
+    return new Date().toISOString();
+}
+
+function elapsedMs(startedAt) {
+    return startedAt ? Date.now() - startedAt : null;
+}
+
 class ScaleBridge {
     constructor({ config, logger, state, stateStore, apiClient }) {
         if (!apiClient) throw new Error('ScaleBridge requiere apiClient');
@@ -55,6 +65,28 @@ class ScaleBridge {
             config: config.scale,
             logger,
         });
+        this.scaleLatencyLogFile = path.join(config.logsDir, 'scale-ticket-latency.log');
+    }
+
+    logTicketLatency(event, meta = {}) {
+        const entry = {
+            ts: nowIso(),
+            source: 'bridge',
+            event,
+            deviceId: this.config.deviceId,
+            branchId: this.config.branchId,
+            scaleId: this.scaleId,
+            ...meta,
+        };
+        try {
+            fs.mkdirSync(path.dirname(this.scaleLatencyLogFile), { recursive: true });
+            fs.appendFileSync(this.scaleLatencyLogFile, `${JSON.stringify(entry)}\n`, 'utf8');
+        } catch (error) {
+            this.logger?.warn?.('No se pudo escribir log de latencia de tickets', {
+                file: this.scaleLatencyLogFile,
+                error: error.message,
+            });
+        }
     }
 
     async ping() {
@@ -792,6 +824,12 @@ class ScaleBridge {
     }
 
     async pullSales({ fromDate, toDate, closeAfter = false }) {
+        const pullStartedAt = Date.now();
+        this.logTicketLatency('bridge_pull_sales_start', {
+            fromDate: new Date(fromDate).toISOString(),
+            toDate: new Date(toDate).toISOString(),
+            closeAfter,
+        });
         const { vendors: vendorRows = [] } = await this.api.getVendors().catch(() => ({ vendors: [] }));
         const vendorByCode = new Map(
             vendorRows.map((row) => [
@@ -820,9 +858,17 @@ class ScaleBridge {
         const yearTo = new Date(year, 11, 31, 23, 59, 59);
         const annualPayload = buildSales72Payload(yearFrom, yearTo);
 
+        const scaleReadStartedAt = Date.now();
+        this.logTicketLatency('bridge_scale_fn72_start', { payload });
         let response = await this.scale.send(72, payload, { timeoutMs: 30000 });
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         let responseData = String(response.data || '');
+        this.logTicketLatency('bridge_scale_fn72_done', {
+            elapsedMs: elapsedMs(scaleReadStartedAt),
+            responseChars: responseData.length,
+            crcOk: response.crc.ok,
+            fallback: 'none',
+        });
         if (responseData.startsWith('E7')) {
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
@@ -831,18 +877,34 @@ class ScaleBridge {
                 annualPayload,
                 response: responseData,
             });
+            const annualReadStartedAt = Date.now();
+            this.logTicketLatency('bridge_scale_fn72_start', { payload: annualPayload, fallback: 'annual' });
             response = await this.scale.send(72, annualPayload, { timeoutMs: 30000 });
             if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback anual)');
             responseData = String(response.data || '');
+            this.logTicketLatency('bridge_scale_fn72_done', {
+                elapsedMs: elapsedMs(annualReadStartedAt),
+                responseChars: responseData.length,
+                crcOk: response.crc.ok,
+                fallback: 'annual',
+            });
 
             if (responseData.startsWith('E7')) {
                 this.logger.info('Funcion 72 fallback anual sin datos, intentando consulta sin parametros', {
                     annualPayload,
                     response: responseData,
                 });
+                const emptyReadStartedAt = Date.now();
+                this.logTicketLatency('bridge_scale_fn72_start', { payload: '', fallback: 'empty' });
                 response = await this.scale.send(72, '', { timeoutMs: 30000 });
                 if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback vacio)');
                 responseData = String(response.data || '');
+                this.logTicketLatency('bridge_scale_fn72_done', {
+                    elapsedMs: elapsedMs(emptyReadStartedAt),
+                    responseChars: responseData.length,
+                    crcOk: response.crc.ok,
+                    fallback: 'empty',
+                });
             }
         }
         if (responseData.startsWith('E7')) {
@@ -851,6 +913,9 @@ class ScaleBridge {
                 to: new Date(toDate).toISOString(),
                 payload,
                 response: responseData,
+            });
+            this.logTicketLatency('bridge_pull_sales_no_data', {
+                elapsedMs: elapsedMs(pullStartedAt),
             });
             return { ok: true, fetched: 0, stored: 0, tickets: 0, noData: true };
         }
@@ -864,25 +929,47 @@ class ScaleBridge {
             throw new Error(`Error al leer ventas: ${responseData}`);
         }
 
+        const parseStartedAt = Date.now();
         let rows = parseSales72(responseData);
         if (rows.length === 0 && payload !== annualPayload) {
             this.logger.info('Funcion 72 devolvio vacio en rango incremental, intentando fallback anual', {
                 payload,
                 annualPayload,
             });
+            const annualEmptyReadStartedAt = Date.now();
+            this.logTicketLatency('bridge_scale_fn72_start', { payload: annualPayload, fallback: 'annual_after_empty_parse' });
             response = await this.scale.send(72, annualPayload, { timeoutMs: 30000 });
             if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback anual-vacio)');
             responseData = String(response.data || '');
+            this.logTicketLatency('bridge_scale_fn72_done', {
+                elapsedMs: elapsedMs(annualEmptyReadStartedAt),
+                responseChars: responseData.length,
+                crcOk: response.crc.ok,
+                fallback: 'annual_after_empty_parse',
+            });
             if (responseData.startsWith('E7')) {
+                const emptyEmptyReadStartedAt = Date.now();
+                this.logTicketLatency('bridge_scale_fn72_start', { payload: '', fallback: 'empty_after_empty_parse' });
                 response = await this.scale.send(72, '', { timeoutMs: 30000 });
                 if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72 fallback vacio-vacio)');
                 responseData = String(response.data || '');
+                this.logTicketLatency('bridge_scale_fn72_done', {
+                    elapsedMs: elapsedMs(emptyEmptyReadStartedAt),
+                    responseChars: responseData.length,
+                    crcOk: response.crc.ok,
+                    fallback: 'empty_after_empty_parse',
+                });
             }
             if (responseData.startsWith('E')) {
                 throw new Error(`Error al leer ventas en fallback: ${responseData}`);
             }
             rows = parseSales72(responseData);
         }
+        this.logTicketLatency('bridge_sales_parse_done', {
+            elapsedMs: elapsedMs(parseStartedAt),
+            rows: rows.length,
+            responseChars: responseData.length,
+        });
 
         const rawRecordCount = countRawRecords(responseData);
         if (rawRecordCount > rows.length) {
@@ -1013,12 +1100,25 @@ class ScaleBridge {
 
         let stored = 0;
         if (ticketsToSend.length > 0) {
+            const apiPostStartedAt = Date.now();
+            this.logTicketLatency('bridge_api_post_sales_start', {
+                tickets: ticketsToSend.length,
+                ticketIds: ticketsToSend.map((ticket) => ticket.ticketId).slice(0, 20),
+                ticketBarcodes: ticketsToSend.map((ticket) => ticket.ticketBarcode).slice(0, 20),
+                printedTicketBarcodes: ticketsToSend.map((ticket) => ticket.printedTicketBarcode).slice(0, 20),
+            });
             const apiResult = await this.api.postSales({
                 scaleId: this.scaleId,
                 scaleAddress: this.config.scale.address,
                 tickets: ticketsToSend,
             });
             stored = Number(apiResult?.itemsUpserted || 0);
+            this.logTicketLatency('bridge_api_post_sales_done', {
+                elapsedMs: elapsedMs(apiPostStartedAt),
+                tickets: ticketsToSend.length,
+                stored,
+                apiResult,
+            });
 
             for (const ticket of ticketsToSend) {
                 knownFingerprints[ticket.ticketId] = ticket.fingerprint;
@@ -1044,7 +1144,7 @@ class ScaleBridge {
             }
         }
 
-        return {
+        const result = {
             ok: true,
             fetched: rows.length,
             stored,
@@ -1052,6 +1152,11 @@ class ScaleBridge {
             newTickets: ticketsToSend.length,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
+        this.logTicketLatency('bridge_pull_sales_done', {
+            elapsedMs: elapsedMs(pullStartedAt),
+            ...result,
+        });
+        return result;
     }
 
     async consolidatePluCatalogOnStartup() {
