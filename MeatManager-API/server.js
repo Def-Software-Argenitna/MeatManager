@@ -159,6 +159,7 @@ const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE
     .replace(/\/+$/, '');
 const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
 const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.env.SCALE_BRIDGE_PULL_LOOKBACK_MINUTES || '45', 10) || 45);
+const SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY = 'scale_bridge_product_sync_seq';
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
@@ -204,6 +205,43 @@ function appendScaleLatencyLog(event, payload = {}) {
         .catch((error) => {
             console.warn('[SCALE LATENCY LOG] No se pudo escribir el log:', error?.message || error);
         });
+}
+
+function shouldQueueScaleProductSync(table, operation, record = {}) {
+    const normalizedTable = String(table || '').trim();
+    const normalizedOperation = String(operation || '').trim().toLowerCase();
+    if (!['insert', 'update', 'delete', 'upsert'].includes(normalizedOperation)) return false;
+
+    if (['products', 'prices', 'product_prices', 'promotions', 'scale_users'].includes(normalizedTable)) {
+        return true;
+    }
+
+    if (normalizedTable === 'settings') {
+        const key = String(record?.key || '').trim();
+        return key.startsWith('scale_');
+    }
+
+    return false;
+}
+
+async function queueScaleProductSync(pool, tenantId, reason) {
+    const seq = Date.now();
+    await pool.query(
+        'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        [tenantId, SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY, String(seq)]
+    );
+    return { seq, reason };
+}
+
+async function queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record, id }) {
+    if (!shouldQueueScaleProductSync(table, operation, record)) return null;
+
+    try {
+        return await queueScaleProductSync(pool, tenantId, `${table}:${operation}:${id || record?.id || ''}`);
+    } catch (error) {
+        console.warn('[BRIDGE COMMAND] No se pudo encolar sync de productos:', error?.message || error);
+        return null;
+    }
 }
 
 const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
@@ -5281,9 +5319,11 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                     };
                     if (promoToBroadcast.active) {
                         const broadcast = await enqueuePromotionBroadcast({ pool, tenantId, promo: promoToBroadcast });
+                        await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id: result.insertId });
                         return res.json({ ok: true, insertId: result.insertId, broadcast });
                     }
                 }
+                await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id: result.insertId });
                 return res.json({ ok: true, insertId: result.insertId });
             } catch (insertError) {
                 if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
@@ -5307,8 +5347,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                                 `UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`,
                                 [restorePayload, existingId, ...scope.params]
                             );
+                            await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: restorePayload, id: existingId });
                             return res.json({ ok: true, insertId: existingId, restored: true });
                         }
+                        await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id: existingId });
                         return res.json({ ok: true, insertId: existingId, existed: true });
                     }
                 }
@@ -5329,6 +5371,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             }
             const scope = tenantWhereClause(table, tenantId);
             await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
+            await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id: numId });
             return res.json({ ok: true });
         }
 
@@ -5347,9 +5390,11 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                      WHERE id = ? AND ${scope.sql}`,
                     [numId, ...scope.params]
                 );
+                await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
                 return res.json({ ok: true, archived: Number(result?.affectedRows || 0) > 0 });
             }
             await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}`, [numId, ...scope.params]);
+            await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
             return res.json({ ok: true });
         }
 
@@ -5382,6 +5427,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                 `INSERT INTO \`${table}\` (${cols}) VALUES (${holders}) ON DUPLICATE KEY UPDATE ${updates}`,
                 vals
             );
+            await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id });
             return res.json({ ok: true });
         }
 
@@ -9807,10 +9853,25 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
 });
 
 app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
-    // El middleware ya actualizó lastSeenAt. Aceptamos info de balanzas para
-    // forward-compat (próxima fase: persistir un registro por balanza).
-    const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
-    return res.json({ ok: true, scales, lastSeenAt: new Date().toISOString() });
+    try {
+        // El middleware ya actualizó lastSeenAt. Aceptamos info de balanzas para
+        // forward-compat (próxima fase: persistir un registro por balanza).
+        const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
+        const pool = getOperationalPool();
+        const [rows] = await pool.query(
+            'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
+            [req.bridge.tenantId, SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY]
+        );
+        const productSyncSeq = Number(rows?.[0]?.value || 0) || 0;
+        const commands = productSyncSeq > 0
+            ? [{ type: 'sync_products', seq: productSyncSeq }]
+            : [];
+
+        return res.json({ ok: true, scales, lastSeenAt: new Date().toISOString(), commands });
+    } catch (error) {
+        console.error('[BRIDGE HEARTBEAT ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo procesar heartbeat del bridge' });
+    }
 });
 
 app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
