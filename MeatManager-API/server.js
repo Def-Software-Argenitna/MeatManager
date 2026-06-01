@@ -5540,6 +5540,7 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
         });
         if (accessContext) {
             assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
         const selectedDate = normalizeCashSummaryDate(req.query.date);

@@ -249,6 +249,38 @@ const CierreCaja = () => {
             .filter((row) => normalizeCashAccount(row.cashAccount) === selectedCashAccount)
     ), [cashSummary, selectedCashAccount]);
 
+    const selectedCashMethodNames = useMemo(() => (
+        new Set(cashPaymentMethods.map((method) => method.name))
+    ), [cashPaymentMethods]);
+
+    const selectedCashSummary = useMemo(() => {
+        const totals = {
+            accumulated: 0,
+            opening: 0,
+            sales: 0,
+            manualIncomes: 0,
+            manualExpenses: 0,
+            reversals: 0,
+            dailyNet: 0,
+        };
+
+        summaryRowsForSelectedAccount.forEach((row) => {
+            const methodType = String(row.type || '').trim().toLowerCase();
+            const methodName = row.name || 'Efectivo';
+            if (methodType !== 'cash' && !selectedCashMethodNames.has(methodName)) return;
+
+            totals.accumulated += toNumber(row.accumulated);
+            totals.opening += toNumber(row.opening);
+            totals.sales += toNumber(row.sales);
+            totals.manualIncomes += toNumber(row.manualIncomes);
+            totals.manualExpenses += toNumber(row.manualExpenses);
+            totals.reversals += toNumber(row.reversals);
+            totals.dailyNet += toNumber(row.dailyNet);
+        });
+
+        return totals;
+    }, [selectedCashMethodNames, summaryRowsForSelectedAccount]);
+
     const summaryByMethod = useMemo(() => {
         const totals = {};
         summaryRowsForSelectedAccount.forEach((row) => {
@@ -420,17 +452,15 @@ const CierreCaja = () => {
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
     const totalSalesIntoCashbox = totalSales - toNumber(selectedAccountSummary.reversals);
 
-    const cashInDrawer = methodCards
-        .filter((method) => method.type === 'cash')
-        .reduce((sum, method) => sum + method.accumulated, 0);
+    const cashInDrawer = toNumber(selectedCashSummary.accumulated);
 
     const cashBalanceExplanation = useMemo(() => {
-        const previous = toNumber(selectedAccountSummary.accumulated) - toNumber(selectedAccountSummary.dailyNet);
-        const openings = toNumber(selectedAccountSummary.opening);
-        const sales = toNumber(selectedAccountSummary.sales);
-        const incomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
-        const outflows = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
-        const reversals = toNumber(selectedAccountSummary.reversals);
+        const previous = toNumber(selectedCashSummary.accumulated) - toNumber(selectedCashSummary.dailyNet);
+        const openings = toNumber(selectedCashSummary.opening);
+        const sales = toNumber(selectedCashSummary.sales);
+        const incomes = Math.max(0, toNumber(selectedCashSummary.manualIncomes) - totalTransfersIn);
+        const outflows = Math.max(0, toNumber(selectedCashSummary.manualExpenses) - totalTransfersOut);
+        const reversals = toNumber(selectedCashSummary.reversals);
         const parts = {
             previous,
             openings,
@@ -457,7 +487,7 @@ const CierreCaja = () => {
             deductions,
             reason,
         };
-    }, [cashInDrawer, selectedAccountSummary, totalTransfersIn, totalTransfersOut]);
+    }, [cashInDrawer, selectedCashSummary, totalTransfersIn, totalTransfersOut]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
@@ -479,7 +509,7 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
-        const rows = activePaymentMethods
+        const rows = cashPaymentMethods
             .map((method) => ({
                 method,
                 amount: parseFloat(openingDraft[method.name]) || 0,
