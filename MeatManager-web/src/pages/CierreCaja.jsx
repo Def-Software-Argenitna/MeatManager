@@ -12,6 +12,7 @@ import {
     ArrowRightLeft,
 } from 'lucide-react';
 import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -136,6 +137,53 @@ const CierreCaja = () => {
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
+    const { activeBranch, accessProfile, currentUser, refreshClientBranches, selectActiveBranch } = useUser();
+    const [clientBranches, setClientBranches] = useState([]);
+    const [branchLoading, setBranchLoading] = useState(false);
+    const activeBranchId = Number(
+        activeBranch?.id
+        || activeBranch?.branchId
+        || accessProfile?.branch?.id
+        || accessProfile?.branchId
+        || accessProfile?.branchRecordId
+        || currentUser?.branchId
+        || 0
+    );
+    const activeBranchName = activeBranch?.name || accessProfile?.branch?.name || '';
+    const transferBranchId = activeBranchId;
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadBranches = async () => {
+            if (typeof refreshClientBranches !== 'function') return;
+            setBranchLoading(true);
+            try {
+                const branches = await refreshClientBranches();
+                if (cancelled) return;
+                const normalizedBranches = Array.isArray(branches) ? branches : [];
+                setClientBranches(normalizedBranches);
+
+                const activeExists = activeBranchId
+                    ? normalizedBranches.some((branch) => String(branch.id) === String(activeBranchId))
+                    : false;
+                if (activeExists) {
+                    return;
+                }
+
+                if (normalizedBranches.length === 1) {
+                    selectActiveBranch(normalizedBranches[0]);
+                }
+            } catch (error) {
+                console.error('[CierreCaja] branch load error', error);
+            } finally {
+                if (!cancelled) setBranchLoading(false);
+            }
+        };
+
+        loadBranches();
+        return () => { cancelled = true; };
+    }, [activeBranchId, refreshClientBranches, selectActiveBranch]);
 
     const loadData = useCallback(async () => {
         try {
@@ -598,6 +646,10 @@ const CierreCaja = () => {
             setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
             return;
         }
+        if (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Esta caja necesita una sucursal activa. Cambiá de empresa/sucursal y volvé a ingresar.' });
+            return;
+        }
         const available = toNumber(cashboxCashBalanceByAccount[transferFromAccount]);
         if (amount > available) {
             setFeedback({ type: 'warning', text: `Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
@@ -620,6 +672,7 @@ const CierreCaja = () => {
                 description: transferDesc,
                 transferGroupId,
                 date: new Date().toISOString(),
+                ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
             });
 
             await loadData();
@@ -628,7 +681,11 @@ const CierreCaja = () => {
             setShowTransferForm(false);
             setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
         } catch (error) {
-            setFeedback({ type: 'error', text: error?.message || 'No se pudo registrar la transferencia entre cajas.' });
+            const detail = error?.details;
+            const branchDebug = detail?.code === 'CASHBOX_TRANSFER_BRANCH_REQUIRED'
+                ? ` Sucursal enviada: ${detail.receivedBranchId || detail.receivedActiveBranchId || detail.headerActiveBranchId || 'ninguna'}. Sucursales activas: ${Array.isArray(detail.activeBranches) && detail.activeBranches.length ? detail.activeBranches.map((branch) => branch.name || branch.id).join(', ') : 'ninguna'}.`
+                : '';
+            setFeedback({ type: 'error', text: `${error?.message || 'No se pudo registrar la transferencia entre cajas.'}${branchDebug}` });
         } finally {
             setTransferSubmitting(false);
         }
@@ -864,6 +921,27 @@ const CierreCaja = () => {
                         {showTransferForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleTransferBetweenCashboxes}>
                                 <div className="form-grid">
+                                    {clientBranches.length > 0 && Number.isFinite(transferBranchId) && transferBranchId > 0 && (
+                                        <div className="form-group full">
+                                            <label>Sucursal operativa</label>
+                                            <input
+                                                className="neo-input"
+                                                value={activeBranchName || `Sucursal ${transferBranchId}`}
+                                                readOnly
+                                            />
+                                            <small style={{ color: 'var(--color-text-muted)' }}>
+                                                Los movimientos de caja quedan asociados a esta sucursal.
+                                            </small>
+                                        </div>
+                                    )}
+                                    {clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0) && (
+                                        <div className="form-group full">
+                                            <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', color: '#f59e0b', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '10px', padding: '0.75rem 0.9rem' }}>
+                                                <AlertCircle size={18} />
+                                                <span>Esta caja está configurada por sucursal. Volvé al ingreso y seleccioná la sucursal operativa.</span>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="form-group">
                                         <label>Desde caja</label>
                                         <select
@@ -927,7 +1005,7 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="save-btn" disabled={transferSubmitting}>
+                                <button type="submit" className="save-btn" disabled={transferSubmitting || branchLoading || (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0))}>
                                     <ArrowRightLeft size={16} /> {transferSubmitting ? 'Transfiriendo...' : 'Confirmar transferencia'}
                                 </button>
                             </form>

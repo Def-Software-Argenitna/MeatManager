@@ -17,7 +17,25 @@ const isSupportSession = (tenant) => tenant?.authMode === 'support';
 const getStoredActiveBranch = () => {
     try {
         const raw = sessionStorage.getItem('mm_active_branch');
-        return raw ? JSON.parse(raw) : null;
+        if (raw) return JSON.parse(raw);
+
+        const profileRaw = sessionStorage.getItem('mm_access_profile');
+        const profile = profileRaw ? JSON.parse(profileRaw) : null;
+        const branchId = Number(
+            profile?.branch?.id
+            ?? profile?.branchId
+            ?? profile?.branchRecordId
+            ?? 0
+        );
+        if (Number.isFinite(branchId) && branchId > 0) {
+            return {
+                id: branchId,
+                clientId: profile?.clientId ?? profile?.branch?.clientId ?? null,
+                name: profile?.branch?.name || profile?.branchName || `Sucursal ${branchId}`,
+            };
+        }
+
+        return null;
     } catch {
         return null;
     }
@@ -301,7 +319,15 @@ export const createCashboxTransfer = async (payload = {}) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo registrar la transferencia entre cajas');
+        console.error('[CAJA TRANSFER ERROR]', {
+            status: res.status,
+            payload,
+            response: err,
+        });
+        const error = new Error(err.code && err.error ? `${err.error} (${err.code})` : err.error || 'No se pudo registrar la transferencia entre cajas');
+        error.code = err.code || null;
+        error.details = err;
+        throw error;
     }
 
     return res.json();

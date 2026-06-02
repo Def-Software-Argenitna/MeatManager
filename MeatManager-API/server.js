@@ -3264,7 +3264,7 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         return activeBranchId;
     }
 
-    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
+    const explicitBranchId = Number(record?.branch_id ?? record?.branchId ?? record?.activeBranchId);
     if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
         return explicitBranchId;
     }
@@ -5710,13 +5710,22 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
     try {
         const amount = Number(req.body?.amount);
         if (!Number.isFinite(amount) || amount <= 0) {
-            return res.status(400).json({ error: 'Monto de transferencia inválido' });
+            return res.status(400).json({
+                code: 'INVALID_TRANSFER_AMOUNT',
+                error: 'Monto de transferencia inválido',
+                receivedAmount: req.body?.amount ?? null,
+            });
         }
 
         const fromCashAccount = normalizeCashAccountToken(req.body?.fromCashAccount || req.body?.from_cash_account);
         const toCashAccount = normalizeCashAccountToken(req.body?.toCashAccount || req.body?.to_cash_account);
         if (fromCashAccount === toCashAccount) {
-            return res.status(400).json({ error: 'Elegí cajas diferentes para transferir' });
+            return res.status(400).json({
+                code: 'SAME_CASHBOX_TRANSFER',
+                error: 'Elegí cajas diferentes para transferir',
+                fromCashAccount,
+                toCashAccount,
+            });
         }
 
         const paymentMethod = String(req.body?.paymentMethod || req.body?.payment_method || 'Efectivo').trim() || 'Efectivo';
@@ -5742,13 +5751,38 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const branchId = accessContext
             ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: req.body || {} })
             : null;
-        if (!Number.isFinite(Number(branchId)) || Number(branchId) <= 0) {
-            return res.status(400).json({ error: 'No se pudo resolver la sucursal para la transferencia' });
+        const resolvedBranchId = Number(branchId);
+        const hasResolvedBranch = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0;
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        const requiresExplicitBranch = activeBranches.length > 0;
+        if (!hasResolvedBranch) {
+            if (requiresExplicitBranch) {
+                return res.status(400).json({
+                    code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
+                    error: 'Seleccioná una sucursal antes de transferir entre cajas',
+                    receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
+                    receivedActiveBranchId: req.body?.activeBranchId ?? null,
+                    headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
+                    userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
+                    activeBranchId: accessContext?.activeBranch?.id ?? null,
+                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                    role: accessContext?.user?.role ?? null,
+                });
+            }
+
+            console.warn('[CAJA TRANSFER] Operando sin sucursal activa', {
+                tenantId,
+                clientId: accessContext?.client?.id ?? null,
+                branchScope: 'legacy',
+                support: Boolean(accessContext?.user?.isGlobalSuperAdmin),
+            });
         }
 
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
+        const branchWhereSql = hasResolvedBranch ? 'AND (branch_id = ? OR branch_id IS NULL)' : '';
+        const branchWhereParams = hasResolvedBranch ? [resolvedBranchId] : [];
         const [balanceRows] = await conn.query(
             `SELECT SUM(CASE
                 WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
@@ -5759,13 +5793,13 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
              WHERE tenant_id = ?
                AND date IS NOT NULL
                AND date <= ?
-               AND (branch_id = ? OR branch_id IS NULL)
+               ${branchWhereSql}
                AND CASE
                     WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
                     ELSE 'principal'
                END = ?
                AND LOWER(COALESCE(payment_method_type, '')) = 'cash'`,
-            [tenantId, transferDate, Number(branchId), fromCashAccount]
+            [tenantId, transferDate, ...branchWhereParams, fromCashAccount]
         );
 
         const available = Number(balanceRows?.[0]?.balance || 0);
@@ -5779,7 +5813,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
         const common = {
             tenant_id: tenantId,
-            branch_id: Number(branchId),
+            branch_id: hasResolvedBranch ? resolvedBranchId : null,
             amount,
             payment_method: paymentMethod,
             payment_method_type: paymentMethodType,
@@ -5807,7 +5841,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         return res.json({
             ok: true,
             transferGroupId,
-            branchId: Number(branchId),
+            branchId: hasResolvedBranch ? resolvedBranchId : null,
             fromMovementId: outResult.insertId,
             toMovementId: inResult.insertId,
         });
