@@ -150,7 +150,9 @@ const CierreCaja = () => {
         || currentUser?.branchId
         || 0
     );
-    const transferBranchId = Number(activeBranchId || selectedTransferBranchId || 0);
+    const transferBranchSelection = selectedTransferBranchId || (activeBranchId ? String(activeBranchId) : '');
+    const isGlobalCashboxScope = transferBranchSelection === 'global';
+    const transferBranchId = isGlobalCashboxScope ? 0 : Number(transferBranchSelection || 0);
 
     useEffect(() => {
         let cancelled = false;
@@ -176,7 +178,7 @@ const CierreCaja = () => {
                     selectActiveBranch(normalizedBranches[0]);
                     setSelectedTransferBranchId(String(normalizedBranches[0].id));
                 } else if (normalizedBranches.length > 1 && !selectedTransferBranchId) {
-                    setSelectedTransferBranchId('');
+                    setSelectedTransferBranchId('global');
                 }
             } catch (error) {
                 console.error('[CierreCaja] branch load error', error);
@@ -650,8 +652,8 @@ const CierreCaja = () => {
             setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
             return;
         }
-        if (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
-            setFeedback({ type: 'warning', text: 'Seleccioná la sucursal antes de transferir entre cajas.' });
+        if (clientBranches.length > 0 && !isGlobalCashboxScope && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná la sucursal o Caja general antes de transferir entre cajas.' });
             return;
         }
         const available = toNumber(cashboxCashBalanceByAccount[transferFromAccount]);
@@ -676,7 +678,8 @@ const CierreCaja = () => {
                 description: transferDesc,
                 transferGroupId,
                 date: new Date().toISOString(),
-                ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
+                ...(isGlobalCashboxScope ? { branchScope: 'global' } : {}),
+                ...(!isGlobalCashboxScope && Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
             });
 
             await loadData();
@@ -927,11 +930,15 @@ const CierreCaja = () => {
                                 <div className="form-grid">
                                     {clientBranches.length > 1 && (
                                         <div className="form-group full">
-                                            <label>Sucursal operativa</label>
+                                            <label>Alcance de caja</label>
                                             <select
                                                 className="neo-input"
-                                                value={String(transferBranchId || '')}
+                                                value={transferBranchSelection}
                                                 onChange={(e) => {
+                                                    if (e.target.value === 'global') {
+                                                        setSelectedTransferBranchId('global');
+                                                        return;
+                                                    }
                                                     const branch = clientBranches.find((item) => String(item.id) === e.target.value);
                                                     setSelectedTransferBranchId(e.target.value);
                                                     if (branch) selectActiveBranch(branch);
@@ -939,13 +946,16 @@ const CierreCaja = () => {
                                                 disabled={branchLoading}
                                                 required
                                             >
-                                                <option value="">Seleccionar sucursal</option>
+                                                <option value="global">Caja general del cliente (sin sucursal)</option>
                                                 {clientBranches.map((branch) => (
                                                     <option key={branch.id} value={branch.id}>
                                                         {branch.name}{branch.internalCode ? ` (${branch.internalCode})` : ''}
                                                     </option>
                                                 ))}
                                             </select>
+                                            <small style={{ color: 'var(--color-text-muted)' }}>
+                                                Usá Caja general si la caja no se administra separada por sucursal.
+                                            </small>
                                         </div>
                                     )}
                                     {clientBranches.length === 1 && (
@@ -1021,7 +1031,7 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="save-btn" disabled={transferSubmitting || branchLoading || (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0))}>
+                                <button type="submit" className="save-btn" disabled={transferSubmitting || branchLoading || (clientBranches.length > 0 && !isGlobalCashboxScope && (!Number.isFinite(transferBranchId) || transferBranchId <= 0))}>
                                     <ArrowRightLeft size={16} /> {transferSubmitting ? 'Transfiriendo...' : 'Confirmar transferencia'}
                                 </button>
                             </form>
