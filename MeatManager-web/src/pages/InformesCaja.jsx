@@ -11,7 +11,7 @@ import {
     Scale,
     ShieldCheck,
 } from 'lucide-react';
-import { fetchTable } from '../utils/apiClient';
+import { fetchCajaReportData } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import './InformesCaja.css';
 
@@ -352,19 +352,17 @@ const getPreviousPeriodBounds = (mode, bounds) => {
     return getPeriodBounds('day', formatDateInput(prev));
 };
 
-const buildReport = ({ movements, closures, mode, value, cashAccount, compareEnabled }) => {
+const buildReport = ({ movements, closures, mode, value, cashAccount, compareEnabled, initialSnapshots = null }) => {
     const bounds = getPeriodBounds(mode, value);
     const previousBounds = getPreviousPeriodBounds(mode, bounds);
     const includeAccount = (account) => cashAccount === 'all' || normalizeCashAccount(account) === cashAccount;
 
-    const buildPeriod = (periodBounds) => {
-        const initialByAccount = { principal: 0, secondary: 0 };
-        (movements || []).forEach((movement) => {
-            const date = new Date(movement.date);
-            const account = normalizeCashAccount(movement.cash_account);
-            if (!Number.isFinite(date.getTime()) || date >= periodBounds.start || !includeAccount(account)) return;
-            initialByAccount[account] = round2(initialByAccount[account] + (Math.abs(toNumber(movement.amount)) * getMovementSign(movement)));
-        });
+    const buildPeriod = (periodBounds, initialKey) => {
+        const snapshot = initialSnapshots?.[initialKey] || {};
+        const initialByAccount = {
+            principal: round2(snapshot.principal),
+            secondary: round2(snapshot.secondary),
+        };
 
         const balancesByAccount = { ...initialByAccount };
         let totalBalance = round2(Object.values(initialByAccount).reduce((sum, value) => sum + value, 0));
@@ -544,8 +542,8 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
         };
     };
 
-    const current = buildPeriod(bounds);
-    const previous = compareEnabled ? buildPeriod(previousBounds) : null;
+    const current = buildPeriod(bounds, 'current');
+    const previous = compareEnabled ? buildPeriod(previousBounds, 'previous') : null;
 
     const compareGroups = (currentRows, previousRows) => {
         const keys = new Set([...currentRows.map((row) => row.key), ...previousRows.map((row) => row.key)]);
@@ -647,10 +645,11 @@ const InformesCaja = () => {
     const [compareEnabled, setCompareEnabled] = useState(true);
     const [movements, setMovements] = useState([]);
     const [closures, setClosures] = useState([]);
+    const [initialSnapshots, setInitialSnapshots] = useState({ current: { principal: 0, secondary: 0 }, previous: { principal: 0, secondary: 0 } });
     const [loading, setLoading] = useState(false);
     const [feedback, setFeedback] = useState(null);
 
-    const selectedValue = mode === 'range'
+    const selectedValue = useMemo(() => (mode === 'range'
         ? { from: rangeFromValue, to: rangeToValue }
         : mode === 'day'
             ? dayValue
@@ -658,25 +657,31 @@ const InformesCaja = () => {
                 ? weekValue
                 : mode === 'month'
                     ? monthValue
-                    : yearValue;
+                    : yearValue), [dayValue, mode, monthValue, rangeFromValue, rangeToValue, weekValue, yearValue]);
     const selectedValueForFile = mode === 'range' ? `${rangeFromValue}_a_${rangeToValue}` : selectedValue;
+
+    const currentBounds = useMemo(() => getPeriodBounds(mode, selectedValue), [mode, selectedValue]);
+    const previousBounds = useMemo(() => getPreviousPeriodBounds(mode, currentBounds), [currentBounds, mode]);
 
     const loadData = useCallback(async () => {
         setLoading(true);
         try {
-            const [movementRows, closureRows] = await Promise.all([
-                fetchTable('caja_movimientos', { limit: 30000, orderBy: 'date', direction: 'ASC' }),
-                fetchTable('cash_closures', { limit: 5000, orderBy: 'closed_at', direction: 'ASC' }).catch(() => []),
-            ]);
-            setMovements(Array.isArray(movementRows) ? movementRows : []);
-            setClosures(Array.isArray(closureRows) ? closureRows : []);
+            const payload = await fetchCajaReportData({
+                from: formatDateInput(currentBounds.start),
+                to: formatDateInput(currentBounds.end),
+                compareFrom: compareEnabled ? formatDateInput(previousBounds.start) : formatDateInput(currentBounds.start),
+                cashAccount,
+            });
+            setMovements(Array.isArray(payload?.movements) ? payload.movements : []);
+            setClosures(Array.isArray(payload?.closures) ? payload.closures : []);
+            setInitialSnapshots(payload?.initialBalances || { current: { principal: 0, secondary: 0 }, previous: { principal: 0, secondary: 0 } });
         } catch (error) {
             console.error('[InformesCaja] loadData error', error);
             setFeedback({ type: 'warning', text: 'No se pudieron cargar los movimientos de caja.' });
         } finally {
             setLoading(false);
         }
-    }, []);
+    }, [cashAccount, compareEnabled, currentBounds.end, currentBounds.start, previousBounds.start]);
 
     useEffect(() => {
         loadData();
@@ -689,7 +694,8 @@ const InformesCaja = () => {
         value: selectedValue,
         cashAccount,
         compareEnabled,
-    }), [cashAccount, closures, compareEnabled, mode, movements, selectedValue]);
+        initialSnapshots,
+    }), [cashAccount, closures, compareEnabled, initialSnapshots, mode, movements, selectedValue]);
 
     const detailRowsForExport = (report.current.rows || []).map((row) => ({
         Origen: row.source,

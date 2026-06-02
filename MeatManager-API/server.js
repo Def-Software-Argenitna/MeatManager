@@ -5527,6 +5527,11 @@ const addCashSummaryTotals = (target, source) => {
     target.dailyNet += Number(source.dailyNet || 0);
 };
 
+const emptyCashAccountBalances = () => ({
+    principal: 0,
+    secondary: 0,
+});
+
 // Resumen contable de caja: el saldo sale del backend y no de la lista paginada.
 app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
     try {
@@ -5702,6 +5707,147 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
         const statusCode = err?.statusCode || 500;
         console.error('[CAJA SUMMARY ERROR]', err.message);
         res.status(statusCode).json({ error: err.message || 'No se pudo calcular el resumen de caja' });
+    }
+});
+
+app.get('/api/caja/report-data', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+
+        const fromDate = normalizeCashSummaryDate(req.query.from);
+        const toDate = normalizeCashSummaryDate(req.query.to);
+        const compareFromDate = normalizeCashSummaryDate(req.query.compare_from || req.query.from);
+        const requestedCashAccount = String(req.query.cash_account || '').trim();
+        const selectedCashAccount = requestedCashAccount ? normalizeCashAccountToken(requestedCashAccount) : null;
+        const earliestDate = compareFromDate < fromDate ? compareFromDate : fromDate;
+        const periodStart = `${earliestDate} 00:00:00`;
+        const currentStart = `${fromDate} 00:00:00`;
+        const previousStart = `${compareFromDate} 00:00:00`;
+        const rangeEnd = `${toDate} 23:59:59`;
+
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: {
+                    branch_id: req.query.branch_id,
+                    branchId: req.query.branchId,
+                    receipt_code: req.query.receipt_code,
+                },
+            })
+            : null;
+
+        const where = ['tenant_id = ?'];
+        const params = [tenantId];
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            where.push('(branch_id = ? OR branch_id IS NULL)');
+            params.push(resolvedBranchId);
+        }
+
+        const cashAccountWhere = selectedCashAccount
+            ? ` AND CASE
+                    WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                    ELSE 'principal'
+                END = ?`
+            : '';
+        const cashAccountParams = selectedCashAccount ? [selectedCashAccount] : [];
+
+        const [[movementRows], [closureRows], [currentInitialRows], [previousInitialRows]] = await Promise.all([
+            pool.query(
+                `SELECT *
+                 FROM caja_movimientos
+                 WHERE ${where.join(' AND ')}
+                   AND date IS NOT NULL
+                   AND date >= ?
+                   AND date <= ?${cashAccountWhere}
+                 ORDER BY date ASC, id ASC`,
+                [...params, periodStart, rangeEnd, ...cashAccountParams]
+            ),
+            pool.query(
+                `SELECT *
+                 FROM cash_closures
+                 WHERE ${where.join(' AND ')}
+                   AND COALESCE(closed_at, closure_date) >= ?
+                   AND COALESCE(closed_at, closure_date) <= ?
+                 ORDER BY COALESCE(closed_at, closure_date) ASC, id ASC`,
+                [...params, periodStart, rangeEnd]
+            ),
+            pool.query(
+                `SELECT
+                    CASE
+                        WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                        ELSE 'principal'
+                    END AS cash_account,
+                    SUM(CASE
+                        WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
+                        WHEN type IN ('egreso', 'retiro', 'anulacion_venta') THEN -COALESCE(amount, 0)
+                        ELSE COALESCE(amount, 0)
+                    END) AS balance
+                 FROM caja_movimientos
+                 WHERE ${where.join(' AND ')}
+                   AND date IS NOT NULL
+                   AND date < ?${cashAccountWhere}
+                 GROUP BY cash_account`,
+                [...params, currentStart, ...cashAccountParams]
+            ),
+            pool.query(
+                `SELECT
+                    CASE
+                        WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+                        ELSE 'principal'
+                    END AS cash_account,
+                    SUM(CASE
+                        WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
+                        WHEN type IN ('egreso', 'retiro', 'anulacion_venta') THEN -COALESCE(amount, 0)
+                        ELSE COALESCE(amount, 0)
+                    END) AS balance
+                 FROM caja_movimientos
+                 WHERE ${where.join(' AND ')}
+                   AND date IS NOT NULL
+                   AND date < ?${cashAccountWhere}
+                 GROUP BY cash_account`,
+                [...params, previousStart, ...cashAccountParams]
+            ),
+        ]);
+
+        const toBalances = (rows) => {
+            const balances = emptyCashAccountBalances();
+            (rows || []).forEach((row) => {
+                const account = normalizeCashAccountToken(row.cash_account);
+                balances[account] = Number(row.balance || 0);
+            });
+            return balances;
+        };
+
+        return res.json({
+            ok: true,
+            from: fromDate,
+            to: toDate,
+            compareFrom: compareFromDate,
+            branchId: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null,
+            movements: movementRows || [],
+            closures: closureRows || [],
+            initialBalances: {
+                current: toBalances(currentInitialRows || []),
+                previous: toBalances(previousInitialRows || []),
+            },
+        });
+    } catch (err) {
+        const statusCode = err?.statusCode || 500;
+        console.error('[CAJA REPORT DATA ERROR]', err.message);
+        res.status(statusCode).json({ error: err.message || 'No se pudo cargar el informe de caja' });
     }
 });
 
