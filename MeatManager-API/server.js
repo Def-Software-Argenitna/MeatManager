@@ -2094,6 +2094,10 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'receipt_code', '`receipt_code` VARCHAR(32) NULL AFTER `receipt_number`');
             await ensureColumn(conn, 'caja_movimientos', 'purchase_id', '`purchase_id` INT NULL AFTER `authorization_verified`');
             await ensureColumn(conn, 'caja_movimientos', 'sale_id', '`sale_id` INT NULL AFTER `purchase_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'money_flow_kind', '`money_flow_kind` VARCHAR(50) NULL AFTER `sale_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'origin_table', '`origin_table` VARCHAR(64) NULL AFTER `money_flow_kind`');
+            await ensureColumn(conn, 'caja_movimientos', 'origin_id', '`origin_id` BIGINT NULL AFTER `origin_table`');
+            await ensureColumn(conn, 'caja_movimientos', 'origin_group_id', '`origin_group_id` VARCHAR(64) NULL AFTER `origin_id`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
@@ -4038,6 +4042,12 @@ function getSchemaTables() {
             authorized_recipient_email VARCHAR(150),
             receipt_number  INT,
             receipt_code    VARCHAR(32),
+            purchase_id     INT,
+            sale_id         INT,
+            money_flow_kind VARCHAR(50) NULL,
+            origin_table    VARCHAR(64) NULL,
+            origin_id       BIGINT NULL,
+            origin_group_id VARCHAR(64) NULL,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_caja_movimientos_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_caja_movimientos_tenant (\`${TENANT_COLUMN}\`),
@@ -5964,12 +5974,16 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             payment_method: paymentMethod,
             payment_method_type: paymentMethodType,
             transfer_group_id: transferGroupId,
+            origin_group_id: transferGroupId,
+            origin_table: 'caja_transfer',
+            origin_id: null,
             date: transferDate,
         };
 
         const [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
             ...common,
             type: 'retiro',
+            money_flow_kind: 'cash_transfer_out',
             category: 'Transferencia enviada entre cajas',
             description: description || `Transferencia a ${toLabel}`,
             cash_account: fromCashAccount,
@@ -5978,6 +5992,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const [inResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
             ...common,
             type: 'ingreso',
+            money_flow_kind: 'cash_transfer_in',
             category: 'Transferencia recibida entre cajas',
             description: description || `Transferencia desde ${fromLabel}`,
             cash_account: toCashAccount,
@@ -7236,6 +7251,15 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                     resolvedBranchId || null,
                 ]
             );
+            await conn.query(
+                `UPDATE caja_movimientos
+                 SET money_flow_kind = 'internal_purchase_payment',
+                     origin_table = 'compras',
+                     origin_id = ?,
+                     origin_group_id = CONCAT('purchase_', ?)
+                 WHERE tenant_id = ? AND purchase_id = ? AND type = 'egreso'`,
+                [purchaseId, purchaseId, tenantId, purchaseId]
+            );
         }
 
         await conn.commit();
@@ -7598,8 +7622,8 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             for (const part of salePaymentParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?, 'sale_collection', 'ventas', ?, CONCAT('sale_', ?))`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
@@ -7611,6 +7635,8 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         resolvedBranchId || null,
                         receipt_number || null,
                         receipt_code || null,
+                        saleId,
+                        saleId,
                         saleId,
                     ]
                 );
@@ -7750,8 +7776,8 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             for (const part of reversalParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id)
-                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?)`,
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?, 'sale_reversal', 'ventas', ?, CONCAT('sale_', ?))`,
                     [
                         tenantId,
                         parseFloat(part.amount) || 0,
@@ -7762,6 +7788,8 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
                         venta.branch_id || null,
                         venta.receipt_number || null,
                         venta.receipt_code || null,
+                        saleId,
+                        saleId,
                         saleId,
                     ]
                 );

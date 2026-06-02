@@ -231,8 +231,12 @@ const isTransferMovement = (movement) => (
     Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
 );
 const getMovementOperation = (movement) => {
+    const flowKind = String(movement?.money_flow_kind || '').toLowerCase();
     const type = String(movement?.type || '').toLowerCase();
     const category = String(movement?.category || '').toLowerCase();
+    if (flowKind === 'customer_payment') return 'Cobro de cliente';
+    if (flowKind === 'supplier_payment') return 'Pago a proveedor';
+    if (flowKind === 'internal_purchase_payment') return 'Compra interna';
     if (type === 'apertura') return 'Apertura de caja';
     if (type === 'venta') return 'Cobro de venta';
     if (type === 'anulacion_venta') return 'Anulación de venta';
@@ -243,6 +247,10 @@ const getMovementOperation = (movement) => {
     return movement?.category || movement?.type || 'Movimiento';
 };
 const getMovementClassification = (movement) => {
+    const flowKind = String(movement?.money_flow_kind || '').toLowerCase();
+    if (flowKind === 'customer_payment') return 'Cobro de cuenta corriente';
+    if (flowKind === 'supplier_payment') return 'Pago a proveedor';
+    if (flowKind === 'internal_purchase_payment') return 'Compra interna';
     if (isTransferMovement(movement)) return 'Transferencia entre cajas';
     if (movement.type === 'retiro' || movement.type === 'egreso') return 'Retiro / gasto / consumo';
     if (movement.type === 'ingreso') return 'Ingreso manual';
@@ -438,6 +446,10 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
                     ventaId: movement.sale_id || '',
                     compraId: movement.purchase_id || '',
                     clienteId: movement.client_id || '',
+                    tipoFlujo: movement.money_flow_kind || '',
+                    origenTabla: movement.origin_table || '',
+                    origenId: movement.origin_id || '',
+                    origenGrupo: movement.origin_group_id || '',
                     sucursalId: movement.branch_id || '',
                     transferenciaId: movement.transfer_group_id || '',
                     autorizacionId: movement.authorization_id || '',
@@ -723,6 +735,10 @@ const InformesCaja = () => {
         'Venta ID': row.ventaId,
         'Compra ID': row.compraId,
         'Cliente ID': row.clienteId,
+        'Tipo flujo': row.tipoFlujo,
+        'Tabla origen': row.origenTabla,
+        'ID origen': row.origenId,
+        'Grupo origen': row.origenGrupo,
         'Sucursal ID': row.sucursalId,
         'Transferencia ID': row.transferenciaId,
         'Autorización ID': row.autorizacionId,
