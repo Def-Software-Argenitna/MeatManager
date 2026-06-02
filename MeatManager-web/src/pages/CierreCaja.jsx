@@ -137,7 +137,10 @@ const CierreCaja = () => {
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
-    const { activeBranch, accessProfile, currentUser } = useUser();
+    const { activeBranch, accessProfile, currentUser, refreshClientBranches, selectActiveBranch } = useUser();
+    const [clientBranches, setClientBranches] = useState([]);
+    const [branchLoading, setBranchLoading] = useState(false);
+    const [selectedTransferBranchId, setSelectedTransferBranchId] = useState('');
     const activeBranchId = Number(
         activeBranch?.id
         || activeBranch?.branchId
@@ -147,6 +150,44 @@ const CierreCaja = () => {
         || currentUser?.branchId
         || 0
     );
+    const transferBranchId = Number(activeBranchId || selectedTransferBranchId || 0);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadBranches = async () => {
+            if (typeof refreshClientBranches !== 'function') return;
+            setBranchLoading(true);
+            try {
+                const branches = await refreshClientBranches();
+                if (cancelled) return;
+                const normalizedBranches = Array.isArray(branches) ? branches : [];
+                setClientBranches(normalizedBranches);
+
+                const activeExists = activeBranchId
+                    ? normalizedBranches.some((branch) => String(branch.id) === String(activeBranchId))
+                    : false;
+                if (activeExists) {
+                    setSelectedTransferBranchId(String(activeBranchId));
+                    return;
+                }
+
+                if (normalizedBranches.length === 1) {
+                    selectActiveBranch(normalizedBranches[0]);
+                    setSelectedTransferBranchId(String(normalizedBranches[0].id));
+                } else if (normalizedBranches.length > 1 && !selectedTransferBranchId) {
+                    setSelectedTransferBranchId('');
+                }
+            } catch (error) {
+                console.error('[CierreCaja] branch load error', error);
+            } finally {
+                if (!cancelled) setBranchLoading(false);
+            }
+        };
+
+        loadBranches();
+        return () => { cancelled = true; };
+    }, [activeBranchId, refreshClientBranches, selectActiveBranch, selectedTransferBranchId]);
 
     const loadData = useCallback(async () => {
         try {
@@ -609,6 +650,10 @@ const CierreCaja = () => {
             setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
             return;
         }
+        if (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná la sucursal antes de transferir entre cajas.' });
+            return;
+        }
         const available = toNumber(cashboxCashBalanceByAccount[transferFromAccount]);
         if (amount > available) {
             setFeedback({ type: 'warning', text: `Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
@@ -631,7 +676,7 @@ const CierreCaja = () => {
                 description: transferDesc,
                 transferGroupId,
                 date: new Date().toISOString(),
-                ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId, activeBranchId } : {}),
+                ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
             });
 
             await loadData();
@@ -880,6 +925,39 @@ const CierreCaja = () => {
                         {showTransferForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleTransferBetweenCashboxes}>
                                 <div className="form-grid">
+                                    {clientBranches.length > 1 && (
+                                        <div className="form-group full">
+                                            <label>Sucursal operativa</label>
+                                            <select
+                                                className="neo-input"
+                                                value={String(transferBranchId || '')}
+                                                onChange={(e) => {
+                                                    const branch = clientBranches.find((item) => String(item.id) === e.target.value);
+                                                    setSelectedTransferBranchId(e.target.value);
+                                                    if (branch) selectActiveBranch(branch);
+                                                }}
+                                                disabled={branchLoading}
+                                                required
+                                            >
+                                                <option value="">Seleccionar sucursal</option>
+                                                {clientBranches.map((branch) => (
+                                                    <option key={branch.id} value={branch.id}>
+                                                        {branch.name}{branch.internalCode ? ` (${branch.internalCode})` : ''}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                    )}
+                                    {clientBranches.length === 1 && (
+                                        <div className="form-group full">
+                                            <label>Sucursal operativa</label>
+                                            <input
+                                                className="neo-input"
+                                                value={clientBranches[0]?.name || `Sucursal ${clientBranches[0]?.id}`}
+                                                readOnly
+                                            />
+                                        </div>
+                                    )}
                                     <div className="form-group">
                                         <label>Desde caja</label>
                                         <select
@@ -943,7 +1021,7 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="save-btn" disabled={transferSubmitting}>
+                                <button type="submit" className="save-btn" disabled={transferSubmitting || branchLoading || (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0))}>
                                     <ArrowRightLeft size={16} /> {transferSubmitting ? 'Transfiriendo...' : 'Confirmar transferencia'}
                                 </button>
                             </form>
