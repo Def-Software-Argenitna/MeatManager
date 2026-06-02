@@ -5743,7 +5743,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: req.body || {} })
             : null;
         if (!Number.isFinite(Number(branchId)) || Number(branchId) <= 0) {
-            return res.status(400).json({ error: 'No se pudo resolver la sucursal para la transferencia' });
+            return res.status(400).json({ error: 'Seleccioná una sucursal antes de transferir entre cajas' });
         }
 
         conn = await pool.getConnection();

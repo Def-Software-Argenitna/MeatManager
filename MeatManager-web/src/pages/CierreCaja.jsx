@@ -12,6 +12,7 @@ import {
     ArrowRightLeft,
 } from 'lucide-react';
 import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -136,6 +137,8 @@ const CierreCaja = () => {
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
+    const { activeBranch } = useUser();
+    const activeBranchId = Number(activeBranch?.id || activeBranch?.branchId || 0);
 
     const loadData = useCallback(async () => {
         try {
@@ -620,6 +623,7 @@ const CierreCaja = () => {
                 description: transferDesc,
                 transferGroupId,
                 date: new Date().toISOString(),
+                ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId } : {}),
             });
 
             await loadData();
