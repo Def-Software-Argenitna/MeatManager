@@ -5753,22 +5753,35 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             : null;
         const resolvedBranchId = Number(branchId);
         const hasResolvedBranch = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0;
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        const requiresExplicitBranch = activeBranches.length > 0;
         if (!hasResolvedBranch) {
-            return res.status(400).json({
-                code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
-                error: 'Seleccioná una sucursal antes de transferir entre cajas',
-                receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
-                receivedActiveBranchId: req.body?.activeBranchId ?? null,
-                headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
-                userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
-                activeBranchId: accessContext?.activeBranch?.id ?? null,
-                role: accessContext?.user?.role ?? null,
+            if (requiresExplicitBranch) {
+                return res.status(400).json({
+                    code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
+                    error: 'Seleccioná una sucursal antes de transferir entre cajas',
+                    receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
+                    receivedActiveBranchId: req.body?.activeBranchId ?? null,
+                    headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
+                    userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
+                    activeBranchId: accessContext?.activeBranch?.id ?? null,
+                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                    role: accessContext?.user?.role ?? null,
+                });
+            }
+
+            console.warn('[CAJA TRANSFER] Operando sin sucursal activa en tenant legacy sin sucursales', {
+                tenantId,
+                clientId: accessContext?.client?.id ?? null,
+                support: Boolean(accessContext?.user?.isGlobalSuperAdmin),
             });
         }
 
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
+        const branchWhereSql = hasResolvedBranch ? 'AND (branch_id = ? OR branch_id IS NULL)' : '';
+        const branchWhereParams = hasResolvedBranch ? [resolvedBranchId] : [];
         const [balanceRows] = await conn.query(
             `SELECT SUM(CASE
                 WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
@@ -5779,13 +5792,13 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
              WHERE tenant_id = ?
                AND date IS NOT NULL
                AND date <= ?
-               AND (branch_id = ? OR branch_id IS NULL)
+               ${branchWhereSql}
                AND CASE
                     WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
                     ELSE 'principal'
                END = ?
                AND LOWER(COALESCE(payment_method_type, '')) = 'cash'`,
-            [tenantId, transferDate, resolvedBranchId, fromCashAccount]
+            [tenantId, transferDate, ...branchWhereParams, fromCashAccount]
         );
 
         const available = Number(balanceRows?.[0]?.balance || 0);
@@ -5799,7 +5812,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
         const common = {
             tenant_id: tenantId,
-            branch_id: resolvedBranchId,
+            branch_id: hasResolvedBranch ? resolvedBranchId : null,
             amount,
             payment_method: paymentMethod,
             payment_method_type: paymentMethodType,
@@ -5827,7 +5840,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         return res.json({
             ok: true,
             transferGroupId,
-            branchId: resolvedBranchId,
+            branchId: hasResolvedBranch ? resolvedBranchId : null,
             fromMovementId: outResult.insertId,
             toMovementId: inResult.insertId,
         });
