@@ -640,7 +640,11 @@ const CierreCaja = () => {
             setShowTransferForm(false);
             setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
         } catch (error) {
-            setFeedback({ type: 'error', text: error?.message || 'No se pudo registrar la transferencia entre cajas.' });
+            const detail = error?.details;
+            const branchDebug = detail?.code === 'CASHBOX_TRANSFER_BRANCH_REQUIRED'
+                ? ` Sucursal enviada: ${detail.receivedBranchId || detail.receivedActiveBranchId || detail.headerActiveBranchId || 'ninguna'}. Sucursales activas: ${Array.isArray(detail.activeBranches) && detail.activeBranches.length ? detail.activeBranches.map((branch) => branch.name || branch.id).join(', ') : 'ninguna'}.`
+                : '';
+            setFeedback({ type: 'error', text: `${error?.message || 'No se pudo registrar la transferencia entre cajas.'}${branchDebug}` });
         } finally {
             setTransferSubmitting(false);
         }
