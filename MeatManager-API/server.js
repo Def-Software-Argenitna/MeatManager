@@ -5754,13 +5754,12 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const resolvedBranchId = Number(branchId);
         const hasResolvedBranch = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0;
         const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
-        const requestedGlobalCashbox = String(req.body?.branchScope || req.body?.branch_scope || '').trim().toLowerCase() === 'global';
-        const requiresExplicitBranch = activeBranches.length > 0 && !requestedGlobalCashbox;
+        const requiresExplicitBranch = activeBranches.length > 0;
         if (!hasResolvedBranch) {
             if (requiresExplicitBranch) {
                 return res.status(400).json({
                     code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
-                    error: 'Seleccioná una sucursal o Caja general antes de transferir entre cajas',
+                    error: 'Seleccioná una sucursal antes de transferir entre cajas',
                     receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
                     receivedActiveBranchId: req.body?.activeBranchId ?? null,
                     headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
@@ -5774,7 +5773,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             console.warn('[CAJA TRANSFER] Operando sin sucursal activa', {
                 tenantId,
                 clientId: accessContext?.client?.id ?? null,
-                branchScope: requestedGlobalCashbox ? 'global' : 'legacy',
+                branchScope: 'legacy',
                 support: Boolean(accessContext?.user?.isGlobalSuperAdmin),
             });
         }
