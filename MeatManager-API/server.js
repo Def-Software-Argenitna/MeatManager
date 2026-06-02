@@ -3264,7 +3264,7 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         return activeBranchId;
     }
 
-    const explicitBranchId = Number(record?.branch_id ?? record?.branchId);
+    const explicitBranchId = Number(record?.branch_id ?? record?.branchId ?? record?.activeBranchId);
     if (Number.isFinite(explicitBranchId) && explicitBranchId > 0) {
         return explicitBranchId;
     }
@@ -5710,13 +5710,22 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
     try {
         const amount = Number(req.body?.amount);
         if (!Number.isFinite(amount) || amount <= 0) {
-            return res.status(400).json({ error: 'Monto de transferencia inválido' });
+            return res.status(400).json({
+                code: 'INVALID_TRANSFER_AMOUNT',
+                error: 'Monto de transferencia inválido',
+                receivedAmount: req.body?.amount ?? null,
+            });
         }
 
         const fromCashAccount = normalizeCashAccountToken(req.body?.fromCashAccount || req.body?.from_cash_account);
         const toCashAccount = normalizeCashAccountToken(req.body?.toCashAccount || req.body?.to_cash_account);
         if (fromCashAccount === toCashAccount) {
-            return res.status(400).json({ error: 'Elegí cajas diferentes para transferir' });
+            return res.status(400).json({
+                code: 'SAME_CASHBOX_TRANSFER',
+                error: 'Elegí cajas diferentes para transferir',
+                fromCashAccount,
+                toCashAccount,
+            });
         }
 
         const paymentMethod = String(req.body?.paymentMethod || req.body?.payment_method || 'Efectivo').trim() || 'Efectivo';
@@ -5745,7 +5754,16 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const resolvedBranchId = Number(branchId);
         const hasResolvedBranch = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0;
         if (!hasResolvedBranch) {
-            return res.status(400).json({ error: 'Seleccioná una sucursal antes de transferir entre cajas' });
+            return res.status(400).json({
+                code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
+                error: 'Seleccioná una sucursal antes de transferir entre cajas',
+                receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
+                receivedActiveBranchId: req.body?.activeBranchId ?? null,
+                headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
+                userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
+                activeBranchId: accessContext?.activeBranch?.id ?? null,
+                role: accessContext?.user?.role ?? null,
+            });
         }
 
         conn = await pool.getConnection();

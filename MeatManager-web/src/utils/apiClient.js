@@ -319,7 +319,10 @@ export const createCashboxTransfer = async (payload = {}) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo registrar la transferencia entre cajas');
+        const error = new Error(err.code && err.error ? `${err.error} (${err.code})` : err.error || 'No se pudo registrar la transferencia entre cajas');
+        error.code = err.code || null;
+        error.details = err;
+        throw error;
     }
 
     return res.json();

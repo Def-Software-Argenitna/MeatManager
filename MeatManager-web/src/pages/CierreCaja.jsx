@@ -631,7 +631,7 @@ const CierreCaja = () => {
                 description: transferDesc,
                 transferGroupId,
                 date: new Date().toISOString(),
-                ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId } : {}),
+                ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId, activeBranchId } : {}),
             });
 
             await loadData();
