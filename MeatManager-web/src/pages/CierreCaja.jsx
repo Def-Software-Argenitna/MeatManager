@@ -137,8 +137,16 @@ const CierreCaja = () => {
     const [paymentMethods, setPaymentMethods] = useState(null);
     const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
-    const { activeBranch } = useUser();
-    const activeBranchId = Number(activeBranch?.id || activeBranch?.branchId || 0);
+    const { activeBranch, accessProfile, currentUser } = useUser();
+    const activeBranchId = Number(
+        activeBranch?.id
+        || activeBranch?.branchId
+        || accessProfile?.branch?.id
+        || accessProfile?.branchId
+        || accessProfile?.branchRecordId
+        || currentUser?.branchId
+        || 0
+    );
 
     const loadData = useCallback(async () => {
         try {

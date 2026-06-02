@@ -5742,7 +5742,9 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const branchId = accessContext
             ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: req.body || {} })
             : null;
-        if (!Number.isFinite(Number(branchId)) || Number(branchId) <= 0) {
+        const resolvedBranchId = Number(branchId);
+        const hasResolvedBranch = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0;
+        if (!hasResolvedBranch) {
             return res.status(400).json({ error: 'Seleccioná una sucursal antes de transferir entre cajas' });
         }
 
@@ -5765,7 +5767,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
                     ELSE 'principal'
                END = ?
                AND LOWER(COALESCE(payment_method_type, '')) = 'cash'`,
-            [tenantId, transferDate, Number(branchId), fromCashAccount]
+            [tenantId, transferDate, resolvedBranchId, fromCashAccount]
         );
 
         const available = Number(balanceRows?.[0]?.balance || 0);
@@ -5779,7 +5781,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
         const common = {
             tenant_id: tenantId,
-            branch_id: Number(branchId),
+            branch_id: resolvedBranchId,
             amount,
             payment_method: paymentMethod,
             payment_method_type: paymentMethodType,
@@ -5807,7 +5809,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         return res.json({
             ok: true,
             transferGroupId,
-            branchId: Number(branchId),
+            branchId: resolvedBranchId,
             fromMovementId: outResult.insertId,
             toMovementId: inResult.insertId,
         });
