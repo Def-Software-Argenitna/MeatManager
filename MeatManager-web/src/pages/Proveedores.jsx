@@ -359,6 +359,10 @@ const Proveedores = () => {
                 type: 'egreso',
                 amount: row.amount,
                 category: 'Pago Proveedor',
+                money_flow_kind: 'supplier_payment',
+                origin_table: 'suppliers',
+                origin_id: paymentSupplier?.id || null,
+                origin_group_id: groupId || `supplier_payment_${Date.now()}`,
                 description: groupId
                     ? `${description} · Pago mixto (${row.method?.name})`
                     : description,

@@ -311,6 +311,22 @@ export const fetchCajaSummary = async (options = {}) => {
     return res.json();
 };
 
+export const fetchCajaReportData = async (options = {}) => {
+    const query = new URLSearchParams();
+    if (options.from) query.set('from', String(options.from));
+    if (options.to) query.set('to', String(options.to));
+    if (options.compareFrom) query.set('compare_from', String(options.compareFrom));
+    if (options.cashAccount && options.cashAccount !== 'all') query.set('cash_account', String(options.cashAccount));
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/caja/report-data${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo cargar el informe de caja');
+    }
+    return res.json();
+};
+
 export const createCashboxTransfer = async (payload = {}) => {
     const res = await apiFetch('/api/caja/transfer', {
         method: 'POST',
