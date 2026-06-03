@@ -967,7 +967,7 @@ const CierreCaja = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <button type="button" className="save-btn" disabled={openingSubmitting} onClick={handleSaveOpening}>
+                                <button type="submit" className="save-btn" disabled={openingSubmitting}>
                                     <Save size={16} /> {openingSubmitting ? 'Guardando...' : 'Guardar apertura'}
                                 </button>
                             </form>
