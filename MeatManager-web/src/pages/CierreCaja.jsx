@@ -334,10 +334,11 @@ const CierreCaja = () => {
         const totals = {};
         summaryRowsForSelectedAccount.forEach((row) => {
             const methodName = row.name || 'Efectivo';
-            const existing = totals[methodName] || { ...row, accumulated: 0, opening: 0, sales: 0, manualNet: 0, dailyNet: 0 };
+            const existing = totals[methodName] || { ...row, accumulated: 0, opening: 0, sales: 0, reversals: 0, manualNet: 0, dailyNet: 0 };
             existing.accumulated += toNumber(row.accumulated);
             existing.opening += toNumber(row.opening);
             existing.sales += toNumber(row.sales);
+            existing.reversals += toNumber(row.reversals);
             existing.manualNet += toNumber(row.manualIncomes) - toNumber(row.manualExpenses);
             existing.dailyNet += toNumber(row.dailyNet);
             totals[methodName] = existing;
@@ -437,6 +438,8 @@ const CierreCaja = () => {
             ...method,
             opening: openingByMethod[method.name] || 0,
             sales: toNumber(summaryByMethod[method.name]?.sales),
+            reversals: toNumber(summaryByMethod[method.name]?.reversals),
+            netSales: toNumber(summaryByMethod[method.name]?.sales) - toNumber(summaryByMethod[method.name]?.reversals),
             salesCount: salesCountByMethod[method.name] || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
@@ -499,7 +502,8 @@ const CierreCaja = () => {
     }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
-    const totalSalesIntoCashbox = totalSales - toNumber(selectedAccountSummary.reversals);
+    const totalReversals = toNumber(selectedAccountSummary.reversals);
+    const totalSalesIntoCashbox = totalSales - totalReversals;
 
     const cashInDrawer = toNumber(selectedCashSummary.accumulated);
 
@@ -775,8 +779,9 @@ const CierreCaja = () => {
                     <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
-                    <span className="label">Cobros por ventas en esta caja</span>
+                    <span className="label">Ventas netas en esta caja</span>
                     <span className="val">+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">Brutas ${totalSales.toLocaleString('es-AR')} · Anuladas ${totalReversals.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas mixtas del día</span>
@@ -802,7 +807,8 @@ const CierreCaja = () => {
                                             <span className="method-name">{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '18px', verticalAlign: 'middle' }} /> : item.name}</span>
                                             <div className="method-breakdown">
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
-                                                <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
+                                                <span>Ventas netas hoy: ${item.netSales.toLocaleString('es-AR')}</span>
+                                                <span>Brutas: ${item.sales.toLocaleString('es-AR')} · Anuladas: ${item.reversals.toLocaleString('es-AR')}</span>
                                                 <span>Cobros: {item.salesCount}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
@@ -819,11 +825,11 @@ const CierreCaja = () => {
 
                     <div className="card-footer">
                         <div className="total-row">
-                            <span>Ventas brutas del día</span>
-                            <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
+                            <span>Ventas netas del día</span>
+                            <span className="total-val">${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                         </div>
                         <div className="total-row">
-                            <span>Cobros que ingresan a caja</span>
+                            <span>Brutas ${totalSales.toLocaleString('es-AR')} · Anuladas ${totalReversals.toLocaleString('es-AR')}</span>
                             <span className="total-val" style={{ fontSize: '1.15rem' }}>+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
