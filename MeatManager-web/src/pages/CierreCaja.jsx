@@ -12,7 +12,7 @@ import {
     ArrowRightLeft,
 } from 'lucide-react';
 import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -151,13 +151,22 @@ const CierreCaja = () => {
     );
     const activeBranchName = activeBranch?.name || accessProfile?.branch?.name || '';
     const transferBranchId = activeBranchId;
+    const canSelectCashboxBranch = isEffectiveAdminUser(currentUser, accessProfile);
     const requiresCashboxBranch = clientBranches.length > 1;
+
+    const handleBranchChange = (branchId) => {
+        if (!canSelectCashboxBranch) return;
+        const selectedBranch = clientBranches.find((branch) => String(branch.id) === String(branchId)) || null;
+        selectActiveBranch(selectedBranch);
+        setFeedback(null);
+    };
 
     useEffect(() => {
         let cancelled = false;
 
         const loadBranches = async () => {
             if (typeof refreshClientBranches !== 'function') return;
+            if (!canSelectCashboxBranch) return;
             setBranchLoading(true);
             try {
                 const branches = await refreshClientBranches();
@@ -184,14 +193,17 @@ const CierreCaja = () => {
 
         loadBranches();
         return () => { cancelled = true; };
-    }, [activeBranchId, refreshClientBranches, selectActiveBranch]);
+    }, [activeBranchId, canSelectCashboxBranch, refreshClientBranches, selectActiveBranch]);
 
     const loadData = useCallback(async () => {
         try {
             const [movRows, pmRows, summaryRows] = await Promise.all([
                 fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
-                fetchCajaSummary({ date: selectedDate }),
+                fetchCajaSummary({
+                    date: selectedDate,
+                    ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId } : {}),
+                }),
             ]);
             setAllMovements(Array.isArray(movRows) ? movRows : []);
             setPaymentMethods(Array.isArray(pmRows) ? pmRows : []);
@@ -199,7 +211,7 @@ const CierreCaja = () => {
         } catch (err) {
             console.error('[CierreCaja] loadData error', err);
         }
-    }, [selectedDate]);
+    }, [activeBranchId, selectedDate]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -717,6 +729,22 @@ const CierreCaja = () => {
                     <p>Apertura, movimientos, retiros y saldo acumulado por medio de pago.</p>
                 </div>
                 <div className="date-picker-wrapper">
+                    {canSelectCashboxBranch && clientBranches.length > 1 && (
+                        <select
+                            className="neo-input"
+                            value={Number.isFinite(activeBranchId) && activeBranchId > 0 ? String(activeBranchId) : ''}
+                            onChange={(e) => handleBranchChange(e.target.value)}
+                            disabled={branchLoading}
+                            style={{ marginBottom: 0, minWidth: '190px' }}
+                        >
+                            <option value="">Seleccionar sucursal</option>
+                            {clientBranches.map((branch) => (
+                                <option key={branch.id} value={branch.id}>
+                                    {branch.name || `Sucursal ${branch.id}`}
+                                </option>
+                            ))}
+                        </select>
+                    )}
                     <select
                         className="neo-input"
                         value={selectedCashAccount}
