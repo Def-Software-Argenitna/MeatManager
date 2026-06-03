@@ -427,6 +427,23 @@ const CierreCaja = () => {
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = 0;
 
+    const handleToggleOpeningForm = (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        if (!showOpeningForm) {
+            setOpeningDraft(buildOpeningDraft(
+                openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+            ));
+            setShowOpeningForm(true);
+            setFeedback(null);
+            return;
+        }
+
+        setOpeningDraft(buildOpeningDraft());
+        setShowOpeningForm(false);
+    };
+
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
@@ -911,16 +928,7 @@ const CierreCaja = () => {
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button type="button" className="cierre-add-btn" onClick={() => {
-                                if (!showOpeningForm) {
-                                    setOpeningDraft(buildOpeningDraft(
-                                        openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
-                                    ));
-                                } else {
-                                    setOpeningDraft(buildOpeningDraft());
-                                }
-                                setShowOpeningForm((prev) => !prev);
-                            }}>
+                            <button type="button" className="cierre-add-btn" onClick={handleToggleOpeningForm}>
                                 {showOpeningForm ? 'Cancelar edición' : openingMovements.length > 0 ? 'Modificar apertura' : 'Registrar apertura'}
                             </button>
                         </div>
@@ -959,7 +967,7 @@ const CierreCaja = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <button type="submit" className="save-btn" disabled={openingSubmitting}>
+                                <button type="button" className="save-btn" disabled={openingSubmitting} onClick={handleSaveOpening}>
                                     <Save size={16} /> {openingSubmitting ? 'Guardando...' : 'Guardar apertura'}
                                 </button>
                             </form>
