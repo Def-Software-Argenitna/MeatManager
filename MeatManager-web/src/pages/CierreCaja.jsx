@@ -132,6 +132,7 @@ const CierreCaja = () => {
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
     const [transferSubmitting, setTransferSubmitting] = useState(false);
+    const [openingSubmitting, setOpeningSubmitting] = useState(false);
 
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
@@ -575,6 +576,9 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
+        if (openingSubmitting) return;
+        setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
+
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
             setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
             return;
@@ -593,6 +597,7 @@ const CierreCaja = () => {
         }
 
         try {
+            setOpeningSubmitting(true);
             await saveCashboxOpening({
                 date: selectedDate,
                 cashAccount: selectedCashAccount,
@@ -608,6 +613,8 @@ const CierreCaja = () => {
             console.error('[CierreCaja] save opening error', error);
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
             return;
+        } finally {
+            setOpeningSubmitting(false);
         }
 
         await loadData();
@@ -904,7 +911,7 @@ const CierreCaja = () => {
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button className="cierre-add-btn" onClick={() => {
+                            <button type="button" className="cierre-add-btn" onClick={() => {
                                 if (!showOpeningForm) {
                                     setOpeningDraft(buildOpeningDraft(
                                         openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
@@ -952,15 +959,15 @@ const CierreCaja = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <button type="submit" className="save-btn">
-                                    <Save size={16} /> Guardar apertura
+                                <button type="submit" className="save-btn" disabled={openingSubmitting}>
+                                    <Save size={16} /> {openingSubmitting ? 'Guardando...' : 'Guardar apertura'}
                                 </button>
                             </form>
                         )}
 
                         <div className="section-header section-header-secondary">
                             <h3>Transferencia entre cajas</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
                                 {showTransferForm ? 'Cancelar' : 'Transferir fondos'}
                             </button>
                         </div>
@@ -1060,7 +1067,7 @@ const CierreCaja = () => {
 
                         <div className="section-header section-header-secondary">
                             <h3>Retiros e ingresos manuales</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
                             </button>
                         </div>
