@@ -141,16 +141,10 @@ const CierreCaja = () => {
     const { activeBranch, accessProfile, currentUser, refreshClientBranches, selectActiveBranch } = useUser();
     const [clientBranches, setClientBranches] = useState([]);
     const [branchLoading, setBranchLoading] = useState(false);
-    const activeBranchId = Number(
-        activeBranch?.id
-        || activeBranch?.branchId
-        || accessProfile?.branch?.id
-        || accessProfile?.branchId
-        || accessProfile?.branchRecordId
-        || currentUser?.branchId
-        || 0
-    );
-    const activeBranchName = activeBranch?.name || accessProfile?.branch?.name || '';
+    
+    // Obtener branchId desde activeBranch directamente
+    const activeBranchId = Number(activeBranch?.id || 0);
+    const activeBranchName = activeBranch?.name || '';
     const transferBranchId = activeBranchId;
     const canSelectCashboxBranch = isEffectiveAdminUser(currentUser, accessProfile);
     const requiresCashboxBranch = clientBranches.length > 1;
@@ -593,12 +587,10 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
-        console.log('🔥 handleSaveOpening EJECUTADO', { openingSubmitting, requiresCashboxBranch, activeBranchId, openingDraft });
         if (openingSubmitting) return;
         setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
 
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
-            console.error('❌ BLOQUEADO: No hay sucursal activa válida');
             setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
             return;
         }

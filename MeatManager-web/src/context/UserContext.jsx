@@ -105,11 +105,23 @@ const restoreSession = () => {
         const p = sessionStorage.getItem('mm_perms');
         const a = sessionStorage.getItem('mm_access_profile');
         const b = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
+        
+        const user = u ? JSON.parse(u) : null;
+        const perms = p ? JSON.parse(p) : [];
+        const accessProfile = a ? JSON.parse(a) : null;
+        let activeBranch = b ? JSON.parse(b) : null;
+        
+        // Si no hay sucursal guardada pero el accessProfile tiene una, usarla
+        // (esto pasa cuando el usuario no es admin y tiene sucursal asignada)
+        if (!activeBranch && accessProfile?.branch?.id) {
+            activeBranch = accessProfile.branch;
+        }
+        
         return {
-            user: u ? JSON.parse(u) : null,
-            perms: p ? JSON.parse(p) : [],
-            accessProfile: a ? JSON.parse(a) : null,
-            activeBranch: b ? JSON.parse(b) : null,
+            user,
+            perms,
+            accessProfile,
+            activeBranch,
         };
     } catch {
         return { user: null, perms: [], accessProfile: null, activeBranch: null };
@@ -132,22 +144,34 @@ export const UserProvider = ({ children }) => {
 
     const applyResolvedUser = useCallback((userData) => {
         const perms = (userData?.role === 'admin') ? ALL_PATHS : (userData?.perms || []);
-        const savedBranch = (() => {
-            try {
-                const raw = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
-                return raw ? JSON.parse(raw) : null;
-            } catch {
-                return null;
-            }
-        })();
-        const canUseSavedBranch = (
-            userData?.role === 'admin'
-            && savedBranch?.id
-            && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
-        );
-        const effectiveUserData = canUseSavedBranch
-            ? { ...userData, branch: savedBranch }
-            : userData;
+        
+        // Determinar la sucursal activa
+        let activeBranchToUse = null;
+        
+        if (userData?.role === 'admin') {
+            // Para admins: priorizar sucursal guardada si existe y es válida
+            const savedBranch = (() => {
+                try {
+                    const raw = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
+                    return raw ? JSON.parse(raw) : null;
+                } catch {
+                    return null;
+                }
+            })();
+            const canUseSavedBranch = (
+                savedBranch?.id
+                && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
+            );
+            activeBranchToUse = canUseSavedBranch ? savedBranch : (userData?.branch || null);
+        } else {
+            // Para usuarios normales: SIEMPRE usar la sucursal que viene del API
+            activeBranchToUse = userData?.branch || null;
+        }
+        
+        const effectiveUserData = {
+            ...userData,
+            branch: activeBranchToUse,
+        };
         const sessionUser = {
             id: effectiveUserData?.id || effectiveUserData?.uid || effectiveUserData?.email,
             uid: effectiveUserData?.uid || null,
@@ -158,10 +182,16 @@ export const UserProvider = ({ children }) => {
         setCurrentUser(sessionUser);
         setUserPerms(perms);
         setAccessProfile(effectiveUserData);
-        setActiveBranch(canUseSavedBranch ? savedBranch : null);
-        if (!canUseSavedBranch && userData?.role !== 'admin') {
+        setActiveBranch(activeBranchToUse);
+        
+        // Guardar la sucursal activa en sessionStorage
+        if (activeBranchToUse) {
+            sessionStorage.setItem(ACTIVE_BRANCH_KEY, JSON.stringify(activeBranchToUse));
+        } else if (userData?.role !== 'admin') {
+            // Solo limpiar si NO es admin y no tiene sucursal
             sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
         }
+        
         sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
         sessionStorage.setItem('mm_perms', JSON.stringify(perms));
         sessionStorage.setItem('mm_access_profile', JSON.stringify(effectiveUserData));
