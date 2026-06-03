@@ -586,11 +586,27 @@ const CierreCaja = () => {
     };
 
     const handleSaveOpening = async (e) => {
+        console.log('🔥🔥🔥 handleSaveOpening LLAMADO', e);
         e.preventDefault();
-        if (openingSubmitting) return;
+        e.stopPropagation();
+        
+        console.log('Estado actual:', {
+            openingSubmitting,
+            requiresCashboxBranch,
+            activeBranchId,
+            openingDraft,
+            cashPaymentMethods: cashPaymentMethods?.length
+        });
+        
+        if (openingSubmitting) {
+            console.log('❌ Ya está enviando, saliendo...');
+            return;
+        }
+        
         setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
 
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            console.error('❌ BLOQUEADO: No hay sucursal activa válida');
             setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
             return;
         }
@@ -602,36 +618,46 @@ const CierreCaja = () => {
             }))
             .filter((row) => row.amount > 0);
 
+        console.log('Rows generadas:', rows);
+
         if (rows.length === 0 && openingMovements.length === 0) {
+            console.log('❌ BLOQUEADO: No hay montos de apertura');
             setFeedback({ type: 'warning', text: 'Ingresá al menos un monto de apertura para registrar la caja.' });
             return;
         }
 
+        const payload = {
+            date: selectedDate,
+            cashAccount: selectedCashAccount,
+            branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+            activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+            openings: rows.map(({ method, amount }) => ({
+                amount,
+                paymentMethod: method.name,
+                paymentMethodType: method.type,
+            })),
+        };
+        
+        console.log('📤 Enviando payload:', payload);
+
         try {
             setOpeningSubmitting(true);
-            await saveCashboxOpening({
-                date: selectedDate,
-                cashAccount: selectedCashAccount,
-                branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-                activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-                openings: rows.map(({ method, amount }) => ({
-                    amount,
-                    paymentMethod: method.name,
-                    paymentMethodType: method.type,
-                })),
-            });
+            const result = await saveCashboxOpening(payload);
+            console.log('✅ Respuesta exitosa:', result);
         } catch (error) {
-            console.error('[CierreCaja] save opening error', error);
+            console.error('❌ Error al guardar:', error);
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
             return;
         } finally {
             setOpeningSubmitting(false);
         }
 
+        console.log('🔄 Recargando datos...');
         await loadData();
         setFeedback({ type: 'success', text: 'Apertura de caja actualizada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft(buildOpeningDraft());
+        console.log('✅ Todo completado');
     };
 
     const handleAddMovement = async (e) => {
