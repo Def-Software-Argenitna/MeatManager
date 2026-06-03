@@ -121,6 +121,20 @@ const ProductosCompra = () => {
         if (!formData.name) return;
 
         const nameTrimmed = formData.name.trim();
+        const requestedPlu = formData.sale_plu.trim();
+        const existingProductCandidate = findProductByIdentity(products, {
+            id: editingItem?.product_id || null,
+            name: nameTrimmed,
+            plu: requestedPlu,
+        });
+        const existingCatalogItem = existingProductCandidate?.id
+            ? items.find((item) => Number(item?.product_id || 0) === Number(existingProductCandidate.id)) || null
+            : null;
+
+        if (!editingItem && existingCatalogItem) {
+            alert(`Este articulo ya existia en el catalogo y ya esta vinculado como "${existingCatalogItem.name}".`);
+            return;
+        }
         if (!formData.sale_price || !formData.sale_plu) {
             alert('⚠️ Completa el precio y el PLU para ventas.');
             return;
@@ -133,7 +147,11 @@ const ProductosCompra = () => {
         }
 
         try {
-            assertUniqueProductPluLocal(products, formData.sale_plu, editingItem?.product_id || null);
+            assertUniqueProductPluLocal(
+                products,
+                requestedPlu,
+                editingItem?.product_id || existingProductCandidate?.id || null
+            );
         } catch (error) {
             alert(`⚠️ ${error.message}`);
             return;
@@ -143,6 +161,7 @@ const ProductosCompra = () => {
         if (editingItem) {
             await saveTableRecord('purchase_items', 'update', {
                 name: nameTrimmed,
+                product_id: existingProductCandidate?.id || editingItem?.product_id || null,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
@@ -154,6 +173,7 @@ const ProductosCompra = () => {
         } else {
             const inserted = await saveTableRecord('purchase_items', 'insert', {
                 name: nameTrimmed,
+                product_id: existingProductCandidate?.id || null,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
@@ -177,9 +197,9 @@ const ProductosCompra = () => {
             categoryId: selectedSaleCategoryRow?.id || null,
             unit: formData.unit,
             price: salePrice,
-            plu: formData.sale_plu.trim(),
+            plu: requestedPlu,
             source: 'catalogo_compra',
-            preferredProductId: editingItem?.product_id || null,
+            preferredProductId: editingItem?.product_id || existingProductCandidate?.id || null,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
