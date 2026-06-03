@@ -169,6 +169,7 @@ const CierreCaja = () => {
                 const normalizedBranches = Array.isArray(branches) ? branches : [];
                 setClientBranches(normalizedBranches);
 
+                // Si hay sucursal activa válida, verificar que exista
                 const activeExists = activeBranchId
                     ? normalizedBranches.some((branch) => String(branch.id) === String(activeBranchId))
                     : false;
@@ -176,7 +177,8 @@ const CierreCaja = () => {
                     return;
                 }
 
-                if (normalizedBranches.length === 1) {
+                // Auto-seleccionar primera sucursal si no hay ninguna activa
+                if (!activeBranchId && normalizedBranches.length > 0) {
                     selectActiveBranch(normalizedBranches[0]);
                 }
             } catch (error) {
@@ -586,28 +588,16 @@ const CierreCaja = () => {
     };
 
     const handleSaveOpening = async (e) => {
-        console.log('🔥🔥🔥 handleSaveOpening LLAMADO', e);
         e.preventDefault();
-        e.stopPropagation();
-        
-        console.log('Estado actual:', {
-            openingSubmitting,
-            requiresCashboxBranch,
-            activeBranchId,
-            openingDraft,
-            cashPaymentMethods: cashPaymentMethods?.length
-        });
-        
-        if (openingSubmitting) {
-            console.log('❌ Ya está enviando, saliendo...');
-            return;
-        }
+        if (openingSubmitting) return;
         
         setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
 
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
-            console.error('❌ BLOQUEADO: No hay sucursal activa válida');
-            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
+            const message = clientBranches.length > 1 
+                ? `Seleccioná una sucursal del selector arriba (${clientBranches.length} disponibles)`
+                : 'Seleccioná una sucursal activa antes de iniciar la caja.';
+            setFeedback({ type: 'error', text: message });
             return;
         }
 
@@ -618,46 +608,36 @@ const CierreCaja = () => {
             }))
             .filter((row) => row.amount > 0);
 
-        console.log('Rows generadas:', rows);
-
         if (rows.length === 0 && openingMovements.length === 0) {
-            console.log('❌ BLOQUEADO: No hay montos de apertura');
             setFeedback({ type: 'warning', text: 'Ingresá al menos un monto de apertura para registrar la caja.' });
             return;
         }
 
-        const payload = {
-            date: selectedDate,
-            cashAccount: selectedCashAccount,
-            branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-            activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-            openings: rows.map(({ method, amount }) => ({
-                amount,
-                paymentMethod: method.name,
-                paymentMethodType: method.type,
-            })),
-        };
-        
-        console.log('📤 Enviando payload:', payload);
-
         try {
             setOpeningSubmitting(true);
-            const result = await saveCashboxOpening(payload);
-            console.log('✅ Respuesta exitosa:', result);
+            await saveCashboxOpening({
+                date: selectedDate,
+                cashAccount: selectedCashAccount,
+                branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                openings: rows.map(({ method, amount }) => ({
+                    amount,
+                    paymentMethod: method.name,
+                    paymentMethodType: method.type,
+                })),
+            });
         } catch (error) {
-            console.error('❌ Error al guardar:', error);
+            console.error('[CierreCaja] save opening error', error);
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
             return;
         } finally {
             setOpeningSubmitting(false);
         }
 
-        console.log('🔄 Recargando datos...');
         await loadData();
         setFeedback({ type: 'success', text: 'Apertura de caja actualizada correctamente.' });
         setShowOpeningForm(false);
         setOpeningDraft(buildOpeningDraft());
-        console.log('✅ Todo completado');
     };
 
     const handleAddMovement = async (e) => {

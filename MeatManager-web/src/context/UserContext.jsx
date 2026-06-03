@@ -143,8 +143,6 @@ export const UserProvider = ({ children }) => {
     const profileRecoveryRef = useRef('');
 
     const applyResolvedUser = useCallback((userData) => {
-        console.log('🔍 applyResolvedUser - userData recibida:', userData);
-        
         const perms = (userData?.role === 'admin') ? ALL_PATHS : (userData?.perms || []);
         
         // Determinar la sucursal activa
@@ -165,11 +163,9 @@ export const UserProvider = ({ children }) => {
                 && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
             );
             activeBranchToUse = canUseSavedBranch ? savedBranch : (userData?.branch || null);
-            console.log('🔍 ADMIN - savedBranch:', savedBranch, 'canUseSaved:', canUseSavedBranch, 'final:', activeBranchToUse);
         } else {
             // Para usuarios normales: SIEMPRE usar la sucursal que viene del API
             activeBranchToUse = userData?.branch || null;
-            console.log('🔍 EMPLOYEE - branch del API:', userData?.branch, 'final:', activeBranchToUse);
         }
         
         const effectiveUserData = {
@@ -183,8 +179,6 @@ export const UserProvider = ({ children }) => {
             username: effectiveUserData?.username || effectiveUserData?.empresa || effectiveUserData?.email,
             role: effectiveUserData?.role || 'employee',
         };
-        console.log('🔍 Aplicando estado:', { sessionUser, activeBranchToUse, effectiveUserData });
-        
         setCurrentUser(sessionUser);
         setUserPerms(perms);
         setAccessProfile(effectiveUserData);
@@ -192,21 +186,15 @@ export const UserProvider = ({ children }) => {
         
         // Guardar la sucursal activa en sessionStorage
         if (activeBranchToUse) {
-            console.log('✅ Guardando activeBranch en sessionStorage:', activeBranchToUse);
             sessionStorage.setItem(ACTIVE_BRANCH_KEY, JSON.stringify(activeBranchToUse));
         } else if (userData?.role !== 'admin') {
             // Solo limpiar si NO es admin y no tiene sucursal
-            console.log('⚠️ No hay sucursal para guardar (usuario no admin)');
             sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
-        } else {
-            console.log('⚠️ Admin sin sucursal');
         }
         
         sessionStorage.setItem('mm_user', JSON.stringify(sessionUser));
         sessionStorage.setItem('mm_perms', JSON.stringify(perms));
         sessionStorage.setItem('mm_access_profile', JSON.stringify(effectiveUserData));
-        
-        console.log('✅ applyResolvedUser completado');
         return { ok: true };
     }, []);
 
