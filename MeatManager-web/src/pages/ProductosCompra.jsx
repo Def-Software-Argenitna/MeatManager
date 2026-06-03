@@ -6,6 +6,7 @@ import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { useUser } from '../context/UserContext';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
@@ -25,6 +26,8 @@ const DEFAULT_SALE_CATEGORY_OPTIONS = [
 const ProductosCompra = () => {
     const navigate = useNavigate();
     const { hasModule } = useLicense();
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const hasDespostadaModule = hasModule('despostada');
     const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -200,6 +203,7 @@ const ProductosCompra = () => {
             plu: requestedPlu,
             source: 'catalogo_compra',
             preferredProductId: editingItem?.product_id || existingProductCandidate?.id || null,
+            branchId: currentBranchId,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>

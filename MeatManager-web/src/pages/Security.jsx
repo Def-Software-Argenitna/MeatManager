@@ -228,7 +228,9 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             toast('success', successText);
             setTimeout(() => onClose(), 300);
         } catch (err) {
-            const errorText = 'Error al guardar: ' + err.message;
+            const errorText = err?.code === 'BRANCH_REQUIRED'
+                ? err.message
+                : 'Error al guardar: ' + err.message;
             setSubmitFeedback({ type: 'error', text: errorText });
             toast('error', errorText);
         } finally {

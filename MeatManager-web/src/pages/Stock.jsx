@@ -30,8 +30,8 @@ const normalizeStockType = (value) => {
 };
 
 const Stock = () => {
-    const { accessProfile } = useUser();
-    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
     const [isImporting, setIsImporting] = useState(false);
@@ -246,6 +246,7 @@ const Stock = () => {
                 category: quickProduct.category,
                 unit: quickProduct.unit,
                 source: 'stock_manual',
+                branchId: currentBranchId,
             });
             product = {
                 id: `product:${createdProduct?.id || Date.now()}`,
@@ -356,6 +357,7 @@ const Stock = () => {
                     price: validPrice ? art.price : null,
                     plu: art.plu,
                     source: 'importacion_balanza',
+                    branchId: currentBranchId,
                 });
                 if (validPrice) updatedCount++;
 
@@ -476,6 +478,7 @@ const Stock = () => {
                 price: numericPrice,
                 plu: item.plu,
                 source: 'stock_manual',
+                branchId: currentBranchId,
             });
 
             await loadStockAndPrices();

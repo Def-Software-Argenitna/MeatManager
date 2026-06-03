@@ -192,10 +192,10 @@ const Ventas = () => {
         };
     }, []);
     const navigate = useNavigate();
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
-    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
     const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
@@ -927,6 +927,7 @@ const Ventas = () => {
                     price,
                     plu,
                     source: 'ventas_manual',
+                    branchId: currentBranchId,
                 });
             } catch (error) {
                 showToast(`⚠️ ${error.message}`, 'warning');
@@ -1390,6 +1391,7 @@ const Ventas = () => {
                 price,
                 plu: finalPlu,
                 source: 'ventas_quick_create',
+                branchId: currentBranchId,
             });
 
             await saveTableRecord('stock', 'insert', {

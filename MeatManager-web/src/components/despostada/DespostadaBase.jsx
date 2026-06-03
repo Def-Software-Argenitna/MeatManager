@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
+import { useUser } from '../../context/UserContext';
 import DirectionalReveal from '../DirectionalReveal';
 import ModuleLicenseGate from '../ModuleLicenseGate';
 import { scaleService } from '../../utils/SerialScaleService';
@@ -93,6 +94,8 @@ const DespostadaBase = ({
     purchaseHints = [],
     accent = '#ef4444',
 }) => {
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const { hasModule } = useLicense();
     const navigate = useNavigate();
     const hasDespostadaModule = hasModule('despostada');
@@ -197,6 +200,7 @@ const DespostadaBase = ({
                     unit: 'kg',
                     price: row.suggestedPricePerKg,
                     source: 'despostada',
+                    branchId: currentBranchId,
                     resolveConflict: ({ incomingPrice, existingPrice }) => incomingPrice || existingPrice,
                 });
 
