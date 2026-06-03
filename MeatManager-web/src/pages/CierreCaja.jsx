@@ -593,10 +593,12 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
+        console.log('🔥 handleSaveOpening EJECUTADO', { openingSubmitting, requiresCashboxBranch, activeBranchId, openingDraft });
         if (openingSubmitting) return;
         setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
 
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            console.error('❌ BLOQUEADO: No hay sucursal activa válida');
             setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
             return;
         }
