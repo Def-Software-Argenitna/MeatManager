@@ -11,7 +11,7 @@ import {
     Wallet,
     ArrowRightLeft,
 } from 'lucide-react';
-import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveTableRecord } from '../utils/apiClient';
+import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
 import { useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
@@ -151,6 +151,7 @@ const CierreCaja = () => {
     );
     const activeBranchName = activeBranch?.name || accessProfile?.branch?.name || '';
     const transferBranchId = activeBranchId;
+    const requiresCashboxBranch = clientBranches.length > 1;
 
     useEffect(() => {
         let cancelled = false;
@@ -558,6 +559,11 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
+        if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
+            return;
+        }
+
         const rows = cashPaymentMethods
             .map((method) => ({
                 method,
@@ -570,26 +576,22 @@ const CierreCaja = () => {
             return;
         }
 
-        // Delete old aperturas before inserting new ones to properly "modify" instead of sum.
-        for (const mov of openingMovements) {
-            await saveTableRecord('caja_movimientos', 'delete', null, mov.id);
-        }
-
-        const openingDate = new Date(`${selectedDate}T08:00:00`).toISOString();
-        for (const { method, amount } of rows) {
-            await saveTableRecord('caja_movimientos', 'insert', {
-                type: 'apertura',
-                amount,
-                category: 'Apertura de caja',
-                money_flow_kind: 'cash_opening',
-                origin_table: 'cash_opening',
-                origin_group_id: `cash_opening_${selectedDate}_${selectedCashAccount}`,
-                description: `Apertura inicial ${method.name}`,
-                payment_method: method.name,
-                payment_method_type: method.type,
-                cash_account: selectedCashAccount,
-                date: openingDate,
+        try {
+            await saveCashboxOpening({
+                date: selectedDate,
+                cashAccount: selectedCashAccount,
+                branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                openings: rows.map(({ method, amount }) => ({
+                    amount,
+                    paymentMethod: method.name,
+                    paymentMethodType: method.type,
+                })),
             });
+        } catch (error) {
+            console.error('[CierreCaja] save opening error', error);
+            setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
+            return;
         }
 
         await loadData();
@@ -600,6 +602,10 @@ const CierreCaja = () => {
 
     const handleAddMovement = async (e) => {
         e.preventDefault();
+        if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de guardar movimientos de caja.' });
+            return;
+        }
         if (!movementAmount || parseFloat(movementAmount) <= 0) {
             setFeedback({ type: 'warning', text: 'Ingresá un importe válido para guardar el movimiento.' });
             return;
@@ -616,6 +622,7 @@ const CierreCaja = () => {
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
             cash_account: selectedCashAccount,
+            branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
             date: new Date().toISOString(),
         });
 
