@@ -93,6 +93,51 @@ const HistorialVentas = () => {
         });
     }, [hiddenDigitalPaymentFilterMode, sales, search]);
 
+    const todayProductSummary = useMemo(() => {
+        const start = new Date();
+        start.setHours(0, 0, 0, 0);
+        const end = new Date();
+        end.setHours(23, 59, 59, 999);
+        const totals = new Map();
+        let salesWithoutRealDetail = 0;
+
+        sales.forEach((sale) => {
+            const saleDate = new Date(sale.date);
+            if (!Number.isFinite(saleDate.getTime()) || saleDate < start || saleDate > end) return;
+            if (hiddenDigitalPaymentFilterMode === 'digital' && !saleUsesOnlyDigitalPayments(sale)) return;
+
+            const items = Array.isArray(sale.items) ? sale.items : [];
+            const hasGenericScaleFallback = items.some((item) =>
+                String(item.product_name || '').trim().toLowerCase().includes('ticket balanza')
+            );
+            if (!items.length || hasGenericScaleFallback) {
+                salesWithoutRealDetail += 1;
+            }
+
+            items.forEach((item) => {
+                const name = String(item.product_name || '').trim();
+                if (!name || name.toLowerCase().includes('ticket balanza')) return;
+                const key = name.toLowerCase();
+                const current = totals.get(key) || {
+                    name,
+                    quantity: 0,
+                    amount: 0,
+                    unit: String(item.unit || 'kg').trim() || 'kg',
+                };
+                current.quantity += Number(item.quantity) || 0;
+                current.amount += Number(item.subtotal) || 0;
+                totals.set(key, current);
+            });
+        });
+
+        return {
+            products: Array.from(totals.values())
+                .sort((a, b) => b.amount - a.amount)
+                .slice(0, 8),
+            salesWithoutRealDetail,
+        };
+    }, [hiddenDigitalPaymentFilterMode, sales]);
+
     return (
         <div className="animate-fade-in">
             <header className="page-header" style={{ marginBottom: '1.5rem' }}>
@@ -159,6 +204,45 @@ const HistorialVentas = () => {
                     </label>
                 </div>
 
+                <div style={{
+                    marginBottom: '1rem',
+                    padding: '0.9rem',
+                    borderRadius: '12px',
+                    border: '1px solid var(--color-border)',
+                    background: 'rgba(255,255,255,0.025)',
+                }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
+                        <strong style={{ color: 'var(--color-text-main)' }}>Productos vendidos hoy</strong>
+                        {todayProductSummary.salesWithoutRealDetail > 0 && (
+                            <span style={{ color: '#f59e0b', fontSize: '0.82rem' }}>
+                                {todayProductSummary.salesWithoutRealDetail} venta{todayProductSummary.salesWithoutRealDetail !== 1 ? 's' : ''} sin desglose real
+                            </span>
+                        )}
+                    </div>
+                    {todayProductSummary.products.length === 0 ? (
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
+                            No hay detalle de productos para el día. Si se cobraron tickets offline de balanza, aparecen como venta genérica.
+                        </div>
+                    ) : (
+                        <div style={{ display: 'grid', gap: '0.45rem' }}>
+                            {todayProductSummary.products.map((item) => (
+                                <div key={item.name} style={{
+                                    display: 'grid',
+                                    gridTemplateColumns: '1fr auto auto',
+                                    gap: '0.75rem',
+                                    alignItems: 'center',
+                                    color: 'var(--color-text-muted)',
+                                    fontSize: '0.9rem',
+                                }}>
+                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 700 }}>{item.name}</span>
+                                    <span>{item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit === 'kg' ? 'kg' : 'un'}</span>
+                                    <strong style={{ color: 'var(--color-text-main)' }}>{formatCurrency(item.amount)}</strong>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
                 {filteredSales.length === 0 ? (
                     <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: '2rem 0' }}>
                         No hay ventas para mostrar con ese criterio.
@@ -168,6 +252,9 @@ const HistorialVentas = () => {
                         {filteredSales.map((sale) => {
                             const receiptCode = sale.receipt_code || formatReceiptCode(1, sale.receipt_number || sale.id);
                             const saleDate = new Date(sale.date);
+                            const saleHasGenericScaleFallback = (sale.items || []).some((item) =>
+                                String(item.product_name || '').trim().toLowerCase().includes('ticket balanza')
+                            );
                             const paymentBreakdown = parsePaymentBreakdown(sale.payment_breakdown);
                             const paymentRows = paymentBreakdown.length > 0
                                 ? paymentBreakdown
@@ -258,6 +345,18 @@ const HistorialVentas = () => {
                                                 color: sale.source === 'qendra' ? '#fff' : 'var(--color-text-muted)',
                                             }}>
                                                 {sale.source}
+                                            </span>
+                                        )}
+                                        {saleHasGenericScaleFallback && (
+                                            <span style={{
+                                                fontSize: '0.78rem',
+                                                padding: '0.2rem 0.55rem',
+                                                borderRadius: '999px',
+                                                background: 'rgba(245,158,11,0.12)',
+                                                border: '1px solid rgba(245,158,11,0.35)',
+                                                color: '#f59e0b',
+                                            }}>
+                                                Sin desglose de balanza
                                             </span>
                                         )}
                                     </div>

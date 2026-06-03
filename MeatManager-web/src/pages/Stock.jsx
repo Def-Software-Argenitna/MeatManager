@@ -227,12 +227,34 @@ const Stock = () => {
         quantity: '',
         type: 'add' // 'add' or 'subtract'
     });
+    const [quickProduct, setQuickProduct] = useState({
+        name: '',
+        category: 'vaca',
+        unit: 'kg',
+    });
 
     const handleAdjustment = async (e) => {
         e.preventDefault();
         if (!adjustment.productId || !adjustment.quantity) return;
 
-        const product = productsForAdjustment.find(p => p.id === adjustment.productId);
+        let product = productsForAdjustment.find(p => p.id === adjustment.productId);
+        if (adjustment.productId === '__new__') {
+            const createdProduct = await ensureUnifiedProduct({
+                products,
+                prices: [],
+                name: quickProduct.name,
+                category: quickProduct.category,
+                unit: quickProduct.unit,
+                source: 'stock_manual',
+            });
+            product = {
+                id: `product:${createdProduct?.id || Date.now()}`,
+                productId: createdProduct?.id || null,
+                name: String(createdProduct?.name || quickProduct.name || '').trim(),
+                category: normalizeStockType(createdProduct?.category || quickProduct.category),
+                unit: String(createdProduct?.unit || quickProduct.unit || 'kg').trim() || 'kg',
+            };
+        }
         if (!product) return;
 
         const qty = parseFloat(adjustment.quantity);
@@ -252,6 +274,7 @@ const Stock = () => {
         await loadStockAndPrices();
         setIsModalOpen(false);
         setAdjustment({ productId: '', quantity: '', type: 'add' });
+        setQuickProduct({ name: '', category: 'vaca', unit: 'kg' });
     };
 
     const handleExportExcel = () => {{
@@ -740,6 +763,7 @@ const Stock = () => {
                                     onChange={e => setAdjustment({ ...adjustment, productId: e.target.value })}
                                 >
                                     <option value="">Seleccionar producto...</option>
+                                    <option value="__new__">+ Crear producto nuevo</option>
                                     {filteredProductsForAdjustment.map(p => (
                                         <option key={p.id} value={p.id}>{p.name} ({p.unit})</option>
                                     ))}
@@ -750,6 +774,55 @@ const Stock = () => {
                                     </div>
                                 )}
                             </div>
+
+                            {adjustment.productId === '__new__' && (
+                                <div style={{
+                                    display: 'grid',
+                                    gap: '0.75rem',
+                                    marginBottom: '1rem',
+                                    padding: '0.85rem',
+                                    borderRadius: '8px',
+                                    border: '1px solid var(--color-border)',
+                                    background: 'rgba(255,255,255,0.03)',
+                                }}>
+                                    <div>
+                                        <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Nombre del producto</label>
+                                        <input
+                                            type="text"
+                                            className="neo-input"
+                                            required
+                                            placeholder="Ej: Pata muslo"
+                                            value={quickProduct.name}
+                                            onChange={(e) => setQuickProduct((prev) => ({ ...prev, name: e.target.value }))}
+                                        />
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Categoría</label>
+                                            <select
+                                                className="neo-input"
+                                                value={quickProduct.category}
+                                                onChange={(e) => setQuickProduct((prev) => ({ ...prev, category: e.target.value }))}
+                                            >
+                                                {TYPE_PRIORITY.map((type) => (
+                                                    <option key={type} value={type}>{TYPE_META[type]?.name || type}</option>
+                                                ))}
+                                            </select>
+                                        </div>
+                                        <div>
+                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Unidad</label>
+                                            <select
+                                                className="neo-input"
+                                                value={quickProduct.unit}
+                                                onChange={(e) => setQuickProduct((prev) => ({ ...prev, unit: e.target.value }))}
+                                            >
+                                                <option value="kg">kg</option>
+                                                <option value="unidades">unidades</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
 
                             <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
                                 <div style={{ flex: 1 }}>
