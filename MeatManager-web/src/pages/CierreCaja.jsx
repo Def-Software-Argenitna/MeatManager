@@ -132,6 +132,7 @@ const CierreCaja = () => {
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
     const [transferSubmitting, setTransferSubmitting] = useState(false);
+    const [openingSubmitting, setOpeningSubmitting] = useState(false);
 
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
@@ -140,16 +141,10 @@ const CierreCaja = () => {
     const { activeBranch, accessProfile, currentUser, refreshClientBranches, selectActiveBranch } = useUser();
     const [clientBranches, setClientBranches] = useState([]);
     const [branchLoading, setBranchLoading] = useState(false);
-    const activeBranchId = Number(
-        activeBranch?.id
-        || activeBranch?.branchId
-        || accessProfile?.branch?.id
-        || accessProfile?.branchId
-        || accessProfile?.branchRecordId
-        || currentUser?.branchId
-        || 0
-    );
-    const activeBranchName = activeBranch?.name || accessProfile?.branch?.name || '';
+    
+    // Obtener branchId desde activeBranch directamente
+    const activeBranchId = Number(activeBranch?.id || 0);
+    const activeBranchName = activeBranch?.name || '';
     const transferBranchId = activeBranchId;
     const canSelectCashboxBranch = isEffectiveAdminUser(currentUser, accessProfile);
     const requiresCashboxBranch = clientBranches.length > 1;
@@ -174,6 +169,7 @@ const CierreCaja = () => {
                 const normalizedBranches = Array.isArray(branches) ? branches : [];
                 setClientBranches(normalizedBranches);
 
+                // Si hay sucursal activa válida, verificar que exista
                 const activeExists = activeBranchId
                     ? normalizedBranches.some((branch) => String(branch.id) === String(activeBranchId))
                     : false;
@@ -181,7 +177,8 @@ const CierreCaja = () => {
                     return;
                 }
 
-                if (normalizedBranches.length === 1) {
+                // Auto-seleccionar primera sucursal si no hay ninguna activa
+                if (!activeBranchId && normalizedBranches.length > 0) {
                     selectActiveBranch(normalizedBranches[0]);
                 }
             } catch (error) {
@@ -426,6 +423,23 @@ const CierreCaja = () => {
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = 0;
 
+    const handleToggleOpeningForm = (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        if (!showOpeningForm) {
+            setOpeningDraft(buildOpeningDraft(
+                openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+            ));
+            setShowOpeningForm(true);
+            setFeedback(null);
+            return;
+        }
+
+        setOpeningDraft(buildOpeningDraft());
+        setShowOpeningForm(false);
+    };
+
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
@@ -575,8 +589,15 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
+        if (openingSubmitting) return;
+        
+        setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
+
         if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
-            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de iniciar la caja.' });
+            const message = clientBranches.length > 1 
+                ? `Seleccioná una sucursal del selector arriba (${clientBranches.length} disponibles)`
+                : 'Seleccioná una sucursal activa antes de iniciar la caja.';
+            setFeedback({ type: 'error', text: message });
             return;
         }
 
@@ -593,6 +614,7 @@ const CierreCaja = () => {
         }
 
         try {
+            setOpeningSubmitting(true);
             await saveCashboxOpening({
                 date: selectedDate,
                 cashAccount: selectedCashAccount,
@@ -608,6 +630,8 @@ const CierreCaja = () => {
             console.error('[CierreCaja] save opening error', error);
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
             return;
+        } finally {
+            setOpeningSubmitting(false);
         }
 
         await loadData();
@@ -904,16 +928,7 @@ const CierreCaja = () => {
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button className="cierre-add-btn" onClick={() => {
-                                if (!showOpeningForm) {
-                                    setOpeningDraft(buildOpeningDraft(
-                                        openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
-                                    ));
-                                } else {
-                                    setOpeningDraft(buildOpeningDraft());
-                                }
-                                setShowOpeningForm((prev) => !prev);
-                            }}>
+                            <button type="button" className="cierre-add-btn" onClick={handleToggleOpeningForm}>
                                 {showOpeningForm ? 'Cancelar edición' : openingMovements.length > 0 ? 'Modificar apertura' : 'Registrar apertura'}
                             </button>
                         </div>
@@ -952,15 +967,15 @@ const CierreCaja = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <button type="submit" className="save-btn">
-                                    <Save size={16} /> Guardar apertura
+                                <button type="submit" className="save-btn" disabled={openingSubmitting}>
+                                    <Save size={16} /> {openingSubmitting ? 'Guardando...' : 'Guardar apertura'}
                                 </button>
                             </form>
                         )}
 
                         <div className="section-header section-header-secondary">
                             <h3>Transferencia entre cajas</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
                                 {showTransferForm ? 'Cancelar' : 'Transferir fondos'}
                             </button>
                         </div>
@@ -1060,7 +1075,7 @@ const CierreCaja = () => {
 
                         <div className="section-header section-header-secondary">
                             <h3>Retiros e ingresos manuales</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
                             </button>
                         </div>
