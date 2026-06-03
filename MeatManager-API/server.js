@@ -8281,6 +8281,7 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             active = 1,
             perms = [],
             assignedClientLicenseIds = [],
+            branchId: requestedBranchId,
         } = req.body || {};
 
         if (!email || !String(email).trim()) {
@@ -8301,6 +8302,9 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
         });
         assertClientAccess(accessContext);
         accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede crear usuarios' });
+        }
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const requestedRole = String(role || 'employee').trim().toLowerCase();
         const effectiveRole = isRequesterAdmin ? 'employee' : requestedRole;
@@ -8316,9 +8320,16 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
             ?? accessContext?.user?.branchId
             ?? accessContext?.activeBranch?.id
         );
-        const newUserBranchId = normalizedRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
-            ? scopedBranchId
-            : null;
+        // Si se envía branchId explícito (desde el formulario), usarlo; si no, heredar del admin si tiene sucursal
+        const newUserBranchId = (() => {
+            if (requestedBranchId !== undefined) {
+                return requestedBranchId ? Number(requestedBranchId) : null;
+            }
+            if (normalizedRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+                return scopedBranchId;
+            }
+            return null;
+        })();
         try {
             const [existingRows] = await conn.query(
                 `SELECT id FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\` WHERE clientId = ? AND LOWER(email) = ? LIMIT 1`,
@@ -8413,7 +8424,7 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             return res.status(400).json({ error: 'Usuario inválido' });
         }
 
-        const { email, password, username, role, active, perms, assignedClientLicenseIds = [] } = req.body || {};
+        const { email, password, username, role, active, perms, assignedClientLicenseIds = [], branchId: requestedBranchId } = req.body || {};
         const accessContext = await getClientAccessContext({
             uid: req.firebaseUser.uid,
             email: req.firebaseUser.email,
@@ -8422,6 +8433,9 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         });
         assertClientAccess(accessContext);
         accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede editar usuarios' });
+        }
         const isRequesterAdmin = accessContext.user.role === 'admin';
         const ownerData = await getTenantClientData(req.firebaseUser);
         const scopedBranchId = Number(
@@ -8460,9 +8474,17 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
             : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
         const nextActive = active === undefined ? currentData.status === 'ACTIVE' : Number(active) === 1;
         const nextPerms = nextRole === 'admin' ? [] : (Array.isArray(perms) ? perms : []);
-        const nextBranchId = nextRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0
-            ? scopedBranchId
-            : currentData.branchId;
+        // Si el admin envía un branchId explícito, usarlo. Si no, mantener el actual.
+        const nextBranchId = (() => {
+            if (isRequesterAdmin && requestedBranchId !== undefined) {
+                // Admin puede asignar o quitar sucursal explícitamente
+                return requestedBranchId ? Number(requestedBranchId) : null;
+            }
+            if (nextRole === 'employee' && Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+                return scopedBranchId;
+            }
+            return currentData.branchId;
+        })();
 
         const writeConn = await clientsControlPool.getConnection();
         let job;
@@ -8545,6 +8567,9 @@ app.delete('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         });
         assertClientAccess(accessContext);
         accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        if (!canWriteProtectedSettings(accessContext)) {
+            return res.status(403).json({ error: 'Solo un administrador puede eliminar usuarios' });
+        }
         const scopedBranchId = Number(
             accessContext?.user?.branchRecordId
             ?? accessContext?.user?.branchId
