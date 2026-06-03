@@ -103,7 +103,7 @@ const formatLicenseLabel = (license) => (
 );
 
 /* ── User modal ─────────────────────────── */
-const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [], activeBranch = null, clientBranches = [] }) => {
+const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [], clientBranches = [] }) => {
     const [form, setForm] = useState(() => {
         if (!user) return EMPTY_FORM;
         return {
@@ -281,7 +281,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                                 value={form.selectedBranchId}
                                 onChange={e => set('selectedBranchId', e.target.value)}
                             >
-                                <option value="">Sin sucursal específica (puede usar todas)</option>
+                                <option value="">Sin sucursal asignada (no podrá iniciar sesión)</option>
                                 {clientBranches.map(branch => (
                                     <option key={branch.id} value={branch.id}>
                                         {branch.name} {branch.internalCode ? `(${branch.internalCode})` : ''}
@@ -477,7 +477,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             ) : (
                                 <span>✓ El usuario podrá operar en todas las sucursales disponibles.</span>
                             )}
-                            {false && (
+                            {form.accountType === 'admin' && (
                                 <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
                             )}
                             {form.accountType === 'internal' && (
@@ -525,7 +525,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, accessProfile, activeBranch, users, licensePool, refreshUsers, refreshClientBranches, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const { currentUser, accessProfile, users, licensePool, refreshUsers, refreshClientBranches, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
     const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
@@ -1291,8 +1291,7 @@ const Security = () => {
             )}
 
             {/* Modal */}
-            {sho    clientBranches={clientBranches}
-                wModal && isAdmin && (
+            {showModal && isAdmin && (
                 <UserModal
                     user={editingUser}
                     onClose={() => setShowModal(false)}
@@ -1301,7 +1300,7 @@ const Security = () => {
                     saveRecord={saveRecord}
                     replacePermissions={replaceUserPermissions}
                     licensePool={licensePool}
-                    activeBranch={activeBranch || accessProfile?.branch || null}
+                    clientBranches={clientBranches}
                 />
             )}
 
