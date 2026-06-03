@@ -5861,6 +5861,111 @@ app.get('/api/caja/report-data', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const tenantPool = getTenantPool(dbName);
+        conn = await tenantPool.getConnection();
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+
+        const selectedDate = normalizeCashSummaryDate(req.body?.date);
+        const selectedCashAccount = normalizeCashAccountToken(req.body?.cashAccount || req.body?.cash_account);
+        const openings = Array.isArray(req.body?.openings) ? req.body.openings : [];
+        const cleanOpenings = openings
+            .map((row) => ({
+                amount: Number(row?.amount || 0),
+                paymentMethod: String(row?.paymentMethod || row?.payment_method || '').trim(),
+                paymentMethodType: String(row?.paymentMethodType || row?.payment_method_type || 'cash').trim() || 'cash',
+            }))
+            .filter((row) => row.amount > 0 && row.paymentMethod);
+
+        if (!cleanOpenings.length) {
+            return res.status(400).json({ error: 'Debe informar al menos una apertura con importe mayor a cero' });
+        }
+
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool: tenantPool,
+                tenantId,
+                accessContext,
+                record: {
+                    branch_id: req.body?.branch_id,
+                    branchId: req.body?.branchId,
+                    activeBranchId: req.body?.activeBranchId,
+                },
+            })
+            : null;
+
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        if (activeBranches.length > 1 && (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0)) {
+            return res.status(400).json({
+                error: 'Debe especificar branch_id para iniciar caja',
+                code: 'BRANCH_REQUIRED',
+                activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+            });
+        }
+
+        const dayStart = `${selectedDate} 00:00:00`;
+        const dayEnd = `${selectedDate} 23:59:59`;
+        const openingDate = `${selectedDate} 08:00:00`;
+        const branchId = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null;
+
+        await conn.beginTransaction();
+        const branchDeleteSql = branchId ? 'AND (branch_id = ? OR branch_id IS NULL)' : 'AND branch_id IS NULL';
+        const branchDeleteParams = branchId ? [branchId] : [];
+        await conn.query(
+            `DELETE FROM caja_movimientos
+             WHERE tenant_id = ?
+               AND type = 'apertura'
+               AND cash_account = ?
+               AND date >= ?
+               AND date <= ?
+               ${branchDeleteSql}`,
+            [tenantId, selectedCashAccount, dayStart, dayEnd, ...branchDeleteParams]
+        );
+
+        for (const row of cleanOpenings) {
+            await conn.query('INSERT INTO caja_movimientos SET ?', [{
+                tenant_id: tenantId,
+                branch_id: branchId,
+                type: 'apertura',
+                amount: row.amount,
+                category: 'Apertura de caja',
+                money_flow_kind: 'cash_opening',
+                origin_table: 'cash_opening',
+                origin_group_id: `cash_opening_${selectedDate}_${selectedCashAccount}`,
+                description: `Apertura inicial ${row.paymentMethod}`,
+                payment_method: row.paymentMethod,
+                payment_method_type: row.paymentMethodType,
+                cash_account: selectedCashAccount,
+                date: openingDate,
+            }]);
+        }
+
+        await conn.commit();
+        return res.json({ ok: true, count: cleanOpenings.length, branchId });
+    } catch (error) {
+        if (conn) await conn.rollback().catch(() => {});
+        console.error('[CAJA OPENING] error', error);
+        return res.status(error.statusCode || 500).json({
+            error: error.message || 'No se pudo guardar la apertura de caja',
+            code: error.code || null,
+        });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
     let conn;
     try {

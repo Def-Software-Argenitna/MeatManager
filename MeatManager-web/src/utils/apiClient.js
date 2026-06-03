@@ -327,6 +327,22 @@ export const fetchCajaReportData = async (options = {}) => {
     return res.json();
 };
 
+export const saveCashboxOpening = async (payload = {}) => {
+    const res = await apiFetch('/api/caja/opening', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const error = new Error(err.error || 'No se pudo guardar la apertura de caja');
+        error.code = err.code || null;
+        error.details = err;
+        throw error;
+    }
+    return res.json();
+};
+
 export const createCashboxTransfer = async (payload = {}) => {
     const res = await apiFetch('/api/caja/transfer', {
         method: 'POST',
