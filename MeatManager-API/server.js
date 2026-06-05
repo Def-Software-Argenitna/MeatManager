@@ -1954,8 +1954,11 @@ async function ensureOperationalTenantIsolation() {
 
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'purchase_items', 'use_for_despostada', '`use_for_despostada` TINYINT(1) NOT NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'products', 'use_for_despostada', '`use_for_despostada` TINYINT(1) NOT NULL DEFAULT 0 AFTER `unit`');
+            await ensureColumn(conn, 'products', 'despostada_species', '`despostada_species` VARCHAR(30) NULL AFTER `use_for_despostada`');
             await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
             await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
             await ensureColumn(conn, 'products', 'archived_plu', '`archived_plu` VARCHAR(20) NULL AFTER `deleted_at`');
@@ -7459,7 +7462,22 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
 
         // 3. Stock / animal_lots por item
         for (const item of items) {
-            const isDespostada = item.type === 'despostada';
+            let effectiveType = item.type;
+            let effectiveSpecies = item.species || 'vaca';
+            if (item.product_id) {
+                const [[productRule]] = await conn.query(
+                    `SELECT use_for_despostada, despostada_species
+                     FROM products
+                     WHERE tenant_id = ? AND id = ?
+                     LIMIT 1`,
+                    [tenantId, item.product_id]
+                );
+                if (Number(productRule?.use_for_despostada || 0) === 1) {
+                    effectiveType = 'despostada';
+                    effectiveSpecies = productRule.despostada_species || effectiveSpecies || 'vaca';
+                }
+            }
+            const isDespostada = effectiveType === 'despostada';
             const isInternal = item.destination === 'interno';
 
             // Despostada → crear lotes (solo si tiene módulo)
@@ -7474,7 +7492,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                          (tenant_id, purchase_id, supplier, date, species, weight, status)
                          VALUES (?, ?, ?, ?, ?, ?, 'disponible')`,
                         [tenantId, purchaseId, String(supplier || '').trim(),
-                         purchaseDate, item.species || 'vaca', weightPerLot]
+                         purchaseDate, effectiveSpecies || 'vaca', weightPerLot]
                     );
                 }
                 continue; // no va al stock de venta
@@ -7496,7 +7514,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                     resolvedBranchId,
                     item.product_id || null,
                     String(item.product_name || '').trim(),
-                    item.species || item.type || 'vaca',
+                    effectiveSpecies || effectiveType || 'vaca',
                     stockQty,
                     item.unit || 'kg',
                     `compra_${purchaseId}`,

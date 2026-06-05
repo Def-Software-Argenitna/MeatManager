@@ -62,6 +62,7 @@ const ProductosCompra = () => {
         category_id: '',
         unit: 'kg', // default unit
         type: 'directo', // directo or despostada
+        use_for_despostada: false,
         is_preelaborable: false,
         species: 'vaca', // default species for traceability
         default_iva_rate: 10.5,
@@ -168,8 +169,9 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                use_for_despostada: formData.use_for_despostada ? 1 : 0,
                 is_preelaborable: formData.is_preelaborable ? 1 : 0,
-                species: formData.type === 'despostada' ? formData.species : null,
+                species: formData.use_for_despostada ? formData.species : null,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
             }, editingItem.id);
             setEditingItem(null);
@@ -180,8 +182,9 @@ const ProductosCompra = () => {
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
+                use_for_despostada: formData.use_for_despostada ? 1 : 0,
                 is_preelaborable: formData.is_preelaborable ? 1 : 0,
-                species: formData.type === 'despostada' ? formData.species : 'vaca',
+                species: formData.use_for_despostada ? formData.species : 'vaca',
                 last_price: 0,
                 default_iva_rate: Number(formData.default_iva_rate) || 10.5
             });
@@ -204,6 +207,8 @@ const ProductosCompra = () => {
             source: 'catalogo_compra',
             preferredProductId: editingItem?.product_id || existingProductCandidate?.id || null,
             branchId: currentBranchId,
+            useForDespostada: formData.use_for_despostada,
+            despostadaSpecies: formData.use_for_despostada ? formData.species : null,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
@@ -234,7 +239,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '' });
     };
 
     const handleDelete = async (id) => {
@@ -269,8 +274,9 @@ const ProductosCompra = () => {
             category_id: item.category_id || '',
             unit: item.unit || 'kg',
             type: item.type || 'directo',
+            use_for_despostada: Number(productRecord?.use_for_despostada ?? item.use_for_despostada ?? (item.type === 'despostada' ? 1 : 0)) === 1,
             is_preelaborable: Number(item.is_preelaborable || 0) === 1,
-            species: item.species || 'vaca',
+            species: productRecord?.despostada_species || item.species || 'vaca',
             default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ANIMAL_SALE_CATEGORIES.includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
             sale_price: productRecord?.current_price?.toString() || '',
@@ -281,7 +287,7 @@ const ProductosCompra = () => {
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu) });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu) });
         setIsModalOpen(true);
     };
 
@@ -300,6 +306,8 @@ const ProductosCompra = () => {
                 plu: productRecord?.plu ?? '',
                 product_category: productRecord?.category ?? null,
                 product_category_code: productRecord?.category_code ?? null,
+                use_for_despostada: Number(productRecord?.use_for_despostada ?? item?.use_for_despostada ?? (item?.type === 'despostada' ? 1 : 0)) === 1 ? 1 : 0,
+                despostada_species: productRecord?.despostada_species || item?.species || null,
             };
         });
     }, [items, products]);
@@ -489,9 +497,9 @@ const ProductosCompra = () => {
                                                 <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
                                                     IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
                                                 </span>
-                                                {item.type === 'despostada' && (
+                                                {Number(item.use_for_despostada || 0) === 1 && (
                                                     <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
-                                                        PARA DESPOSTAR
+                                                        USA DESPOSTADA
                                                     </span>
                                                 )}
                                                 {Number(item.is_preelaborable || 0) === 1 && (
@@ -593,11 +601,15 @@ const ProductosCompra = () => {
                                     </select>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Destino / Uso</label>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Destino histórico de compra</label>
                                     <select
                                         className="neo-input"
                                         value={formData.type}
-                                        onChange={e => setFormData({ ...formData, type: e.target.value })}
+                                        onChange={e => setFormData({
+                                            ...formData,
+                                            type: e.target.value,
+                                            use_for_despostada: e.target.value === 'despostada' ? true : formData.use_for_despostada,
+                                        })}
                                         disabled={!hasDespostadaModule}
                                     >
                                         <option value="directo">Venta Directa / Insumo</option>
@@ -616,6 +628,34 @@ const ProductosCompra = () => {
                                         </div>
                                     )}
                                 </div>
+                            </div>
+
+                            <div style={{ marginBottom: '1.5rem', padding: '0.9rem 1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(234,179,8,0.06)' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: hasDespostadaModule ? 'pointer' : 'not-allowed', fontWeight: '700', color: hasDespostadaModule ? 'var(--color-text-main)' : 'var(--color-text-muted)' }}>
+                                    <input
+                                        type="checkbox"
+                                        checked={formData.use_for_despostada}
+                                        disabled={!hasDespostadaModule}
+                                        onChange={(e) => setFormData({
+                                            ...formData,
+                                            use_for_despostada: e.target.checked,
+                                            type: e.target.checked ? 'despostada' : formData.type,
+                                            species: e.target.checked ? (formData.species || 'vaca') : formData.species,
+                                        })}
+                                    />
+                                    Usar este artículo para despostada
+                                </label>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.45rem' }}>
+                                    Esta es la regla principal del artículo. Cuando lo compres, entra como lote de despostada y no como stock directo.
+                                </div>
+                                {!hasDespostadaModule && (
+                                    <div
+                                        onClick={() => navigate('/config/licencia')}
+                                        style={{ fontSize: '0.72rem', color: 'var(--color-primary)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginTop: '0.45rem' }}
+                                    >
+                                        <ShieldCheck size={12} /> Activar modo PRO para despostada
+                                    </div>
+                                )}
                             </div>
 
                             <div style={{ marginBottom: '1.5rem', padding: '0.9rem 1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.02)' }}>
@@ -646,7 +686,7 @@ const ProductosCompra = () => {
                                 </p>
                             </div>
 
-                            {ANIMAL_SALE_CATEGORIES.includes(formData.sale_category) && (
+                            {(ANIMAL_SALE_CATEGORIES.includes(formData.sale_category) || formData.use_for_despostada) && (
                             <div style={{ marginBottom: '1.5rem', animate: 'fade-in' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem', color: 'var(--color-primary)', fontWeight: 'bold' }}>Especie de Animal</label>
                                 <select

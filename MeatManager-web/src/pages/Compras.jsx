@@ -82,6 +82,7 @@ const Compras = () => {
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [compras, setCompras] = useState([]);
     const [purchaseItems, setPurchaseItems] = useState([]);
+    const [products, setProducts] = useState([]);
     const [suppliers, setSuppliers] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [categories, setCategories] = useState([]);
@@ -120,10 +121,11 @@ const Compras = () => {
     const isMixedPurchase = newPurchase.destination === 'mixto';
 
     const loadComprasData = async () => {
-        const [comprasRows, comprasItemsRows, purchaseItemsRows, suppliersRows, paymentMethodsRows, categoriesRows, supplierTaxRows] = await Promise.all([
+        const [comprasRows, comprasItemsRows, purchaseItemsRows, productRows, suppliersRows, paymentMethodsRows, categoriesRows, supplierTaxRows] = await Promise.all([
             fetchTable('compras', { limit: 1000, orderBy: 'date', direction: 'DESC' }),
             fetchTable('compras_items', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
             fetchTable('purchase_items', { limit: 2000, orderBy: 'id', direction: 'ASC' }),
+            fetchTable('products', { limit: 5000, orderBy: 'name', direction: 'ASC' }),
             fetchTable('suppliers', { limit: 1000, orderBy: 'name', direction: 'ASC' }),
             fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
             fetchTable('categories', { limit: 500, orderBy: 'id', direction: 'ASC' }),
@@ -143,6 +145,7 @@ const Compras = () => {
             items_detail: compra.items_detail || itemsByPurchaseId.get(Number(compra.id)) || [],
         })));
         setPurchaseItems(Array.isArray(purchaseItemsRows) ? purchaseItemsRows : []);
+        setProducts(Array.isArray(productRows) ? productRows : []);
         setSuppliers(Array.isArray(suppliersRows) ? suppliersRows : []);
         setPaymentMethods(Array.isArray(paymentMethodsRows) ? paymentMethodsRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
@@ -151,10 +154,11 @@ const Compras = () => {
 
     useEffect(() => {
         loadComprasData().catch((error) => {
-            console.error('[COMPRAS] No se pudieron cargar datos desde la API', error);
-            setCompras([]);
-            setPurchaseItems([]);
-            setSuppliers([]);
+                    console.error('[COMPRAS] No se pudieron cargar datos desde la API', error);
+                    setCompras([]);
+                    setPurchaseItems([]);
+                    setProducts([]);
+                    setSuppliers([]);
             setPaymentMethods([]);
             setCategories([]);
             setSupplierTaxProfiles([]);
@@ -204,15 +208,32 @@ const Compras = () => {
         }
     }, [currentItem.iva_manual, currentItem.iva_rate, currentItem.name, getSuggestedIvaRate]);
 
+    const getProductRuleForCatalogItem = useCallback((item) => {
+        const product = (Array.isArray(products) ? products : []).find((candidate) => (
+            Number(candidate?.id || 0) === Number(item?.product_id || 0)
+            || String(candidate?.name || '').trim().toLowerCase() === String(item?.name || '').trim().toLowerCase()
+        ));
+        const useForDespostada = Number(product?.use_for_despostada ?? item?.use_for_despostada ?? (item?.type === 'despostada' ? 1 : 0)) === 1;
+        return {
+            product,
+            useForDespostada,
+            type: useForDespostada ? 'despostada' : (item?.type || 'directo'),
+            species: useForDespostada
+                ? (product?.despostada_species || item?.species || 'vaca')
+                : (item?.species || 'vaca'),
+        };
+    }, [products]);
+
     // Helper: Select item from suggestions
     const selectSuggestion = (item) => {
         const suggestedIvaRate = getSuggestedIvaRate(item.name, item);
+        const productRule = getProductRuleForCatalogItem(item);
         setCurrentItem({
             ...currentItem,
             name: item.name,
             unit: item.unit || 'kg',
-            type: item.type || 'directo', // Track if it goes to despostada
-            species: item.species || 'vaca', // NEW: Take species from catalog
+            type: productRule.type,
+            species: productRule.species,
             destination: item.usage || 'venta',
             unit_price: item.last_price || '', // Optional: auto-fill last price
             iva_rate: suggestedIvaRate,
@@ -239,8 +260,9 @@ const Compras = () => {
         if (!itemType || itemType === 'directo') {
             const matched = purchaseItems?.find(pi => pi.name.toLowerCase() === currentItem.name.toLowerCase());
             if (matched) {
-                itemType = matched.type;
-                itemSpecies = matched.species;
+                const productRule = getProductRuleForCatalogItem(matched);
+                itemType = productRule.type;
+                itemSpecies = productRule.species;
                 itemDestination = isMixedPurchase ? (matched.usage || itemDestination) : newPurchase.destination;
                 if (!currentItem.iva_manual) {
                     itemIvaRate = getSuggestedIvaRate(currentItem.name, matched);
@@ -389,6 +411,10 @@ const Compras = () => {
             // Items enriquecidos con product_id del catálogo
             const enrichedItems = newPurchase.selectedItems.map(i => {
                 const catalogItem = purchaseItems?.find(pi => pi.name.toLowerCase() === i.name.toLowerCase());
+                const productRule = catalogItem ? getProductRuleForCatalogItem(catalogItem) : {
+                    type: i.type,
+                    species: i.species || 'vaca',
+                };
                 const subtotal = Number(i.subtotal) || 0;
                 const ivaRate = Number(i.iva_rate) || 0;
                 const ivaAmount = parseFloat((subtotal * ivaRate / (100 + ivaRate)).toFixed(2));
@@ -404,8 +430,8 @@ const Compras = () => {
                     net_subtotal: subtotal - ivaAmount,
                     destination: i.destination || 'venta',
                     unit: i.unit,
-                    type: i.type,
-                    species: i.species || 'vaca',
+                    type: productRule.type || i.type,
+                    species: productRule.species || i.species || 'vaca',
                 };
             });
 
