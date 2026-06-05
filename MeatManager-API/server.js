@@ -7472,8 +7472,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                      LIMIT 1`,
                     [tenantId, item.product_id]
                 );
-                if (Number(productRule?.use_for_despostada || 0) === 1) {
-                    effectiveType = 'despostada';
+                if (Number(productRule?.use_for_despostada || 0) === 1 && effectiveType === 'despostada') {
                     effectiveSpecies = productRule.despostada_species || effectiveSpecies || 'vaca';
                 }
             }

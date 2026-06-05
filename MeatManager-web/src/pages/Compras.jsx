@@ -111,6 +111,7 @@ const Compras = () => {
         unit: 'kg',
         type: 'directo',
         species: 'vaca',
+        use_for_despostada: false,
         destination: 'venta',
         iva_rate: 10.5,
         iva_manual: false
@@ -217,10 +218,8 @@ const Compras = () => {
         return {
             product,
             useForDespostada,
-            type: useForDespostada ? 'despostada' : (item?.type || 'directo'),
-            species: useForDespostada
-                ? (product?.despostada_species || item?.species || 'vaca')
-                : (item?.species || 'vaca'),
+            type: item?.type || 'directo',
+            species: product?.despostada_species || item?.species || 'vaca',
         };
     }, [products]);
 
@@ -234,6 +233,7 @@ const Compras = () => {
             unit: item.unit || 'kg',
             type: productRule.type,
             species: productRule.species,
+            use_for_despostada: productRule.useForDespostada,
             destination: item.usage || 'venta',
             unit_price: item.last_price || '', // Optional: auto-fill last price
             iva_rate: suggestedIvaRate,
@@ -261,7 +261,7 @@ const Compras = () => {
             const matched = purchaseItems?.find(pi => pi.name.toLowerCase() === currentItem.name.toLowerCase());
             if (matched) {
                 const productRule = getProductRuleForCatalogItem(matched);
-                itemType = productRule.type;
+                itemType = currentItem.type || productRule.type;
                 itemSpecies = productRule.species;
                 itemDestination = isMixedPurchase ? (matched.usage || itemDestination) : newPurchase.destination;
                 if (!currentItem.iva_manual) {
@@ -319,6 +319,7 @@ const Compras = () => {
             unit: 'kg',
             type: 'directo',
             species: 'vaca',
+            use_for_despostada: false,
             destination: isMixedPurchase ? currentItem.destination : newPurchase.destination,
             iva_rate: 10.5,
             iva_manual: false
@@ -430,7 +431,7 @@ const Compras = () => {
                     net_subtotal: subtotal - ivaAmount,
                     destination: i.destination || 'venta',
                     unit: i.unit,
-                    type: productRule.type || i.type,
+                    type: i.type || productRule.type || 'directo',
                     species: productRule.species || i.species || 'vaca',
                 };
             });
@@ -817,25 +818,28 @@ const Compras = () => {
                                                 background: 'var(--color-bg-card)', border: '1px solid var(--color-primary)',
                                                 zIndex: 50, maxHeight: '200px', overflowY: 'auto', borderRadius: '0 0 4px 4px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
                                             }}>
-                                                {suggestions.map(s => (
-                                                    <div
-                                                        key={s.id}
-                                                        style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
-                                                        onMouseDown={() => selectSuggestion(s)}
-                                                    >
-                                                        <div>
-                                                            <div style={{ fontWeight: 'bold' }}>{s.name}</div>
-                                                            <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                                                                {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                                {suggestions.map(s => {
+                                                    const suggestionRule = getProductRuleForCatalogItem(s);
+                                                    return (
+                                                        <div
+                                                            key={s.id}
+                                                            style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
+                                                            onMouseDown={() => selectSuggestion(s)}
+                                                        >
+                                                            <div>
+                                                                <div style={{ fontWeight: 'bold' }}>{s.name}</div>
+                                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                                                    {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                                                </div>
                                                             </div>
+                                                            {suggestionRule.useForDespostada && hasDespostadaModule && (
+                                                                <span style={{ background: 'rgba(234, 179, 8, 0.12)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                                                    Multi destino
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        {s.type === 'despostada' && hasDespostadaModule && (
-                                                            <span style={{ background: 'rgba(234, 179, 8, 0.12)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                                                                Despostada
-                                                            </span>
-                                                        )}
-                                                    </div>
-                                                ))}
+                                                    );
+                                                })}
                                             </div>
                                         )}
                                     </div>
@@ -849,8 +853,10 @@ const Compras = () => {
                                             onChange={(e) => setCurrentItem({ ...currentItem, type: e.target.value })}
                                         >
                                             <option value="directo">Stock directo / insumo</option>
-                                            {hasDespostadaModule ? (
+                                            {hasDespostadaModule && currentItem.use_for_despostada ? (
                                                 <option value="despostada">Animal para despostada</option>
+                                            ) : hasDespostadaModule ? (
+                                                <option value="despostada" disabled>Animal para despostada (habilitalo en el artículo)</option>
                                             ) : (
                                                 <option value="directo" disabled>Animal para despostada (requiere licencia)</option>
                                             )}

@@ -601,7 +601,7 @@ const ProductosCompra = () => {
                                     </select>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Destino histórico de compra</label>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Destino por defecto en compras</label>
                                     <select
                                         className="neo-input"
                                         value={formData.type}
@@ -612,9 +612,9 @@ const ProductosCompra = () => {
                                         })}
                                         disabled={!hasDespostadaModule}
                                     >
-                                        <option value="directo">Venta Directa / Insumo</option>
+                                        <option value="directo">Stock directo / insumo</option>
                                         {hasDespostadaModule ? (
-                                            <option value="despostada">Animal para Despostada</option>
+                                            <option value="despostada">Despostada por defecto</option>
                                         ) : (
                                             <option value="disabled" disabled>Animal para Despostada (Solo PRO)</option>
                                         )}
@@ -639,14 +639,13 @@ const ProductosCompra = () => {
                                         onChange={(e) => setFormData({
                                             ...formData,
                                             use_for_despostada: e.target.checked,
-                                            type: e.target.checked ? 'despostada' : formData.type,
                                             species: e.target.checked ? (formData.species || 'vaca') : formData.species,
                                         })}
                                     />
-                                    Usar este artículo para despostada
+                                    Artículo multi destino
                                 </label>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.45rem' }}>
-                                    Esta es la regla principal del artículo. Cuando lo compres, entra como lote de despostada y no como stock directo.
+                                    Al comprarlo vas a poder elegir por cada partida si entra a stock directo o como lote pendiente de despostada.
                                 </div>
                                 {!hasDespostadaModule && (
                                     <div
