@@ -1,0 +1,30 @@
+services:
+  mysql-test:
+    image: mysql/mysql-server:5.7
+    container_name: Def-MySQL-Test
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_ROOT_HOST: '%'
+    command:
+      - mysqld
+      - --innodb-buffer-pool-size=256M
+    ports:
+      - "3307:3306"
+    volumes:
+      - def-mysql-test-data:/var/lib/mysql
+    networks:
+      - Def-Network
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+volumes:
+  def-mysql-test-data:
+
+networks:
+  Def-Network:
+    external: true

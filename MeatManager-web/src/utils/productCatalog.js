@@ -179,6 +179,8 @@ export const ensureUnifiedProduct = async ({
     categoryId = null,
     preferredProductId = null,
     branchId = null,
+    useForDespostada = null,
+    despostadaSpecies = null,
     resolveConflict = promptPriceConflictResolution,
 }) => {
     const trimmedName = String(name || '').trim();
@@ -226,6 +228,12 @@ export const ensureUnifiedProduct = async ({
         source: source || existingProduct?.source || 'manual',
         updated_at: new Date().toISOString(),
     };
+    if (useForDespostada !== null) {
+        payload.use_for_despostada = useForDespostada ? 1 : 0;
+        payload.despostada_species = useForDespostada
+            ? (String(despostadaSpecies || existingProduct?.despostada_species || '').trim() || null)
+            : null;
+    }
     if (!hasBranchScope) {
         payload.current_price = resolvedPrice > 0 ? resolvedPrice : null;
     }
