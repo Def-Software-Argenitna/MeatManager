@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
+import { useUser } from '../../context/UserContext';
 import DirectionalReveal from '../DirectionalReveal';
 import ModuleLicenseGate from '../ModuleLicenseGate';
 import { scaleService } from '../../utils/SerialScaleService';
@@ -93,6 +94,8 @@ const DespostadaBase = ({
     purchaseHints = [],
     accent = '#ef4444',
 }) => {
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const { hasModule } = useLicense();
     const navigate = useNavigate();
     const hasDespostadaModule = hasModule('despostada');
@@ -197,6 +200,7 @@ const DespostadaBase = ({
                     unit: 'kg',
                     price: row.suggestedPricePerKg,
                     source: 'despostada',
+                    branchId: currentBranchId,
                     resolveConflict: ({ incomingPrice, existingPrice }) => incomingPrice || existingPrice,
                 });
 
@@ -376,12 +380,6 @@ const DespostadaBase = ({
                         </div>
                     </div>
 
-                    <div className="despostada-hero-art">
-                        <div className="despostada-hero-art-badge">
-                            <ScanLine size={14} />
-                            {isSessionStarted ? 'Lote en proceso' : 'Panel operativo'}
-                        </div>
-                    </div>
                 </div>
             </DirectionalReveal>
 
@@ -498,6 +496,14 @@ const DespostadaBase = ({
                     <div className="despostada-helper" style={{ marginBottom: '0.55rem' }}>
                         {isSessionStarted ? 'El lote ya está activo y listo para registrar cortes.' : 'Ajustá el peso o elegí un lote para habilitar el trabajo.'}
                     </div>
+                    {isSessionStarted && (
+                        <div className="despostada-finish-warning">
+                            <AlertTriangle size={16} />
+                            <span>
+                                Los cortes cargados quedan como stock provisorio. Para crear/actualizar productos, precios y que figuren correctamente en Ventas, tenés que tocar Finalizar.
+                            </span>
+                        </div>
+                    )}
                     <div className="despostada-meter">
                         <span style={{ width: `${Math.min(Number(yieldPercentage) || 0, 100)}%` }} />
                     </div>

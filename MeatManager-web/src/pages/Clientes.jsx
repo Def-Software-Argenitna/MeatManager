@@ -214,18 +214,22 @@ const Clientes = () => {
             return a.id.localeCompare(b.id);
         });
 
-        let runningBalance = 0;
-        let openingBalance = 0;
+        const storedCurrentBalance = getBalanceValue(clientRef);
+        const monthDelta = allRows
+            .filter((row) => row.timestamp >= start && row.timestamp < end)
+            .reduce((sum, row) => sum + row.delta, 0);
+        const futureDelta = allRows
+            .filter((row) => row.timestamp >= end)
+            .reduce((sum, row) => sum + row.delta, 0);
+        const monthEndBalance = storedCurrentBalance - futureDelta;
+        let runningBalance = monthEndBalance - monthDelta;
+        const openingBalance = runningBalance;
         let salesTotal = 0;
         let paymentTotal = 0;
         const rows = [];
 
         allRows.forEach((row) => {
-            if (row.timestamp < start) {
-                runningBalance += row.delta;
-                openingBalance = runningBalance;
-                return;
-            }
+            if (row.timestamp < start) return;
             if (row.timestamp >= end) return;
 
             runningBalance += row.delta;
@@ -242,7 +246,7 @@ const Clientes = () => {
             openingBalance,
             salesTotal,
             paymentTotal,
-            currentBalance: runningBalance
+            currentBalance: monthEndBalance
         });
     }, [historyClient, historyMonth]);
 
@@ -263,22 +267,6 @@ const Clientes = () => {
     useEffect(() => {
         loadLedger();
     }, [loadLedger]);
-
-    useEffect(() => {
-        if (!historyClientData || !clientLedger) return;
-        if (historyClientData.has_initial_balance) return;
-
-        const storedBalance = getBalanceValue(historyClientData);
-        const derivedBalance = Number(clientLedger.currentBalance) || 0;
-
-        if (Math.abs(storedBalance - derivedBalance) < 0.01) return;
-
-        saveTableRecord('clients', 'update', {
-            ...historyClientData,
-            balance: derivedBalance,
-            last_updated: new Date().toISOString()
-        }, historyClientData.id).catch(() => {});
-    }, [historyClientData, clientLedger]);
 
     useEffect(() => {
         if (!clients?.length) return;
@@ -459,6 +447,10 @@ const Clientes = () => {
                 type: 'ingreso',
                 category: 'Cobro Pendientes',
                 amount: payAmount,
+                money_flow_kind: 'customer_payment',
+                origin_table: 'clients',
+                origin_id: historyClient.id,
+                origin_group_id: `client_payment_${paymentReceiptCode || paymentReceiptNumber || Date.now()}`,
                 receipt_number: paymentReceiptNumber,
                 receipt_code: paymentReceiptCode,
                 client_id: historyClient.id,
@@ -910,7 +902,7 @@ const Clientes = () => {
                                 display: 'flex', justifyContent: 'space-between', alignItems: 'center'
                             }}>
                                 <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
-                                    Debe del mes ({clientLedger.rows.length} movimiento{clientLedger.rows.length !== 1 ? 's' : ''})
+                                    Compras a cuenta del mes ({clientLedger.rows.length} movimiento{clientLedger.rows.length !== 1 ? 's' : ''})
                                 </span>
                                 <span style={{ fontWeight: '800', color: '#ef4444', fontSize: '1.1rem' }}>
                                     ${clientLedger.salesTotal.toLocaleString()}
@@ -926,11 +918,11 @@ const Clientes = () => {
                                         <strong>{clientLedger.openingBalance.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item">
-                                        <span>Debe</span>
+                                        <span>Debe mes</span>
                                         <strong>{clientLedger.salesTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                     <div className="clients-history-summary-item positive">
-                                        <span>Haber</span>
+                                        <span>Pagos mes</span>
                                         <strong>{clientLedger.paymentTotal.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' })}</strong>
                                     </div>
                                 </div>

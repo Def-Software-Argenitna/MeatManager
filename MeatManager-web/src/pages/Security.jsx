@@ -21,6 +21,7 @@ const EMPTY_FORM = {
     accountType: 'internal',
     selectedPaths: [],
     assignedClientLicenseIds: [],
+    selectedBranchId: '',
 };
 
 const generateTicketDeleteCode = () => String(Math.floor(100000 + Math.random() * 900000));
@@ -102,9 +103,14 @@ const formatLicenseLabel = (license) => (
 );
 
 /* ── User modal ─────────────────────────── */
-const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [] }) => {
+const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissions, licensePool = [], clientBranches = [], branchesLoading = false }) => {
     const [form, setForm] = useState(() => {
-        if (!user) return EMPTY_FORM;
+        if (!user) {
+            return {
+                ...EMPTY_FORM,
+                selectedBranchId: clientBranches.length === 1 ? String(clientBranches[0].id) : '',
+            };
+        }
         return {
             username: user.username,
             email: user.email || '',
@@ -113,6 +119,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             accountType: inferAccountType(user),
             selectedPaths: (user._perms || []).filter((pathValue) => pathValue !== DRIVER_PATH),
             assignedClientLicenseIds: (user.assignedLicenses || []).map((license) => String(license.clientLicenseId)),
+            selectedBranchId: String(user.branchId || ''),
         };
     });
     const [loading, setLoading] = useState(false);
@@ -122,6 +129,15 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
     ));
     const logisticsLicenses = availablePerUserLicenses.filter((assignment) => hasLogisticsCapability(assignment));
     const optionalPerUserLicenses = availablePerUserLicenses.filter((assignment) => !hasLogisticsCapability(assignment));
+
+    useEffect(() => {
+        if (!user && clientBranches.length === 1 && !form.selectedBranchId) {
+            setForm((current) => ({
+                ...current,
+                selectedBranchId: String(clientBranches[0].id),
+            }));
+        }
+    }, [user, clientBranches, form.selectedBranchId]);
 
     const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -171,6 +187,10 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             return toast('error', 'Para habilitar Logística, el usuario debe tener una licencia de entregas asignada');
         }
 
+        if (clientBranches.length > 1 && !form.selectedBranchId) {
+            return toast('error', 'Seleccioná la sucursal del usuario antes de guardar');
+        }
+
         setLoading(true);
         try {
             let userId = user?.id;
@@ -181,6 +201,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                     role: normalizedRole,
                     perms: normalizedPerms,
                     assignedClientLicenseIds: form.assignedClientLicenseIds.map((licenseId) => Number(licenseId)),
+                    branchId: form.selectedBranchId ? Number(form.selectedBranchId) : null,
                 };
                 if (form.password) update.password = form.password;
                 await saveRecord('users', 'update', update, userId);
@@ -191,6 +212,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                     password: form.password,
                     role: normalizedRole,
                     active: 1,
+                    branchId: form.selectedBranchId ? Number(form.selectedBranchId) : null,
                     perms: normalizedPerms,
                     assignedClientLicenseIds: form.assignedClientLicenseIds.map((licenseId) => Number(licenseId)),
                 });
@@ -206,7 +228,9 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             toast('success', successText);
             setTimeout(() => onClose(), 300);
         } catch (err) {
-            const errorText = 'Error al guardar: ' + err.message;
+            const errorText = err?.code === 'BRANCH_REQUIRED'
+                ? err.message
+                : 'Error al guardar: ' + err.message;
             setSubmitFeedback({ type: 'error', text: errorText });
             toast('error', errorText);
         } finally {
@@ -267,6 +291,41 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             placeholder={user ? '••••••' : 'Nueva contraseña'}
                             maxLength={128}
                         />
+                    </div>
+
+                    <div className="form-group" style={{ marginBottom: '1rem' }}>
+                        <label>Sucursal asignada</label>
+                        <select
+                            className="security-input"
+                            value={form.selectedBranchId}
+                            onChange={e => set('selectedBranchId', e.target.value)}
+                            disabled={branchesLoading || clientBranches.length === 0}
+                        >
+                            {branchesLoading && (
+                                <option value="">Cargando sucursales...</option>
+                            )}
+                            {!branchesLoading && clientBranches.length === 0 && (
+                                <option value="">No hay sucursales disponibles</option>
+                            )}
+                            {!branchesLoading && clientBranches.length > 1 && (
+                                <option value="">Seleccioná una sucursal</option>
+                            )}
+                            {!branchesLoading && clientBranches.length > 0 && (
+                                <option value="">Sin sucursal asignada (no podrá iniciar sesión)</option>
+                            )}
+                            {!branchesLoading && clientBranches.map(branch => (
+                                <option key={branch.id} value={branch.id}>
+                                    {branch.name} {branch.internalCode ? `(${branch.internalCode})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                        <small style={{ display: 'block', marginTop: '0.3rem', color: '#9ca3af', fontSize: '0.85rem' }}>
+                            {clientBranches.length > 1
+                                ? 'Este cliente tiene varias sucursales. Elegí cuál le corresponde al usuario.'
+                                : clientBranches.length === 1
+                                    ? 'El usuario quedará asignado a la única sucursal disponible.'
+                                    : 'Primero deben existir sucursales activas para poder asignar una.'}
+                        </small>
                     </div>
 
                     <div className="security-section" style={{ marginBottom: '1.5rem' }}>
@@ -447,7 +506,12 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                             Resumen de acceso
                         </label>
                         <div className="security-summary-box">
-                            {false && (
+                            {form.selectedBranchId ? (
+                                <span>✓ El usuario quedará asignado a la sucursal: {clientBranches.find(b => String(b.id) === String(form.selectedBranchId))?.name || 'seleccionada'}.</span>
+                            ) : (
+                                <span>✓ El usuario podrá operar en todas las sucursales disponibles.</span>
+                            )}
+                            {form.accountType === 'admin' && (
                                 <span>Este usuario tendrá acceso administrativo completo a MeatManager.</span>
                             )}
                             {form.accountType === 'internal' && (
@@ -495,7 +559,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, accessProfile, users, licensePool, refreshUsers, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const { currentUser, accessProfile, users, licensePool, refreshUsers, refreshClientBranches, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
     const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
@@ -507,6 +571,8 @@ const Security = () => {
     const activeLicenseCount = licenses.length;
     const [activeTab, setActiveTab] = useState('usuarios');
     const [message, setMessage] = useState(null);
+    const [clientBranches, setClientBranches] = useState([]);
+    const [branchesLoading, setBranchesLoading] = useState(false);
     const displayModules = useMemo(() => ([
         { key: 'despostada', label: 'Despostada' },
         { key: 'informes-pro', label: 'Análisis de Rinde' },
@@ -563,7 +629,19 @@ const Security = () => {
 
     const loadUsers = useCallback(async () => {
         await refreshUsers();
-    }, [refreshUsers]);
+        if (typeof refreshClientBranches === 'function') {
+            setBranchesLoading(true);
+            try {
+                const branches = await refreshClientBranches();
+                setClientBranches(Array.isArray(branches) ? branches : []);
+            } catch (error) {
+                console.error('[Security] Error loading branches:', error);
+                setClientBranches([]);
+            } finally {
+                setBranchesLoading(false);
+            }
+        }
+    }, [refreshUsers, refreshClientBranches]);
 
     const loadScaleUsers = useCallback(async () => {
         try {
@@ -1259,6 +1337,8 @@ const Security = () => {
                     saveRecord={saveRecord}
                     replacePermissions={replaceUserPermissions}
                     licensePool={licensePool}
+                    clientBranches={clientBranches}
+                    branchesLoading={branchesLoading}
                 />
             )}
 

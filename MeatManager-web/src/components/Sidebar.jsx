@@ -124,6 +124,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
     { title: 'Ventas', path: '/ventas', icon: Banknote },
     { title: 'Caja', path: '/caja', icon: Calculator },
+    { title: 'Informes de Caja', path: '/informes-caja', icon: BarChart3, permissionPath: '/caja' },
     { title: 'Compras', path: '/compras', icon: ShoppingCart },
     { title: 'Stock', path: '/stock', icon: PackageSearch },
   ];
@@ -247,7 +248,7 @@ const Sidebar = ({ isCollapsed }) => {
   };
 
   const renderGroup = (groupKey, title, GroupIcon, items, extraContent = null) => {
-    const visibleItems = items.filter((item) => hasAccess(item.path));
+    const visibleItems = items.filter((item) => hasAccess(item.permissionPath || item.path));
     const hasVisibleContent = visibleItems.length > 0 || extraContent;
 
     if (!hasVisibleContent) return null;

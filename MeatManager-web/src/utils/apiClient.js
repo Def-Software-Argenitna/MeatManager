@@ -14,6 +14,32 @@ const getStoredTenantSession = () => {
     }
 };
 const isSupportSession = (tenant) => tenant?.authMode === 'support';
+const getStoredActiveBranch = () => {
+    try {
+        const raw = sessionStorage.getItem('mm_active_branch');
+        if (raw) return JSON.parse(raw);
+
+        const profileRaw = sessionStorage.getItem('mm_access_profile');
+        const profile = profileRaw ? JSON.parse(profileRaw) : null;
+        const branchId = Number(
+            profile?.branch?.id
+            ?? profile?.branchId
+            ?? profile?.branchRecordId
+            ?? 0
+        );
+        if (Number.isFinite(branchId) && branchId > 0) {
+            return {
+                id: branchId,
+                clientId: profile?.clientId ?? profile?.branch?.clientId ?? null,
+                name: profile?.branch?.name || profile?.branchName || `Sucursal ${branchId}`,
+            };
+        }
+
+        return null;
+    } catch {
+        return null;
+    }
+};
 const appendSupportClientIdToPath = (path, clientId) => {
     if (!clientId) return path;
     const separator = path.includes('?') ? '&' : '?';
@@ -119,6 +145,7 @@ const clearLocalSessionState = () => {
     sessionStorage.removeItem('mm_user');
     sessionStorage.removeItem('mm_perms');
     sessionStorage.removeItem('mm_access_profile');
+    sessionStorage.removeItem('mm_active_branch');
 };
 
 const notifySupportSessionExpired = () => {
@@ -182,6 +209,11 @@ export const apiFetch = async (path, options = {}) => {
         }
         if (isSupportSession(tenant) && tenant?.clientId) {
             headers['X-MM-Target-Client-Id'] = String(tenant.clientId);
+        }
+        const activeBranch = getStoredActiveBranch();
+        const activeBranchId = Number(activeBranch?.id || activeBranch?.branchId || 0);
+        if (Number.isFinite(activeBranchId) && activeBranchId > 0) {
+            headers['X-MM-Active-Branch-Id'] = String(activeBranchId);
         }
 
         return headers;
@@ -264,6 +296,75 @@ export const fetchTable = async (table, options = {}) => {
     return data?.rows || [];
 };
 
+export const fetchCajaSummary = async (options = {}) => {
+    const query = new URLSearchParams();
+    if (options.date) query.set('date', String(options.date));
+    if (options.branchId) query.set('branch_id', String(options.branchId));
+    if (options.cashAccount) query.set('cash_account', String(options.cashAccount));
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/caja/summary${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo calcular el resumen de caja');
+    }
+    return res.json();
+};
+
+export const fetchCajaReportData = async (options = {}) => {
+    const query = new URLSearchParams();
+    if (options.from) query.set('from', String(options.from));
+    if (options.to) query.set('to', String(options.to));
+    if (options.compareFrom) query.set('compare_from', String(options.compareFrom));
+    if (options.cashAccount && options.cashAccount !== 'all') query.set('cash_account', String(options.cashAccount));
+
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    const res = await apiFetch(`/api/caja/report-data${suffix}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo cargar el informe de caja');
+    }
+    return res.json();
+};
+
+export const saveCashboxOpening = async (payload = {}) => {
+    const res = await apiFetch('/api/caja/opening', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const error = new Error(err.error || 'No se pudo guardar la apertura de caja');
+        error.code = err.code || null;
+        error.details = err;
+        throw error;
+    }
+    return res.json();
+};
+
+export const createCashboxTransfer = async (payload = {}) => {
+    const res = await apiFetch('/api/caja/transfer', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        console.error('[CAJA TRANSFER ERROR]', {
+            status: res.status,
+            payload,
+            response: err,
+        });
+        const error = new Error(err.code && err.error ? `${err.error} (${err.code})` : err.error || 'No se pudo registrar la transferencia entre cajas');
+        error.code = err.code || null;
+        error.details = err;
+        throw error;
+    }
+
+    return res.json();
+};
+
 export const saveTableRecord = async (table, operation, record, id) => {
     const res = await apiFetch('/api/data', {
         method: 'POST',
@@ -273,6 +374,20 @@ export const saveTableRecord = async (table, operation, record, id) => {
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `No se pudo guardar ${table}`);
+    }
+
+    return res.json();
+};
+
+export const saveProductPrice = async (productId, payload = {}) => {
+    const res = await apiFetch(`/api/products/${encodeURIComponent(productId)}/prices`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo guardar el precio del producto');
     }
 
     return res.json();
@@ -477,7 +592,9 @@ export const createFirebaseUser = async (record) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo crear el usuario web');
+        const error = new Error(err.error || 'No se pudo crear el usuario web');
+        error.code = err.code || null;
+        throw error;
     }
 
     return res.json();
@@ -491,7 +608,9 @@ export const updateFirebaseUser = async (userId, record) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo actualizar el usuario web');
+        const error = new Error(err.error || 'No se pudo actualizar el usuario web');
+        error.code = err.code || null;
+        throw error;
     }
 
     return res.json();

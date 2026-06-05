@@ -13,6 +13,7 @@ import { buildCartPricing, normalizePluCode, normalizePromotions } from '../util
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { scaleService } from '../utils/SerialScaleService';
+import { CERDO_CUTS, PESCADO_CUTS, POLLO_CUTS, VACA_CUTS } from './despostadaData';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -29,6 +30,13 @@ const CATEGORY_META = {
 };
 
 const CATEGORY_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'pre-elaborados', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
+
+const DEFAULT_SALE_CUTS = [
+    ...VACA_CUTS.map((cut) => ({ ...cut, species: 'vaca' })),
+    ...CERDO_CUTS.map((cut) => ({ ...cut, species: 'cerdo' })),
+    ...POLLO_CUTS.map((cut) => ({ ...cut, species: 'pollo' })),
+    ...PESCADO_CUTS.map((cut) => ({ ...cut, species: 'pescado' })),
+];
 
 const normalizeCategoryId = (value) => String(value || '').trim().toLowerCase().replace(/_/g, '-');
 
@@ -184,10 +192,10 @@ const Ventas = () => {
         };
     }, []);
     const navigate = useNavigate();
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
-    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
     const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
 
@@ -503,11 +511,54 @@ const Ventas = () => {
     };
 
     const products = React.useMemo(() => {
-        if (!stockItems) return [];
-
         const grouped = {};
 
-        stockItems.forEach(item => {
+        (Array.isArray(productsCatalog) ? productsCatalog : []).forEach((productRecord) => {
+            if (productRecord?.active != null && Number(productRecord.active) === 0) return;
+            if (productRecord?.deleted_at) return;
+
+            const productId = Number(productRecord?.id);
+            if (!Number.isFinite(productId) || productId <= 0) return;
+
+            const key = `product:${productId}`;
+            grouped[key] = {
+                id: key,
+                productId,
+                name: String(productRecord?.name || '').trim(),
+                category: productRecord?.category || 'otros',
+                totalQuantity: 0,
+                unit: productRecord?.unit || 'kg',
+                price: getProductCurrentPrice(productRecord),
+                plu: productRecord?.plu || '',
+                barcode: null,
+            };
+        });
+
+        DEFAULT_SALE_CUTS.forEach((cut) => {
+            const name = String(cut?.name || '').trim();
+            const category = String(cut?.species || 'otros').trim() || 'otros';
+            if (!name) return;
+
+            const alreadyExists = Object.values(grouped).some((product) => (
+                normalizeProductKey(product?.name) === normalizeProductKey(name)
+                && normalizeCategoryId(product?.category) === normalizeCategoryId(category)
+            ));
+            if (alreadyExists) return;
+
+            grouped[`default:${category}:${cut.id}`] = {
+                id: `default:${category}:${cut.id}`,
+                productId: null,
+                name,
+                category,
+                totalQuantity: 0,
+                unit: 'kg',
+                price: 0,
+                plu: '',
+                barcode: null,
+            };
+        });
+
+        (Array.isArray(stockItems) ? stockItems : []).forEach(item => {
             const usage = String(item?.usage || 'venta').trim().toLowerCase();
             if (usage === 'interno' || usage === 'consumo_interno' || usage === 'consumo interno') {
                 return;
@@ -517,7 +568,11 @@ const Ventas = () => {
                 id: item.product_id,
                 name: item.name,
             });
-            const key = productRecord?.id ? `product:${productRecord.id}` : buildLegacyPriceProductId(item.name, item.type);
+            const fallbackKey = Object.entries(grouped).find(([, product]) => (
+                normalizeProductKey(product?.name) === normalizeProductKey(item.name)
+                && normalizeCategoryId(product?.category) === normalizeCategoryId(item.type)
+            ))?.[0];
+            const key = productRecord?.id ? `product:${productRecord.id}` : fallbackKey || buildLegacyPriceProductId(item.name, item.type);
 
             if (!grouped[key]) {
 
@@ -539,7 +594,9 @@ const Ventas = () => {
             grouped[key].totalQuantity += toNumber(item.quantity);
         });
 
-        return Object.values(grouped);
+        return Object.values(grouped)
+            .filter((product) => String(product?.name || '').trim())
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es', { sensitivity: 'base' }));
     }, [stockItems, productsCatalog]);
 
     const availableCategories = React.useMemo(() => {
@@ -870,6 +927,7 @@ const Ventas = () => {
                     price,
                     plu,
                     source: 'ventas_manual',
+                    branchId: currentBranchId,
                 });
             } catch (error) {
                 showToast(`⚠️ ${error.message}`, 'warning');
@@ -1333,6 +1391,7 @@ const Ventas = () => {
                 price,
                 plu: finalPlu,
                 source: 'ventas_quick_create',
+                branchId: currentBranchId,
             });
 
             await saveTableRecord('stock', 'insert', {

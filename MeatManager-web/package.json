@@ -16,6 +16,7 @@
     "@google/generative-ai": "^0.24.1",
     "@react-google-maps/api": "^2.20.8",
     "axios": "^1.13.4",
+    "exceljs": "^4.4.0",
     "firebase": "^12.7.0",
     "framer-motion": "^12.23.25",
     "leaflet": "^1.9.4",

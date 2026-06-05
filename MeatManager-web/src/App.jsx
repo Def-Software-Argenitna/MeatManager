@@ -1,6 +1,6 @@
 import React, { Suspense, lazy } from 'react';
 import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
-import { UserProvider, useUser } from './context/UserContext';
+import { UserProvider, useUser, isEffectiveAdminUser } from './context/UserContext';
 import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
@@ -51,6 +51,7 @@ const Categorias = lazyWithRecovery(() => import('./pages/Categorias'));
 const ProductosCompra = lazyWithRecovery(() => import('./pages/ProductosCompra'));
 const Proveedores = lazyWithRecovery(() => import('./pages/Proveedores'));
 const InformesPro = lazyWithRecovery(() => import('./pages/InformesPro'));
+const InformesCaja = lazyWithRecovery(() => import('./pages/InformesCaja'));
 const Pedidos = lazyWithRecovery(() => import('./pages/Pedidos'));
 const MenuDigital = lazyWithRecovery(() => import('./pages/MenuDigital'));
 const CustomerPortal = lazyWithRecovery(() => import('./pages/CustomerPortal'));
@@ -89,9 +90,35 @@ const lazyElement = (lazyComponent) => (
   </Suspense>
 );
 
+function NoBranchScreen({ onLogout }) {
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      background: '#0f0f0f', color: '#f3f4f6', padding: '2rem', textAlign: 'center',
+    }}>
+      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🏪</div>
+      <h2 style={{ fontSize: '1.4rem', fontWeight: '700', marginBottom: '0.75rem' }}>Sin sucursal asignada</h2>
+      <p style={{ color: '#9ca3af', maxWidth: '380px', lineHeight: '1.6' }}>
+        Tu usuario no tiene una sucursal activada. Contactá al administrador para que te asigne una.
+      </p>
+      <button
+        onClick={onLogout}
+        style={{
+          marginTop: '2rem', padding: '0.6rem 1.6rem', borderRadius: '8px',
+          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+          color: '#f3f4f6', cursor: 'pointer', fontWeight: '600',
+        }}
+      >
+        Cerrar sesión
+      </button>
+    </div>
+  );
+}
+
 function RequireAuth() {
   const { tenant, loading } = useTenant();
-  const { currentUser, loadingUser } = useUser();
+  const { currentUser, loadingUser, accessProfile, activeBranch, logout } = useUser();
   const location = useLocation();
   const isPublic = PUBLIC_PATHS.some(p => location.pathname.startsWith(p));
   if (loading) {
@@ -105,6 +132,11 @@ function RequireAuth() {
   }
   if (!tenant && !isPublic) {
     return <Navigate to="/login" state={{ from: location }} replace />;
+  }
+  // Usuarios no-admin sin sucursal asignada no pueden operar
+  const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+  if (!isPublic && currentUser && !isAdmin && !activeBranch?.id) {
+    return <NoBranchScreen onLogout={logout} />;
   }
   return <Outlet />;
 }
@@ -164,6 +196,7 @@ function AppRoutes() {
                 <Route path="ventas/historial" element={protect('/ventas/historial', lazyElement(HistorialVentas))} />
                 <Route path="caja" element={protect('/caja', lazyElement(CierreCaja))} />
                 <Route path="cierre-caja" element={protect('/cierre-caja', lazyElement(CierreCaja))} />
+                <Route path="informes-caja" element={protect('/caja', lazyElement(InformesCaja))} />
                 <Route path="compras" element={protect('/compras', lazyElement(Compras))} />
                 <Route path="stock" element={protect('/stock', lazyElement(Stock))} />
                 <Route path="clientes" element={protect('/clientes', lazyElement(Clientes))} />

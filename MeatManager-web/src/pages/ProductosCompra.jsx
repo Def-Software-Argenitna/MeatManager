@@ -6,6 +6,7 @@ import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { useUser } from '../context/UserContext';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
@@ -25,6 +26,8 @@ const DEFAULT_SALE_CATEGORY_OPTIONS = [
 const ProductosCompra = () => {
     const navigate = useNavigate();
     const { hasModule } = useLicense();
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const hasDespostadaModule = hasModule('despostada');
     const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -121,6 +124,20 @@ const ProductosCompra = () => {
         if (!formData.name) return;
 
         const nameTrimmed = formData.name.trim();
+        const requestedPlu = formData.sale_plu.trim();
+        const existingProductCandidate = findProductByIdentity(products, {
+            id: editingItem?.product_id || null,
+            name: nameTrimmed,
+            plu: requestedPlu,
+        });
+        const existingCatalogItem = existingProductCandidate?.id
+            ? items.find((item) => Number(item?.product_id || 0) === Number(existingProductCandidate.id)) || null
+            : null;
+
+        if (!editingItem && existingCatalogItem) {
+            alert(`Este articulo ya existia en el catalogo y ya esta vinculado como "${existingCatalogItem.name}".`);
+            return;
+        }
         if (!formData.sale_price || !formData.sale_plu) {
             alert('⚠️ Completa el precio y el PLU para ventas.');
             return;
@@ -133,7 +150,11 @@ const ProductosCompra = () => {
         }
 
         try {
-            assertUniqueProductPluLocal(products, formData.sale_plu, editingItem?.product_id || null);
+            assertUniqueProductPluLocal(
+                products,
+                requestedPlu,
+                editingItem?.product_id || existingProductCandidate?.id || null
+            );
         } catch (error) {
             alert(`⚠️ ${error.message}`);
             return;
@@ -143,6 +164,7 @@ const ProductosCompra = () => {
         if (editingItem) {
             await saveTableRecord('purchase_items', 'update', {
                 name: nameTrimmed,
+                product_id: existingProductCandidate?.id || editingItem?.product_id || null,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
@@ -154,6 +176,7 @@ const ProductosCompra = () => {
         } else {
             const inserted = await saveTableRecord('purchase_items', 'insert', {
                 name: nameTrimmed,
+                product_id: existingProductCandidate?.id || null,
                 category_id: formData.category_id ? parseInt(formData.category_id) : null,
                 unit: formData.unit,
                 type: formData.type,
@@ -177,9 +200,10 @@ const ProductosCompra = () => {
             categoryId: selectedSaleCategoryRow?.id || null,
             unit: formData.unit,
             price: salePrice,
-            plu: formData.sale_plu.trim(),
+            plu: requestedPlu,
             source: 'catalogo_compra',
-            preferredProductId: editingItem?.product_id || null,
+            preferredProductId: editingItem?.product_id || existingProductCandidate?.id || null,
+            branchId: currentBranchId,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
@@ -215,6 +239,22 @@ const ProductosCompra = () => {
 
     const handleDelete = async (id) => {
         if (window.confirm('¿Eliminar este producto del catálogo de compras?')) {
+            const item = items.find((entry) => Number(entry.id) === Number(id)) || null;
+            const productId = Number(item?.product_id || 0);
+            if (productId > 0) {
+                await saveTableRecord('products', 'delete', null, productId);
+
+                const stockRows = await fetchTable('stock').catch(() => []);
+                const emptyStockRows = (Array.isArray(stockRows) ? stockRows : []).filter((row) => (
+                    Number(row?.product_id || 0) === productId
+                    && Math.abs(Number(row?.quantity || 0)) <= 0.000001
+                ));
+                for (const row of emptyStockRows) {
+                    if (row?.id) {
+                        await saveTableRecord('stock', 'delete', null, row.id);
+                    }
+                }
+            }
             await saveTableRecord('purchase_items', 'delete', null, id);
             await loadData();
         }

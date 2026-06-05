@@ -11,7 +11,8 @@ import {
     Wallet,
     ArrowRightLeft,
 } from 'lucide-react';
-import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -58,7 +59,8 @@ const normalizeCashAccount = (value) => {
 
 const isCurrentAccount = (name, type) => {
     const normalizedName = String(name || '').trim().toLowerCase();
-    return type === 'cuenta_corriente' || normalizedName === 'cuenta corriente';
+    const normalizedType = String(type || '').trim().toLowerCase();
+    return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
 };
 
 const toNumber = (value) => Number(value) || 0;
@@ -73,6 +75,25 @@ const isAutoSaleMovement = (movement) => (
     movement?.type === 'venta' || movement?.type === 'anulacion_venta'
 );
 
+const isTransferMovement = (movement) => (
+    Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
+);
+
+const getManualMovementPresentation = (movement) => {
+    if (isTransferMovement(movement)) {
+        return {
+            label: movement.type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada',
+            note: movement.type === 'ingreso'
+                ? 'Ingreso interno desde otra caja. No es venta ni ajuste.'
+                : 'Salida interna hacia otra caja. No es gasto ni consumo.',
+        };
+    }
+    if (movement.type === 'ingreso') {
+        return { label: movement.category || 'Ingreso manual', note: 'Ingreso manual de caja.' };
+    }
+    return { label: movement.category || 'Retiro / gasto', note: 'Retiro, gasto o consumo de caja.' };
+};
+
 const getDayBounds = (selectedDate) => {
     const [y, m, d] = selectedDate.split('-').map(Number);
     return {
@@ -81,45 +102,14 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
-const getSalePaymentBreakdown = (sale) => {
-    if (!sale?.payment_breakdown) return [];
-    if (Array.isArray(sale.payment_breakdown)) return sale.payment_breakdown;
-    if (typeof sale.payment_breakdown === 'string') {
-        try {
-            const parsed = JSON.parse(sale.payment_breakdown);
-            return Array.isArray(parsed) ? parsed : [];
-        } catch {
-            return [];
-        }
-    }
-    return [];
-};
+const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
 
-const buildSaleParts = (sale, { includeCurrentAccount = false } = {}) => {
-    const breakdown = getSalePaymentBreakdown(sale);
-    if (breakdown.length > 0) {
-        return breakdown
-            .map((part) => ({
-                name: part?.method_name || 'Efectivo',
-                type: part?.method_type || 'cash',
-                amount: toNumber(part?.amount_charged ?? part?.amount ?? 0),
-            }))
-            .filter((part) => (
-                includeCurrentAccount
-                    ? part.amount > 0
-                    : (part.amount > 0 && !isCurrentAccount(part.name, part.type))
-            ));
-    }
-
-    const fallback = {
-        name: sale?.payment_method || 'Efectivo',
-        type: 'cash',
-        amount: toNumber(sale?.total),
-    };
-    if (!includeCurrentAccount && isCurrentAccount(fallback.name, fallback.type)) return [];
-    return fallback.amount > 0 ? [fallback] : [];
-};
-
+const getCashAccountLabel = (value) => (
+    CASH_ACCOUNTS.find((item) => item.value === normalizeCashAccount(value))?.label || 'Caja Principal'
+);
 const CierreCaja = () => {
     const now = new Date();
     const [selectedDate, setSelectedDate] = useState(
@@ -141,30 +131,84 @@ const CierreCaja = () => {
     const [transferAmount, setTransferAmount] = useState('');
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
+    const [transferSubmitting, setTransferSubmitting] = useState(false);
+    const [openingSubmitting, setOpeningSubmitting] = useState(false);
 
-    const [allSales, setAllSales] = useState([]);
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
-    const [loading, setLoading] = useState(false);
+    const [cashSummary, setCashSummary] = useState(null);
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
+    const { activeBranch, accessProfile, currentUser, refreshClientBranches, selectActiveBranch } = useUser();
+    const [clientBranches, setClientBranches] = useState([]);
+    const [branchLoading, setBranchLoading] = useState(false);
+    
+    // Obtener branchId desde activeBranch directamente
+    const activeBranchId = Number(activeBranch?.id || 0);
+    const activeBranchName = activeBranch?.name || '';
+    const transferBranchId = activeBranchId;
+    const canSelectCashboxBranch = isEffectiveAdminUser(currentUser, accessProfile);
+    const requiresCashboxBranch = clientBranches.length > 1;
+
+    const handleBranchChange = (branchId) => {
+        if (!canSelectCashboxBranch) return;
+        const selectedBranch = clientBranches.find((branch) => String(branch.id) === String(branchId)) || null;
+        selectActiveBranch(selectedBranch);
+        setFeedback(null);
+    };
+
+    useEffect(() => {
+        let cancelled = false;
+
+        const loadBranches = async () => {
+            if (typeof refreshClientBranches !== 'function') return;
+            if (!canSelectCashboxBranch) return;
+            setBranchLoading(true);
+            try {
+                const branches = await refreshClientBranches();
+                if (cancelled) return;
+                const normalizedBranches = Array.isArray(branches) ? branches : [];
+                setClientBranches(normalizedBranches);
+
+                // Si hay sucursal activa válida, verificar que exista
+                const activeExists = activeBranchId
+                    ? normalizedBranches.some((branch) => String(branch.id) === String(activeBranchId))
+                    : false;
+                if (activeExists) {
+                    return;
+                }
+
+                // Auto-seleccionar primera sucursal si no hay ninguna activa
+                if (!activeBranchId && normalizedBranches.length > 0) {
+                    selectActiveBranch(normalizedBranches[0]);
+                }
+            } catch (error) {
+                console.error('[CierreCaja] branch load error', error);
+            } finally {
+                if (!cancelled) setBranchLoading(false);
+            }
+        };
+
+        loadBranches();
+        return () => { cancelled = true; };
+    }, [activeBranchId, canSelectCashboxBranch, refreshClientBranches, selectActiveBranch]);
 
     const loadData = useCallback(async () => {
-        setLoading(true);
         try {
-            const [salesRows, movRows, pmRows] = await Promise.all([
-                fetchTable('ventas', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+            const [movRows, pmRows, summaryRows] = await Promise.all([
                 fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
+                fetchCajaSummary({
+                    date: selectedDate,
+                    ...(Number.isFinite(activeBranchId) && activeBranchId > 0 ? { branchId: activeBranchId } : {}),
+                }),
             ]);
-            setAllSales(Array.isArray(salesRows) ? salesRows : []);
             setAllMovements(Array.isArray(movRows) ? movRows : []);
             setPaymentMethods(Array.isArray(pmRows) ? pmRows : []);
+            setCashSummary(summaryRows || null);
         } catch (err) {
             console.error('[CierreCaja] loadData error', err);
-        } finally {
-            setLoading(false);
         }
-    }, []);
+    }, [activeBranchId, selectedDate]);
 
     useEffect(() => { loadData(); }, [loadData]);
 
@@ -176,25 +220,10 @@ const CierreCaja = () => {
         return Number.isFinite(d.getTime()) ? d : null;
     };
 
-    const sales = useMemo(() => allSales.filter((s) => {
-        const d = parseDate(s.date);
-        return d && d >= start && d <= end;
-    }), [allSales, start, end]);
-
-    const allSalesUntilDate = useMemo(() => allSales.filter((s) => {
-        const d = parseDate(s.date);
-        return d && d <= end;
-    }), [allSales, end]);
-
     const movements = useMemo(() => allMovements.filter((m) => {
         const d = parseDate(m.date);
         return d && d >= start && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
     }), [allMovements, start, end, selectedCashAccount]);
-
-    const allMovementsUntilDate = useMemo(() => allMovements.filter((m) => {
-        const d = parseDate(m.date);
-        return d && d <= end && normalizeCashAccount(m.cash_account) === selectedCashAccount;
-    }), [allMovements, end, selectedCashAccount]);
 
     const salesMovements = useMemo(() => (
         (movements || []).filter((movement) => {
@@ -206,19 +235,6 @@ const CierreCaja = () => {
             });
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
-
-    const cashBalanceByAccount = useMemo(() => {
-        const balances = { principal: 0, secondary: 0 };
-        allMovements.forEach((movement) => {
-            const d = parseDate(movement.date);
-            if (!d || d > end) return;
-            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
-            const account = normalizeCashAccount(movement.cash_account);
-            const sign = getMovementSign(movement);
-            balances[account] = (balances[account] || 0) + (toNumber(movement.amount) * sign);
-        });
-        return balances;
-    }, [allMovements, end]);
 
     const activePaymentMethods = useMemo(() => {
         const methods = (paymentMethods || [])
@@ -236,6 +252,29 @@ const CierreCaja = () => {
         return methods;
     }, [paymentMethods]);
 
+    const cashPaymentMethods = useMemo(() => {
+        const methods = activePaymentMethods.filter((method) => method.type === 'cash');
+        return methods.length > 0 ? methods : [{ id: 'cash-fallback', name: 'Efectivo', type: 'cash', enabled: true }];
+    }, [activePaymentMethods]);
+
+    const primaryCashMethod = cashPaymentMethods[0] || { name: 'Efectivo', type: 'cash' };
+
+    const cashboxCashBalanceByAccount = useMemo(() => {
+        const cashMethodNames = new Set(cashPaymentMethods.map((method) => method.name));
+        const balances = { principal: 0, secondary: 0 };
+
+        (cashSummary?.byPaymentMethod || []).forEach((row) => {
+            const methodName = row.name || 'Efectivo';
+            const methodType = String(row.type || '').trim().toLowerCase();
+            if (methodType !== 'cash' && !cashMethodNames.has(methodName)) return;
+
+            const account = normalizeCashAccount(row.cashAccount);
+            balances[account] = (balances[account] || 0) + toNumber(row.accumulated);
+        });
+
+        return balances;
+    }, [cashPaymentMethods, cashSummary]);
+
     useEffect(() => {
         setMovementPaymentMethod((prev) => (
             activePaymentMethods.some((method) => method.name === prev)
@@ -243,11 +282,11 @@ const CierreCaja = () => {
                 : activePaymentMethods[0]?.name || 'Efectivo'
         ));
         setTransferPaymentMethod((prev) => (
-            activePaymentMethods.some((method) => method.name === prev)
+            cashPaymentMethods.some((method) => method.name === prev)
                 ? prev
-                : activePaymentMethods[0]?.name || 'Efectivo'
+                : primaryCashMethod.name
         ));
-    }, [activePaymentMethods]);
+    }, [activePaymentMethods, cashPaymentMethods, primaryCashMethod.name]);
 
     useEffect(() => {
         setTransferFromAccount(selectedCashAccount);
@@ -257,32 +296,65 @@ const CierreCaja = () => {
     useEffect(() => {
         setOpeningDraft((prev) => {
             const next = {};
-            activePaymentMethods.filter((method) => method.type === 'cash').forEach((method) => {
+            cashPaymentMethods.forEach((method) => {
                 next[method.name] = prev[method.name] || '';
             });
             return next;
         });
-    }, [activePaymentMethods]);
+    }, [cashPaymentMethods]);
 
-    const salesByMethod = useMemo(() => {
+    const summaryRowsForSelectedAccount = useMemo(() => (
+        (cashSummary?.byPaymentMethod || [])
+            .filter((row) => normalizeCashAccount(row.cashAccount) === selectedCashAccount)
+    ), [cashSummary, selectedCashAccount]);
+
+    const selectedCashMethodNames = useMemo(() => (
+        new Set(cashPaymentMethods.map((method) => method.name))
+    ), [cashPaymentMethods]);
+
+    const selectedCashSummary = useMemo(() => {
+        const totals = {
+            accumulated: 0,
+            opening: 0,
+            sales: 0,
+            manualIncomes: 0,
+            manualExpenses: 0,
+            reversals: 0,
+            dailyNet: 0,
+        };
+
+        summaryRowsForSelectedAccount.forEach((row) => {
+            const methodType = String(row.type || '').trim().toLowerCase();
+            const methodName = row.name || 'Efectivo';
+            if (methodType !== 'cash' && !selectedCashMethodNames.has(methodName)) return;
+
+            totals.accumulated += toNumber(row.accumulated);
+            totals.opening += toNumber(row.opening);
+            totals.sales += toNumber(row.sales);
+            totals.manualIncomes += toNumber(row.manualIncomes);
+            totals.manualExpenses += toNumber(row.manualExpenses);
+            totals.reversals += toNumber(row.reversals);
+            totals.dailyNet += toNumber(row.dailyNet);
+        });
+
+        return totals;
+    }, [selectedCashMethodNames, summaryRowsForSelectedAccount]);
+
+    const summaryByMethod = useMemo(() => {
         const totals = {};
-        salesMovements.forEach((movement) => {
-            if (isCurrentAccount(movement.payment_method, movement.payment_method_type)) return;
-            const sign = movement.type === 'anulacion_venta' ? -1 : 1;
-            const methodName = movement.payment_method || 'Efectivo';
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+        summaryRowsForSelectedAccount.forEach((row) => {
+            const methodName = row.name || 'Efectivo';
+            const existing = totals[methodName] || { ...row, accumulated: 0, opening: 0, sales: 0, reversals: 0, manualNet: 0, dailyNet: 0 };
+            existing.accumulated += toNumber(row.accumulated);
+            existing.opening += toNumber(row.opening);
+            existing.sales += toNumber(row.sales);
+            existing.reversals += toNumber(row.reversals);
+            existing.manualNet += toNumber(row.manualIncomes) - toNumber(row.manualExpenses);
+            existing.dailyNet += toNumber(row.dailyNet);
+            totals[methodName] = existing;
         });
-
-        return Object.entries(totals).map(([name, total]) => {
-            const method = activePaymentMethods.find((item) => item.name === name);
-            return {
-                name,
-                total,
-                method: method || { name, type: 'cash' },
-                type: method?.type || 'cash',
-            };
-        });
-    }, [salesMovements, activePaymentMethods]);
+        return totals;
+    }, [summaryRowsForSelectedAccount]);
 
     const salesCountByMethod = useMemo(() => {
         const totals = {};
@@ -300,37 +372,26 @@ const CierreCaja = () => {
 
     const openingByMethod = useMemo(() => {
         const totals = {};
-        openingMovements.forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            totals[methodName] = (totals[methodName] || 0) + toNumber(movement.amount);
+        Object.entries(summaryByMethod).forEach(([methodName, row]) => {
+            totals[methodName] = toNumber(row.opening);
         });
         return totals;
-    }, [openingMovements]);
+    }, [summaryByMethod]);
 
     const lastClosingByMethod = useMemo(() => {
         const totals = {};
 
-        activePaymentMethods
-            .filter((method) => method.type === 'cash')
-            .forEach((method) => {
-                totals[method.name] = 0;
-            });
+        cashPaymentMethods.forEach((method) => {
+            totals[method.name] = 0;
+        });
 
-        allMovements.forEach((movement) => {
-            const movementDate = parseDate(movement.date);
-            if (!movementDate || movementDate >= start) return;
-            if (normalizeCashAccount(movement.cash_account) !== selectedCashAccount) return;
-
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+        Object.entries(summaryByMethod).forEach(([methodName, row]) => {
             if (!(methodName in totals)) return;
-
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            totals[methodName] = toNumber(row.accumulated) - toNumber(row.dailyNet);
         });
 
         return totals;
-    }, [activePaymentMethods, allMovements, selectedCashAccount, start]);
+    }, [cashPaymentMethods, summaryByMethod]);
 
     const manualMovements = useMemo(() => (
         (movements || []).filter((movement) => {
@@ -343,43 +404,59 @@ const CierreCaja = () => {
         })
     ), [hiddenDigitalPaymentsOnly, movements]);
 
-    const totalSales = salesMovements
-        .filter((movement) => movement.type === 'venta')
+    const selectedAccountSummary = useMemo(() => (
+        cashSummary?.byCashAccount?.[selectedCashAccount] || {}
+    ), [cashSummary, selectedCashAccount]);
+    const totalSales = toNumber(selectedAccountSummary.sales);
+    const transferOutMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
+    const transferInMovements = manualMovements
+        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso');
+    const totalTransfersOut = transferOutMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalExpenses = manualMovements
-        .filter((movement) => movement.type === 'egreso' || movement.type === 'retiro')
+    const totalTransfersIn = transferInMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalIncomes = manualMovements
-        .filter((movement) => movement.type === 'ingreso')
-        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalExpenses = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
+    const totalIncomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
+    const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
+    const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
+    const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = 0;
+
+    const handleToggleOpeningForm = (event) => {
+        event?.preventDefault?.();
+        event?.stopPropagation?.();
+
+        if (!showOpeningForm) {
+            setOpeningDraft(buildOpeningDraft(
+                openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+            ));
+            setShowOpeningForm(true);
+            setFeedback(null);
+            return;
+        }
+
+        setOpeningDraft(buildOpeningDraft());
+        setShowOpeningForm(false);
+    };
 
     const accumulatedByMethod = useMemo(() => {
         const totals = {};
 
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = 0;
-        });
-
-        (allMovementsUntilDate || []).forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.accumulated);
         });
 
         return totals;
-    }, [activePaymentMethods, allMovementsUntilDate]);
+    }, [activePaymentMethods, summaryByMethod]);
 
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
-        manualMovements.forEach((movement) => {
-            const methodName = movement.payment_method || 'Efectivo';
-            const sign = getMovementSign(movement);
-            totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+        activePaymentMethods.forEach((method) => {
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.manualNet);
         });
         return totals;
-    }, [manualMovements]);
+    }, [activePaymentMethods, summaryByMethod]);
 
     const methodCards = useMemo(() => (
         activePaymentMethods
@@ -387,12 +464,14 @@ const CierreCaja = () => {
             .map((method) => ({
             ...method,
             opening: openingByMethod[method.name] || 0,
-            sales: salesByMethod.find((item) => item.name === method.name)?.total || 0,
+            sales: toNumber(summaryByMethod[method.name]?.sales),
+            reversals: toNumber(summaryByMethod[method.name]?.reversals),
+            netSales: toNumber(summaryByMethod[method.name]?.sales) - toNumber(summaryByMethod[method.name]?.reversals),
             salesCount: salesCountByMethod[method.name] || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesByMethod, salesCountByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -430,7 +509,9 @@ const CierreCaja = () => {
             .map((sale) => {
                 const cajaParts = sale.fullParts.filter((part) => !isCurrentAccount(part.name, part.type));
                 const cuentaCorrienteParts = sale.fullParts.filter((part) => isCurrentAccount(part.name, part.type));
-                const cajaAmount = cajaParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
+                const cajaAmount = sale.fullParts
+                    .filter((part) => !isCurrentAccount(part.name, part.type))
+                    .reduce((sum, part) => sum + toNumber(part.amount), 0);
                 const ccAmount = cuentaCorrienteParts.reduce((sum, part) => sum + toNumber(part.amount), 0);
                 return {
                     ...sale,
@@ -448,24 +529,56 @@ const CierreCaja = () => {
     }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
-    const totalSalesIntoCashbox = salesDetails.reduce((sum, sale) => sum + sale.cajaAmount, 0);
+    const totalReversals = toNumber(selectedAccountSummary.reversals);
+    const totalSalesIntoCashbox = totalSales - totalReversals;
 
-    const cashInDrawer = methodCards
-        .filter((method) => method.type === 'cash')
-        .reduce((sum, method) => sum + method.accumulated, 0);
+    const cashInDrawer = toNumber(selectedCashSummary.accumulated);
+
+    const cashBalanceExplanation = useMemo(() => {
+        const previous = toNumber(selectedCashSummary.accumulated) - toNumber(selectedCashSummary.dailyNet);
+        const openings = toNumber(selectedCashSummary.opening);
+        const sales = toNumber(selectedCashSummary.sales);
+        const incomes = Math.max(0, toNumber(selectedCashSummary.manualIncomes) - totalTransfersIn);
+        const outflows = Math.max(0, toNumber(selectedCashSummary.manualExpenses) - totalTransfersOut);
+        const reversals = toNumber(selectedCashSummary.reversals);
+        const parts = {
+            previous,
+            openings,
+            sales,
+            incomes,
+            transfersIn: totalTransfersIn,
+            transfersOut: totalTransfersOut,
+            outflows,
+            reversals,
+            adjustments: 0,
+        };
+
+        const available = parts.previous + parts.openings + parts.sales + parts.incomes + parts.transfersIn + Math.max(parts.adjustments, 0);
+        const deductions = parts.transfersOut + parts.outflows + parts.reversals + Math.abs(Math.min(parts.adjustments, 0));
+        const reason = cashInDrawer < 0
+            ? `Está en negativo porque las salidas de efectivo superan los fondos disponibles por ${formatCurrency(Math.abs(cashInDrawer))}.`
+            : cashInDrawer > 0
+                ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
+                : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
+
+        return {
+            ...parts,
+            available,
+            deductions,
+            reason,
+        };
+    }, [cashInDrawer, selectedCashSummary, totalTransfersIn, totalTransfersOut]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
 
-        activePaymentMethods
-            .filter((method) => method.type === 'cash')
-            .forEach((method) => {
-                const amount = toNumber(source[method.name]);
-                next[method.name] = amount > 0 ? String(amount) : '';
-            });
+        cashPaymentMethods.forEach((method) => {
+            const amount = toNumber(source[method.name]);
+            next[method.name] = amount > 0 ? String(amount) : '';
+        });
 
         return next;
-    }, [activePaymentMethods]);
+    }, [cashPaymentMethods]);
 
     const handleOpeningChange = (methodName, value) => {
         setOpeningDraft((prev) => ({
@@ -476,7 +589,19 @@ const CierreCaja = () => {
 
     const handleSaveOpening = async (e) => {
         e.preventDefault();
-        const rows = activePaymentMethods
+        if (openingSubmitting) return;
+        
+        setFeedback({ type: 'warning', text: 'Guardando apertura de caja...' });
+
+        if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            const message = clientBranches.length > 1 
+                ? `Seleccioná una sucursal del selector arriba (${clientBranches.length} disponibles)`
+                : 'Seleccioná una sucursal activa antes de iniciar la caja.';
+            setFeedback({ type: 'error', text: message });
+            return;
+        }
+
+        const rows = cashPaymentMethods
             .map((method) => ({
                 method,
                 amount: parseFloat(openingDraft[method.name]) || 0,
@@ -488,23 +613,25 @@ const CierreCaja = () => {
             return;
         }
 
-        // Delete old aperturas before inserting new ones to properly "modify" instead of sum.
-        for (const mov of openingMovements) {
-            await saveTableRecord('caja_movimientos', 'delete', null, mov.id);
-        }
-
-        const openingDate = new Date(`${selectedDate}T08:00:00`).toISOString();
-        for (const { method, amount } of rows) {
-            await saveTableRecord('caja_movimientos', 'insert', {
-                type: 'apertura',
-                amount,
-                category: 'Apertura de caja',
-                description: `Apertura inicial ${method.name}`,
-                payment_method: method.name,
-                payment_method_type: method.type,
-                cash_account: selectedCashAccount,
-                date: openingDate,
+        try {
+            setOpeningSubmitting(true);
+            await saveCashboxOpening({
+                date: selectedDate,
+                cashAccount: selectedCashAccount,
+                branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                openings: rows.map(({ method, amount }) => ({
+                    amount,
+                    paymentMethod: method.name,
+                    paymentMethodType: method.type,
+                })),
             });
+        } catch (error) {
+            console.error('[CierreCaja] save opening error', error);
+            setFeedback({ type: 'error', text: error.message || 'No se pudo guardar la apertura de caja.' });
+            return;
+        } finally {
+            setOpeningSubmitting(false);
         }
 
         await loadData();
@@ -515,6 +642,10 @@ const CierreCaja = () => {
 
     const handleAddMovement = async (e) => {
         e.preventDefault();
+        if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de guardar movimientos de caja.' });
+            return;
+        }
         if (!movementAmount || parseFloat(movementAmount) <= 0) {
             setFeedback({ type: 'warning', text: 'Ingresá un importe válido para guardar el movimiento.' });
             return;
@@ -524,10 +655,14 @@ const CierreCaja = () => {
             type: movementType,
             amount: parseFloat(movementAmount),
             category: movementCategory,
+            money_flow_kind: movementType === 'ingreso' ? 'manual_income' : 'manual_expense',
+            origin_table: 'cierre_caja',
+            origin_group_id: `manual_${selectedDate}_${selectedCashAccount}`,
             description: movementDesc,
             payment_method: movementPaymentMethod,
             payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
             cash_account: selectedCashAccount,
+            branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
             date: new Date().toISOString(),
         });
 
@@ -554,6 +689,7 @@ const CierreCaja = () => {
 
     const handleTransferBetweenCashboxes = async (e) => {
         e.preventDefault();
+        if (transferSubmitting) return;
         const amount = parseFloat(transferAmount);
         if (!Number.isFinite(amount) || amount <= 0) {
             setFeedback({ type: 'warning', text: 'Ingresá un monto válido para transferir.' });
@@ -563,46 +699,49 @@ const CierreCaja = () => {
             setFeedback({ type: 'warning', text: 'Elegí cajas diferentes para transferir.' });
             return;
         }
-        const available = toNumber(cashBalanceByAccount[transferFromAccount]);
+        if (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Esta caja necesita una sucursal activa. Cambiá de empresa/sucursal y volvé a ingresar.' });
+            return;
+        }
+        const available = toNumber(cashboxCashBalanceByAccount[transferFromAccount]);
         if (amount > available) {
-            setFeedback({ type: 'warning', text: `Saldo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
+            setFeedback({ type: 'warning', text: `Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}` });
             return;
         }
 
         const transferGroupId = `tr_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const fromLabel = CASH_ACCOUNTS.find((item) => item.value === transferFromAccount)?.label || 'Caja origen';
         const toLabel = CASH_ACCOUNTS.find((item) => item.value === transferToAccount)?.label || 'Caja destino';
-        const selectedMethod = activePaymentMethods.find((method) => method.name === transferPaymentMethod);
+        const selectedMethod = cashPaymentMethods.find((method) => method.name === transferPaymentMethod) || primaryCashMethod;
 
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: 'retiro',
-            amount,
-            category: 'Transferencia entre cajas',
-            description: transferDesc || `Transferencia a ${toLabel}`,
-            payment_method: transferPaymentMethod,
-            payment_method_type: selectedMethod?.type || 'cash',
-            cash_account: transferFromAccount,
-            transfer_group_id: transferGroupId,
-            date: new Date().toISOString(),
-        });
+        try {
+            setTransferSubmitting(true);
+            await createCashboxTransfer({
+                amount,
+                fromCashAccount: transferFromAccount,
+                toCashAccount: transferToAccount,
+                paymentMethod: selectedMethod.name,
+                paymentMethodType: 'cash',
+                description: transferDesc,
+                transferGroupId,
+                date: new Date().toISOString(),
+                ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
+            });
 
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: 'ingreso',
-            amount,
-            category: 'Transferencia entre cajas',
-            description: transferDesc || `Transferencia desde ${fromLabel}`,
-            payment_method: transferPaymentMethod,
-            payment_method_type: selectedMethod?.type || 'cash',
-            cash_account: transferToAccount,
-            transfer_group_id: transferGroupId,
-            date: new Date().toISOString(),
-        });
-
-        await loadData();
-        setTransferAmount('');
-        setTransferDesc('');
-        setShowTransferForm(false);
-        setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
+            await loadData();
+            setTransferAmount('');
+            setTransferDesc('');
+            setShowTransferForm(false);
+            setFeedback({ type: 'success', text: `Transferencia registrada: ${fromLabel} → ${toLabel}.` });
+        } catch (error) {
+            const detail = error?.details;
+            const branchDebug = detail?.code === 'CASHBOX_TRANSFER_BRANCH_REQUIRED'
+                ? ` Sucursal enviada: ${detail.receivedBranchId || detail.receivedActiveBranchId || detail.headerActiveBranchId || 'ninguna'}. Sucursales activas: ${Array.isArray(detail.activeBranches) && detail.activeBranches.length ? detail.activeBranches.map((branch) => branch.name || branch.id).join(', ') : 'ninguna'}.`
+                : '';
+            setFeedback({ type: 'error', text: `${error?.message || 'No se pudo registrar la transferencia entre cajas.'}${branchDebug}` });
+        } finally {
+            setTransferSubmitting(false);
+        }
     };
 
     return (
@@ -614,6 +753,22 @@ const CierreCaja = () => {
                     <p>Apertura, movimientos, retiros y saldo acumulado por medio de pago.</p>
                 </div>
                 <div className="date-picker-wrapper">
+                    {canSelectCashboxBranch && clientBranches.length > 1 && (
+                        <select
+                            className="neo-input"
+                            value={Number.isFinite(activeBranchId) && activeBranchId > 0 ? String(activeBranchId) : ''}
+                            onChange={(e) => handleBranchChange(e.target.value)}
+                            disabled={branchLoading}
+                            style={{ marginBottom: 0, minWidth: '190px' }}
+                        >
+                            <option value="">Seleccionar sucursal</option>
+                            {clientBranches.map((branch) => (
+                                <option key={branch.id} value={branch.id}>
+                                    {branch.name || `Sucursal ${branch.id}`}
+                                </option>
+                            ))}
+                        </select>
+                    )}
                     <select
                         className="neo-input"
                         value={selectedCashAccount}
@@ -643,9 +798,22 @@ const CierreCaja = () => {
             )}
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
-                <div className="stat-box result">
-                    <span className="label">Efectivo acumulado ({selectedCashAccount === 'principal' ? 'Principal' : 'Secundaria'})</span>
+                <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
+                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
+                    <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
+                    <div className="cash-result-breakdown">
+                        <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
+                        <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
+                        <span>Saldo previo: {formatCurrency(cashBalanceExplanation.previous)}</span>
+                        <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
+                        <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
+                        <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>
+                        <span>Transf. recibidas: {formatCurrency(cashBalanceExplanation.transfersIn)}</span>
+                        <span>Transf. enviadas: -{formatCurrency(cashBalanceExplanation.transfersOut)}</span>
+                        <span>Retiros/gastos: -{formatCurrency(cashBalanceExplanation.outflows)}</span>
+                        <span>Anulaciones: -{formatCurrency(cashBalanceExplanation.reversals)}</span>
+                    </div>
                 </div>
                 <div className="stat-box income">
                     <span className="label">Ingresos manuales del día</span>
@@ -655,13 +823,24 @@ const CierreCaja = () => {
                     <span className="label">Retiros / gastos del día</span>
                     <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                 </div>
+                <div className="stat-box transfer-out">
+                    <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                    <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                </div>
+                <div className="stat-box transfer-in">
+                    <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                    <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
+                </div>
                 <div className="stat-box">
                     <span className="label">Ventas a cuenta corriente</span>
                     <span className="val">${currentAccountSales.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box income">
-                    <span className="label">Cobros por ventas en esta caja</span>
+                    <span className="label">Ventas netas en esta caja</span>
                     <span className="val">+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
+                    <span className="stat-note">Brutas ${totalSales.toLocaleString('es-AR')} · Anuladas ${totalReversals.toLocaleString('es-AR')}</span>
                 </div>
                 <div className="stat-box">
                     <span className="label">Ventas mixtas del día</span>
@@ -687,7 +866,8 @@ const CierreCaja = () => {
                                             <span className="method-name">{item.name.toLowerCase().includes('mercado pago') ? <img src={mpLogoText} alt="Mercado Pago" style={{ height: '18px', verticalAlign: 'middle' }} /> : item.name}</span>
                                             <div className="method-breakdown">
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
-                                                <span>Ventas hoy: ${item.sales.toLocaleString('es-AR')}</span>
+                                                <span>Ventas netas hoy: ${item.netSales.toLocaleString('es-AR')}</span>
+                                                <span>Brutas: ${item.sales.toLocaleString('es-AR')} · Anuladas: ${item.reversals.toLocaleString('es-AR')}</span>
                                                 <span>Cobros: {item.salesCount}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
@@ -704,11 +884,11 @@ const CierreCaja = () => {
 
                     <div className="card-footer">
                         <div className="total-row">
-                            <span>Ventas brutas del día</span>
-                            <span className="total-val">${totalSales.toLocaleString('es-AR')}</span>
+                            <span>Ventas netas del día</span>
+                            <span className="total-val">${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                         </div>
                         <div className="total-row">
-                            <span>Cobros que ingresan a caja</span>
+                            <span>Brutas ${totalSales.toLocaleString('es-AR')} · Anuladas ${totalReversals.toLocaleString('es-AR')}</span>
                             <span className="total-val" style={{ fontSize: '1.15rem' }}>+${totalSalesIntoCashbox.toLocaleString('es-AR')}</span>
                         </div>
                     </div>
@@ -733,21 +913,22 @@ const CierreCaja = () => {
                             <span className="label">Retiros y gastos</span>
                             <span className="val">-${totalExpenses.toLocaleString('es-AR')}</span>
                         </div>
+                        <div className="stat-box transfer-out">
+                            <span className="label">Transferido a {counterpartCashAccountLabel}</span>
+                            <span className="val">-${totalTransfersOut.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferOutMovements.length} transferencia{transferOutMovements.length === 1 ? '' : 's'} interna{transferOutMovements.length === 1 ? '' : 's'} del día</span>
+                        </div>
+                        <div className="stat-box transfer-in">
+                            <span className="label">Recibido desde {counterpartCashAccountLabel}</span>
+                            <span className="val">+${totalTransfersIn.toLocaleString('es-AR')}</span>
+                            <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
+                        </div>
                     </div>
 
                     <div className="expenses-section">
                         <div className="section-header">
                             <h3>Apertura de caja</h3>
-                            <button className="cierre-add-btn" onClick={() => {
-                                if (!showOpeningForm) {
-                                    setOpeningDraft(buildOpeningDraft(
-                                        openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
-                                    ));
-                                } else {
-                                    setOpeningDraft(buildOpeningDraft());
-                                }
-                                setShowOpeningForm((prev) => !prev);
-                            }}>
+                            <button type="button" className="cierre-add-btn" onClick={handleToggleOpeningForm}>
                                 {showOpeningForm ? 'Cancelar edición' : openingMovements.length > 0 ? 'Modificar apertura' : 'Registrar apertura'}
                             </button>
                         </div>
@@ -766,7 +947,7 @@ const CierreCaja = () => {
                         {showOpeningForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleSaveOpening}>
                                 <div className="form-grid">
-                                    {activePaymentMethods.filter(m => m.type === 'cash').map((method) => (
+                                    {cashPaymentMethods.map((method) => (
                                         <div className="form-group full" key={method.name}>
                                             <label>{method.name} inicial (Apertura)</label>
                                             <input
@@ -786,15 +967,15 @@ const CierreCaja = () => {
                                         </div>
                                     ))}
                                 </div>
-                                <button type="submit" className="save-btn">
-                                    <Save size={16} /> Guardar apertura
+                                <button type="submit" className="save-btn" disabled={openingSubmitting}>
+                                    <Save size={16} /> {openingSubmitting ? 'Guardando...' : 'Guardar apertura'}
                                 </button>
                             </form>
                         )}
 
                         <div className="section-header section-header-secondary">
                             <h3>Transferencia entre cajas</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
                                 {showTransferForm ? 'Cancelar' : 'Transferir fondos'}
                             </button>
                         </div>
@@ -802,6 +983,27 @@ const CierreCaja = () => {
                         {showTransferForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleTransferBetweenCashboxes}>
                                 <div className="form-grid">
+                                    {clientBranches.length > 0 && Number.isFinite(transferBranchId) && transferBranchId > 0 && (
+                                        <div className="form-group full">
+                                            <label>Sucursal operativa</label>
+                                            <input
+                                                className="neo-input"
+                                                value={activeBranchName || `Sucursal ${transferBranchId}`}
+                                                readOnly
+                                            />
+                                            <small style={{ color: 'var(--color-text-muted)' }}>
+                                                Los movimientos de caja quedan asociados a esta sucursal.
+                                            </small>
+                                        </div>
+                                    )}
+                                    {clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0) && (
+                                        <div className="form-group full">
+                                            <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', color: '#f59e0b', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.25)', borderRadius: '10px', padding: '0.75rem 0.9rem' }}>
+                                                <AlertCircle size={18} />
+                                                <span>Esta caja está configurada por sucursal. Volvé al ingreso y seleccioná la sucursal operativa.</span>
+                                            </div>
+                                        </div>
+                                    )}
                                     <div className="form-group">
                                         <label>Desde caja</label>
                                         <select
@@ -814,7 +1016,7 @@ const CierreCaja = () => {
                                             ))}
                                         </select>
                                         <small style={{ color: 'var(--color-text-muted)' }}>
-                                            Disponible: ${toNumber(cashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
+                                            Disponible efectivo: ${toNumber(cashboxCashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
                                         </small>
                                     </div>
                                     <div className="form-group">
@@ -836,7 +1038,7 @@ const CierreCaja = () => {
                                             value={transferPaymentMethod}
                                             onChange={(e) => setTransferPaymentMethod(e.target.value)}
                                         >
-                                            {activePaymentMethods.map((method) => (
+                                            {cashPaymentMethods.map((method) => (
                                                 <option key={method.name} value={method.name}>{method.name}</option>
                                             ))}
                                         </select>
@@ -865,15 +1067,15 @@ const CierreCaja = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="save-btn">
-                                    <ArrowRightLeft size={16} /> Confirmar transferencia
+                                <button type="submit" className="save-btn" disabled={transferSubmitting || branchLoading || (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0))}>
+                                    <ArrowRightLeft size={16} /> {transferSubmitting ? 'Transfiriendo...' : 'Confirmar transferencia'}
                                 </button>
                             </form>
                         )}
 
                         <div className="section-header section-header-secondary">
                             <h3>Retiros e ingresos manuales</h3>
-                            <button className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
+                            <button type="button" className="cierre-add-btn" onClick={() => setShowMovementForm((prev) => !prev)}>
                                 {showMovementForm ? 'Cancelar' : '+ Registrar movimiento'}
                             </button>
                         </div>
@@ -961,21 +1163,23 @@ const CierreCaja = () => {
                             {manualMovements.length === 0 && (
                                 <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
                             )}
-                            {manualMovements.map((movement) => (
-                                <div key={movement.id} className={`movement-item ${movement.type}`}>
-                                    <div className="m-info">
-                                        <span className="m-cat">{movement.category}</span>
-                                        <span className="m-desc">
-                                            {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'}
-                                            {movement.transfer_group_id ? ' · transferencia interna' : ''}
+                            {manualMovements.map((movement) => {
+                                const presentation = getManualMovementPresentation(movement);
+                                return (
+                                    <div key={movement.id} className={`movement-item ${movement.type} ${isTransferMovement(movement) ? 'transfer' : ''}`}>
+                                        <div className="m-info">
+                                            <span className="m-cat">{presentation.label}</span>
+                                            <span className="m-desc">
+                                                {(movement.payment_method || 'Efectivo')} · {movement.description || 'Sin detalle'} · {presentation.note}
+                                            </span>
+                                        </div>
+                                        <span className="m-amount">
+                                            {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
                                         </span>
+                                        <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
                                     </div>
-                                    <span className="m-amount">
-                                        {getMovementSign(movement) >= 0 ? '+' : '-'}${toNumber(movement.amount).toLocaleString('es-AR')}
-                                    </span>
-                                    <button onClick={() => handleDeleteMovement(movement.id)} className="del-btn">×</button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
 
                         <div className="section-header section-header-secondary">
