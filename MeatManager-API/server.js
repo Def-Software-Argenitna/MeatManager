@@ -162,6 +162,9 @@ const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.e
 const SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY = 'scale_bridge_product_sync_seq';
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
+const STRICT_BRANCH_SCOPING = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.STRICT_BRANCH_SCOPING || '').trim().toLowerCase()
+);
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
 const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
@@ -3215,6 +3218,40 @@ async function listClientBranches(clientId) {
     }
 }
 
+function hasMultipleActiveBranches(branches = []) {
+    if (!Array.isArray(branches)) return false;
+    return branches.filter((branch) => {
+        const branchId = Number(branch?.id);
+        return Number.isFinite(branchId) && branchId > 0;
+    }).length > 1;
+}
+
+function buildBranchScopeClause({ column = 'branch_id', branchId, allowLegacyNullFallback = false } = {}) {
+    const resolvedBranchId = Number(branchId);
+    if (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0) {
+        return { sql: '', params: [] };
+    }
+
+    if (allowLegacyNullFallback) {
+        return {
+            sql: `(${column} = ? OR ${column} IS NULL)`,
+            params: [resolvedBranchId],
+        };
+    }
+
+    return {
+        sql: `${column} = ?`,
+        params: [resolvedBranchId],
+    };
+}
+
+function warnBranchScopeFallback(event, payload = {}) {
+    console.warn(`[BRANCH SCOPE] ${event}`, {
+        strict: STRICT_BRANCH_SCOPING,
+        ...payload,
+    });
+}
+
 function getRequestedActiveBranchId(req) {
     const rawValue = req?.headers?.['x-mm-active-branch-id'] ?? req?.query?.activeBranchId ?? req?.body?.activeBranchId;
     const branchId = Number(rawValue);
@@ -5854,11 +5891,33 @@ app.get('/api/caja/report-data', verifyFirebaseToken, async (req, res) => {
             })
             : null;
 
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        const requiresExplicitBranch = hasMultipleActiveBranches(activeBranches);
+        if (requiresExplicitBranch && (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0)) {
+            if (STRICT_BRANCH_SCOPING) {
+                return res.status(400).json({
+                    error: 'Debe especificar branch_id para consultar caja',
+                    code: 'BRANCH_REQUIRED',
+                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                });
+            }
+            warnBranchScopeFallback('cash-report-without-branch', {
+                tenantId,
+                clientId: accessContext?.client?.id ?? null,
+                userId: accessContext?.user?.id ?? null,
+                path: req.path,
+            });
+        }
+
         const where = ['tenant_id = ?'];
         const params = [tenantId];
-        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
-            where.push('(branch_id = ? OR branch_id IS NULL)');
-            params.push(resolvedBranchId);
+        const branchScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: !STRICT_BRANCH_SCOPING || !requiresExplicitBranch,
+        });
+        if (branchScope.sql) {
+            where.push(branchScope.sql);
+            params.push(...branchScope.params);
         }
 
         const cashAccountWhere = selectedCashAccount
@@ -6014,10 +6073,14 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
         const dayEnd = `${selectedDate} 23:59:59`;
         const openingDate = `${selectedDate} 08:00:00`;
         const branchId = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null;
+        const branchDeleteScope = buildBranchScopeClause({
+            branchId,
+            allowLegacyNullFallback: !STRICT_BRANCH_SCOPING || !hasMultipleActiveBranches(activeBranches),
+        });
 
         await conn.beginTransaction();
-        const branchDeleteSql = branchId ? 'AND (branch_id = ? OR branch_id IS NULL)' : 'AND branch_id IS NULL';
-        const branchDeleteParams = branchId ? [branchId] : [];
+        const branchDeleteSql = branchDeleteScope.sql ? `AND ${branchDeleteScope.sql}` : 'AND branch_id IS NULL';
+        const branchDeleteParams = branchDeleteScope.params;
         await conn.query(
             `DELETE FROM caja_movimientos
              WHERE tenant_id = ?
@@ -6113,16 +6176,24 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const requiresExplicitBranch = activeBranches.length > 0;
         if (!hasResolvedBranch) {
             if (requiresExplicitBranch) {
-                return res.status(400).json({
-                    code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
-                    error: 'Seleccioná una sucursal antes de transferir entre cajas',
-                    receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
-                    receivedActiveBranchId: req.body?.activeBranchId ?? null,
-                    headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
-                    userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
-                    activeBranchId: accessContext?.activeBranch?.id ?? null,
-                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
-                    role: accessContext?.user?.role ?? null,
+                if (STRICT_BRANCH_SCOPING) {
+                    return res.status(400).json({
+                        code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
+                        error: 'Seleccioná una sucursal antes de transferir entre cajas',
+                        receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
+                        receivedActiveBranchId: req.body?.activeBranchId ?? null,
+                        headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
+                        userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
+                        activeBranchId: accessContext?.activeBranch?.id ?? null,
+                        activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                        role: accessContext?.user?.role ?? null,
+                    });
+                }
+                warnBranchScopeFallback('cash-transfer-without-branch', {
+                    tenantId,
+                    clientId: accessContext?.client?.id ?? null,
+                    userId: accessContext?.user?.id ?? null,
+                    path: req.path,
                 });
             }
 
@@ -6137,8 +6208,12 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        const branchWhereSql = hasResolvedBranch ? 'AND (branch_id = ? OR branch_id IS NULL)' : '';
-        const branchWhereParams = hasResolvedBranch ? [resolvedBranchId] : [];
+        const branchScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: !STRICT_BRANCH_SCOPING || !hasMultipleActiveBranches(activeBranches),
+        });
+        const branchWhereSql = branchScope.sql ? `AND ${branchScope.sql}` : '';
+        const branchWhereParams = branchScope.params;
         const [balanceRows] = await conn.query(
             `SELECT SUM(CASE
                 WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
@@ -9258,13 +9333,18 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
                 if (qty <= 0) continue;
 
                 if (item.product_id) {
+                    const stockBranchScope = buildBranchScopeClause({
+                        branchId: transfer.from_branch_id,
+                        allowLegacyNullFallback: !STRICT_BRANCH_SCOPING,
+                    });
+                    const stockBranchWhereSql = stockBranchScope.sql || 'branch_id IS NULL';
                     const [[stockRow]] = await conn.query(
                         `SELECT COALESCE(SUM(quantity), 0) AS total
                          FROM stock
                          WHERE tenant_id = ?
                            AND product_id = ?
-                           AND (branch_id = ? OR branch_id IS NULL)`,
-                        [tenantId, item.product_id, transfer.from_branch_id]
+                           AND ${stockBranchWhereSql}`,
+                        [tenantId, item.product_id, ...stockBranchScope.params]
                     );
                     const available = Number(stockRow?.total || 0);
                     if (available < qty) {
@@ -10089,7 +10169,31 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
     try {
         const pool = getOperationalPool();
         const tenantId = req.bridge.tenantId;
-        const branchId = Number(req.bridge.branchId || 0);
+        const requestedBranchId = Number(req.bridge.branchId || 0);
+        const activeBranches = req.bridge.clientId ? await listClientBranches(req.bridge.clientId) : [];
+        const requiresExplicitBranch = hasMultipleActiveBranches(activeBranches);
+        const resolvedBranchId = Number.isFinite(requestedBranchId) && requestedBranchId > 0
+            ? requestedBranchId
+            : (activeBranches.length === 1 ? Number(activeBranches[0]?.id || 0) : null);
+        if (requiresExplicitBranch && (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0)) {
+            if (STRICT_BRANCH_SCOPING) {
+                return res.status(400).json({
+                    error: 'El bridge requiere una sucursal asignada',
+                    code: 'BRIDGE_BRANCH_REQUIRED',
+                });
+            }
+            warnBranchScopeFallback('bridge-catalog-without-branch', {
+                tenantId,
+                clientId: req.bridge.clientId ?? null,
+                deviceId: req.bridge.deviceId ?? null,
+                path: req.path,
+            });
+        }
+        const promotionScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: !STRICT_BRANCH_SCOPING || !requiresExplicitBranch,
+        });
+        const promotionWhereSql = promotionScope.sql ? `AND ${promotionScope.sql}` : 'AND branch_id IS NULL';
 
         const [duplicateRows] = await pool.query(
             `SELECT effective_plu_code, COUNT(*) AS qty
@@ -10101,7 +10205,7 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                     LEFT JOIN branch_product_prices bpp
                       ON bpp.tenant_id = p.tenant_id
                      AND bpp.product_id = p.id
-                     AND bpp.branch_id = ?
+                                         AND bpp.branch_id = ?
                     WHERE p.\`${TENANT_COLUMN}\` = ?
                       AND COALESCE(p.active, 1) = 1
                       AND p.deleted_at IS NULL
@@ -10112,14 +10216,14 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                 SELECT TRIM(CAST(promo_plu AS CHAR)) AS effective_plu_code
                 FROM promotions
                 WHERE \`${TENANT_COLUMN}\` = ?
-                  AND (branch_id = ? OR branch_id IS NULL)
+                                    ${promotionWhereSql}
                   AND COALESCE(active, 1) = 1
                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
              ) x
              GROUP BY effective_plu_code
              HAVING COUNT(*) > 1
              ORDER BY effective_plu_code`,
-            [branchId, tenantId, tenantId, branchId]
+                        [resolvedBranchId, tenantId, tenantId, ...promotionScope.params]
         );
 
         const [productRows] = await pool.query(
@@ -10131,13 +10235,13 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
              LEFT JOIN branch_product_prices bpp
                ON bpp.tenant_id = p.tenant_id
               AND bpp.product_id = p.id
-              AND bpp.branch_id = ?
+                            AND bpp.branch_id = ?
              WHERE p.\`${TENANT_COLUMN}\` = ?
                AND COALESCE(p.active, 1) = 1
                AND p.deleted_at IS NULL
                AND COALESCE(bpp.price, p.current_price, 0) > 0
              ORDER BY COALESCE(bpp.updated_at, p.updated_at) ASC, p.id ASC`,
-            [branchId, tenantId]
+                        [resolvedBranchId, tenantId]
         );
 
         let promotionRows = [];
@@ -10146,10 +10250,10 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                 `SELECT *
                  FROM promotions
                  WHERE \`${TENANT_COLUMN}\` = ?
-                   AND (branch_id = ? OR branch_id IS NULL)
+                                     ${promotionWhereSql}
                    AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
                  ORDER BY updated_at ASC, id ASC`,
-                [tenantId, branchId]
+                                [tenantId, ...promotionScope.params]
             );
             promotionRows = rows;
         } catch (error) {

@@ -255,6 +255,7 @@ const Clientes = () => {
         const latestClients = await loadCoreData();
         const updated = latestClients.find((client) => Number(client.id) === Number(historyClient.id));
         if (updated) setHistoryClient(updated);
+        return updated || null;
     };
 
     const historyClientData = historyClient;
@@ -462,8 +463,8 @@ const Clientes = () => {
             });
             setPayInput('');
             setPaymentMethodId('');
-            await refreshHistoryClient();
-            await loadLedger(historyClient, historyMonth);
+            const updatedClient = await refreshHistoryClient();
+            await loadLedger(updatedClient || historyClient, historyMonth);
         } finally {
             setPayLoading(false);
         }
