@@ -9,6 +9,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "start:demo": "node -r dotenv/config server.js dotenv_config_path=.env.demo",
+    "dev:demo": "nodemon -r dotenv/config server.js dotenv_config_path=.env.demo",
     "reconcile:firebase-users": "node _reconcile_client_users_firebase.js",
     "dedupe:prices": "node _dedupe_prices.js --apply",
     "dedupe:prices:dry": "node _dedupe_prices.js",

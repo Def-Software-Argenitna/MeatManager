@@ -3,7 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+const envFilePath = process.env.DOTENV_CONFIG_PATH
+    ? path.resolve(__dirname, process.env.DOTENV_CONFIG_PATH)
+    : path.join(__dirname, '.env');
+require('dotenv').config({ path: envFilePath });
 const gdcBackendEnvPath = path.resolve(__dirname, '..', 'Gestionclientes', '.deploy', 'backend.env');
 const hasLocalSmtpConfig =
     Boolean(process.env.SMTP_HOST) &&
