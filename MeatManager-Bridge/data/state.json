@@ -1,21 +1,19 @@
 {
-  "lastProductSyncAt": "2026-04-16T03:09:49.237Z",
-  "lastTicketSyncAt": "2026-04-16T02:30:08.000Z",
+  "lastProductSyncAt": null,
+  "lastTicketSyncAt": null,
   "lastSalesBackfillAt": null,
-  "lastRunAt": "2026-04-16T03:09:59.010Z",
-  "lastRunStatus": "ok",
-  "lastRunMessage": "Productos:0/0 Ventas:22",
+  "lastRunAt": null,
+  "lastRunStatus": "idle",
+  "lastRunMessage": null,
   "lastError": null,
   "barcodeConfigFingerprint": null,
-  "priceFormatFingerprint": "6d:0",
-  "vendorConfigFingerprint": "3127a398e418f5980910",
-  "marqueeConfigFingerprint": "3c7771739afec4a6d77f",
-  "ticketHeaderFingerprint": "76aadd8ad9ee92488494",
-  "sectionMapFingerprint": "7bf206069e7d90e8000d",
+  "priceFormatFingerprint": null,
+  "vendorConfigFingerprint": null,
+  "marqueeConfigFingerprint": null,
+  "ticketHeaderFingerprint": null,
+  "sectionMapFingerprint": null,
+  "productsWatermark": null,
+  "vendorsWatermark": null,
   "ticketFingerprints": {},
-  "productFingerprints": {},
-  "startupPluConsolidatedAt": "2026-04-16T01:48:42.435Z",
-  "orphanPluCleanupCache": {
-    "9": 1776304123431
-  }
+  "productFingerprints": {}
 }
