@@ -1233,6 +1233,7 @@ async function ensureSettingsPrimaryKey(conn) {
 async function ensureProductCatalogIntegrity(conn) {
     const canonicalNameSql = (expr) => `LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_'))`;
     const cleanTextSql = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
+    const nonGenericScaleTicketSql = (expr) => `LOWER(TRIM(COALESCE(${expr}, ''))) NOT LIKE 'ticket%balanza%offline%'`;
     const cleanCategoryKeySql = (expr) => `NULLIF(LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_')), '')`;
     const legacyPriceNameSql = `TRIM(REPLACE(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1), '_', ' '))`;
     const legacyPriceCategorySql = `NULLIF(TRIM(REPLACE(SUBSTRING(COALESCE(pr.product_id, ''), LENGTH(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1)) + 2), '_', ' ')), '')`;
@@ -1257,8 +1258,9 @@ async function ensureProductCatalogIntegrity(conn) {
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
           AND p.branch_id <=> s.branch_id
-          AND p.canonical_key = ${canonicalNameSql('s.name')}
+         AND p.canonical_key = ${canonicalNameSql('s.name')}
          WHERE ${cleanTextSql('s.name')} IS NOT NULL
+           AND ${nonGenericScaleTicketSql('s.name')}
            AND p.id IS NULL
          GROUP BY s.\`${TENANT_COLUMN}\`, s.branch_id, ${canonicalNameSql('s.name')}, TRIM(s.name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
@@ -1284,13 +1286,14 @@ async function ensureProductCatalogIntegrity(conn) {
            AND p.id IS NULL
          GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}, TRIM(pi.name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
-            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+            (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
             vi.\`${TENANT_COLUMN}\`,
+            vi.branch_id,
             ${canonicalNameSql('vi.product_name')} AS canonical_key,
             TRIM(vi.product_name) AS name,
-            NULL AS category,
-            NULL AS unit,
+            MAX(${cleanTextSql('vi.category')}) AS category,
+            MAX(${cleanTextSql('vi.unit')}) AS unit,
             MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
             NULL AS plu,
             'ventas_backfill' AS source,
@@ -1299,10 +1302,15 @@ async function ensureProductCatalogIntegrity(conn) {
          FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> vi.branch_id
           AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
-         WHERE ${cleanTextSql('vi.product_name')} IS NOT NULL
+         WHERE vi.branch_id IS NOT NULL
+           AND ${cleanTextSql('vi.product_name')} IS NOT NULL
+           AND ${cleanTextSql('vi.category')} IS NOT NULL
+           AND ${cleanTextSql('vi.unit')} IS NOT NULL
+           AND ${nonGenericScaleTicketSql('vi.product_name')}
            AND p.id IS NULL
-         GROUP BY vi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
+         GROUP BY vi.\`${TENANT_COLUMN}\`, vi.branch_id, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
             (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
@@ -1370,6 +1378,18 @@ async function ensureProductCatalogIntegrity(conn) {
     }
 
     await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET active = 0,
+             deleted_at = COALESCE(deleted_at, NOW()),
+             archived_plu = COALESCE(archived_plu, plu),
+             plu = NULL,
+             source = 'scale_ticket_fallback_archived',
+             updated_at = NOW()
+         WHERE NOT (${nonGenericScaleTicketSql('name')})
+           AND deleted_at IS NULL`
+    );
+
+    await conn.query(
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
          JOIN (
             SELECT
@@ -1381,6 +1401,7 @@ async function ensureProductCatalogIntegrity(conn) {
                 MAX(CASE WHEN COALESCE(s.price, 0) > 0 THEN s.price ELSE 0 END) AS current_price
             FROM \`${OPERATIONAL_DB_NAME}\`.stock s
             WHERE ${cleanTextSql('s.name')} IS NOT NULL
+              AND ${nonGenericScaleTicketSql('s.name')}
             GROUP BY s.\`${TENANT_COLUMN}\`, s.branch_id, ${canonicalNameSql('s.name')}
          ) src
            ON src.tenant_id = p.\`${TENANT_COLUMN}\`
@@ -1476,10 +1497,12 @@ async function ensureProductCatalogIntegrity(conn) {
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
          JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> vi.branch_id
           AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
          SET vi.product_id = p.id
          WHERE vi.product_id IS NULL
-           AND ${cleanTextSql('vi.product_name')} IS NOT NULL`
+           AND ${cleanTextSql('vi.product_name')} IS NOT NULL
+           AND ${nonGenericScaleTicketSql('vi.product_name')}`
     );
 
     await conn.query(
@@ -8114,6 +8137,10 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 2. INSERT ventas_items
         const promoUsageById = new Map();
+        const isGenericScaleTicketItem = (item) => (
+            Boolean(item?.is_scale_offline_ticket)
+            || /^ticket.*balanza.*offline/i.test(String(item?.product_name || '').trim())
+        );
         for (const item of items) {
             const itemSubtotal = parseFloat(item.subtotal) || (parseFloat(item.price) * parseFloat(item.quantity));
             const promoId = item?.promo_payload?.id != null
@@ -8129,7 +8156,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     tenantId, resolvedBranchId || null, saleId,
-                    item.product_id || null,
+                    isGenericScaleTicketItem(item) ? null : (item.product_id || null),
                     String(item.product_name || '').trim(),
                     parseFloat(item.quantity) || 0,
                     parseFloat(item.price) || 0,
@@ -8157,6 +8184,9 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 3. INSERT movimientos negativos en stock (descuento)
         for (const item of items) {
+            if (isGenericScaleTicketItem(item)) {
+                continue;
+            }
             // Resolver product_id por FK si no vino desde el frontend
             let productId = item.product_id || null;
             if (!productId && item.product_name) {

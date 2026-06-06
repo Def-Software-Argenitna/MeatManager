@@ -18,6 +18,8 @@ const toNumber = (value) => {
     return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const isGenericScaleTicketName = (value) => /^ticket.*balanza.*offline/i.test(String(value || '').trim());
+
 const toTimestamp = (value) => {
     if (!value) return 0;
     const ts = new Date(value).getTime();
@@ -282,6 +284,7 @@ export const syncLegacyProductsToCatalog = async ({ products, stockRows, prices 
     stockList.forEach((item) => {
         const trimmedName = String(item?.name || '').trim();
         if (!trimmedName) return;
+        if (isGenericScaleTicketName(trimmedName)) return;
         const canonicalKey = buildProductCanonicalKey(trimmedName);
         if (!grouped.has(canonicalKey)) {
             grouped.set(canonicalKey, {
