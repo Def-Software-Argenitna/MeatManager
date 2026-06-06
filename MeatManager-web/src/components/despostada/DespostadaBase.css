@@ -193,7 +193,7 @@
 
 .despostada-setup-grid {
     display: grid;
-    grid-template-columns: minmax(0, 1.2fr) minmax(180px, 0.7fr) minmax(180px, 0.7fr) auto;
+    grid-template-columns: minmax(0, 1.5fr) minmax(180px, 0.7fr) auto;
     gap: 1rem;
     align-items: end;
 }
