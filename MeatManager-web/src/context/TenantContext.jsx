@@ -159,7 +159,7 @@ export const TenantProvider = ({ children }) => {
         }
     }, []);
 
-    const activateSupportSession = useCallback(async ({ token, admin, client }) => {
+    const activateSupportSession = useCallback(async ({ token, admin, client, branch = null }) => {
         if (!token || !admin || !client?.id) {
             return { ok: false, error: 'Faltan datos para ingresar al tenant' };
         }
@@ -182,10 +182,22 @@ export const TenantProvider = ({ children }) => {
             authMode: 'support',
             supportAdmin: admin,
         };
+        const normalizedBranch = branch?.id ? {
+            id: Number(branch.id),
+            clientId: branch.clientId ?? client.id,
+            name: branch.name || `Sucursal ${branch.id}`,
+            internalCode: branch.internalCode || null,
+            address: branch.address || null,
+            status: branch.status || 'ACTIVE',
+        } : null;
 
         setTenant(nextTenant);
         setAuthToken(token);
-        sessionStorage.removeItem('mm_active_branch');
+        if (normalizedBranch) {
+            sessionStorage.setItem('mm_active_branch', JSON.stringify(normalizedBranch));
+        } else {
+            sessionStorage.removeItem('mm_active_branch');
+        }
         sessionStorage.setItem(SESSION_KEY, JSON.stringify(nextTenant));
         sessionStorage.setItem(TOKEN_KEY, token);
         return { ok: true };

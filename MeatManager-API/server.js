@@ -8555,10 +8555,50 @@ app.get('/api/internal-admin/clients', verifyInternalAdminSession, async (req, r
                  LIMIT 1000`,
                 search ? [searchLike, searchLike, searchLike] : []
             );
+            const clientIds = rows
+                .map((client) => Number(client.id))
+                .filter((clientId) => Number.isFinite(clientId) && clientId > 0);
+            let branchRows = [];
+            if (clientIds.length) {
+                const placeholders = clientIds.map(() => '?').join(', ');
+                [branchRows] = await conn.query(
+                    `SELECT
+                        id,
+                        clientId,
+                        name,
+                        internalCode,
+                        address,
+                        isBillable,
+                        status
+                     FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+                     WHERE clientId IN (${placeholders})
+                       AND status = 'ACTIVE'
+                     ORDER BY clientId ASC, id ASC`,
+                    clientIds
+                );
+            }
+            const branchesByClientId = new Map();
+            branchRows.forEach((branch) => {
+                const clientId = Number(branch.clientId);
+                if (!branchesByClientId.has(clientId)) branchesByClientId.set(clientId, []);
+                branchesByClientId.get(clientId).push({
+                    id: branch.id,
+                    clientId: branch.clientId,
+                    name: String(branch.name || '').trim() || `Sucursal ${branch.id}`,
+                    internalCode: branch.internalCode || null,
+                    address: branch.address || null,
+                    isBillable: branch.isBillable === 1 || branch.isBillable === true,
+                    status: branch.status || 'ACTIVE',
+                });
+            });
+            const clients = rows.map((client) => ({
+                ...client,
+                branches: branchesByClientId.get(Number(client.id)) || [],
+            }));
 
             return res.json({
                 ok: true,
-                clients: rows,
+                clients,
             });
         } finally {
             conn.release();

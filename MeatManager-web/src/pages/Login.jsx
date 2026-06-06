@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Beef, LogIn, AlertCircle, ShieldCheck, Search, MapPin } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
@@ -41,12 +41,21 @@ const Login = () => {
     const [branchCheckComplete, setBranchCheckComplete] = useState(false);
     const [branchError, setBranchError] = useState('');
     const [selectedBranchId, setSelectedBranchId] = useState('');
+    const [selectedSupportBranchId, setSelectedSupportBranchId] = useState('');
     const [loading, setLoading] = useState(false);
     const from = location.state?.from?.pathname || '/';
     const isAdminUser = currentUser?.role === 'admin';
     const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !activeBranch?.id;
     const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
     const hasBranchBlockingError = tenant && currentUser && isAdminUser && branchCheckComplete && Boolean(branchError);
+    const selectedSupportClient = useMemo(
+        () => supportClients.find((client) => String(client.id) === String(selectedClientId)) || null,
+        [supportClients, selectedClientId]
+    );
+    const selectedSupportBranches = useMemo(
+        () => (Array.isArray(selectedSupportClient?.branches) ? selectedSupportClient.branches : []),
+        [selectedSupportClient]
+    );
 
     useEffect(() => {
         if (tenant && currentUser && !loadingUser && !waitingForBranchCheck && !requiresBranchSelection && !hasBranchBlockingError) {
@@ -147,10 +156,29 @@ const Login = () => {
         setSelectedClientId(String(result.clients?.[0]?.id || ''));
     };
 
+    useEffect(() => {
+        if (!supportToken) {
+            setSelectedSupportBranchId('');
+            return;
+        }
+        const firstBranchId = selectedSupportBranches[0]?.id;
+        const currentBranchStillExists = selectedSupportBranchId
+            ? selectedSupportBranches.some((branch) => String(branch.id) === String(selectedSupportBranchId))
+            : false;
+        if (!currentBranchStillExists) {
+            setSelectedSupportBranchId(firstBranchId ? String(firstBranchId) : '');
+        }
+    }, [supportToken, selectedClientId, selectedSupportBranches, selectedSupportBranchId]);
+
     const handleSupportAccess = async () => {
-        const selectedClient = supportClients.find((client) => String(client.id) === String(selectedClientId));
+        const selectedClient = selectedSupportClient;
         if (!selectedClient) {
             setSupportError('Seleccioná un tenant para continuar');
+            return;
+        }
+        const selectedBranch = selectedSupportBranches.find((branch) => String(branch.id) === String(selectedSupportBranchId)) || null;
+        if (selectedSupportBranches.length > 1 && !selectedBranch) {
+            setSupportError('Seleccioná una sucursal para continuar');
             return;
         }
 
@@ -159,6 +187,7 @@ const Login = () => {
             token: supportToken,
             admin: supportAdmin,
             client: selectedClient,
+            branch: selectedBranch || selectedSupportBranches[0] || null,
         });
         setLoading(false);
 
@@ -447,11 +476,33 @@ const Login = () => {
                                     </select>
                                 </div>
 
+                                <div className="form-group">
+                                    <label>Sucursal para operar</label>
+                                    {selectedSupportBranches.length ? (
+                                        <select
+                                            className="form-input"
+                                            value={selectedSupportBranchId}
+                                            onChange={(e) => setSelectedSupportBranchId(e.target.value)}
+                                        >
+                                            {selectedSupportBranches.map((branch) => (
+                                                <option key={branch.id} value={branch.id}>
+                                                    {branch.name}{branch.internalCode ? ` (${branch.internalCode})` : ''}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <div className="login-support-note">
+                                            <MapPin size={16} />
+                                            Este tenant no tiene sucursales activas cargadas.
+                                        </div>
+                                    )}
+                                </div>
+
                                 <button
                                     type="button"
-                                    disabled={loading || !selectedClientId}
+                                    disabled={loading || !selectedClientId || (selectedSupportBranches.length > 1 && !selectedSupportBranchId)}
                                     className="login-button"
-                                    style={{ opacity: loading || !selectedClientId ? 0.7 : 1 }}
+                                    style={{ opacity: loading || !selectedClientId || (selectedSupportBranches.length > 1 && !selectedSupportBranchId) ? 0.7 : 1 }}
                                     onClick={handleSupportAccess}
                                 >
                                     {loading ? (
