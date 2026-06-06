@@ -991,7 +991,7 @@ const BRANCH_SCOPED_TABLES = new Set([
 const STRICT_BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'despostada_logs',
-    'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
 ]);
 
 function isTenantScopedTable(table) {
