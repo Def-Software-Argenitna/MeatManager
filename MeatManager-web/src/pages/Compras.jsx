@@ -260,11 +260,29 @@ const Compras = () => {
     };
 
     const addItemToPurchase = () => {
-        if (!currentItem.name || !currentItem.quantity) return;
+        if (!currentItem.name) return;
 
         const qty = parseFloat(currentItem.quantity) || 0;
         const weight = parseFloat(currentItem.weight) || 0;
         const price = parseFloat(currentItem.unit_price) || 0;
+        const isWeighable = ['kg', 'l'].includes(currentItem.unit);
+
+        if (isWeighable) {
+            if (weight <= 0 && qty <= 0) {
+                window.alert('Ingresá el Total Kg del producto.');
+                return;
+            }
+        } else {
+            if (qty <= 0) {
+                window.alert('Ingresá la cantidad (unidades) del producto.');
+                return;
+            }
+        }
+
+        if (price <= 0) {
+            window.alert('Ingresá el precio unitario del producto.');
+            return;
+        }
 
         // NEW: Safety check - if type is missing (manual typing), look it up in catalog
         let itemType = currentItem.type;
@@ -924,7 +942,7 @@ const Compras = () => {
                                     </div>
 
                                     {/* 2. QUANTITY (Units) */}
-                                    <div>
+                                    <div style={{ opacity: ['kg', 'l'].includes(currentItem.unit) ? 0.3 : 1, pointerEvents: ['kg', 'l'].includes(currentItem.unit) ? 'none' : 'auto' }}>
                                         <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Cant.</label>
                                         <input
                                             type="number"
