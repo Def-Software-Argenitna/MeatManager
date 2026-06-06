@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck, Edit2 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
@@ -119,6 +119,7 @@ const Compras = () => {
 
     const [suggestions, setSuggestions] = useState([]);
     const [showSuggestions, setShowSuggestions] = useState(false);
+    const productSearchInputRef = useRef(null);
     const isMixedPurchase = newPurchase.destination === 'mixto';
 
     const loadComprasData = async () => {
@@ -184,6 +185,22 @@ const Compras = () => {
             setCurrentItem(prev => ({ ...prev, destination: newPurchase.destination }));
         }
     }, [isMixedPurchase, newPurchase.destination]);
+
+    useEffect(() => {
+        if (!showSuggestions) return undefined;
+        const handleClick = (event) => {
+            if (productSearchInputRef.current && !productSearchInputRef.current.contains(event.target)) {
+                setShowSuggestions(false);
+            }
+        };
+        const handleScroll = () => setShowSuggestions(false);
+        document.addEventListener('mousedown', handleClick);
+        window.addEventListener('scroll', handleScroll, true);
+        return () => {
+            document.removeEventListener('mousedown', handleClick);
+            window.removeEventListener('scroll', handleScroll, true);
+        };
+    }, [showSuggestions]);
 
     const getSuggestedIvaRate = useCallback((productName, fallbackItem = null) => {
         const supplierKey = normalizeLookupValue(newPurchase.supplier);
@@ -804,6 +821,7 @@ const Compras = () => {
                                     <div style={{ position: 'relative' }}>
                                         <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Producto</label>
                                         <input
+                                            ref={productSearchInputRef}
                                             type="text"
                                             placeholder="Buscar producto..."
                                             className="neo-input"
@@ -812,11 +830,14 @@ const Compras = () => {
                                             onChange={(e) => setCurrentItem({ ...currentItem, name: e.target.value })}
                                             onFocus={() => { if (currentItem.name && suggestions.length > 0) setShowSuggestions(true) }}
                                         />
-                                        {showSuggestions && (
+                                        {showSuggestions && productSearchInputRef.current && createPortal(
                                             <div style={{
-                                                position: 'absolute', top: '100%', left: 0, right: 0,
+                                                position: 'fixed',
+                                                top: productSearchInputRef.current.getBoundingClientRect().bottom,
+                                                left: productSearchInputRef.current.getBoundingClientRect().left,
+                                                width: productSearchInputRef.current.getBoundingClientRect().width,
                                                 background: 'var(--color-bg-card)', border: '1px solid var(--color-primary)',
-                                                zIndex: 50, maxHeight: '200px', overflowY: 'auto', borderRadius: '0 0 4px 4px', boxShadow: '0 4px 6px rgba(0,0,0,0.3)'
+                                                zIndex: 9999, maxHeight: '200px', overflowY: 'auto', borderRadius: '0 0 4px 4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
                                             }}>
                                                 {suggestions.map(s => {
                                                     const suggestionRule = getProductRuleForCatalogItem(s);
@@ -840,7 +861,8 @@ const Compras = () => {
                                                         </div>
                                                     );
                                                 })}
-                                            </div>
+                                            </div>,
+                                            document.body
                                         )}
                                     </div>
 
