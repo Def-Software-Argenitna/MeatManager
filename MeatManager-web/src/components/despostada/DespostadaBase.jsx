@@ -114,7 +114,7 @@ const DespostadaBase = ({
     const [isSimulated, setIsSimulated] = useState(false);
     const [logs, setLogs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
-    const [marginPercentage, setMarginPercentage] = useState(DEFAULT_DESPOSTADA_MARGIN);
+    const marginPercentage = DEFAULT_DESPOSTADA_MARGIN;
     const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = useRef(null);
     const showToast = useCallback((text, type = 'error') => {
@@ -178,7 +178,6 @@ const DespostadaBase = ({
         setCurrentWeight('');
         setIsScaleConnected(false);
         setIsSimulated(false);
-        setMarginPercentage(DEFAULT_DESPOSTADA_MARGIN);
     };
 
     const handleSelectLot = (lot) => {
@@ -468,21 +467,6 @@ const DespostadaBase = ({
                                 onChange={(event) => setInitialWeight(event.target.value)}
                             />
                             <span>kg</span>
-                        </div>
-                    </div>
-
-                    <div className="despostada-field">
-                        <label>Margen sugerido</label>
-                        <div className="despostada-number-row">
-                            <input
-                                type="number"
-                                className="despostada-number"
-                                placeholder="30"
-                                value={marginPercentage}
-                                disabled={isSaving}
-                                onChange={(event) => setMarginPercentage(event.target.value)}
-                            />
-                            <span>%</span>
                         </div>
                     </div>
 
