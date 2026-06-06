@@ -9,7 +9,7 @@ import ErrorBoundary from '../ErrorBoundary';
 import { scaleService } from '../../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../../utils/apiClient';
-import { buildDespostadaPricingSummary, DEFAULT_DESPOSTADA_MARGIN } from '../../utils/despostadaPricing';
+import { buildDespostadaPricingSummary } from '../../utils/despostadaPricing';
 import { ensureUnifiedProduct, fetchProductsSafe } from '../../utils/productCatalog';
 import './DespostadaBase.css';
 
@@ -114,7 +114,6 @@ const DespostadaBase = ({
     const [isSimulated, setIsSimulated] = useState(false);
     const [logs, setLogs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
-    const marginPercentage = DEFAULT_DESPOSTADA_MARGIN;
     const [toastMsg, setToastMsg] = useState(null);
     const toastTimerRef = useRef(null);
     const showToast = useCallback((text, type = 'error') => {
@@ -158,8 +157,7 @@ const DespostadaBase = ({
         cuts: logs,
         totalInputWeight: totalWeight,
         originCostPerKg: costPerKg,
-        marginPercentage,
-    }), [costPerKg, logs, marginPercentage, species, totalWeight]);
+    }), [costPerKg, logs, species, totalWeight]);
     const selectedCut = cutMap.find((cut) => cut.id === selectedCutId) || null;
     const scaleState = connectionLabel(isScaleConnected, isSimulated);
     const hasWorkingState = isSessionStarted && Boolean(selectedCutId);
@@ -552,7 +550,6 @@ const DespostadaBase = ({
                                     <th>Kg</th>
                                     <th>Indice</th>
                                     <th>Costo</th>
-                                    <th>Margen</th>
                                     <th>Sugerido</th>
                                 </tr>
                             </thead>
@@ -566,7 +563,6 @@ const DespostadaBase = ({
                                         <td>{formatKg(row.weight, 2)}</td>
                                         <td>{toNumber(row.valueIndex).toFixed(2)}</td>
                                         <td>{formatCurrency(row.specificCostPerKg)}</td>
-                                        <td>{toNumber(marginPercentage).toFixed(0)}%</td>
                                         <td>{formatCurrency(row.suggestedPricePerKg)}</td>
                                     </tr>
                                 ))}

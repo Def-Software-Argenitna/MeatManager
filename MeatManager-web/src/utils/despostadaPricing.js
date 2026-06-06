@@ -130,7 +130,6 @@ export const buildDespostadaPricingSummary = ({
     cuts = [],
     totalInputWeight = 0,
     originCostPerKg = 0,
-    marginPercentage = DEFAULT_DESPOSTADA_MARGIN,
 }) => {
     const totalCost = roundMetric((Number(totalInputWeight) || 0) * (Number(originCostPerKg) || 0), 2);
     const grouped = new Map();
@@ -185,7 +184,7 @@ export const buildDespostadaPricingSummary = ({
     const pricingRows = rows.map((row) => {
         const provisionalCostPerKg = cleanAverageCostPerKg * (Number(row.valueIndex) || 0);
         const specificCostPerKg = roundMetric(provisionalCostPerKg * normalizationFactor, 2);
-        const suggestedPricePerKg = roundMetric(specificCostPerKg * (1 + ((Number(marginPercentage) || 0) / 100)), 2);
+        const suggestedPricePerKg = specificCostPerKg;
         const allocatedCostTotal = roundMetric((Number(row.weight) || 0) * specificCostPerKg, 2);
 
         return {
@@ -206,7 +205,6 @@ export const buildDespostadaPricingSummary = ({
         weightedOutputUnits,
         normalizedBaseCostPerKg,
         normalizationFactor,
-        marginPercentage: roundMetric(marginPercentage, 2),
         allocatedCostTotal,
         validationDifference: roundMetric(totalCost - allocatedCostTotal, 2),
         rows: pricingRows,

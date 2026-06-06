@@ -97,7 +97,6 @@ export const buildDespostadaLogPayload = ({
         weighted_output_units: roundMetric(pricingSummary?.weightedOutputUnits),
         clean_average_cost_per_kg: roundMetric(pricingSummary?.cleanAverageCostPerKg, 2),
         normalized_base_cost_per_kg: roundMetric(pricingSummary?.normalizedBaseCostPerKg, 2),
-        pricing_margin_percentage: roundMetric(pricingSummary?.marginPercentage, 2),
         pricing_normalization_factor: roundMetric(pricingSummary?.normalizationFactor, 6),
         pricing_allocated_total: roundMetric(pricingSummary?.allocatedCostTotal, 2),
         pricing_validation_difference: roundMetric(pricingSummary?.validationDifference, 2),
