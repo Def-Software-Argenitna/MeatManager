@@ -1996,8 +1996,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'products', 'archived_plu', '`archived_plu` VARCHAR(20) NULL AFTER `deleted_at`');
             await dropIndexIfExists(conn, 'products', 'uniq_products_tenant_canonical');
             await dropIndexIfExists(conn, 'products', 'uniq_products_tenant_plu');
-            await ensureIndex(conn, 'products', 'idx_products_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
-            await ensureIndex(conn, 'purchase_items', 'idx_purchase_items_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'products', 'idx_products_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureIndex(conn, 'purchase_items', 'idx_purchase_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_branch_canonical'))) {
                 await conn.query(
                     `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
@@ -2039,23 +2039,23 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'animal_lots', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'animal_lots', 'idx_animal_lots_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'animal_lots', 'idx_animal_lots_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'clients', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'clients', 'idx_clients_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'clients', 'idx_clients_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'suppliers', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'suppliers', 'idx_suppliers_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'suppliers', 'idx_suppliers_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'ventas_items', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'ventas_items', 'idx_ventas_items_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'ventas_items', 'idx_ventas_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'compras', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'compras', 'idx_compras_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'compras', 'idx_compras_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'compras_items', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'compras_items', 'idx_compras_items_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'compras_items', 'idx_compras_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'despostada_logs', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'despostada_logs', 'idx_despostada_logs_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'despostada_logs', 'idx_despostada_logs_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'menu_digital', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'menu_digital', 'idx_menu_digital_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'menu_digital', 'idx_menu_digital_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await ensureColumn(conn, 'supplier_item_tax_profiles', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
-            await ensureIndex(conn, 'supplier_item_tax_profiles', 'idx_sitp_tenant_branch', `(\`${TENANT_COLUMN}\`, branch_id)`);
+            await ensureIndex(conn, 'supplier_item_tax_profiles', 'idx_sitp_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await dropIndexIfExists(conn, 'supplier_item_tax_profiles', 'uniq_sitp_tenant_supplier_product');
             if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'supplier_item_tax_profiles', 'uniq_sitp_tenant_branch_supplier_product'))) {
                 await conn.query(
