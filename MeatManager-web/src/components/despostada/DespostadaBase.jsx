@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
 import { useUser } from '../../context/UserContext';
 import DirectionalReveal from '../DirectionalReveal';
 import ModuleLicenseGate from '../ModuleLicenseGate';
+import ErrorBoundary from '../ErrorBoundary';
 import { scaleService } from '../../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../../utils/apiClient';
@@ -114,6 +115,21 @@ const DespostadaBase = ({
     const [logs, setLogs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
     const [marginPercentage, setMarginPercentage] = useState(DEFAULT_DESPOSTADA_MARGIN);
+    const [toastMsg, setToastMsg] = useState(null);
+    const toastTimerRef = useRef(null);
+    const showToast = useCallback((text, type = 'error') => {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToastMsg({ text, type });
+        toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+        };
+    }, []);
 
     const loadDespostadaData = React.useCallback(async () => {
         const [lotRows, comprasRows] = await Promise.all([
@@ -127,7 +143,7 @@ const DespostadaBase = ({
 
     useEffect(() => {
         loadDespostadaData().catch((error) => console.error(`Error cargando despostada ${species}:`, error));
-    }, [loadDespostadaData, species]);
+    }, [loadDespostadaData]);
 
     const processedWeight = logs.reduce((acc, log) => acc + toNumber(log.weight), 0);
     const totalWeight = toNumber(initialWeight);
@@ -174,7 +190,7 @@ const DespostadaBase = ({
 
     const startSession = async () => {
         if (!initialWeight || totalWeight <= 0) {
-            window.alert(noWeightMessage);
+            showToast(noWeightMessage, 'warning');
             return;
         }
         setIsSessionStarted(true);
@@ -204,10 +220,6 @@ const DespostadaBase = ({
                     resolveConflict: ({ incomingPrice, existingPrice }) => incomingPrice || existingPrice,
                 });
 
-                if (unifiedProduct?.id && !products.some((item) => Number(item?.id) === Number(unifiedProduct.id))) {
-                    products.push(unifiedProduct);
-                }
-
                 const matchingLogs = logs.filter((log) => log.cutId === row.cutId && Number(log.stockEntryId) > 0);
                 for (const log of matchingLogs) {
                     await saveTableRecord('stock', 'update', {
@@ -236,10 +248,10 @@ const DespostadaBase = ({
 
             await loadDespostadaData();
             resetSession(false);
-            window.alert(finishSuccess);
+            showToast(finishSuccess, 'success');
         } catch (error) {
             console.error(`Error finalizando despostada ${species}:`, error);
-            window.alert(finishFailure);
+            showToast(finishFailure, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -257,7 +269,7 @@ const DespostadaBase = ({
     const handleConnectScale = async () => {
         const success = await scaleService.requestPort();
         if (!success) {
-            window.alert('⚠️ No se detectó ninguna balanza.\n\nVerificá que:\n• La balanza esté encendida\n• El cable USB esté conectado\n• Instalaste el driver del fabricante\n\nSi no tenés balanza, usá el Modo Test.');
+            showToast('No se detectó ninguna balanza. Verificá que esté encendida, conectada por USB y con los drivers instalados. Si no tenés balanza, usá el Modo Test.', 'warning');
             return;
         }
 
@@ -265,9 +277,9 @@ const DespostadaBase = ({
         setIsScaleConnected(connected);
         if (connected) {
             setIsSimulated(false);
-            window.alert('✅ Balanza conectada correctamente.');
+            showToast('Balanza conectada correctamente.', 'success');
         } else {
-            window.alert('⚠️ No se pudo abrir el puerto serie. Probá desconectar y volver a conectar el cable.');
+            showToast('No se pudo abrir el puerto serie. Probá desconectar y volver a conectar el cable.', 'error');
         }
     };
 
@@ -320,7 +332,7 @@ const DespostadaBase = ({
             setCurrentWeight('');
         } catch (error) {
             console.error(`Error guardando corte ${species}:`, error);
-            window.alert('No se pudo guardar el corte en stock.');
+            showToast('No se pudo guardar el corte en stock.', 'error');
         } finally {
             setIsSaving(false);
         }
@@ -330,7 +342,7 @@ const DespostadaBase = ({
     const totalCuts = logs.length;
 
     return (
-        <ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
+        <ErrorBoundary><ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
         <div
             className="despostada-module animate-fade-in"
             style={{
@@ -653,7 +665,11 @@ const DespostadaBase = ({
                                     <button
                                         className="despostada-button-ghost"
                                         style={{ minHeight: '2.4rem', paddingInline: '0.8rem' }}
-                                        onClick={() => setSelectedCutId(null)}
+                                        onClick={() => {
+                                            if (currentWeight && currentWeight !== '0' && !window.confirm('¿Cancelar este corte? Se perderá el peso ingresado.')) return;
+                                            setSelectedCutId(null);
+                                            setCurrentWeight('');
+                                        }}
                                     >
                                         Cancelar
                                     </button>
@@ -770,7 +786,23 @@ const DespostadaBase = ({
                 </div>
             </DirectionalReveal>
         </div>
-        </ModuleLicenseGate>
+        </ModuleLicenseGate></ErrorBoundary>
+        {toastMsg && (
+            <div
+                onClick={() => setToastMsg(null)}
+                style={{
+                    position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 99999,
+                    padding: '0.75rem 1.25rem', borderRadius: '10px',
+                    background: toastMsg.type === 'success' ? '#166534' : toastMsg.type === 'warning' ? '#854d0e' : '#991b1b',
+                    color: '#fff', fontSize: '0.9rem', fontWeight: 600,
+                    boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+                    cursor: 'pointer',
+                    maxWidth: '420px',
+                }}
+            >
+                {toastMsg.text}
+            </div>
+        )}
     );
 };
 
