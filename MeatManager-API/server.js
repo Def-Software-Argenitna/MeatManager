@@ -1293,7 +1293,7 @@ async function ensureProductCatalogIntegrity(conn) {
              ${canonicalNameSql('vi.product_name')} AS canonical_key,
              TRIM(vi.product_name) AS name,
              NULL AS category,
-             MAX(${cleanTextSql('vi.unit')}) AS unit,
+             NULL AS unit,
              MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
              NULL AS plu,
              'ventas_backfill' AS source,
@@ -1306,7 +1306,6 @@ async function ensureProductCatalogIntegrity(conn) {
            AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
           WHERE vi.branch_id IS NOT NULL
             AND ${cleanTextSql('vi.product_name')} IS NOT NULL
-            AND ${cleanTextSql('vi.unit')} IS NOT NULL
             AND ${nonGenericScaleTicketSql('vi.product_name')}
             AND p.id IS NULL
           GROUP BY vi.\`${TENANT_COLUMN}\`, vi.branch_id, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
