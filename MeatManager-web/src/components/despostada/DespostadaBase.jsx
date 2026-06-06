@@ -342,7 +342,7 @@ const DespostadaBase = ({
     const totalCuts = logs.length;
 
     return (
-        <ErrorBoundary><ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
+        <><ErrorBoundary><ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
         <div
             className="despostada-module animate-fade-in"
             style={{
@@ -803,6 +803,7 @@ const DespostadaBase = ({
                 {toastMsg.text}
             </div>
         )}
+    </>
     );
 };
 
