@@ -109,6 +109,7 @@ const DespostadaBase = ({
     const [availableLots, setAvailableLots] = useState([]);
     const [compras, setCompras] = useState([]);
     const [selectedCutId, setSelectedCutId] = useState(null);
+    const [editingLogId, setEditingLogId] = useState(null);
     const [currentWeight, setCurrentWeight] = useState('');
     const [isScaleConnected, setIsScaleConnected] = useState(false);
     const [isSimulated, setIsSimulated] = useState(false);
@@ -256,11 +257,25 @@ const DespostadaBase = ({
 
     const handleCutClick = (id) => {
         if (!isSessionStarted) return;
-        setSelectedCutId(id);
-        setCurrentWeight('');
-        if (isScaleConnected || isSimulated) {
-            handleReadScale();
+        const existingLog = logs.find((log) => log.cutId === id);
+        if (existingLog) {
+            setEditingLogId(existingLog.id);
+            setSelectedCutId(id);
+            setCurrentWeight(String(existingLog.weight));
+        } else {
+            setEditingLogId(null);
+            setSelectedCutId(id);
+            setCurrentWeight('');
+            if (isScaleConnected || isSimulated) {
+                handleReadScale();
+            }
         }
+    };
+
+    const cancelEdit = () => {
+        setEditingLogId(null);
+        setSelectedCutId(null);
+        setCurrentWeight('');
     };
 
     const handleConnectScale = async () => {
@@ -305,27 +320,41 @@ const DespostadaBase = ({
 
         setIsSaving(true);
         try {
-            const stockResult = await saveTableRecord('stock', 'insert', {
-                name: cutInfo.name,
-                type: species,
-                quantity: weightVal,
-                unit: 'kg',
-                price: 0,
-                updated_at: new Date().toISOString(),
-            });
+            if (editingLogId) {
+                const existing = logs.find((log) => log.id === editingLogId);
+                if (existing && existing.stockEntryId) {
+                    await saveTableRecord('stock', 'update', {
+                        quantity: weightVal,
+                        updated_at: new Date().toISOString(),
+                    }, existing.stockEntryId);
+                }
+                setLogs((prev) => prev.map((log) => log.id === editingLogId ? { ...log, weight: weightVal, timestamp: new Date() } : log));
+                showToast(`Corte "${cutInfo.name}" actualizado.`, 'success');
+            } else {
+                const stockResult = await saveTableRecord('stock', 'insert', {
+                    name: cutInfo.name,
+                    type: species,
+                    quantity: weightVal,
+                    unit: 'kg',
+                    price: 0,
+                    updated_at: new Date().toISOString(),
+                });
 
-            const newLog = {
-                cutId: selectedCutId,
-                cutNumber: cutInfo.number,
-                cutName: cutInfo.name,
-                cutCategory: cutInfo.category,
-                weight: weightVal,
-                stockEntryId: stockResult?.insertId || null,
-                timestamp: new Date()
-            };
+                const newLog = {
+                    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    cutId: selectedCutId,
+                    cutNumber: cutInfo.number,
+                    cutName: cutInfo.name,
+                    cutCategory: cutInfo.category,
+                    weight: weightVal,
+                    stockEntryId: stockResult?.insertId || null,
+                    timestamp: new Date()
+                };
 
-            setLogs((prev) => [newLog, ...prev]);
+                setLogs((prev) => [newLog, ...prev]);
+            }
             setSelectedCutId(null);
+            setEditingLogId(null);
             setCurrentWeight('');
         } catch (error) {
             console.error(`Error guardando corte ${species}:`, error);
@@ -636,7 +665,7 @@ const DespostadaBase = ({
                         <div className="despostada-work-card-body">
                             <div className="despostada-status-line">
                                 <div>
-                                    <div className="state">Despostando</div>
+                                    <div className="state">{editingLogId ? 'Editando corte' : 'Despostando'}</div>
                                     <div className="cut-name">
                                         {selectedCut ? `${selectedCut.number}. ${selectedCut.name}` : 'Esperando selección'}
                                     </div>
@@ -646,12 +675,16 @@ const DespostadaBase = ({
                                         className="despostada-button-ghost"
                                         style={{ minHeight: '2.4rem', paddingInline: '0.8rem' }}
                                         onClick={() => {
+                                            if (editingLogId) {
+                                                cancelEdit();
+                                                return;
+                                            }
                                             if (currentWeight && currentWeight !== '0' && !window.confirm('¿Cancelar este corte? Se perderá el peso ingresado.')) return;
                                             setSelectedCutId(null);
                                             setCurrentWeight('');
                                         }}
                                     >
-                                        Cancelar
+                                        {editingLogId ? 'Salir' : 'Cancelar'}
                                     </button>
                                 )}
                             </div>
@@ -723,7 +756,7 @@ const DespostadaBase = ({
                                             disabled={!currentWeight || isSaving}
                                             style={{ flex: '1 1 180px' }}
                                         >
-                                            <Save size={16} /> Registrar corte
+                                            <Save size={16} /> {editingLogId ? 'Actualizar corte' : 'Registrar corte'}
                                         </button>
                                     </div>
                                 </>
