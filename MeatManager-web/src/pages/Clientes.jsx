@@ -55,8 +55,8 @@ const toClientForm = (client) => {
     const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
     const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
     return {
-        first_name: cleanValue(client?.first_name) || fallbackFirstName,
-        last_name: cleanValue(client?.last_name) || fallbackLastName,
+        first_name: (cleanValue(client?.first_name) || fallbackFirstName).toUpperCase(),
+        last_name: (cleanValue(client?.last_name) || fallbackLastName).toUpperCase(),
         street: cleanValue(client?.street),
         street_number: cleanValue(client?.street_number),
         zip_code: cleanValue(client?.zip_code),
@@ -110,7 +110,7 @@ const formatAddress = (client) => {
 const hasCurrentAccount = (client) => client?.has_current_account !== false;
 const getBalanceValue = (client) => Number(client?.balance) || 0;
 const getClientFullName = (client) =>
-    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name);
+    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ').toUpperCase() || cleanValue(client.name).toUpperCase();
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 const getMovementPaymentMethod = (movement) => {
@@ -370,8 +370,8 @@ const Clientes = () => {
 
     const handleSaveClient = async (e) => {
         e.preventDefault();
-        const firstName = cleanValue(newClient.first_name);
-        const lastName = cleanValue(newClient.last_name);
+        const firstName = cleanValue(newClient.first_name).toUpperCase();
+        const lastName = cleanValue(newClient.last_name).toUpperCase();
         const fullName = [firstName, lastName].filter(Boolean).join(' ');
         if (!fullName) return;
 
