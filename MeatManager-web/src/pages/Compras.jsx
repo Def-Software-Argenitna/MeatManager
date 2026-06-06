@@ -765,7 +765,7 @@ const Compras = () => {
 
             {isModalOpen && createPortal(
                 <div className="modal-overlay" onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '800px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={e => e.stopPropagation()}>
+                    <div className="modal-content neo-card" style={{ maxWidth: '800px', width: '95%', maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
                         <div style={{ display: 'flex', justifyItems: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
                             <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{editingPurchaseId ? 'Editar Compra' : 'Ingresar Factura / Remito'}</h2>
                             <button onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', marginLeft: 'auto' }}>
@@ -838,50 +838,51 @@ const Compras = () => {
                                     {/* 1. PRODUCT SEARCH */}
                                     <div style={{ position: 'relative' }}>
                                         <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Producto</label>
-                                        <input
-                                            ref={productSearchInputRef}
-                                            type="text"
-                                            placeholder="Buscar producto..."
-                                            className="neo-input"
-                                            style={{ marginBottom: 0 }}
-                                            value={currentItem.name}
-                                            onChange={(e) => setCurrentItem({ ...currentItem, name: e.target.value })}
-                                            onFocus={() => { if (currentItem.name && suggestions.length > 0) setShowSuggestions(true) }}
-                                        />
-                                        {showSuggestions && productSearchInputRef.current && createPortal(
-                                            <div style={{
-                                                position: 'fixed',
-                                                top: productSearchInputRef.current.getBoundingClientRect().bottom,
-                                                left: productSearchInputRef.current.getBoundingClientRect().left,
-                                                width: productSearchInputRef.current.getBoundingClientRect().width,
-                                                background: 'var(--color-bg-card)', border: '1px solid var(--color-primary)',
-                                                zIndex: 9999, maxHeight: '200px', overflowY: 'auto', borderRadius: '0 0 4px 4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
-                                            }}>
-                                                {suggestions.map(s => {
-                                                    const suggestionRule = getProductRuleForCatalogItem(s);
-                                                    return (
-                                                        <div
-                                                            key={s.id}
-                                                            style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
-                                                            onMouseDown={() => selectSuggestion(s)}
-                                                        >
-                                                            <div>
-                                                                <div style={{ fontWeight: 'bold' }}>{s.name}</div>
-                                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
-                                                                    {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                        <div style={{ position: 'relative' }}>
+                                            <input
+                                                ref={productSearchInputRef}
+                                                type="text"
+                                                placeholder="Buscar producto..."
+                                                className="neo-input"
+                                                style={{ marginBottom: 0 }}
+                                                value={currentItem.name}
+                                                onChange={(e) => setCurrentItem({ ...currentItem, name: e.target.value })}
+                                                onFocus={() => { if (currentItem.name && suggestions.length > 0) setShowSuggestions(true) }}
+                                            />
+                                            {showSuggestions && (
+                                                <div style={{
+                                                    position: 'absolute',
+                                                    top: '100%',
+                                                    left: 0,
+                                                    right: 0,
+                                                    background: 'var(--color-bg-card)', border: '1px solid var(--color-primary)',
+                                                    zIndex: 50, maxHeight: '200px', overflowY: 'auto', borderRadius: '0 0 4px 4px', boxShadow: '0 4px 12px rgba(0,0,0,0.5)'
+                                                }}>
+                                                    {suggestions.map(s => {
+                                                        const suggestionRule = getProductRuleForCatalogItem(s);
+                                                        return (
+                                                            <div
+                                                                key={s.id}
+                                                                style={{ padding: '0.5rem', cursor: 'pointer', borderBottom: '1px solid var(--color-border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '0.75rem' }}
+                                                                onMouseDown={() => selectSuggestion(s)}
+                                                            >
+                                                                <div>
+                                                                    <div style={{ fontWeight: 'bold' }}>{s.name}</div>
+                                                                    <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                                                                        {s.unit} • Último precio: {s.last_price > 0 ? `$${s.last_price}` : '-'}
+                                                                    </div>
                                                                 </div>
+                                                                {suggestionRule.useForDespostada && hasDespostadaModule && (
+                                                                    <span style={{ background: 'rgba(234, 179, 8, 0.12)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                                                        Multi destino
+                                                                    </span>
+                                                                )}
                                                             </div>
-                                                            {suggestionRule.useForDespostada && hasDespostadaModule && (
-                                                                <span style={{ background: 'rgba(234, 179, 8, 0.12)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '700', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                                                                    Multi destino
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>,
-                                            document.body
-                                        )}
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </div>
                                     </div>
 
                                     <div>
