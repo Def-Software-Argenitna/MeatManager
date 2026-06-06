@@ -901,6 +901,13 @@ const InformesCaja = () => {
             { header: 'Saldo final', key: 'Saldo final', money: true },
             { header: 'Movimientos', key: 'Movimientos', width: 14 },
         ]);
+        addRowsSheet(workbook, 'Por medio de pago', methodRows, [
+            { header: 'Medio de pago', key: 'Medio de pago', width: 28 },
+            { header: 'Movimientos', key: 'Movimientos', width: 14 },
+            { header: 'Ingresos', key: 'Ingresos', money: true },
+            { header: 'Egresos', key: 'Egresos', money: true, negative: true },
+            { header: 'Neto', key: 'Neto', money: true },
+        ]);
         addRowsSheet(workbook, 'Transferencias cajas', transferRows, [
             { header: 'Fecha', key: 'Fecha', width: 20 },
             { header: 'Caja', key: 'Caja', width: 18 },
@@ -955,6 +962,15 @@ const InformesCaja = () => {
 
         const summaryHtml = report.current.byAccount.map((row) => `
             <tr><td>${escapeHtml(row.caja)}</td><td class="num">${escapeHtml(formatCurrency(row.saldoInicial))}</td><td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td><td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td><td class="num income">${escapeHtml(formatCurrency(row.transferenciasRecibidas))}</td><td class="num expense">${escapeHtml(formatCurrency(row.transferenciasEnviadas))}</td><td class="num">${escapeHtml(formatCurrency(row.saldoFinal))}</td></tr>
+        `).join('');
+        const paymentMethodsHtml = report.current.byMethod.map((row) => `
+            <tr>
+                <td>${escapeHtml(row.key)}</td>
+                <td class="num">${escapeHtml(String(row.count))}</td>
+                <td class="num income">${escapeHtml(formatCurrency(row.ingresos))}</td>
+                <td class="num expense">${escapeHtml(formatCurrency(row.egresos))}</td>
+                <td class="num">${escapeHtml(formatCurrency(row.neto))}</td>
+            </tr>
         `).join('');
         const findingsHtml = report.problemFindings.map((finding) => `
             <div class="finding ${escapeHtml(finding.severity)}"><strong>${escapeHtml(finding.title)}</strong><span>${escapeHtml(finding.detail)}</span></div>
@@ -1021,6 +1037,8 @@ const InformesCaja = () => {
                     ${findingsHtml}
                     <h2>Resumen por caja</h2>
                     <table><thead><tr><th>Caja</th><th>Saldo inicial</th><th>Ingresos</th><th>Egresos</th><th>Transf. recibidas</th><th>Transf. enviadas</th><th>Saldo final</th></tr></thead><tbody>${summaryHtml}</tbody></table>
+                    <h2>Resumen por medio de pago</h2>
+                    <table><thead><tr><th>Medio de pago</th><th>Movimientos</th><th>Ingresos</th><th>Egresos</th><th>Neto</th></tr></thead><tbody>${paymentMethodsHtml}</tbody></table>
                     <h2>Detalle completo</h2>
                     <table><thead><tr><th>Fecha</th><th>Caja</th><th>Operación</th><th>Clasificación</th><th>Movimiento entre cajas</th><th>Categoría</th><th>Medio</th><th>Detalle</th><th>Ingreso</th><th>Egreso</th><th>Saldo caja</th></tr></thead><tbody>${rowsHtml}</tbody></table>
                     <script>window.onload = () => window.print();</script>
