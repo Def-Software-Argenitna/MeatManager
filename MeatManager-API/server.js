@@ -1285,32 +1285,31 @@ async function ensureProductCatalogIntegrity(conn) {
          WHERE ${cleanTextSql('pi.name')} IS NOT NULL
            AND p.id IS NULL
          GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}, TRIM(pi.name)`,
-        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
-            (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
-         SELECT
-            vi.\`${TENANT_COLUMN}\`,
-            vi.branch_id,
-            ${canonicalNameSql('vi.product_name')} AS canonical_key,
-            TRIM(vi.product_name) AS name,
-            MAX(${cleanTextSql('vi.category')}) AS category,
-            MAX(${cleanTextSql('vi.unit')}) AS unit,
-            MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
-            NULL AS plu,
-            'ventas_backfill' AS source,
-            NOW(),
-            NOW()
-         FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
-         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
-           ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
-          AND p.branch_id <=> vi.branch_id
-          AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
-         WHERE vi.branch_id IS NOT NULL
-           AND ${cleanTextSql('vi.product_name')} IS NOT NULL
-           AND ${cleanTextSql('vi.category')} IS NOT NULL
-           AND ${cleanTextSql('vi.unit')} IS NOT NULL
-           AND ${nonGenericScaleTicketSql('vi.product_name')}
-           AND p.id IS NULL
-         GROUP BY vi.\`${TENANT_COLUMN}\`, vi.branch_id, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
+         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+             (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+          SELECT
+             vi.\`${TENANT_COLUMN}\`,
+             vi.branch_id,
+             ${canonicalNameSql('vi.product_name')} AS canonical_key,
+             TRIM(vi.product_name) AS name,
+             NULL AS category,
+             MAX(${cleanTextSql('vi.unit')}) AS unit,
+             MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
+             NULL AS plu,
+             'ventas_backfill' AS source,
+             NOW(),
+             NOW()
+          FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
+          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+            ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+           AND p.branch_id <=> vi.branch_id
+           AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
+          WHERE vi.branch_id IS NOT NULL
+            AND ${cleanTextSql('vi.product_name')} IS NOT NULL
+            AND ${cleanTextSql('vi.unit')} IS NOT NULL
+            AND ${nonGenericScaleTicketSql('vi.product_name')}
+            AND p.id IS NULL
+          GROUP BY vi.\`${TENANT_COLUMN}\`, vi.branch_id, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
             (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
