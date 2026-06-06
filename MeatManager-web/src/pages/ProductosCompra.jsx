@@ -221,6 +221,7 @@ const ProductosCompra = () => {
 
         if (!existingStock) {
             await saveTableRecord('stock', 'insert', {
+                branch_id: currentBranchId || null,
                 product_id: unifiedProduct?.id || null,
                 name: nameTrimmed,
                 type: selectedSaleCategory?.value || formData.sale_category,
