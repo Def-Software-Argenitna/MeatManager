@@ -1986,6 +1986,103 @@ async function ensureTenantScopedForeignKeys(conn) {
     }
 }
 
+function parseJsonMaybe(value) {
+    if (!value) return null;
+    if (Array.isArray(value) || typeof value === 'object') return value;
+    try {
+        return JSON.parse(String(value));
+    } catch {
+        return null;
+    }
+}
+
+function currentAccountAmountFromStoredSale(row) {
+    const breakdown = parseJsonMaybe(row?.payment_breakdown);
+    if (Array.isArray(breakdown) && breakdown.length > 0) {
+        return breakdown.reduce((sum, part) => {
+            const methodName = String(part?.method_name || part?.name || '').trim().toLowerCase();
+            const methodType = String(part?.method_type || part?.type || '').trim().toLowerCase();
+            if (methodType !== 'cuenta_corriente' && methodName !== 'cuenta corriente') return sum;
+            return sum + (Number(part?.amount_charged ?? part?.amount ?? part?.total) || 0);
+        }, 0);
+    }
+
+    return String(row?.payment_method || '').trim().toLowerCase() === 'cuenta corriente'
+        ? (Number(row?.total) || 0)
+        : 0;
+}
+
+async function reconcileClientCurrentAccountBalances(conn) {
+    const [clientRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, id, balance
+         FROM \`${OPERATIONAL_DB_NAME}\`.clients
+         WHERE COALESCE(has_current_account, 1) = 1
+           AND COALESCE(has_initial_balance, 0) = 0`
+    );
+    if (!clientRows.length) return;
+
+    const balances = new Map(clientRows.map((client) => [
+        `${client[TENANT_COLUMN]}:${client.id}`,
+        {
+            tenantId: client[TENANT_COLUMN],
+            clientId: client.id,
+            storedBalance: Number(client.balance || 0),
+            calculatedBalance: 0,
+        },
+    ]));
+
+    const [saleRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, id, clientId, total, payment_method, payment_breakdown
+         FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+         WHERE clientId IS NOT NULL`
+    );
+    for (const sale of saleRows) {
+        const key = `${sale[TENANT_COLUMN]}:${sale.clientId}`;
+        const bucket = balances.get(key);
+        if (!bucket) continue;
+        bucket.calculatedBalance -= currentAccountAmountFromStoredSale(sale);
+    }
+
+    const [paymentRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, client_id, amount
+         FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
+         WHERE client_id IS NOT NULL
+           AND (
+                money_flow_kind = 'customer_payment'
+                OR (
+                    type = 'ingreso'
+                    AND category = 'Cobro Pendientes'
+                )
+           )`
+    );
+    for (const payment of paymentRows) {
+        const key = `${payment[TENANT_COLUMN]}:${payment.client_id}`;
+        const bucket = balances.get(key);
+        if (!bucket) continue;
+        bucket.calculatedBalance += Number(payment.amount || 0);
+    }
+
+    let updatedCount = 0;
+    for (const entry of balances.values()) {
+        const nextBalance = Math.round(entry.calculatedBalance * 100) / 100;
+        if (Math.abs(nextBalance - entry.storedBalance) <= 0.009) continue;
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.clients
+             SET balance = ?,
+                 last_updated = NOW()
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND id = ?
+               AND COALESCE(has_initial_balance, 0) = 0`,
+            [nextBalance, entry.tenantId, entry.clientId]
+        );
+        updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+        console.warn(`[DB] Reconciliados ${updatedCount} saldos de cuenta corriente sin saldo inicial manual.`);
+    }
+}
+
 async function ensureOperationalTenantIsolation() {
     const adminConn = await provisionPool.getConnection();
     try {
@@ -2407,6 +2504,7 @@ async function ensureOperationalTenantIsolation() {
 
             await ensureProductCategoriesIntegrity(conn);
             await ensureProductCatalogIntegrity(conn);
+            await reconcileClientCurrentAccountBalances(conn);
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
@@ -6020,6 +6118,29 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
             ]
         );
 
+        const saleWhere = [
+            '`tenant_id` = ?',
+            '`date` IS NOT NULL',
+            '`date` >= ?',
+            '`date` <= ?',
+            '`clientId` IS NOT NULL',
+        ];
+        const saleParams = [tenantId, start, end];
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            saleWhere.push('`branch_id` = ?');
+            saleParams.push(resolvedBranchId);
+        }
+        const [currentAccountSaleRows] = await pool.query(
+            `SELECT total, payment_method, payment_breakdown
+             FROM ventas
+             WHERE ${saleWhere.join(' AND ')}`,
+            saleParams
+        );
+        const currentAccountSales = currentAccountSaleRows.reduce(
+            (sum, sale) => sum + currentAccountAmountFromStoredSale(sale),
+            0
+        );
+
         const byCashAccount = {};
         const groupedRows = new Map();
         rows.forEach((row) => {
@@ -6084,6 +6205,7 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
             branchId: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null,
             includesLegacyGlobalMovements: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0,
             accumulatedBalance: totals.accumulated,
+            currentAccountSales,
             dailyBalance: {
                 opening: totals.opening,
                 sales: totals.sales,
@@ -8001,6 +8123,74 @@ const isCurrentAccountPayment = (paymentMethodName, paymentMethodType) => {
     return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
 };
 
+const getCurrentAccountAmountFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
+    const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
+    if (!breakdown || breakdown.length === 0) {
+        const safeTotal = parseFloat(totalAmount) || 0;
+        if (safeTotal <= 0) return 0;
+        return isCurrentAccountPayment(paymentMethod, paymentMethodType) ? safeTotal : 0;
+    }
+
+    return breakdown.reduce((sum, part) => {
+        const methodName = String(
+            part?.method_name || part?.name || paymentMethod || 'Efectivo'
+        ).trim();
+        const methodType = String(
+            part?.method_type || part?.type || inferPaymentTypeByName(methodName)
+        ).trim();
+        if (!isCurrentAccountPayment(methodName, methodType)) return sum;
+        return sum + (parseFloat(part?.amount_charged ?? part?.amount ?? part?.total ?? 0) || 0);
+    }, 0);
+};
+
+async function resolveClientBalanceTargetId(conn, tenantId, clientId, branchId = null) {
+    const normalizedClientId = Number(clientId);
+    if (!Number.isFinite(normalizedClientId) || normalizedClientId <= 0) return null;
+
+    const normalizedBranchId = Number(branchId);
+    if (Number.isFinite(normalizedBranchId) && normalizedBranchId > 0) {
+        const [rows] = await conn.query(
+            `SELECT id
+             FROM clients
+             WHERE tenant_id = ?
+               AND id = ?
+               AND (branch_id <=> ? OR branch_id IS NULL)
+             ORDER BY CASE WHEN branch_id <=> ? THEN 0 ELSE 1 END, id ASC
+             LIMIT 1`,
+            [tenantId, normalizedClientId, normalizedBranchId, normalizedBranchId]
+        );
+        if (rows?.[0]?.id) return Number(rows[0].id);
+    }
+
+    const [fallbackRows] = await conn.query(
+        `SELECT id
+         FROM clients
+         WHERE tenant_id = ?
+           AND id = ?
+         LIMIT 1`,
+        [tenantId, normalizedClientId]
+    );
+    return fallbackRows?.[0]?.id ? Number(fallbackRows[0].id) : null;
+}
+
+async function applyClientBalanceDelta(conn, { tenantId, clientId, branchId = null, delta = 0 } = {}) {
+    const amount = Number(delta);
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0.0001) return false;
+
+    const targetClientId = await resolveClientBalanceTargetId(conn, tenantId, clientId, branchId);
+    if (!targetClientId) return false;
+
+    await conn.query(
+        `UPDATE clients
+         SET balance = COALESCE(balance, 0) + ?,
+             last_updated = NOW()
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [amount, tenantId, targetClientId]
+    );
+    return true;
+}
+
 const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
     const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
     if (!breakdown || breakdown.length === 0) {
@@ -8282,16 +8472,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 4. Actualizar balance del cliente (solo cuenta corriente)
         if (safeClientId) {
-            const isCurrentAccount = payment_method === 'Cuenta Corriente'
-                || (Array.isArray(payment_breakdown) && payment_breakdown.some(
-                    (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
-                ));
-            if (isCurrentAccount) {
-                await conn.query(
-                    `UPDATE clients SET balance = balance - ?, last_updated = NOW()
-                     WHERE tenant_id = ? AND id = ? AND branch_id <=> ?`,
-                    [safeTotal, tenantId, safeClientId, resolvedBranchId || null]
-                );
+            const currentAccountAmount = getCurrentAccountAmountFromSale({
+                paymentMethod: payment_method,
+                paymentMethodType: null,
+                paymentBreakdown: payment_breakdown,
+                totalAmount: safeTotal,
+            });
+            if (currentAccountAmount > 0) {
+                await applyClientBalanceDelta(conn, {
+                    tenantId,
+                    clientId: safeClientId,
+                    branchId: resolvedBranchId || null,
+                    delta: -currentAccountAmount,
+                });
             }
         }
 
@@ -8420,36 +8613,33 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
 
         // 2. Revertir balance cliente (solo cta cte)
         if (venta.clientId) {
-            const isCurrentAccount = venta.payment_method === 'Cuenta Corriente'
-                || (() => {
-                    try {
-                        const pb = typeof venta.payment_breakdown === 'string'
-                            ? JSON.parse(venta.payment_breakdown) : venta.payment_breakdown;
-                        return Array.isArray(pb) && pb.some(
-                            (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
-                        );
-                    } catch { return false; }
-                })();
-            if (isCurrentAccount) {
-                await conn.query(
-                    `UPDATE clients SET balance = balance + ?, last_updated = NOW()
-                     WHERE tenant_id = ? AND id = ?`,
-                    [parseFloat(venta.total) || 0, tenantId, venta.clientId]
-                );
+            const ventaBreakdown = (() => {
+                try {
+                    if (!venta.payment_breakdown) return null;
+                    return typeof venta.payment_breakdown === 'string'
+                        ? JSON.parse(venta.payment_breakdown)
+                        : venta.payment_breakdown;
+                } catch {
+                    return null;
+                }
+            })();
+            const currentAccountAmount = getCurrentAccountAmountFromSale({
+                paymentMethod: venta.payment_method,
+                paymentMethodType: null,
+                paymentBreakdown: ventaBreakdown,
+                totalAmount: venta.total,
+            });
+            if (currentAccountAmount > 0) {
+                await applyClientBalanceDelta(conn, {
+                    tenantId,
+                    clientId: venta.clientId,
+                    branchId: venta.branch_id || null,
+                    delta: currentAccountAmount,
+                });
             }
         }
 
         // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
-        const ventaBreakdown = (() => {
-            try {
-                if (!venta.payment_breakdown) return null;
-                return typeof venta.payment_breakdown === 'string'
-                    ? JSON.parse(venta.payment_breakdown)
-                    : venta.payment_breakdown;
-            } catch {
-                return null;
-            }
-        })();
         const reversalParts = buildCajaPartsFromSale({
             paymentMethod: venta.payment_method,
             paymentMethodType: null,

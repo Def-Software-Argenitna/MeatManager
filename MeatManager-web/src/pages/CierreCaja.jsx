@@ -421,7 +421,7 @@ const CierreCaja = () => {
     const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
     const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
-    const currentAccountSales = 0;
+    const currentAccountSales = toNumber(cashSummary?.currentAccountSales);
 
     const handleToggleOpeningForm = (event) => {
         event?.preventDefault?.();
@@ -453,10 +453,19 @@ const CierreCaja = () => {
     const dailyManualNetByMethod = useMemo(() => {
         const totals = {};
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = toNumber(summaryByMethod[method.name]?.manualNet);
+            totals[method.name] = 0;
         });
+
+        manualMovements
+            .filter((movement) => !isTransferMovement(movement))
+            .forEach((movement) => {
+                const methodName = movement.payment_method || 'Efectivo';
+                const sign = movement.type === 'egreso' || movement.type === 'retiro' ? -1 : 1;
+                totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            });
+
         return totals;
-    }, [activePaymentMethods, summaryByMethod]);
+    }, [activePaymentMethods, manualMovements]);
 
     const methodCards = useMemo(() => (
         activePaymentMethods

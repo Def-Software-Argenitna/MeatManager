@@ -119,6 +119,36 @@ const getMovementPaymentMethod = (movement) => {
     return cleanValue(match?.[1]);
 };
 
+const isCurrentAccountPart = (part) => {
+    const methodType = cleanValue(part?.method_type || part?.type).toLowerCase();
+    const methodName = cleanValue(part?.method_name || part?.name).toLowerCase();
+    return methodType === 'cuenta_corriente' || methodName === 'cuenta corriente';
+};
+
+const getCurrentAccountAmountFromVenta = (venta) => {
+    const breakdown = Array.isArray(venta?.payment_breakdown) ? venta.payment_breakdown : null;
+    if (breakdown?.length) {
+        return breakdown.reduce((sum, part) => (
+            isCurrentAccountPart(part)
+                ? sum + (Number(part?.amount_charged ?? part?.amount ?? part?.total) || 0)
+                : sum
+        ), 0);
+    }
+
+    return cleanValue(venta?.payment_method).toLowerCase() === 'cuenta corriente'
+        ? (Number(venta?.total) || 0)
+        : 0;
+};
+
+const isCustomerPaymentMovement = (movement, clientName) => {
+    const kind = cleanValue(movement?.money_flow_kind).toLowerCase();
+    if (kind === 'customer_payment') return true;
+
+    return cleanValue(movement?.type).toLowerCase() === 'ingreso'
+        && cleanValue(movement?.category) === 'Cobro Pendientes'
+        && String(movement?.description || '').includes(`cliente: ${clientName}`);
+};
+
 const getClientLedgerPaymentMethod = (row) => {
     if (!row) return '-';
     if (Number(row.debe || 0) > 0) return 'Cuenta Corriente';
@@ -174,30 +204,27 @@ const Clientes = () => {
         const saleRows = ventas
             .filter((venta) => {
                 if (Number(venta.clientId) !== clientId) return false;
-
-                const hasCurrentAccountInBreakdown = Array.isArray(venta.payment_breakdown)
-                    && venta.payment_breakdown.some((part) => part.method_type === 'cuenta_corriente' || part.method_name === 'Cuenta Corriente');
-
-                return venta.payment_method === 'Cuenta Corriente' || hasCurrentAccountInBreakdown;
+                return getCurrentAccountAmountFromVenta(venta) > 0;
             })
-            .map((venta) => ({
+            .map((venta) => {
+                const currentAccountAmount = getCurrentAccountAmountFromVenta(venta);
+                return ({
                 id: `sale-${venta.id}`,
                 timestamp: new Date(venta.date).getTime(),
                 fecha: new Date(venta.date),
                 comprobante: `Venta ${venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id)}`,
-                debe: Number(venta.total) || 0,
+                debe: currentAccountAmount,
                 haber: 0,
-                delta: -(Number(venta.total) || 0),
+                delta: -currentAccountAmount,
                 items: ventasItems.filter((item) => Number(item.venta_id) === Number(venta.id))
-            }));
+            });
+            });
 
         const paymentRows = movimientos
+            .filter((mov) => isCustomerPaymentMovement(mov, clientName))
             .filter((mov) =>
-                (Number(mov.client_id) === clientId) ||
-                (
-                    mov.category === 'Cobro Pendientes' &&
-                    String(mov.description || '').includes(`cliente: ${clientName}`)
-                )
+                Number(mov.client_id) === clientId
+                || String(mov.description || '').includes(`cliente: ${clientName}`)
             )
             .map((mov) => ({
                 id: `payment-${mov.id}`,

@@ -202,7 +202,7 @@ const Ventas = () => {
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState([]);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
