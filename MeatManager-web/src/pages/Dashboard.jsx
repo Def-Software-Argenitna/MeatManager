@@ -13,6 +13,37 @@ const toNumber = (value) => {
     return Number.isFinite(numeric) ? numeric : 0;
 };
 
+const cleanValue = (value) => String(value || '').trim();
+
+const isCurrentAccountPart = (part) => {
+    const methodType = cleanValue(part?.method_type || part?.type).toLowerCase();
+    const methodName = cleanValue(part?.method_name || part?.name).toLowerCase();
+    return methodType === 'cuenta_corriente' || methodName === 'cuenta corriente';
+};
+
+const getCurrentAccountAmountFromSale = (sale) => {
+    const breakdown = Array.isArray(sale?.payment_breakdown) ? sale.payment_breakdown : null;
+    if (breakdown?.length) {
+        return breakdown.reduce((sum, part) => (
+            isCurrentAccountPart(part)
+                ? sum + toNumber(part?.amount_charged ?? part?.amount ?? part?.total)
+                : sum
+        ), 0);
+    }
+
+    return cleanValue(sale?.payment_method).toLowerCase() === 'cuenta corriente'
+        ? toNumber(sale?.total)
+        : 0;
+};
+
+const isCustomerPaymentMovement = (movement) => {
+    const kind = cleanValue(movement?.money_flow_kind).toLowerCase();
+    if (kind === 'customer_payment') return true;
+
+    return cleanValue(movement?.type).toLowerCase() === 'ingreso'
+        && cleanValue(movement?.category) === 'Cobro Pendientes';
+};
+
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 
@@ -54,16 +85,18 @@ const DashboardReveal = ({ from = 'up', delay = 0, className = '', children, sty
 
 const Dashboard = () => {
     const navigate = useNavigate();
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const { hasModule } = useLicense();
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const activeBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
     const [ventasDia, setVentasDia] = useState([]);
     const [allVentas, setAllVentas] = useState([]);
+    const [ledgerVentas, setLedgerVentas] = useState([]);
     const [comprasMes, setComprasMes] = useState([]);
     const [stockItems, setStockItems] = useState([]);
-    const [clients, setClients] = useState([]);
+    const [cashMovements, setCashMovements] = useState([]);
     const [proLogs, setProLogs] = useState([]);
     const [branchSnapshots, setBranchSnapshots] = useState([]);
     const [tenantBranches, setTenantBranches] = useState([]);
@@ -82,12 +115,12 @@ const Dashboard = () => {
 
         const loadDashboard = async () => {
             try {
-                const [ventasRows, ventasItemsRows, comprasRows, stockRows, clientRows, logRows, snapshotRows, branchPayload] = await Promise.all([
+                const [ventasRows, ventasItemsRows, comprasRows, stockRows, movementRows, logRows, snapshotRows, branchPayload] = await Promise.all([
                     fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                     fetchTable('ventas_items', { limit: 10000, orderBy: 'id', direction: 'DESC' }),
                     fetchTable('compras', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
-                    fetchTable('clients', { limit: 5000, orderBy: 'id', direction: 'ASC' }),
+                    fetchTable('caja_movimientos', { limit: 10000, orderBy: 'date', direction: 'ASC' }),
                     fetchTable('despostada_logs', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                     fetchTable('branch_stock_snapshots', { limit: 5000, orderBy: 'snapshot_at', direction: 'DESC' }),
                     fetchClientBranches(),
@@ -95,8 +128,18 @@ const Dashboard = () => {
 
                 if (cancelled) return;
 
-                const salesList = Array.isArray(ventasRows) ? ventasRows : [];
-                const saleItems = Array.isArray(ventasItemsRows) ? ventasItemsRows : [];
+                const branchMatches = (row) => {
+                    if (!activeBranchId) return true;
+                    return Number(row?.branch_id) === Number(activeBranchId);
+                };
+
+                const salesList = (Array.isArray(ventasRows) ? ventasRows : []).filter(branchMatches);
+                const purchaseList = (Array.isArray(comprasRows) ? comprasRows : []).filter(branchMatches);
+                const stockList = (Array.isArray(stockRows) ? stockRows : []).filter(branchMatches);
+                const movementList = (Array.isArray(movementRows) ? movementRows : []).filter(branchMatches);
+                const logList = (Array.isArray(logRows) ? logRows : []).filter(branchMatches);
+                setLedgerVentas(salesList);
+                const saleItems = (Array.isArray(ventasItemsRows) ? ventasItemsRows : []).filter(branchMatches);
                 const itemsBySaleId = new Map();
                 saleItems.forEach((item) => {
                     const key = Number(item.venta_id);
@@ -121,10 +164,10 @@ const Dashboard = () => {
                             items: Array.isArray(sale.items) ? sale.items : (itemsBySaleId.get(Number(sale.id)) || []),
                         }))
                 );
-                setComprasMes((Array.isArray(comprasRows) ? comprasRows : []).filter((compra) => new Date(compra.date) >= monthStart));
-                setStockItems(Array.isArray(stockRows) ? stockRows : []);
-                setClients(Array.isArray(clientRows) ? clientRows : []);
-                setProLogs(Array.isArray(logRows) ? logRows : []);
+                setComprasMes(purchaseList.filter((compra) => new Date(compra.date) >= monthStart));
+                setStockItems(stockList);
+                setCashMovements(movementList);
+                setProLogs(logList);
                 setBranchSnapshots(Array.isArray(snapshotRows) ? snapshotRows : []);
                 setTenantBranches(Array.isArray(branchPayload?.branches) ? branchPayload.branches : []);
             } catch (error) {
@@ -132,9 +175,10 @@ const Dashboard = () => {
                     console.error('[DASHBOARD] No se pudieron cargar métricas desde la API', error);
                     setVentasDia([]);
                     setAllVentas([]);
+                    setLedgerVentas([]);
                     setComprasMes([]);
                     setStockItems([]);
-                    setClients([]);
+                    setCashMovements([]);
                     setProLogs([]);
                     setBranchSnapshots([]);
                     setTenantBranches([]);
@@ -146,7 +190,7 @@ const Dashboard = () => {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [activeBranchId]);
 
     const totalVentasDia = ventasDia.reduce((acc, sale) => acc + toNumber(sale.total), 0);
     const totalComprasMes = comprasMes.reduce((acc, compra) => acc + toNumber(compra.total), 0);
@@ -167,10 +211,29 @@ const Dashboard = () => {
         });
         return Object.values(grouped).filter((qty) => qty < -0.0001).length;
     }, [stockItems]);
-    const totalDeudaCalle = clients.reduce((acc, client) => {
-        const balance = toNumber(client.balance);
-        return balance < 0 ? acc + Math.abs(balance) : acc;
-    }, 0);
+    const totalDeudaCalle = React.useMemo(() => {
+        const balanceByClient = new Map();
+
+        ledgerVentas.forEach((sale) => {
+            const clientId = Number(sale.clientId);
+            if (!Number.isFinite(clientId) || clientId <= 0) return;
+            const amount = getCurrentAccountAmountFromSale(sale);
+            if (amount <= 0) return;
+            balanceByClient.set(clientId, toNumber(balanceByClient.get(clientId)) - amount);
+        });
+
+        cashMovements
+            .filter(isCustomerPaymentMovement)
+            .forEach((movement) => {
+                const clientId = Number(movement.client_id);
+                if (!Number.isFinite(clientId) || clientId <= 0) return;
+                balanceByClient.set(clientId, toNumber(balanceByClient.get(clientId)) + toNumber(movement.amount));
+            });
+
+        return Array.from(balanceByClient.values()).reduce((acc, balance) => (
+            balance < 0 ? acc + Math.abs(balance) : acc
+        ), 0);
+    }, [ledgerVentas, cashMovements]);
     const avgYield = proLogs.length > 0
         ? (proLogs.reduce((acc, log) => acc + toNumber(log.yield_percentage), 0) / proLogs.length)
         : 0;
