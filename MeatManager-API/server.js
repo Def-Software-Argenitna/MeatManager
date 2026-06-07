@@ -5172,14 +5172,23 @@ async function applyBranchProductPrices(pool, tenantId, branchId, rows) {
     if (productIds.length === 0) return rows;
 
     const placeholders = productIds.map(() => '?').join(', ');
-    const [priceRows] = await pool.query(
-        `SELECT product_id, price, plu, source, effective_at, updated_at
-         FROM branch_product_prices
-         WHERE \`${TENANT_COLUMN}\` = ?
-           AND branch_id = ?
-           AND product_id IN (${placeholders})`,
-        [tenantId, resolvedBranchId, ...productIds]
-    );
+    let priceRows;
+    try {
+        const [rows] = await pool.query(
+            `SELECT product_id, price, plu, source, effective_at, updated_at
+             FROM branch_product_prices
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND branch_id = ?
+               AND product_id IN (${placeholders})`,
+            [tenantId, resolvedBranchId, ...productIds]
+        );
+        priceRows = rows;
+    } catch (error) {
+        if (!isUnknownBranchColumnError(error)) {
+            throw error;
+        }
+        return rows;
+    }
     const byProductId = new Map(priceRows.map((row) => [Number(row.product_id), row]));
 
     return rows.map((row) => {
@@ -5265,6 +5274,11 @@ function normalizePluValue(value) {
     return String(numeric);
 }
 
+function isUnknownBranchColumnError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return error?.code === 'ER_BAD_FIELD_ERROR' && message.includes('branch_id');
+}
+
 async function findProductByPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
     const normalizedPlu = normalizePluValue(plu);
     if (!normalizedPlu) return null;
@@ -5289,8 +5303,30 @@ async function findProductByPlu(pool, tenantId, plu, excludeProductId = null, br
     }
     sql += ' ORDER BY id ASC LIMIT 1';
 
-    const [rows] = await pool.query(sql, params);
-    return rows?.[0] || null;
+    try {
+        const [rows] = await pool.query(sql, params);
+        return rows?.[0] || null;
+    } catch (error) {
+        if (!isUnknownBranchColumnError(error) || !(Number.isFinite(normalizedBranchId) && normalizedBranchId > 0)) {
+            throw error;
+        }
+        const retryParams = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+        let retrySql = `SELECT id, name, plu
+                        FROM products
+                        WHERE tenant_id = ?
+                          AND COALESCE(active, 1) = 1
+                          AND (
+                             plu = ?
+                             OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                          )`;
+        if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
+            retrySql += ' AND id <> ?';
+            retryParams.push(Number(excludeProductId));
+        }
+        retrySql += ' ORDER BY id ASC LIMIT 1';
+        const [rows] = await pool.query(retrySql, retryParams);
+        return rows?.[0] || null;
+    }
 }
 
 async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
@@ -6695,8 +6731,16 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
                     ? (STRICT_BRANCH_SCOPED_TABLES.has(table) ? ' AND `branch_id` = ?' : ' AND (`branch_id` = ? OR `branch_id` IS NULL)')
                     : '';
             const branchParams = branchScoped ? [scopedBranchId] : [];
-            const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}${branchSql}`, [...scope.params, ...branchParams]);
-            payload[table] = rows.map(deserializeRow);
+            try {
+                const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}${branchSql}`, [...scope.params, ...branchParams]);
+                payload[table] = rows.map(deserializeRow);
+            } catch (error) {
+                if (!isUnknownBranchColumnError(error) || !validCols.includes('branch_id')) {
+                    throw error;
+                }
+                const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}`, scope.params);
+                payload[table] = rows.map(deserializeRow);
+            }
         }
 
         return res.json({
@@ -6769,11 +6813,14 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             },
         });
 
+        const productCols = await getTableColumns(pool, dbName, 'products');
+        const productsHaveBranchId = productCols.includes('branch_id');
+
         // Verificar que el producto pertenece a este tenant
-        const productWhere = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+        const productWhere = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 && productsHaveBranchId
             ? 'tenant_id = ? AND id = ? AND branch_id = ?'
             : 'tenant_id = ? AND id = ?';
-        const productParams = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+        const productParams = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 && productsHaveBranchId
             ? [tenantId, productId, resolvedBranchId]
             : [tenantId, productId];
         const [[product]] = await pool.query(
@@ -6781,7 +6828,7 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             productParams
         );
         if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
-        await assertUniqueProductPlu(pool, tenantId, plu, productId, resolvedBranchId);
+        await assertUniqueProductPlu(pool, tenantId, plu, productId, productsHaveBranchId ? resolvedBranchId : null);
 
         const now = new Date();
         if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
@@ -6913,10 +6960,27 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
             ? `${scope.sql} AND ${extraWhere.join(' AND ')}`
             : scope.sql;
 
-        let [rows] = await pool.query(
-            `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-            [...scope.params, ...extraParams, limit, offset]
-        );
+        let rows;
+        try {
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
+            );
+        } catch (error) {
+            if (!isUnknownBranchColumnError(error) || !validCols.includes('branch_id')) {
+                throw error;
+            }
+            const fallbackWhere = table === 'products' && validCols.includes('active') && !includeInactive
+                ? `${scope.sql} AND COALESCE(active, 1) = 1`
+                : scope.sql;
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${fallbackWhere} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                table === 'products' && validCols.includes('active') && !includeInactive
+                    ? [...scope.params, limit, offset]
+                    : [...scope.params, limit, offset]
+            );
+            scopedBranchIdForRead = null;
+        }
 
         if (table === 'products') {
             rows = await applyBranchProductPrices(pool, tenantId, scopedBranchIdForRead, rows);

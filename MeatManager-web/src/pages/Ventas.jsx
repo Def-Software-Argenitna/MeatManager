@@ -235,17 +235,21 @@ const Ventas = () => {
             fetchTable('caja_movimientos').catch(() => []),
         ]);
 
-        await syncLegacyProductsToCatalog({
-            products: productRows,
-            stockRows,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
+        try {
+            await syncLegacyProductsToCatalog({
+                products: productRows,
+                stockRows,
+                prices: Array.isArray(pricesRows) ? pricesRows : [],
+            });
 
-        const syncedProducts = await fetchProductsSafe();
-        await reconcileLegacyProductConflicts({
-            products: syncedProducts,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
+            const syncedProducts = await fetchProductsSafe();
+            await reconcileLegacyProductConflicts({
+                products: syncedProducts,
+                prices: Array.isArray(pricesRows) ? pricesRows : [],
+            });
+        } catch (error) {
+            console.warn('[VENTAS] Se omite sync legado de productos:', error?.message || error);
+        }
         const refreshedProducts = await fetchProductsSafe();
 
         const branchMatches = (row) => {
