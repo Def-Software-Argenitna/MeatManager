@@ -104,7 +104,7 @@ const Pedidos = () => {
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
                 ]);
                 if (!cancelled) {
-                    setClients(Array.isArray(clientRows) ? clientRows : []);
+                    setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
                     setProducts(Array.isArray(productRows) ? productRows : []);
                     setPedidos(sortOrders((Array.isArray(orderRows) ? orderRows : []).filter(branchMatches)));
                     setStockRows((Array.isArray(stockTableRows) ? stockTableRows : []).filter(branchMatches));

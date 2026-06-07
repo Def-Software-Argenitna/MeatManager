@@ -179,8 +179,6 @@ const Clientes = () => {
 
     const clientBelongsToCurrentBranch = useCallback((client) => {
         if (!currentBranchId) return false;
-        if (!Object.prototype.hasOwnProperty.call(client || {}, 'branch_id')) return true;
-        if (client?.branch_id == null || client?.branch_id === '') return true;
         return Number(client?.branch_id) === Number(currentBranchId);
     }, [currentBranchId]);
 

@@ -17,6 +17,8 @@
     "audit:cash-orphans": "node _audit_orphan_cash_movements.js",
     "audit:branch-scope": "node _audit_branch_scope.js",
     "audit:branch-scope:apply": "node _audit_branch_scope.js --apply-single-branch-backfill",
+    "backfill:clients-branch": "node _backfill_clients_branch_scope.js",
+    "backfill:clients-branch:apply": "node _backfill_clients_branch_scope.js --apply",
     "remap:branch-scope": "node _remap_branch_scope.js"
   },
   "dependencies": {
