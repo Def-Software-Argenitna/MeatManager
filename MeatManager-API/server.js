@@ -990,8 +990,8 @@ const BRANCH_SCOPED_TABLES = new Set([
 ]);
 const STRICT_BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
-    'stock', 'promotions', 'products', 'despostada_logs',
-    'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
+    'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
 ]);
 
 function isTenantScopedTable(table) {
@@ -8154,12 +8154,12 @@ async function resolveClientBalanceTargetId(conn, tenantId, clientId, branchId =
              FROM clients
              WHERE tenant_id = ?
                AND id = ?
-               AND (branch_id <=> ? OR branch_id IS NULL)
-             ORDER BY CASE WHEN branch_id <=> ? THEN 0 ELSE 1 END, id ASC
+               AND branch_id = ?
              LIMIT 1`,
-            [tenantId, normalizedClientId, normalizedBranchId, normalizedBranchId]
+            [tenantId, normalizedClientId, normalizedBranchId]
         );
         if (rows?.[0]?.id) return Number(rows[0].id);
+        return null;
     }
 
     const [fallbackRows] = await conn.query(
@@ -8171,6 +8171,36 @@ async function resolveClientBalanceTargetId(conn, tenantId, clientId, branchId =
         [tenantId, normalizedClientId]
     );
     return fallbackRows?.[0]?.id ? Number(fallbackRows[0].id) : null;
+}
+
+async function assertClientBelongsToBranch(conn, { tenantId, clientId, branchId, label = 'cliente' } = {}) {
+    const normalizedClientId = Number(clientId);
+    if (!Number.isFinite(normalizedClientId) || normalizedClientId <= 0) return null;
+
+    const normalizedBranchId = Number(branchId);
+    if (!Number.isFinite(normalizedBranchId) || normalizedBranchId <= 0) {
+        const error = new Error(`Debe especificar branch_id para validar ${label}`);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const [[client]] = await conn.query(
+        `SELECT id, branch_id
+         FROM clients
+         WHERE tenant_id = ?
+           AND id = ?
+           AND branch_id = ?
+         LIMIT 1`,
+        [tenantId, normalizedClientId, normalizedBranchId]
+    );
+
+    if (!client) {
+        const error = new Error(`El ${label} no pertenece a la sucursal activa`);
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return client;
 }
 
 async function applyClientBalanceDelta(conn, { tenantId, clientId, branchId = null, delta = 0 } = {}) {
@@ -8290,6 +8320,25 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             if (n >= 100) return 100;
             return n;
         };
+
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: { branch_id: req.body?.branch_id, receipt_code },
+            })
+            : null;
+
+        if (safeClientId) {
+            await assertClientBelongsToBranch(conn, {
+                tenantId,
+                clientId: safeClientId,
+                branchId: resolvedBranchId,
+                label: 'cliente de cuenta corriente',
+            });
+        }
+
         let safeDiscountClientId = null;
         let safeClientDiscountPct = 0;
         let safeClientDiscountAmount = 0;
@@ -8298,9 +8347,11 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             const [[discountClient]] = await conn.query(
                 `SELECT id, employee_discount_enabled, employee_discount_pct
                  FROM clients
-                 WHERE tenant_id = ? AND id = ?
+                 WHERE tenant_id = ?
+                   AND id = ?
+                   AND branch_id = ?
                  LIMIT 1`,
-                [tenantId, requestedDiscountClientId]
+                [tenantId, requestedDiscountClientId, resolvedBranchId]
             );
             const discountEnabled = Number(discountClient?.employee_discount_enabled) === 1
                 || discountClient?.employee_discount_enabled === true;
@@ -8343,15 +8394,6 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 return res.status(409).json({ error: 'Ese ticket ya fue cobrado o anulado y no puede reutilizarse' });
             }
         }
-
-        const resolvedBranchId = accessContext
-            ? await resolveOperationalBranchId({
-                pool,
-                tenantId,
-                accessContext,
-                record: { branch_id: req.body?.branch_id, receipt_code },
-            })
-            : null;
 
         // 1. INSERT ventas
         const [ventaResult] = await conn.query(

@@ -253,8 +253,8 @@ const Ventas = () => {
         const refreshedProducts = await fetchProductsSafe();
 
         const branchMatches = (row) => {
-            if (currentBranchId == null) return true;
-            if (row?.branch_id == null || row?.branch_id === '') return true;
+            if (currentBranchId == null) return false;
+            if (row?.branch_id == null || row?.branch_id === '') return false;
             return Number(row.branch_id) === Number(currentBranchId);
         };
 

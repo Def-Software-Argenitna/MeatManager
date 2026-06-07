@@ -112,9 +112,9 @@ const Stock = () => {
 
     const branchStockRows = React.useMemo(() => {
         if (!Array.isArray(allStock)) return [];
-        if (!currentBranchId) return allStock;
+        if (!currentBranchId) return [];
         return allStock.filter((row) => (
-            row.branch_id == null || Number(row.branch_id) === currentBranchId
+            Number(row.branch_id) === currentBranchId
         ));
     }, [allStock, currentBranchId]);
 

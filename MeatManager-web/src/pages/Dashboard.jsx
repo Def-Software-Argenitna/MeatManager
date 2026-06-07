@@ -211,7 +211,7 @@ const Dashboard = () => {
         });
         return Object.values(grouped).filter((qty) => qty < -0.0001).length;
     }, [stockItems]);
-    const totalDeudaCalle = React.useMemo(() => {
+    const currentAccountSummary = React.useMemo(() => {
         const balanceByClient = new Map();
 
         ledgerVentas.forEach((sale) => {
@@ -230,9 +230,15 @@ const Dashboard = () => {
                 balanceByClient.set(clientId, toNumber(balanceByClient.get(clientId)) + toNumber(movement.amount));
             });
 
-        return Array.from(balanceByClient.values()).reduce((acc, balance) => (
-            balance < 0 ? acc + Math.abs(balance) : acc
-        ), 0);
+        return Array.from(balanceByClient.values()).reduce((summary, balance) => {
+            if (balance < 0) {
+                summary.debt += Math.abs(balance);
+            } else if (balance > 0) {
+                summary.credit += balance;
+            }
+            summary.net += balance;
+            return summary;
+        }, { debt: 0, credit: 0, net: 0 });
     }, [ledgerVentas, cashMovements]);
     const avgYield = proLogs.length > 0
         ? (proLogs.reduce((acc, log) => acc + toNumber(log.yield_percentage), 0) / proLogs.length)
@@ -272,6 +278,12 @@ const Dashboard = () => {
     const formatCurrency = (amount) =>
         new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(toNumber(amount));
 
+    const formatSignedCurrency = (amount) => {
+        const numeric = toNumber(amount);
+        if (numeric === 0) return formatCurrency(0);
+        return `${numeric > 0 ? '+' : '-'}${formatCurrency(Math.abs(numeric))}`;
+    };
+
     const visibleVentas = hiddenDigitalPaymentsOnly
         ? allVentas.filter((venta) => saleUsesOnlyDigitalPayments(venta))
         : allVentas;
@@ -286,11 +298,16 @@ const Dashboard = () => {
                 <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" delay={0.02} from="left" />
                 <StatCard title="Compras (Mes)" value={formatCurrency(totalComprasMes)} icon={ShoppingCart} trend="Mensual" isNegative delay={0.08} from="up" />
                 <StatCard
-                    title="Fiado en Calle"
-                    value={formatCurrency(totalDeudaCalle)}
+                    title="Cuenta Corriente"
+                    value={formatSignedCurrency(currentAccountSummary.net)}
                     icon={Wallet}
-                    trend="Por Cobrar"
-                    isWarning={totalDeudaCalle > 0}
+                    trend={currentAccountSummary.net < 0 ? 'Neto a cobrar' : (currentAccountSummary.net > 0 ? 'Saldo a favor neto' : 'Sin saldo')}
+                    isWarning={currentAccountSummary.debt > 0}
+                    isNegative={currentAccountSummary.net < 0}
+                    details={[
+                        { label: 'A cobrar', value: formatCurrency(currentAccountSummary.debt), tone: 'negative' },
+                        { label: 'A favor', value: formatCurrency(currentAccountSummary.credit), tone: 'positive' },
+                    ]}
                     onClick={() => navigate('/clientes')}
                     delay={0.14}
                     from="right"
@@ -516,7 +533,7 @@ const Dashboard = () => {
     );
 };
 
-const StatCard = ({ title, value, icon, trend, isNegative, isWarning, onClick, delay = 0, from = 'up' }) => (
+const StatCard = ({ title, value, icon, trend, isNegative, isWarning, details = [], onClick, delay = 0, from = 'up' }) => (
     <DashboardReveal className="dashboard-stat-card" from={from} delay={delay}>
         <div onClick={onClick} style={{ cursor: onClick ? 'pointer' : 'default' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
@@ -529,6 +546,16 @@ const StatCard = ({ title, value, icon, trend, isNegative, isWarning, onClick, d
             {trend && (
                 <div style={{ fontSize: '0.85rem', color: isNegative ? '#ef4444' : (isWarning ? '#f59e0b' : '#22c55e') }}>
                     {trend}
+                </div>
+            )}
+            {details.length > 0 && (
+                <div className="dashboard-stat-details">
+                    {details.map((detail) => (
+                        <div key={detail.label} className={`dashboard-stat-detail dashboard-stat-detail-${detail.tone || 'default'}`}>
+                            <span>{detail.label}</span>
+                            <strong>{detail.value}</strong>
+                        </div>
+                    ))}
                 </div>
             )}
         </div>
