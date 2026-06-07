@@ -180,7 +180,7 @@ const Logistica = () => {
                             .filter((pedido) => pedido.delivery_type === 'delivery')
                             .map(normalizeOrderForLogistics)
                     );
-                    setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
+                    setClients(Array.isArray(clientRows) ? clientRows : []);
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -224,7 +224,7 @@ const Logistica = () => {
                 .filter((pedido) => pedido.delivery_type === 'delivery')
                 .map(normalizeOrderForLogistics)
         );
-        setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
+        setClients(Array.isArray(clientRows) ? clientRows : []);
     };
 
     useEffect(() => {
