@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import ReactDOM from 'react-dom';
 import {
     Truck,
@@ -22,6 +22,7 @@ import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import GoogleLogisticsMap from '../components/GoogleLogisticsMap';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
+import { useUser } from '../context/UserContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import './Logistica.css';
@@ -121,6 +122,8 @@ const getDriverBranchLabel = (driver) => {
 
 const Logistica = () => {
     const { hasModule } = useLicense();
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [filter, setFilter] = useState('all');
     const [searchTerm, setSearchTerm] = useState('');
     const [selectedPedido, setSelectedPedido] = useState(null);
@@ -137,6 +140,10 @@ const Logistica = () => {
     const [paymentDraft, setPaymentDraft] = useState({ status: 'pending_driver_collection', amountDue: '', method: '' });
     const hasLogisticsModule = hasModule('logistica');
     const [isMapExpanded, setIsMapExpanded] = useState(false);
+    const branchMatches = useCallback((row) => {
+        if (!currentBranchId) return false;
+        return Number(row?.branch_id) === Number(currentBranchId);
+    }, [currentBranchId]);
     const driversById = useMemo(() => {
         const map = new Map();
         registeredDrivers.forEach((driver) => map.set(String(driver.id), driver));
@@ -169,10 +176,11 @@ const Logistica = () => {
                 if (!cancelled) {
                     setPedidos(
                         (Array.isArray(orderRows) ? orderRows : [])
+                            .filter(branchMatches)
                             .filter((pedido) => pedido.delivery_type === 'delivery')
                             .map(normalizeOrderForLogistics)
                     );
-                    setClients(Array.isArray(clientRows) ? clientRows : []);
+                    setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -203,7 +211,7 @@ const Logistica = () => {
         return () => {
             cancelled = true;
         };
-    }, [hasLogisticsModule]);
+    }, [hasLogisticsModule, branchMatches]);
 
     const refreshOrders = async () => {
         const [orderRows, clientRows] = await Promise.all([
@@ -212,10 +220,11 @@ const Logistica = () => {
         ]);
         setPedidos(
             (Array.isArray(orderRows) ? orderRows : [])
+                .filter(branchMatches)
                 .filter((pedido) => pedido.delivery_type === 'delivery')
                 .map(normalizeOrderForLogistics)
         );
-        setClients(Array.isArray(clientRows) ? clientRows : []);
+        setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
     };
 
     useEffect(() => {

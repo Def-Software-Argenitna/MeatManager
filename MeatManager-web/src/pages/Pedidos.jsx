@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import ReactDOM from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { ShoppingBag, Plus, Search, MessageCircle, Clock, CheckCircle2, XCircle, ClipboardPaste, Printer, Truck, MapPin, Tag } from 'lucide-react';
@@ -8,6 +8,7 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../utils/geocoding';
 import { buildProductId, normalizeProductKey } from '../utils/productMatching';
 import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
+import { useUser } from '../context/UserContext';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -65,6 +66,8 @@ const formatOrderItems = (pedido) => parseOrderItems(pedido).map((item) => item.
 
 const Pedidos = () => {
     const navigate = useNavigate();
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [filter, setFilter] = useState('pending');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -84,6 +87,11 @@ const Pedidos = () => {
         if (left !== right) return left - right;
         return Number(b?.id || 0) - Number(a?.id || 0);
     });
+    const branchMatches = useCallback((row) => {
+        if (!currentBranchId) return false;
+        return Number(row?.branch_id) === Number(currentBranchId);
+    }, [currentBranchId]);
+
     useEffect(() => {
         let cancelled = false;
 
@@ -96,10 +104,10 @@ const Pedidos = () => {
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
                 ]);
                 if (!cancelled) {
-                    setClients(Array.isArray(clientRows) ? clientRows : []);
+                    setClients((Array.isArray(clientRows) ? clientRows : []).filter(branchMatches));
                     setProducts(Array.isArray(productRows) ? productRows : []);
-                    setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
-                    setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
+                    setPedidos(sortOrders((Array.isArray(orderRows) ? orderRows : []).filter(branchMatches)));
+                    setStockRows((Array.isArray(stockTableRows) ? stockTableRows : []).filter(branchMatches));
                 }
             } catch (error) {
                 console.error('[PEDIDOS] No se pudieron cargar datos desde la API', error);
@@ -116,7 +124,7 @@ const Pedidos = () => {
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [branchMatches]);
 
     const refreshPedidosData = async () => {
         const [orderRows, stockTableRows, productRows] = await Promise.all([
@@ -124,8 +132,8 @@ const Pedidos = () => {
             fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
             fetchProductsSafe(),
         ]);
-        setPedidos(sortOrders(Array.isArray(orderRows) ? orderRows : []));
-        setStockRows(Array.isArray(stockTableRows) ? stockTableRows : []);
+        setPedidos(sortOrders((Array.isArray(orderRows) ? orderRows : []).filter(branchMatches)));
+        setStockRows((Array.isArray(stockTableRows) ? stockTableRows : []).filter(branchMatches));
         setProducts(Array.isArray(productRows) ? productRows : []);
     };
 

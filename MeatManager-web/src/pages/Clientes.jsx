@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import './Clientes.css';
 
@@ -157,6 +158,8 @@ const getClientLedgerPaymentMethod = (row) => {
 };
 
 const Clientes = () => {
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClientId, setEditingClientId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -174,19 +177,25 @@ const Clientes = () => {
     const paymentInputRef = useRef(null);
     const isEditingClient = Boolean(editingClientId);
 
-    const loadCoreData = async () => {
+    const clientBelongsToCurrentBranch = useCallback((client) => {
+        if (!currentBranchId) return false;
+        return Number(client?.branch_id) === Number(currentBranchId);
+    }, [currentBranchId]);
+
+    const loadCoreData = useCallback(async () => {
         const [clientsRows, paymentMethodRows] = await Promise.all([
             fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
             fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' })
         ]);
         const allowedNames = ['Posnet', 'Postnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
-        setClients(clientsRows);
+        const branchClients = (Array.isArray(clientsRows) ? clientsRows : []).filter(clientBelongsToCurrentBranch);
+        setClients(branchClients);
         setPaymentMethods(paymentMethodRows.filter((method) => method.enabled && allowedNames.includes(method.name)));
-        return clientsRows;
-    };
+        return branchClients;
+    }, [clientBelongsToCurrentBranch]);
 
     const loadLedger = useCallback(async (clientRef = historyClient, monthRef = historyMonth) => {
-        if (!clientRef) {
+        if (!clientRef || !clientBelongsToCurrentBranch(clientRef)) {
             setClientLedger({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
             return;
         }
@@ -275,7 +284,7 @@ const Clientes = () => {
             paymentTotal,
             currentBalance: monthEndBalance
         });
-    }, [historyClient, historyMonth]);
+    }, [historyClient, historyMonth, clientBelongsToCurrentBranch]);
 
     const refreshHistoryClient = async () => {
         if (!historyClient) return;
@@ -289,8 +298,12 @@ const Clientes = () => {
     const effectiveHistoryBalance = clientLedger ? (Number(clientLedger.currentBalance) || 0) : getBalanceValue(historyClientData);
 
     useEffect(() => {
+        setHistoryClient(null);
+        setClientLedger({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
+        setSearchTerm('');
+        setExpandedLedgerRowId(null);
         loadCoreData();
-    }, []);
+    }, [loadCoreData]);
 
     useEffect(() => {
         loadLedger();
@@ -326,6 +339,7 @@ const Clientes = () => {
     }, [historyMonth]);
 
     const openHistory = (client, options = {}) => {
+        if (!clientBelongsToCurrentBranch(client)) return;
         if (!hasCurrentAccount(client)) return;
         setHistoryClient(client);
         setHistoryMonth(currentMonth());
