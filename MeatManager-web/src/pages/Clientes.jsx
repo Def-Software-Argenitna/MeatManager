@@ -174,6 +174,7 @@ const Clientes = () => {
     const [paymentQuickMode, setPaymentQuickMode] = useState(false);
     const [expandedLedgerRowId, setExpandedLedgerRowId] = useState(null);
     const [newClient, setNewClient] = useState(emptyClientForm);
+    const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [branches, setBranches] = useState([]);
@@ -519,6 +520,7 @@ const Clientes = () => {
     };
 
     const filteredClients = clients?.filter((c) => {
+        if (showUnassignedOnly && c.branch_id) return false;
         const term = searchTerm.toLowerCase();
         return (
             getClientFullName(c).toLowerCase().includes(term) ||
@@ -566,16 +568,32 @@ const Clientes = () => {
             </DirectionalReveal>
 
             <DirectionalReveal className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }} from="left" delay={0.1}>
-                <div style={{ position: 'relative' }}>
-                    <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
-                    <input
-                        type="text"
-                        placeholder="Buscar cliente por nombre, telefono, mail o direccion..."
-                        className="neo-input"
-                        style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                        <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+                        <input
+                            type="text"
+                            placeholder="Buscar cliente por nombre, telefono, mail o direccion..."
+                            className="neo-input"
+                            style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
+                    {isAdmin && (
+                        <button
+                            className="neo-button"
+                            onClick={() => setShowUnassignedOnly(!showUnassignedOnly)}
+                            style={{
+                                fontSize: '0.8rem', padding: '0.4rem 0.75rem', whiteSpace: 'nowrap',
+                                background: showUnassignedOnly ? 'var(--color-primary)' : 'transparent',
+                                color: showUnassignedOnly ? '#fff' : 'var(--color-text-main)',
+                                border: '1px solid var(--color-border)'
+                            }}
+                        >
+                            Sin sucursal
+                        </button>
+                    )}
                 </div>
             </DirectionalReveal>
 
