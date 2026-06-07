@@ -992,7 +992,7 @@ const BRANCH_SCOPED_TABLES = new Set([
 const STRICT_BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
-    'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
     'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots',
 ]);
 
@@ -6887,12 +6887,6 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
                     : '';
             const branchParams = branchScoped ? [scopedBranchId] : [];
             try {
-                if (table === 'clients' && branchScoped && Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
-                    await pool.query(
-                        `UPDATE \`clients\` SET branch_id = ? WHERE \`${TENANT_COLUMN}\` = ? AND branch_id IS NULL`,
-                        [scopedBranchId, tenantId]
-                    );
-                }
                 const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}${branchSql}`, [...scope.params, ...branchParams]);
                 payload[table] = rows.map(deserializeRow);
             } catch (error) {
@@ -7139,13 +7133,6 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
             } else if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
                 extraWhere.push('1 = 0');
             }
-        }
-
-        if (table === 'clients' && Number.isFinite(scopedBranchIdForRead) && scopedBranchIdForRead > 0) {
-            await pool.query(
-                `UPDATE \`clients\` SET branch_id = ? WHERE \`${TENANT_COLUMN}\` = ? AND branch_id IS NULL`,
-                [scopedBranchIdForRead, tenantId]
-            );
         }
 
         if (table === 'products') {

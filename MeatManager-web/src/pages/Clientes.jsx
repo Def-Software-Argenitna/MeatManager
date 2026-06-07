@@ -1,8 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
-import { useUser } from '../context/UserContext';
+import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
+import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import './Clientes.css';
 
@@ -26,7 +26,8 @@ const emptyClientForm = {
     employeeDiscountEnabled: false,
     employeeDiscountPct: '0',
     hasInitialBalance: false,
-    balance: ''
+    balance: '',
+    branchId: ''
 };
 
 const cleanValue = (value) => String(value || '').trim();
@@ -71,6 +72,7 @@ const toClientForm = (client) => {
         employeeDiscountPct: employeeDiscountEnabled ? String(employeeDiscountPct) : '0',
         hasInitialBalance: Boolean(client?.has_initial_balance),
         balance: String(getBalanceValue(client) || ''),
+        branchId: String(client?.branch_id || ''),
     };
 };
 
@@ -158,8 +160,9 @@ const getClientLedgerPaymentMethod = (row) => {
 };
 
 const Clientes = () => {
-    const { accessProfile, activeBranch } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClientId, setEditingClientId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -169,28 +172,31 @@ const Clientes = () => {
     const [payLoading, setPayLoading] = useState(false);
     const [paymentMethodId, setPaymentMethodId] = useState('');
     const [paymentQuickMode, setPaymentQuickMode] = useState(false);
-    const [newClient, setNewClient] = useState(emptyClientForm);
     const [expandedLedgerRowId, setExpandedLedgerRowId] = useState(null);
+    const [newClient, setNewClient] = useState(emptyClientForm);
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
+    const [branches, setBranches] = useState([]);
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
     const paymentInputRef = useRef(null);
     const isEditingClient = Boolean(editingClientId);
 
     const clientBelongsToCurrentBranch = useCallback((client) => {
         if (!currentBranchId) return false;
-        return Number(client?.branch_id) === Number(currentBranchId);
+        return !client?.branch_id || Number(client.branch_id) === Number(currentBranchId);
     }, [currentBranchId]);
 
     const loadCoreData = useCallback(async () => {
-        const [clientsRows, paymentMethodRows] = await Promise.all([
+        const [clientsRows, paymentMethodRows, branchPayload] = await Promise.all([
             fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
-            fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' })
+            fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' }),
+            fetchClientBranches(),
         ]);
         const allowedNames = ['Posnet', 'Postnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
         const branchClients = (Array.isArray(clientsRows) ? clientsRows : []).filter(clientBelongsToCurrentBranch);
         setClients(branchClients);
         setPaymentMethods(paymentMethodRows.filter((method) => method.enabled && allowedNames.includes(method.name)));
+        setBranches(Array.isArray(branchPayload?.branches) ? branchPayload.branches : []);
         return branchClients;
     }, [clientBelongsToCurrentBranch]);
 
@@ -450,7 +456,8 @@ const Clientes = () => {
             employee_discount_enabled: employeeDiscountEnabled,
             employee_discount_pct: employeeDiscountPct,
             last_updated: new Date().toISOString(),
-            synced: 0
+            synced: 0,
+            ...(isAdmin ? { branch_id: newClient.branchId ? Number(newClient.branchId) : null } : {}),
         };
 
         if (isEditingClient) {
@@ -595,6 +602,23 @@ const Clientes = () => {
                                     </div>
                                     {clientAddress && (
                                         <div className="client-extra-data">{clientAddress}</div>
+                                    )}
+                                    {!client.branch_id && (
+                                        <div style={{
+                                            marginTop: '0.35rem',
+                                            fontSize: '0.72rem',
+                                            fontWeight: '800',
+                                            color: '#fbbf24',
+                                            background: 'rgba(251,191,36,0.12)',
+                                            border: '1px solid rgba(251,191,36,0.3)',
+                                            borderRadius: '999px',
+                                            padding: '0.18rem 0.5rem',
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '0.3rem'
+                                        }}>
+                                            Sin sucursal
+                                        </div>
                                     )}
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
@@ -763,6 +787,23 @@ const Clientes = () => {
                                     </label>
                                 )}
                             </div>
+
+                            {isAdmin && (
+                                <div className="clients-form-group clients-form-group-last">
+                                    <label className="clients-form-label">Sucursal</label>
+                                    <select
+                                        className="neo-input"
+                                        value={newClient.branchId}
+                                        onChange={(e) => updateNewClient('branchId', e.target.value)}
+                                    >
+                                        <option value="">Sin asignar (visible en todas las sucursales)</option>
+                                        {branches.map((b) => (
+                                            <option key={b.id} value={String(b.id)}>{b.name || `Sucursal ${b.id}`}</option>
+                                        ))}
+                                    </select>
+                                    <small className="clients-form-hint">Solo el admin puede asignar la sucursal.</small>
+                                </div>
+                            )}
 
                             {newClient.employeeDiscountEnabled && (
                                 <div className="clients-form-group clients-form-group-last">
