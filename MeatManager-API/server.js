@@ -987,11 +987,13 @@ const BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
     'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots',
 ]);
 const STRICT_BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
     'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots',
 ]);
 
 function isTenantScopedTable(table) {
@@ -1574,9 +1576,10 @@ async function ensureProductCatalogIntegrity(conn) {
     // Esto construye el historial progresivamente sin tocar filas antiguas.
     await conn.query(
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_prices
-            (\`${TENANT_COLUMN}\`, product_id, price, plu, source, effective_at, created_at)
+            (\`${TENANT_COLUMN}\`, branch_id, product_id, price, plu, source, effective_at, created_at)
          SELECT
             p.\`${TENANT_COLUMN}\`,
+            p.branch_id,
             p.id,
             COALESCE(p.current_price, 0),
             NULLIF(TRIM(COALESCE(p.plu, '')), ''),
@@ -1593,6 +1596,7 @@ async function ensureProductCatalogIntegrity(conn) {
                LIMIT 1
            )
          WHERE COALESCE(p.current_price, 0) > 0
+           AND p.branch_id IS NOT NULL
            AND (latest.product_id IS NULL
                 OR ABS(COALESCE(latest.price, 0) - COALESCE(p.current_price, 0)) > 0.009)`
     );
@@ -2283,6 +2287,9 @@ async function ensureOperationalTenantIsolation() {
             `);
 
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'product_prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'branch_stock_snapshots', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
             await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');
             await ensureColumn(conn, 'despostada_logs', 'merma_percentage', '`merma_percentage` DECIMAL(5,2) NULL AFTER `merma_weight`');
@@ -2378,11 +2385,33 @@ async function ensureOperationalTenantIsolation() {
                 'idx_caja_summary',
                 '`tenant_id`, `branch_id`, `cash_account`, `payment_method`, `date`'
             );
+            await ensureIndex(conn, 'prices', 'idx_prices_tenant_branch', '`tenant_id`, `branch_id`');
+            await ensureIndex(conn, 'product_prices', 'idx_pp_tenant_branch', '`tenant_id`, `branch_id`');
+            await ensureIndex(conn, 'branch_stock_snapshots', 'idx_bss_tenant_branch', '`tenant_id`, `branch_id`');
 
             // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
             await conn.query(
                 `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
                  WHERE product_id REGEXP '[A-Z ]'`
+            );
+
+            await conn.query(
+                `UPDATE prices pr
+                 JOIN products p
+                   ON p.tenant_id = pr.tenant_id
+                  AND p.id = pr.product_ref_id
+                 SET pr.branch_id = p.branch_id
+                 WHERE pr.branch_id IS NULL
+                   AND p.branch_id IS NOT NULL`
+            );
+            await conn.query(
+                `UPDATE product_prices pp
+                 JOIN products p
+                   ON p.tenant_id = pp.tenant_id
+                  AND p.id = pp.product_id
+                 SET pp.branch_id = p.branch_id
+                 WHERE pp.branch_id IS NULL
+                   AND p.branch_id IS NOT NULL`
             );
 
             await conn.query(
@@ -4531,13 +4560,15 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             product_ref_id  INT,
             product_id      VARCHAR(191),
             price           DECIMAL(12,2),
             plu             VARCHAR(20),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_prices_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         // Tabla canónica de historial de precios (reemplaza a prices a mediano plazo).
         // Cada fila es un evento de precio: no se actualiza, se inserta una nueva.
@@ -4545,6 +4576,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS product_prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             product_id      INT NOT NULL,
             price           DECIMAL(12,2) NOT NULL DEFAULT 0,
             plu             VARCHAR(20),
@@ -4553,6 +4585,7 @@ function getSchemaTables() {
             created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_product_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at),
+            INDEX idx_pp_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_pp_tenant_plu (\`${TENANT_COLUMN}\`, plu)
         )`,
         `CREATE TABLE IF NOT EXISTS branch_product_prices (
@@ -6886,13 +6919,44 @@ app.get('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 500));
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const resolvedBranchId = await resolveOperationalBranchId({
+            pool,
+            tenantId,
+            accessContext,
+            record: {
+                branch_id: req.query?.branch_id,
+                branchId: req.query?.branchId,
+            },
+        });
+        const productCols = await getTableColumns(pool, dbName, 'products');
+        const priceCols = await getTableColumns(pool, dbName, 'product_prices');
+        if (productCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            const [[product]] = await pool.query(
+                `SELECT id FROM products WHERE tenant_id = ? AND id = ? AND branch_id = ? LIMIT 1`,
+                [tenantId, productId, resolvedBranchId]
+            );
+            if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        const branchFilterSql = priceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? ' AND branch_id = ?'
+            : '';
+        const params = priceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? [tenantId, productId, resolvedBranchId, limit]
+            : [tenantId, productId, limit];
         const [rows] = await pool.query(
             `SELECT id, product_id, price, plu, source, effective_at, created_at
              FROM product_prices
-             WHERE tenant_id = ? AND product_id = ?
+             WHERE tenant_id = ? AND product_id = ?${branchFilterSql}
              ORDER BY effective_at DESC, id DESC
              LIMIT ?`,
-            [tenantId, productId, limit]
+            params
         );
         return res.json({ ok: true, prices: rows });
     } catch (err) {
@@ -6967,8 +7031,14 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
                 [tenantId, resolvedBranchId, productId, price, plu, source, now, now, now]
             );
             await pool.query(
-                'UPDATE products SET plu = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
-                [plu, now, tenantId, productId]
+                `INSERT INTO product_prices
+                    (tenant_id, branch_id, product_id, price, plu, source, effective_at, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [tenantId, resolvedBranchId, productId, price, plu, source, now, now]
+            );
+            await pool.query(
+                'UPDATE products SET current_price = ?, plu = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+                [price, plu, now, tenantId, productId]
             );
             await queueScaleProductSyncIfNeeded({
                 pool,
@@ -6981,11 +7051,16 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
             return res.json({ ok: true, id: result.insertId || productId, branchId: resolvedBranchId });
         }
 
-        const [result] = await pool.query(
-            `INSERT INTO product_prices (tenant_id, product_id, price, plu, source, effective_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [tenantId, productId, price, plu, source, now, now]
-        );
+        const productPriceCols = await getTableColumns(pool, dbName, 'product_prices');
+        const productPriceInsertSql = productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? `INSERT INTO product_prices (tenant_id, branch_id, product_id, price, plu, source, effective_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            : `INSERT INTO product_prices (tenant_id, product_id, price, plu, source, effective_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`;
+        const productPriceParams = productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? [tenantId, resolvedBranchId, productId, price, plu, source, now, now]
+            : [tenantId, productId, price, plu, source, now, now];
+        const [result] = await pool.query(productPriceInsertSql, productPriceParams);
         await pool.query(
             'UPDATE products SET current_price = ?, plu = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
             [price, plu, now, tenantId, productId]
@@ -8023,12 +8098,22 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
 
             // Dual-write: registrar precio de costo en product_prices (source='compra')
             if (item.product_id && parseFloat(item.unit_price) > 0) {
-                await conn.query(
-                    `INSERT INTO product_prices
-                     (tenant_id, product_id, price, source, effective_at, created_at)
-                     VALUES (?, ?, ?, 'compra', ?, NOW())`,
-                    [tenantId, item.product_id, parseFloat(item.unit_price), purchaseDate]
-                );
+                const productPriceCols = await getTableColumns(conn, dbName, 'product_prices');
+                if (productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+                    await conn.query(
+                        `INSERT INTO product_prices
+                         (tenant_id, branch_id, product_id, price, source, effective_at, created_at)
+                         VALUES (?, ?, ?, ?, 'compra', ?, NOW())`,
+                        [tenantId, resolvedBranchId, item.product_id, parseFloat(item.unit_price), purchaseDate]
+                    );
+                } else {
+                    await conn.query(
+                        `INSERT INTO product_prices
+                         (tenant_id, product_id, price, source, effective_at, created_at)
+                         VALUES (?, ?, ?, 'compra', ?, NOW())`,
+                        [tenantId, item.product_id, parseFloat(item.unit_price), purchaseDate]
+                    );
+                }
             }
         }
 

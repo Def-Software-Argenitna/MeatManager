@@ -19,6 +19,8 @@
     "audit:branch-scope:apply": "node _audit_branch_scope.js --apply-single-branch-backfill",
     "backfill:clients-branch": "node _backfill_clients_branch_scope.js",
     "backfill:clients-branch:apply": "node _backfill_clients_branch_scope.js --apply",
+    "migrate:demo-branch-scope": "node _migrate_demo_branch_scope.js",
+    "migrate:demo-branch-scope:apply": "node _migrate_demo_branch_scope.js --apply",
     "remap:branch-scope": "node _remap_branch_scope.js"
   },
   "dependencies": {
