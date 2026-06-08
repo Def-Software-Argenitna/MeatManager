@@ -178,6 +178,9 @@ const SCALE_LATENCY_LOG_FILE = process.env.SCALE_LATENCY_LOG_FILE || path.join(S
 const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SKIP_SCHEMA_BOOT || '').trim().toLowerCase()
 );
+const BOOTSTRAP_DATA_REPAIRS_ENABLED = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.BOOTSTRAP_DATA_REPAIRS_ENABLED || '').trim().toLowerCase()
+);
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
 );
@@ -2402,117 +2405,123 @@ async function ensureOperationalTenantIsolation() {
             await ensureIndex(conn, 'product_prices', 'idx_pp_tenant_branch', '`tenant_id`, `branch_id`');
             await ensureIndex(conn, 'branch_stock_snapshots', 'idx_bss_tenant_branch', '`tenant_id`, `branch_id`');
 
-            // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
-            await conn.query(
-                `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
-                 WHERE product_id REGEXP '[A-Z ]'`
-            );
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
+                await conn.query(
+                    `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
+                     WHERE product_id REGEXP '[A-Z ]'`
+                );
 
-            await conn.query(
-                `UPDATE prices pr
-                 JOIN products p
-                   ON p.tenant_id = pr.tenant_id
-                  AND p.id = pr.product_ref_id
-                 SET pr.branch_id = p.branch_id
-                 WHERE pr.branch_id IS NULL
-                   AND p.branch_id IS NOT NULL`
-            );
-            await conn.query(
-                `UPDATE product_prices pp
-                 JOIN products p
-                   ON p.tenant_id = pp.tenant_id
-                  AND p.id = pp.product_id
-                 SET pp.branch_id = p.branch_id
-                 WHERE pp.branch_id IS NULL
-                   AND p.branch_id IS NOT NULL`
-            );
+                await conn.query(
+                    `UPDATE prices pr
+                     JOIN products p
+                       ON p.tenant_id = pr.tenant_id
+                      AND p.id = pr.product_ref_id
+                     SET pr.branch_id = p.branch_id
+                     WHERE pr.branch_id IS NULL
+                       AND p.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE product_prices pp
+                     JOIN products p
+                       ON p.tenant_id = pp.tenant_id
+                      AND p.id = pp.product_id
+                     SET pp.branch_id = p.branch_id
+                     WHERE pp.branch_id IS NULL
+                       AND p.branch_id IS NOT NULL`
+                );
 
-            await conn.query(
-                `UPDATE ventas
-                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
-                 WHERE branch_id IS NULL
-                   AND receipt_code REGEXP '^[0-9]{4}-'`
-            );
-            await conn.query(
-                `UPDATE caja_movimientos
-                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
-                 WHERE branch_id IS NULL
-                   AND receipt_code REGEXP '^[0-9]{4}-'`
-            );
-            await conn.query(
-                `UPDATE branch_transfers
-                 SET document_type = 'remito'
-                 WHERE document_type IS NULL OR TRIM(document_type) = ''`
-            );
-            await conn.query(
-                `UPDATE branch_transfers
-                 SET document_code = CONCAT('R-', remito_code)
-                 WHERE (document_code IS NULL OR TRIM(document_code) = '')
-                   AND remito_code IS NOT NULL
-                   AND TRIM(remito_code) <> ''`
-            );
-            await conn.query(
-                `UPDATE ventas_items vi
-                 JOIN ventas v
-                   ON v.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
-                  AND v.id = vi.venta_id
-                 SET vi.branch_id = v.branch_id
-                 WHERE vi.branch_id IS NULL
-                   AND v.branch_id IS NOT NULL`
-            );
-            await conn.query(
-                `UPDATE compras_items ci
-                 JOIN compras c
-                   ON c.\`${TENANT_COLUMN}\` = ci.\`${TENANT_COLUMN}\`
-                  AND c.id = ci.purchase_id
-                 SET ci.branch_id = c.branch_id
-                 WHERE ci.branch_id IS NULL
-                   AND c.branch_id IS NOT NULL`
-            );
-            await conn.query(
-                `UPDATE despostada_logs dl
-                 JOIN animal_lots al
-                   ON al.\`${TENANT_COLUMN}\` = dl.\`${TENANT_COLUMN}\`
-                  AND al.id = dl.lot_id
-                 SET dl.branch_id = al.branch_id
-                 WHERE dl.branch_id IS NULL
-                   AND al.branch_id IS NOT NULL`
-            );
-            await conn.query(
-                `UPDATE clients c
-                 JOIN (
-                    SELECT \`${TENANT_COLUMN}\`, client_id, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
-                    FROM ventas
-                    WHERE client_id IS NOT NULL AND branch_id IS NOT NULL
-                    GROUP BY \`${TENANT_COLUMN}\`, client_id
-                 ) src
-                   ON src.\`${TENANT_COLUMN}\` = c.\`${TENANT_COLUMN}\`
-                  AND src.client_id = c.id
-                 SET c.branch_id = src.branch_id
-                 WHERE c.branch_id IS NULL
-                   AND src.branch_count = 1`
-            );
-            await conn.query(
-                `UPDATE suppliers s
-                 JOIN (
-                    SELECT \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier)) AS supplier_key, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
-                    FROM compras
-                    WHERE supplier IS NOT NULL AND TRIM(supplier) <> '' AND branch_id IS NOT NULL
-                    GROUP BY \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier))
-                 ) src
-                   ON src.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
-                  AND src.supplier_key = LOWER(TRIM(s.name))
-                 SET s.branch_id = src.branch_id
-                 WHERE s.branch_id IS NULL
-                   AND src.branch_count = 1`
-            );
+                await conn.query(
+                    `UPDATE ventas
+                     SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                     WHERE branch_id IS NULL
+                       AND receipt_code REGEXP '^[0-9]{4}-'`
+                );
+                await conn.query(
+                    `UPDATE caja_movimientos
+                     SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                     WHERE branch_id IS NULL
+                       AND receipt_code REGEXP '^[0-9]{4}-'`
+                );
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_type = 'remito'
+                     WHERE document_type IS NULL OR TRIM(document_type) = ''`
+                );
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_code = CONCAT('R-', remito_code)
+                     WHERE (document_code IS NULL OR TRIM(document_code) = '')
+                       AND remito_code IS NOT NULL
+                       AND TRIM(remito_code) <> ''`
+                );
+                await conn.query(
+                    `UPDATE ventas_items vi
+                     JOIN ventas v
+                       ON v.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+                      AND v.id = vi.venta_id
+                     SET vi.branch_id = v.branch_id
+                     WHERE vi.branch_id IS NULL
+                       AND v.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE compras_items ci
+                     JOIN compras c
+                       ON c.\`${TENANT_COLUMN}\` = ci.\`${TENANT_COLUMN}\`
+                      AND c.id = ci.purchase_id
+                     SET ci.branch_id = c.branch_id
+                     WHERE ci.branch_id IS NULL
+                       AND c.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE despostada_logs dl
+                     JOIN animal_lots al
+                       ON al.\`${TENANT_COLUMN}\` = dl.\`${TENANT_COLUMN}\`
+                      AND al.id = dl.lot_id
+                     SET dl.branch_id = al.branch_id
+                     WHERE dl.branch_id IS NULL
+                       AND al.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE clients c
+                     JOIN (
+                        SELECT \`${TENANT_COLUMN}\`, client_id, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
+                        FROM ventas
+                        WHERE client_id IS NOT NULL AND branch_id IS NOT NULL
+                        GROUP BY \`${TENANT_COLUMN}\`, client_id
+                     ) src
+                       ON src.\`${TENANT_COLUMN}\` = c.\`${TENANT_COLUMN}\`
+                      AND src.client_id = c.id
+                     SET c.branch_id = src.branch_id
+                     WHERE c.branch_id IS NULL
+                       AND src.branch_count = 1`
+                );
+                await conn.query(
+                    `UPDATE suppliers s
+                     JOIN (
+                        SELECT \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier)) AS supplier_key, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
+                        FROM compras
+                        WHERE supplier IS NOT NULL AND TRIM(supplier) <> '' AND branch_id IS NOT NULL
+                        GROUP BY \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier))
+                     ) src
+                       ON src.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
+                      AND src.supplier_key = LOWER(TRIM(s.name))
+                     SET s.branch_id = src.branch_id
+                     WHERE s.branch_id IS NULL
+                       AND src.branch_count = 1`
+                );
+            } else {
+                console.warn('[DB] Reparaciones automaticas de datos desactivadas (BOOTSTRAP_DATA_REPAIRS_ENABLED=false). Solo se aplica esquema.');
+            }
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
             }
 
-            for (const tableName of TENANT_ID_TABLES) {
-                await backfillTenantId(conn, tableName);
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                for (const tableName of TENANT_ID_TABLES) {
+                    await backfillTenantId(conn, tableName);
+                }
             }
 
             const fksToDrop = [
@@ -2544,9 +2553,11 @@ async function ensureOperationalTenantIsolation() {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
 
-            await ensureProductCategoriesIntegrity(conn);
-            await ensureProductCatalogIntegrity(conn);
-            await reconcileClientCurrentAccountBalances(conn);
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                await ensureProductCategoriesIntegrity(conn);
+                await ensureProductCatalogIntegrity(conn);
+                await reconcileClientCurrentAccountBalances(conn);
+            }
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
