@@ -58,6 +58,9 @@ const Sidebar = ({ isCollapsed }) => {
     configuracion: false,
   });
   const [branches, setBranches] = useState([]);
+  const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
+  const avatarInitial = displayName.charAt(0).toUpperCase();
+  const isEffectiveAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
   React.useEffect(() => {
     const checkMaster = async () => {
@@ -126,10 +129,6 @@ const Sidebar = ({ isCollapsed }) => {
       setDespostadaOpen(false);
     }
   };
-
-  const displayName = currentUser?.username || tenant?.empresa || 'Usuario';
-  const avatarInitial = displayName.charAt(0).toUpperCase();
-  const isEffectiveAdmin = isEffectiveAdminUser(currentUser, accessProfile);
 
   const operationItems = [
     { title: 'Dashboard', path: '/', icon: LayoutDashboard },
