@@ -360,7 +360,7 @@ const Sidebar = ({ isCollapsed }) => {
             </div>
           )}
           {!isCollapsed && isEffectiveAdmin && branches.length > 1 && (
-            <div style={{ position: 'relative', marginTop: '0.4rem', marginBottom: '0.4rem' }}>
+            <div className="sidebar-branch-select">
               <select
                 value={adminGlobalMode ? 'all' : (activeBranch?.id ? String(activeBranch.id) : '')}
                 onChange={(e) => {
@@ -394,7 +394,7 @@ const Sidebar = ({ isCollapsed }) => {
           )}
           <button
             type="button"
-            style={{ marginLeft: isCollapsed ? '0' : 'auto', flexShrink: 0, padding: '0.4rem', background: 'rgba(255,255,255,0.05)', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer', color: 'var(--color-text-main)' }}
+            className="sidebar-logout-button"
             onClick={handleLogout}
             title="Cerrar Sesion"
           >
