@@ -21,6 +21,7 @@ const Login = () => {
         currentUser,
         loadingUser,
         activeBranch,
+        accessProfile,
         adminGlobalMode,
         selectActiveBranch,
         setAdminGlobalMode,
