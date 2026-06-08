@@ -715,7 +715,9 @@ export const fetchScaleTicketByBarcode = async (barcode) => {
     const res = await apiFetch(`/api/scale/tickets/by-barcode/${encodeURIComponent(code)}`);
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo leer ticket de balanza');
+        const error = new Error(err.error || 'No se pudo leer ticket de balanza');
+        error.status = res.status;
+        throw error;
     }
     return res.json();
 };

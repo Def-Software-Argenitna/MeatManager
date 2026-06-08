@@ -1264,7 +1264,9 @@ class ScaleBridge {
                 }
 
                 if (sales.ok && Number(sales.fetched || 0) > 0) {
-                    this.state.lastTicketSyncAt = sales.latestSaleAt || new Date().toISOString();
+                    const latestMs = new Date(sales.latestSaleAt || Date.now()).getTime();
+                    const nowMs = Date.now();
+                    this.state.lastTicketSyncAt = new Date(Math.min(latestMs, nowMs)).toISOString();
                 }
             } catch (error) {
                 sales = { ok: false, fetched: 0, stored: 0, error: error.message };

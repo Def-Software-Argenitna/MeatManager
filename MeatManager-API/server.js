@@ -7737,6 +7737,54 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                     });
                 }
             }
+
+            if (!ticketRows.length) {
+                for (const totalAmount of totalCandidates) {
+                    const [amountMatches] = await pool.query(
+                        `SELECT ${ticketSelect}
+                         FROM scale_bridge_ticket_map
+                         WHERE tenant_id = ?
+                           ${scaleSchema.ticketStatus ? "AND ticket_status = 'open'" : ''}
+                           AND ABS(total_amount - ?) < 0.01
+                           AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
+                         ORDER BY sale_at DESC
+                         LIMIT 3`,
+                        [tenantId, totalAmount]
+                    );
+                    if (amountMatches.length === 1) {
+                        ticketRows = [amountMatches[0]];
+                        appendScaleLatencyLog('lookup_amount_only_fallback_match', {
+                            tenantId,
+                            barcode,
+                            ticketId: amountMatches[0]?.ticket_id || null,
+                            ticketBarcode: amountMatches[0]?.ticket_barcode || null,
+                            printedTicketBarcode: amountMatches[0]?.printed_ticket_barcode || null,
+                            totalAmount,
+                            elapsedMs: Date.now() - lookupStartedAt,
+                        });
+                        break;
+                    }
+                    if (amountMatches.length > 1) {
+                        appendScaleLatencyLog('lookup_amount_only_fallback_conflict', {
+                            tenantId,
+                            barcode,
+                            totalAmount,
+                            candidates: amountMatches.length,
+                            elapsedMs: Date.now() - lookupStartedAt,
+                        });
+                        return res.status(409).json({
+                            ok: false,
+                            error: 'Hay mas de un ticket posible para ese importe. Reimprima ticket con codigo unico o escanee codigo MM.',
+                            candidates: amountMatches.map((row) => ({
+                                ticketId: row.ticket_id,
+                                printedBarcode: row.printed_ticket_barcode || null,
+                                saleAt: row.sale_at,
+                                total: Number(row.total_amount || 0),
+                            })),
+                        });
+                    }
+                }
+            }
         }
 
         if (!ticketRows.length && scaleSchema.ventaTicketBarcode) {

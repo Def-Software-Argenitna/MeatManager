@@ -1226,7 +1226,13 @@ const Ventas = () => {
                 try {
                     const loaded = await loadBridgeTicketFromBarcode(cleanData);
                     if (loaded) return;
-                } catch {
+                } catch (error) {
+                    if (error?.status && error.status !== 404) {
+                        setScannerError(`⚠️ ${error.message || 'No se pudo leer ticket de balanza'}`);
+                        setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                        return;
+                    }
+
                     // Fallback para balanzas offline ("no conectadas a red"):
                     // el código de barra contiene el TOTAL exacto de la compra.
                     // Formato: 22(pref) + XXXX(id) + TTTTTT(total en pesos) + C(check)
