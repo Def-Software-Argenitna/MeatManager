@@ -21,6 +21,7 @@ services:
     env_file:
       - ./env/api-main.env
     environment:
+      BOOTSTRAP_BRANCH_INFERENCE_ENABLED: "true"
       BOOTSTRAP_DATA_REPAIRS_ENABLED: "false"
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -59,6 +60,7 @@ services:
     env_file:
       - ./env/api-dev.env
     environment:
+      BOOTSTRAP_BRANCH_INFERENCE_ENABLED: "true"
       BOOTSTRAP_DATA_REPAIRS_ENABLED: "true"
     extra_hosts:
       - "host.docker.internal:host-gateway"

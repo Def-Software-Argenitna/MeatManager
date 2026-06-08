@@ -181,6 +181,9 @@ const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
 const BOOTSTRAP_DATA_REPAIRS_ENABLED = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.BOOTSTRAP_DATA_REPAIRS_ENABLED || '').trim().toLowerCase()
 );
+const BOOTSTRAP_BRANCH_INFERENCE_ENABLED = BOOTSTRAP_DATA_REPAIRS_ENABLED || ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.BOOTSTRAP_BRANCH_INFERENCE_ENABLED || '').trim().toLowerCase()
+);
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
 );
@@ -2405,13 +2408,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureIndex(conn, 'product_prices', 'idx_pp_tenant_branch', '`tenant_id`, `branch_id`');
             await ensureIndex(conn, 'branch_stock_snapshots', 'idx_bss_tenant_branch', '`tenant_id`, `branch_id`');
 
-            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
-                // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
-                await conn.query(
-                    `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
-                     WHERE product_id REGEXP '[A-Z ]'`
-                );
-
+            if (BOOTSTRAP_BRANCH_INFERENCE_ENABLED) {
                 await conn.query(
                     `UPDATE prices pr
                      JOIN products p
@@ -2442,18 +2439,6 @@ async function ensureOperationalTenantIsolation() {
                      SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
                      WHERE branch_id IS NULL
                        AND receipt_code REGEXP '^[0-9]{4}-'`
-                );
-                await conn.query(
-                    `UPDATE branch_transfers
-                     SET document_type = 'remito'
-                     WHERE document_type IS NULL OR TRIM(document_type) = ''`
-                );
-                await conn.query(
-                    `UPDATE branch_transfers
-                     SET document_code = CONCAT('R-', remito_code)
-                     WHERE (document_code IS NULL OR TRIM(document_code) = '')
-                       AND remito_code IS NOT NULL
-                       AND TRIM(remito_code) <> ''`
                 );
                 await conn.query(
                     `UPDATE ventas_items vi
@@ -2509,6 +2494,29 @@ async function ensureOperationalTenantIsolation() {
                      SET s.branch_id = src.branch_id
                      WHERE s.branch_id IS NULL
                        AND src.branch_count = 1`
+                );
+            } else {
+                console.warn('[DB] Inferencia automatica de sucursal desactivada (BOOTSTRAP_BRANCH_INFERENCE_ENABLED=false).');
+            }
+
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
+                await conn.query(
+                    `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
+                     WHERE product_id REGEXP '[A-Z ]'`
+                );
+
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_type = 'remito'
+                     WHERE document_type IS NULL OR TRIM(document_type) = ''`
+                );
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_code = CONCAT('R-', remito_code)
+                     WHERE (document_code IS NULL OR TRIM(document_code) = '')
+                       AND remito_code IS NOT NULL
+                       AND TRIM(remito_code) <> ''`
                 );
             } else {
                 console.warn('[DB] Reparaciones automaticas de datos desactivadas (BOOTSTRAP_DATA_REPAIRS_ENABLED=false). Solo se aplica esquema.');
