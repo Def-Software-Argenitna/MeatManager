@@ -365,7 +365,7 @@ const Sidebar = ({ isCollapsed }) => {
             onClick={handleLogout}
             title="Cerrar Sesion"
           >
-            <LogOut size={18} />
+            <LogOut className="sidebar-logout-icon" size={18} aria-hidden="true" />
           </button>
           {!isCollapsed && isEffectiveAdmin && branches.length > 1 && (
             <div className="sidebar-branch-select">
