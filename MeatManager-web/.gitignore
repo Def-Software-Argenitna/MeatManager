@@ -37,6 +37,7 @@ MeatManager_PRO*.zip
 .env.*
 !.env.example
 !.env.production.example
+!.env.demo.example
 
 # External / unrelated workspace folders
 mailcow-dockerized/

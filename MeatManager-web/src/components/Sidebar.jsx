@@ -44,7 +44,7 @@ const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isPro, hasModule } = useLicense();
-  const { currentUser, accessProfile, hasAccess, logout } = useUser();
+  const { currentUser, accessProfile, hasAccess, logout, activeBranch } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
@@ -338,6 +338,11 @@ const Sidebar = ({ isCollapsed }) => {
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {isEffectiveAdmin ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
+              {activeBranch?.name && (
+                <span className="user-branch" style={{ fontSize: '0.6rem', color: 'var(--color-accent)', fontWeight: '600', marginTop: '1px' }}>
+                  {activeBranch.name}
+                </span>
+              )}
             </div>
           )}
           <button

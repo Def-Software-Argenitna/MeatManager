@@ -148,6 +148,11 @@ const Ventas = () => {
     const [weightProduct, setWeightProduct] = useState(null);
     const [showQuickCreateModal, setShowQuickCreateModal] = useState(false);
     const [pendingBarcode, setPendingBarcode] = useState(null);
+    const [offlineTicket, setOfflineTicket] = useState(null);
+    const [offlineTicketSearch, setOfflineTicketSearch] = useState('');
+    const [offlineTicketProductId, setOfflineTicketProductId] = useState('');
+    const [offlineTicketQuantity, setOfflineTicketQuantity] = useState('');
+    const [offlineTicketLines, setOfflineTicketLines] = useState([]);
     const [quickProductName, setQuickProductName] = useState('');
     const [quickProductPrice, setQuickProductPrice] = useState('');
     const [quickProductCategory, setQuickProductCategory] = useState('vaca');
@@ -192,12 +197,12 @@ const Ventas = () => {
         };
     }, []);
     const navigate = useNavigate();
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
-    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState(['vaca']);
+    const [expandedCategoryIds, setExpandedCategoryIds] = useState([]);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -230,22 +235,26 @@ const Ventas = () => {
             fetchTable('caja_movimientos').catch(() => []),
         ]);
 
-        await syncLegacyProductsToCatalog({
-            products: productRows,
-            stockRows,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
+        try {
+            await syncLegacyProductsToCatalog({
+                products: productRows,
+                stockRows,
+                prices: Array.isArray(pricesRows) ? pricesRows : [],
+            });
 
-        const syncedProducts = await fetchProductsSafe();
-        await reconcileLegacyProductConflicts({
-            products: syncedProducts,
-            prices: Array.isArray(pricesRows) ? pricesRows : [],
-        });
+            const syncedProducts = await fetchProductsSafe();
+            await reconcileLegacyProductConflicts({
+                products: syncedProducts,
+                prices: Array.isArray(pricesRows) ? pricesRows : [],
+            });
+        } catch (error) {
+            console.warn('[VENTAS] Se omite sync legado de productos:', error?.message || error);
+        }
         const refreshedProducts = await fetchProductsSafe();
 
         const branchMatches = (row) => {
-            if (currentBranchId == null) return true;
-            if (row?.branch_id == null || row?.branch_id === '') return true;
+            if (currentBranchId == null) return false;
+            if (row?.branch_id == null || row?.branch_id === '') return false;
             return Number(row.branch_id) === Number(currentBranchId);
         };
 
@@ -314,6 +323,7 @@ const Ventas = () => {
             || showPaymentModal
             || showQuickCreateModal
             || showDeleteTicketModal
+            || offlineTicket
             || showTicketPreview
             || isScaleSyncing
         ) {
@@ -338,6 +348,7 @@ const Ventas = () => {
         showPaymentModal,
         showQuickCreateModal,
         showDeleteTicketModal,
+        offlineTicket,
         showTicketPreview,
         editingPriceId,
         isScaleSyncing,
@@ -884,6 +895,82 @@ const Ventas = () => {
         });
     }, [filteredProducts]);
 
+    const offlineTicketProductOptions = React.useMemo(() => {
+        const term = offlineTicketSearch.trim().toLowerCase();
+        return products
+            .filter((product) => (
+                product?.productId
+                && (
+                    !term
+                    || String(product.name || '').toLowerCase().includes(term)
+                    || String(product.plu || '').toLowerCase().includes(term)
+                    || String(product.category || '').toLowerCase().includes(term)
+                )
+            ))
+            .slice(0, 80);
+    }, [offlineTicketSearch, products]);
+
+    const selectedOfflineTicketProduct = React.useMemo(
+        () => products.find((product) => String(product.id) === String(offlineTicketProductId)) || null,
+        [offlineTicketProductId, products]
+    );
+
+    const offlineTicketLinesTotal = React.useMemo(
+        () => offlineTicketLines.reduce((sum, line) => sum + toNumber(line.subtotal), 0),
+        [offlineTicketLines]
+    );
+    const offlineTicketDifference = toNumber(offlineTicket?.total) - offlineTicketLinesTotal;
+    const offlineTicketCanConfirm = offlineTicketLines.length > 0 && Math.abs(offlineTicketDifference) <= 1;
+
+    const openOfflineTicketResolver = React.useCallback(({ barcode, plu, total }) => {
+        setOfflineTicket({ barcode, plu, total: toNumber(total) });
+        setOfflineTicketSearch('');
+        setOfflineTicketProductId('');
+        setOfflineTicketQuantity('');
+        setOfflineTicketLines([]);
+        setScannerError('');
+    }, []);
+
+    const closeOfflineTicketResolver = React.useCallback(() => {
+        setOfflineTicket(null);
+        setOfflineTicketSearch('');
+        setOfflineTicketProductId('');
+        setOfflineTicketQuantity('');
+        setOfflineTicketLines([]);
+        setTimeout(() => barcodeInputRef.current?.focus(), 50);
+    }, []);
+
+    const addOfflineTicketLine = React.useCallback(() => {
+        if (!selectedOfflineTicketProduct) {
+            showToast('Seleccioná un producto real.', 'warning');
+            return;
+        }
+        const quantity = parseFloat(String(offlineTicketQuantity || '').replace(',', '.'));
+        if (!Number.isFinite(quantity) || quantity <= 0) {
+            showToast('Cargá kilos o cantidad válida.', 'warning');
+            return;
+        }
+        const price = toNumber(selectedOfflineTicketProduct.price);
+        if (price <= 0) {
+            showToast('Ese producto no tiene precio configurado.', 'warning');
+            return;
+        }
+        const subtotal = Math.round(price * quantity * 100) / 100;
+        setOfflineTicketLines((current) => [
+            ...current,
+            {
+                lineId: `${selectedOfflineTicketProduct.id}:${Date.now()}:${current.length}`,
+                product: selectedOfflineTicketProduct,
+                quantity,
+                price,
+                subtotal,
+            },
+        ]);
+        setOfflineTicketProductId('');
+        setOfflineTicketQuantity('');
+    }, [offlineTicketQuantity, selectedOfflineTicketProduct, showToast]);
+
+
     React.useEffect(() => {
         const nextIds = groupedFilteredProducts.map((group) => group.id);
         const hasSearch = barcodeInputValue.trim().length > 0;
@@ -927,6 +1014,7 @@ const Ventas = () => {
                     price,
                     plu,
                     source: 'ventas_manual',
+                    branchId: currentBranchId,
                 });
             } catch (error) {
                 showToast(`⚠️ ${error.message}`, 'warning');
@@ -1145,20 +1233,14 @@ const Ventas = () => {
                     // Generalmente, "120727" = $120.727
                     const parsedTotal = parseFloat(importeRaw); // Pesos enteros
                     if (parsedTotal > 0) {
-                        const ticketFallbackProduct = {
-                            id: `ticket-balanza-offline`,
-                            name: `Ticket de Balanza Offline (#${pluRaw})`,
-                            category: 'Balanza',
-                            unit: 'un',
-                            price: parsedTotal,
-                            plu: '',
-                        };
-                        addToCart(ticketFallbackProduct, 1);
+                        openOfflineTicketResolver({
+                            barcode: cleanData,
+                            plu: pluRaw,
+                            total: parsedTotal,
+                        });
                         setScannerError(
-                            `⚠️ Ticket agregado desde el código de barras porque la balanza está offline.`
+                            `⚠️ Ticket offline detectado. Seleccioná manualmente los productos y kilos para cobrarlo.`
                         );
-                        // Limpiar advertencia automáticamente
-                        setTimeout(() => setScannerError(''), 5000);
                         return;
                     }
 
@@ -1390,6 +1472,7 @@ const Ventas = () => {
                 price,
                 plu: finalPlu,
                 source: 'ventas_quick_create',
+                branchId: currentBranchId,
             });
 
             await saveTableRecord('stock', 'insert', {
@@ -1520,6 +1603,18 @@ const Ventas = () => {
             return;
         }
         addToCart(product, weight);
+    };
+
+    const confirmOfflineTicketLines = async () => {
+        if (!offlineTicketCanConfirm) {
+            showToast(`La suma debe coincidir con el ticket. Diferencia: $${formatNumericLocale(offlineTicketDifference, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, 'warning');
+            return;
+        }
+        for (const line of offlineTicketLines) {
+            await addToCart(line.product, line.quantity);
+        }
+        showToast('Ticket offline resuelto con productos reales.', 'success');
+        closeOfflineTicketResolver();
     };
 
     const removeFromCart = (id) => {
@@ -1806,6 +1901,7 @@ const Ventas = () => {
                     return ({
                     product_id: i.productId || null,
                     product_name: i.name,
+                    is_scale_offline_ticket: Boolean(i.isScaleOfflineTicket),
                     quantity: i.quantity,
                     price: i.price,
                     subtotal: line?.subtotal ?? (i.price * i.quantity),
@@ -2399,6 +2495,7 @@ const Ventas = () => {
         )}
         {showClientList && (
             <div
+                className="app-modal-overlay"
                 style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 onClick={() => setShowClientList(false)}
             >
@@ -2806,6 +2903,140 @@ const Ventas = () => {
                 </div>
             )}
 
+            {offlineTicket && (
+                <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1250 }}>
+                    <div className="modal-content neo-card" style={{ maxWidth: '760px', width: '94%', maxHeight: '90vh', overflowY: 'auto', padding: '1.5rem' }} onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', marginBottom: '1rem' }}>
+                            <div>
+                                <h2 style={{ fontSize: '1.25rem', fontWeight: 900, margin: 0 }}>Resolver ticket offline</h2>
+                                <p style={{ margin: '0.35rem 0 0', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+                                    Código #{offlineTicket.plu} · Total leído ${formatNumericLocale(offlineTicket.total, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </p>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={closeOfflineTicketResolver}
+                                style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}
+                            >
+                                <X size={22} />
+                            </button>
+                        </div>
+
+                        <div style={{ background: 'rgba(249,115,22,0.10)', border: '1px solid rgba(249,115,22,0.28)', borderRadius: '12px', padding: '0.85rem 1rem', marginBottom: '1rem', color: '#fed7aa', fontSize: '0.88rem', lineHeight: 1.45 }}>
+                            La balanza no envió el detalle del ticket. Cargá manualmente los productos reales y sus kilos/cantidades para que caja y stock queden trazables.
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem', alignItems: 'end', marginBottom: '1rem' }}>
+                            <label>
+                                <span style={{ display: 'block', fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>Buscar</span>
+                                <input
+                                    type="search"
+                                    value={offlineTicketSearch}
+                                    onChange={(e) => setOfflineTicketSearch(e.target.value)}
+                                    placeholder="Nombre, PLU o categoría"
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
+                                />
+                            </label>
+                            <label>
+                                <span style={{ display: 'block', fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>Producto</span>
+                                <select
+                                    value={offlineTicketProductId}
+                                    onChange={(e) => setOfflineTicketProductId(e.target.value)}
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
+                                >
+                                    <option value="">Seleccionar producto</option>
+                                    {offlineTicketProductOptions.map((product) => (
+                                        <option key={product.id} value={product.id}>
+                                            {product.name} · ${formatPrice(toNumber(product.price), priceFormat)} / {(product.unit || 'kg').toLowerCase()}
+                                        </option>
+                                    ))}
+                                </select>
+                            </label>
+                            <label>
+                                <span style={{ display: 'block', fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.35rem' }}>Kilos/cant.</span>
+                                <input
+                                    type="number"
+                                    min="0.001"
+                                    step="0.001"
+                                    value={offlineTicketQuantity}
+                                    onChange={(e) => setOfflineTicketQuantity(e.target.value)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') addOfflineTicketLine(); }}
+                                    placeholder="0.000"
+                                    style={{ width: '100%', padding: '0.75rem', borderRadius: '10px', border: '1px solid var(--color-border)', background: 'var(--color-bg-main)', color: 'var(--color-text-main)' }}
+                                />
+                            </label>
+                            <button
+                                type="button"
+                                onClick={addOfflineTicketLine}
+                                className="neo-button"
+                                style={{ padding: '0.75rem 1rem', whiteSpace: 'nowrap' }}
+                            >
+                                Agregar
+                            </button>
+                        </div>
+
+                        <div style={{ border: '1px solid var(--color-border)', borderRadius: '12px', overflow: 'hidden', marginBottom: '1rem' }}>
+                            {offlineTicketLines.length === 0 ? (
+                                <div style={{ padding: '1rem', color: 'var(--color-text-muted)', textAlign: 'center' }}>Todavía no hay productos cargados.</div>
+                            ) : offlineTicketLines.map((line) => (
+                                <div key={line.lineId} style={{ display: 'grid', gridTemplateColumns: '1fr auto auto', gap: '0.75rem', alignItems: 'center', padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)' }}>
+                                    <div>
+                                        <strong>{line.product.name}</strong>
+                                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>
+                                            {formatNumericLocale(line.quantity, 'es-AR', { minimumFractionDigits: 3, maximumFractionDigits: 3 })} {(line.product.unit || 'kg').toLowerCase()} x ${formatPrice(line.price, priceFormat)}
+                                        </div>
+                                    </div>
+                                    <strong>${formatNumericLocale(line.subtotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                                    <button
+                                        type="button"
+                                        onClick={() => setOfflineTicketLines((current) => current.filter((item) => item.lineId !== line.lineId))}
+                                        style={{ background: 'transparent', border: 'none', color: '#ef4444', cursor: 'pointer' }}
+                                    >
+                                        <Trash2 size={16} />
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                            <div style={{ padding: '0.8rem', borderRadius: '10px', background: 'rgba(255,255,255,0.04)' }}>
+                                <span style={{ display: 'block', color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>Total ticket</span>
+                                <strong>${formatNumericLocale(offlineTicket.total, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                            </div>
+                            <div style={{ padding: '0.8rem', borderRadius: '10px', background: 'rgba(255,255,255,0.04)' }}>
+                                <span style={{ display: 'block', color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>Total cargado</span>
+                                <strong>${formatNumericLocale(offlineTicketLinesTotal, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</strong>
+                            </div>
+                            <div style={{ padding: '0.8rem', borderRadius: '10px', background: Math.abs(offlineTicketDifference) <= 1 ? 'rgba(34,197,94,0.10)' : 'rgba(239,68,68,0.10)' }}>
+                                <span style={{ display: 'block', color: 'var(--color-text-muted)', fontSize: '0.75rem' }}>Diferencia</span>
+                                <strong style={{ color: Math.abs(offlineTicketDifference) <= 1 ? '#22c55e' : '#ef4444' }}>
+                                    ${formatNumericLocale(offlineTicketDifference, 'es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                </strong>
+                            </div>
+                        </div>
+
+                        <div style={{ display: 'flex', gap: '0.75rem' }}>
+                            <button
+                                type="button"
+                                onClick={closeOfflineTicketResolver}
+                                style={{ flex: 1, padding: '0.9rem', borderRadius: '10px', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-main)', cursor: 'pointer', fontWeight: 700 }}
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="button"
+                                onClick={confirmOfflineTicketLines}
+                                disabled={!offlineTicketCanConfirm}
+                                className="neo-button"
+                                style={{ flex: 1, padding: '0.9rem', opacity: offlineTicketCanConfirm ? 1 : 0.55 }}
+                            >
+                                Confirmar productos
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* MODAL SIN STOCK – CONFIRMAR VENTA IGUAL */}
             {pendingNoStockItem && (
                 <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1200 }}>
@@ -3144,7 +3375,7 @@ const Ventas = () => {
 
         {/* ─── MODAL ELIMINAR TICKET ────────────────────────────────────────────── */}
         {showDeleteTicketModal && (
-            <div style={{
+            <div className="app-modal-overlay" style={{
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3299,7 +3530,7 @@ const Ventas = () => {
 
         {/* ─── MODAL PREVIEW TICKET MULTI-ITEM (balanza) ──────────────────── */}
         {showTicketPreview && (
-            <div style={{
+            <div className="app-modal-overlay" style={{
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

@@ -22,6 +22,10 @@
     --glass-border: rgba(255, 255, 255, 0.1);
     --glass-blur: blur(25px);
     --glass-reflection: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 40%, rgba(255,255,255,0.05) 100%);
+    --z-app-shell: 20000;
+    --z-app-modal: 60000;
+    --z-app-modal-content: 60001;
+    --z-app-toast: 70000;
 }
 
 * {
@@ -232,7 +236,7 @@ tr:hover td {
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 10000;
+    z-index: var(--z-app-modal);
     animation: fadeIn 0.3s ease-out;
     padding: 1rem;
     overflow-y: auto;
@@ -246,9 +250,39 @@ tr:hover td {
 .modal-content {
     padding: 2rem;
     animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
     overflow-y: auto;
     margin: auto;
+    position: relative;
+    z-index: var(--z-app-modal-content);
+}
+
+/* Global modal stack: every popup must stay above sidebar/topbar and keep the page behind it. */
+body:has(.modal-overlay, .app-modal-overlay, .order-map-overlay, .map-fullscreen-overlay, .app-update-overlay) .main-content {
+    overflow: hidden !important;
+}
+
+.modal-overlay,
+.app-modal-overlay,
+.order-map-overlay,
+.map-fullscreen-overlay,
+.module-license-gate__overlay {
+    position: fixed !important;
+    z-index: var(--z-app-modal) !important;
+    isolation: isolate;
+}
+
+.modal-overlay > *,
+.app-modal-overlay > *,
+.order-map-overlay > *,
+.map-fullscreen-overlay > *,
+.module-license-gate__overlay > * {
+    position: relative;
+    z-index: var(--z-app-modal-content);
+}
+
+.app-update-overlay {
+    z-index: var(--z-app-toast) !important;
 }
 
 @keyframes slideUp {

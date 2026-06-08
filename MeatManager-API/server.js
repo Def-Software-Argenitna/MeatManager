@@ -3,7 +3,10 @@
 
 const fs = require('fs');
 const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '.env') });
+const envFilePath = process.env.DOTENV_CONFIG_PATH
+    ? path.resolve(__dirname, process.env.DOTENV_CONFIG_PATH)
+    : path.join(__dirname, '.env');
+require('dotenv').config({ path: envFilePath });
 const gdcBackendEnvPath = path.resolve(__dirname, '..', 'Gestionclientes', '.deploy', 'backend.env');
 const hasLocalSmtpConfig =
     Boolean(process.env.SMTP_HOST) &&
@@ -162,6 +165,9 @@ const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.e
 const SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY = 'scale_bridge_product_sync_seq';
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
+const STRICT_BRANCH_SCOPING = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.STRICT_BRANCH_SCOPING || '').trim().toLowerCase()
+);
 const REDIS_TRACKING_TTL_SECONDS = Number(process.env.REDIS_TRACKING_TTL_SECONDS || 90);
 const CASH_WITHDRAWAL_CODE_TTL_MINUTES = Number(process.env.CASH_WITHDRAWAL_CODE_TTL_MINUTES || 10);
 const INTERNAL_ADMIN_JWT_SECRET = process.env.JWT_SECRET || process.env.INTERNAL_ADMIN_JWT_SECRET || 'change-this-in-production-super-secret-key';
@@ -171,6 +177,9 @@ const SCALE_LATENCY_LOG_DIR = process.env.SCALE_LATENCY_LOG_DIR || path.join(__d
 const SCALE_LATENCY_LOG_FILE = process.env.SCALE_LATENCY_LOG_FILE || path.join(SCALE_LATENCY_LOG_DIR, 'scale-ticket-latency.log');
 const SKIP_SCHEMA_BOOT = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SKIP_SCHEMA_BOOT || '').trim().toLowerCase()
+);
+const BOOTSTRAP_DATA_REPAIRS_ENABLED = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
+    String(process.env.BOOTSTRAP_DATA_REPAIRS_ENABLED || '').trim().toLowerCase()
 );
 const smtpSecure = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
     String(process.env.SMTP_SECURE || '').trim().toLowerCase()
@@ -212,7 +221,7 @@ function shouldQueueScaleProductSync(table, operation, record = {}) {
     const normalizedOperation = String(operation || '').trim().toLowerCase();
     if (!['insert', 'update', 'delete', 'upsert'].includes(normalizedOperation)) return false;
 
-    if (['products', 'prices', 'product_prices', 'promotions', 'scale_users'].includes(normalizedTable)) {
+    if (['products', 'prices', 'product_prices', 'branch_product_prices', 'promotions', 'scale_users'].includes(normalizedTable)) {
         return true;
     }
 
@@ -706,7 +715,7 @@ const TENANT_SCOPED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'branch_product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ]);
 
@@ -714,7 +723,7 @@ const TENANT_ID_TABLES = [
     'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'delivery_tracking_events', 'prices', 'product_prices', 'branch_product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ];
 
@@ -974,10 +983,21 @@ const TABLES_WITH_NUMERIC_ID = [
     'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items', 'stock',
     'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'prices', 'product_prices', 'users', 'user_permissions',
+    'caja_movimientos', 'prices', 'product_prices', 'branch_product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'app_logs', 'promotions', 'scale_users',
 ];
-const BRANCH_SCOPED_TABLES = new Set(['ventas', 'caja_movimientos', 'pedidos', 'cash_closures', 'stock', 'promotions']);
+const BRANCH_SCOPED_TABLES = new Set([
+    'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
+    'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
+    'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots', 'scale_users',
+]);
+const STRICT_BRANCH_SCOPED_TABLES = new Set([
+    'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
+    'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
+    'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots', 'scale_users',
+]);
 
 function isTenantScopedTable(table) {
     return TENANT_SCOPED_TABLES.has(String(table || '').trim());
@@ -1066,6 +1086,14 @@ async function hasIndex(conn, dbName, tableName, indexName) {
         [dbName, tableName, indexName]
     );
     return rows.length > 0;
+}
+
+async function dropIndexIfExists(conn, tableName, indexName) {
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, tableName, indexName))) return;
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.\`${tableName}\`
+         DROP INDEX \`${indexName}\``
+    );
 }
 
 async function hasForeignKey(conn, dbName, tableName, constraintName) {
@@ -1210,6 +1238,7 @@ async function ensureSettingsPrimaryKey(conn) {
 async function ensureProductCatalogIntegrity(conn) {
     const canonicalNameSql = (expr) => `LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_'))`;
     const cleanTextSql = (expr) => `NULLIF(TRIM(COALESCE(${expr}, '')), '')`;
+    const nonGenericScaleTicketSql = (expr) => `LOWER(TRIM(COALESCE(${expr}, ''))) NOT LIKE 'ticket%balanza%offline%'`;
     const cleanCategoryKeySql = (expr) => `NULLIF(LOWER(REPLACE(TRIM(COALESCE(${expr}, '')), ' ', '_')), '')`;
     const legacyPriceNameSql = `TRIM(REPLACE(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1), '_', ' '))`;
     const legacyPriceCategorySql = `NULLIF(TRIM(REPLACE(SUBSTRING(COALESCE(pr.product_id, ''), LENGTH(SUBSTRING_INDEX(COALESCE(pr.product_id, ''), '-', 1)) + 2), '_', ' ')), '')`;
@@ -1217,9 +1246,10 @@ async function ensureProductCatalogIntegrity(conn) {
 
     const insertStatements = [
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
-            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+            (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
             s.\`${TENANT_COLUMN}\`,
+            s.branch_id,
             ${canonicalNameSql('s.name')} AS canonical_key,
             TRIM(s.name) AS name,
             MAX(${cleanTextSql('s.type')}) AS category,
@@ -1232,14 +1262,17 @@ async function ensureProductCatalogIntegrity(conn) {
          FROM \`${OPERATIONAL_DB_NAME}\`.stock s
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
-          AND p.canonical_key = ${canonicalNameSql('s.name')}
+          AND p.branch_id <=> s.branch_id
+         AND p.canonical_key = ${canonicalNameSql('s.name')}
          WHERE ${cleanTextSql('s.name')} IS NOT NULL
+           AND ${nonGenericScaleTicketSql('s.name')}
            AND p.id IS NULL
-         GROUP BY s.\`${TENANT_COLUMN}\`, ${canonicalNameSql('s.name')}, TRIM(s.name)`,
+         GROUP BY s.\`${TENANT_COLUMN}\`, s.branch_id, ${canonicalNameSql('s.name')}, TRIM(s.name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
-            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+            (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
             pi.\`${TENANT_COLUMN}\`,
+            pi.branch_id,
             ${canonicalNameSql('pi.name')} AS canonical_key,
             TRIM(pi.name) AS name,
             MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
@@ -1252,30 +1285,35 @@ async function ensureProductCatalogIntegrity(conn) {
          FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = pi.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> pi.branch_id
           AND p.canonical_key = ${canonicalNameSql('pi.name')}
          WHERE ${cleanTextSql('pi.name')} IS NOT NULL
            AND p.id IS NULL
-         GROUP BY pi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('pi.name')}, TRIM(pi.name)`,
-        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
-            (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
-         SELECT
-            vi.\`${TENANT_COLUMN}\`,
-            ${canonicalNameSql('vi.product_name')} AS canonical_key,
-            TRIM(vi.product_name) AS name,
-            NULL AS category,
-            NULL AS unit,
-            MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
-            NULL AS plu,
-            'ventas_backfill' AS source,
-            NOW(),
-            NOW()
-         FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
-         LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
-           ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
-          AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
-         WHERE ${cleanTextSql('vi.product_name')} IS NOT NULL
-           AND p.id IS NULL
-         GROUP BY vi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
+         GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}, TRIM(pi.name)`,
+         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
+             (\`${TENANT_COLUMN}\`, branch_id, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
+          SELECT
+             vi.\`${TENANT_COLUMN}\`,
+             vi.branch_id,
+             ${canonicalNameSql('vi.product_name')} AS canonical_key,
+             TRIM(vi.product_name) AS name,
+             NULL AS category,
+             NULL AS unit,
+             MAX(CASE WHEN COALESCE(vi.price, 0) > 0 THEN vi.price ELSE 0 END) AS current_price,
+             NULL AS plu,
+             'ventas_backfill' AS source,
+             NOW(),
+             NOW()
+          FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
+          LEFT JOIN \`${OPERATIONAL_DB_NAME}\`.products p
+            ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+           AND p.branch_id <=> vi.branch_id
+           AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
+          WHERE vi.branch_id IS NOT NULL
+            AND ${cleanTextSql('vi.product_name')} IS NOT NULL
+            AND ${nonGenericScaleTicketSql('vi.product_name')}
+            AND p.id IS NULL
+          GROUP BY vi.\`${TENANT_COLUMN}\`, vi.branch_id, ${canonicalNameSql('vi.product_name')}, TRIM(vi.product_name)`,
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.products
             (\`${TENANT_COLUMN}\`, canonical_key, name, category, unit, current_price, plu, source, created_at, updated_at)
          SELECT
@@ -1343,19 +1381,34 @@ async function ensureProductCatalogIntegrity(conn) {
     }
 
     await conn.query(
+        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+         SET active = 0,
+             deleted_at = COALESCE(deleted_at, NOW()),
+             archived_plu = COALESCE(archived_plu, plu),
+             plu = NULL,
+             source = 'scale_ticket_fallback_archived',
+             updated_at = NOW()
+         WHERE NOT (${nonGenericScaleTicketSql('name')})
+           AND deleted_at IS NULL`
+    );
+
+    await conn.query(
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
          JOIN (
             SELECT
                 s.\`${TENANT_COLUMN}\` AS tenant_id,
+                s.branch_id,
                 ${canonicalNameSql('s.name')} AS canonical_key,
                 MAX(${cleanTextSql('s.type')}) AS category,
                 MAX(${cleanTextSql('s.unit')}) AS unit,
                 MAX(CASE WHEN COALESCE(s.price, 0) > 0 THEN s.price ELSE 0 END) AS current_price
             FROM \`${OPERATIONAL_DB_NAME}\`.stock s
             WHERE ${cleanTextSql('s.name')} IS NOT NULL
-            GROUP BY s.\`${TENANT_COLUMN}\`, ${canonicalNameSql('s.name')}
+              AND ${nonGenericScaleTicketSql('s.name')}
+            GROUP BY s.\`${TENANT_COLUMN}\`, s.branch_id, ${canonicalNameSql('s.name')}
          ) src
            ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> src.branch_id
           AND src.canonical_key = p.canonical_key
          SET
             p.category = COALESCE(NULLIF(p.category, ''), src.category),
@@ -1372,6 +1425,7 @@ async function ensureProductCatalogIntegrity(conn) {
          JOIN (
             SELECT
                 pi.\`${TENANT_COLUMN}\` AS tenant_id,
+                pi.branch_id,
                 ${canonicalNameSql('pi.name')} AS canonical_key,
                 MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
                 MAX(${cleanTextSql('pi.unit')}) AS unit,
@@ -1379,9 +1433,10 @@ async function ensureProductCatalogIntegrity(conn) {
                 MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
             FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
             WHERE ${cleanTextSql('pi.name')} IS NOT NULL
-            GROUP BY pi.\`${TENANT_COLUMN}\`, ${canonicalNameSql('pi.name')}
+            GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}
          ) src
            ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> src.branch_id
           AND src.canonical_key = p.canonical_key
          SET
             p.category = COALESCE(NULLIF(p.category, ''), src.category),
@@ -1423,6 +1478,7 @@ async function ensureProductCatalogIntegrity(conn) {
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.stock s
          JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> s.branch_id
           AND p.canonical_key = ${canonicalNameSql('s.name')}
          SET s.product_id = p.id
          WHERE s.product_id IS NULL
@@ -1433,6 +1489,7 @@ async function ensureProductCatalogIntegrity(conn) {
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
          JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = pi.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> pi.branch_id
           AND p.canonical_key = ${canonicalNameSql('pi.name')}
          SET pi.product_id = p.id
          WHERE pi.product_id IS NULL
@@ -1443,10 +1500,12 @@ async function ensureProductCatalogIntegrity(conn) {
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.ventas_items vi
          JOIN \`${OPERATIONAL_DB_NAME}\`.products p
            ON p.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+          AND p.branch_id <=> vi.branch_id
           AND p.canonical_key = ${canonicalNameSql('vi.product_name')}
          SET vi.product_id = p.id
          WHERE vi.product_id IS NULL
-           AND ${cleanTextSql('vi.product_name')} IS NOT NULL`
+           AND ${cleanTextSql('vi.product_name')} IS NOT NULL
+           AND ${nonGenericScaleTicketSql('vi.product_name')}`
     );
 
     await conn.query(
@@ -1520,9 +1579,10 @@ async function ensureProductCatalogIntegrity(conn) {
     // Esto construye el historial progresivamente sin tocar filas antiguas.
     await conn.query(
         `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.product_prices
-            (\`${TENANT_COLUMN}\`, product_id, price, plu, source, effective_at, created_at)
+            (\`${TENANT_COLUMN}\`, branch_id, product_id, price, plu, source, effective_at, created_at)
          SELECT
             p.\`${TENANT_COLUMN}\`,
+            p.branch_id,
             p.id,
             COALESCE(p.current_price, 0),
             NULLIF(TRIM(COALESCE(p.plu, '')), ''),
@@ -1539,6 +1599,7 @@ async function ensureProductCatalogIntegrity(conn) {
                LIMIT 1
            )
          WHERE COALESCE(p.current_price, 0) > 0
+           AND p.branch_id IS NOT NULL
            AND (latest.product_id IS NULL
                 OR ABS(COALESCE(latest.price, 0) - COALESCE(p.current_price, 0)) > 0.009)`
     );
@@ -1882,15 +1943,15 @@ async function ensureTenantScopedForeignKeys(conn) {
            AND plu IS NOT NULL`
     );
 
-    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_plu'))) {
+    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_branch_plu'))) {
         try {
             await conn.query(
                 `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
-                 ADD UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu)`
+                 ADD UNIQUE KEY uniq_products_tenant_branch_plu (\`${TENANT_COLUMN}\`, branch_id, plu)`
             );
         } catch (error) {
             if (error?.code === 'ER_DUP_ENTRY') {
-                console.warn('[DB] No se pudo crear uniq_products_tenant_plu porque existen PLU duplicados. Limpialos y reiniciá la API.');
+                console.warn('[DB] No se pudo crear uniq_products_tenant_branch_plu porque existen PLU duplicados por sucursal. Limpialos y reiniciá la API.');
             } else if (error?.code !== 'ER_DUP_KEYNAME') {
                 throw error;
             }
@@ -1932,6 +1993,103 @@ async function ensureTenantScopedForeignKeys(conn) {
     }
 }
 
+function parseJsonMaybe(value) {
+    if (!value) return null;
+    if (Array.isArray(value) || typeof value === 'object') return value;
+    try {
+        return JSON.parse(String(value));
+    } catch {
+        return null;
+    }
+}
+
+function currentAccountAmountFromStoredSale(row) {
+    const breakdown = parseJsonMaybe(row?.payment_breakdown);
+    if (Array.isArray(breakdown) && breakdown.length > 0) {
+        return breakdown.reduce((sum, part) => {
+            const methodName = String(part?.method_name || part?.name || '').trim().toLowerCase();
+            const methodType = String(part?.method_type || part?.type || '').trim().toLowerCase();
+            if (methodType !== 'cuenta_corriente' && methodName !== 'cuenta corriente') return sum;
+            return sum + (Number(part?.amount_charged ?? part?.amount ?? part?.total) || 0);
+        }, 0);
+    }
+
+    return String(row?.payment_method || '').trim().toLowerCase() === 'cuenta corriente'
+        ? (Number(row?.total) || 0)
+        : 0;
+}
+
+async function reconcileClientCurrentAccountBalances(conn) {
+    const [clientRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, id, balance
+         FROM \`${OPERATIONAL_DB_NAME}\`.clients
+         WHERE COALESCE(has_current_account, 1) = 1
+           AND COALESCE(has_initial_balance, 0) = 0`
+    );
+    if (!clientRows.length) return;
+
+    const balances = new Map(clientRows.map((client) => [
+        `${client[TENANT_COLUMN]}:${client.id}`,
+        {
+            tenantId: client[TENANT_COLUMN],
+            clientId: client.id,
+            storedBalance: Number(client.balance || 0),
+            calculatedBalance: 0,
+        },
+    ]));
+
+    const [saleRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, id, clientId, total, payment_method, payment_breakdown
+         FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+         WHERE clientId IS NOT NULL`
+    );
+    for (const sale of saleRows) {
+        const key = `${sale[TENANT_COLUMN]}:${sale.clientId}`;
+        const bucket = balances.get(key);
+        if (!bucket) continue;
+        bucket.calculatedBalance -= currentAccountAmountFromStoredSale(sale);
+    }
+
+    const [paymentRows] = await conn.query(
+        `SELECT \`${TENANT_COLUMN}\`, client_id, amount
+         FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
+         WHERE client_id IS NOT NULL
+           AND (
+                money_flow_kind = 'customer_payment'
+                OR (
+                    type = 'ingreso'
+                    AND category = 'Cobro Pendientes'
+                )
+           )`
+    );
+    for (const payment of paymentRows) {
+        const key = `${payment[TENANT_COLUMN]}:${payment.client_id}`;
+        const bucket = balances.get(key);
+        if (!bucket) continue;
+        bucket.calculatedBalance += Number(payment.amount || 0);
+    }
+
+    let updatedCount = 0;
+    for (const entry of balances.values()) {
+        const nextBalance = Math.round(entry.calculatedBalance * 100) / 100;
+        if (Math.abs(nextBalance - entry.storedBalance) <= 0.009) continue;
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.clients
+             SET balance = ?,
+                 last_updated = NOW()
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND id = ?
+               AND COALESCE(has_initial_balance, 0) = 0`,
+            [nextBalance, entry.tenantId, entry.clientId]
+        );
+        updatedCount += 1;
+    }
+
+    if (updatedCount > 0) {
+        console.warn(`[DB] Reconciliados ${updatedCount} saldos de cuenta corriente sin saldo inicial manual.`);
+    }
+}
+
 async function ensureOperationalTenantIsolation() {
     const adminConn = await provisionPool.getConnection();
     try {
@@ -1950,14 +2108,86 @@ async function ensureOperationalTenantIsolation() {
             }
 
             await ensureColumn(conn, 'purchase_items', 'default_iva_rate', '`default_iva_rate` DECIMAL(5,2) NULL DEFAULT 10.50 AFTER `usage`');
+            await ensureColumn(conn, 'purchase_items', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'purchase_items', 'product_id', '`product_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'purchase_items', 'use_for_despostada', '`use_for_despostada` TINYINT(1) NOT NULL DEFAULT 0 AFTER `type`');
             await ensureColumn(conn, 'purchase_items', 'is_preelaborable', '`is_preelaborable` TINYINT(1) NULL DEFAULT 0 AFTER `type`');
+            await ensureColumn(conn, 'products', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
+            await ensureColumn(conn, 'products', 'use_for_despostada', '`use_for_despostada` TINYINT(1) NOT NULL DEFAULT 0 AFTER `unit`');
+            await ensureColumn(conn, 'products', 'despostada_species', '`despostada_species` VARCHAR(30) NULL AFTER `use_for_despostada`');
             await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
             await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
             await ensureColumn(conn, 'products', 'archived_plu', '`archived_plu` VARCHAR(20) NULL AFTER `deleted_at`');
+            await dropIndexIfExists(conn, 'products', 'uniq_products_tenant_canonical');
+            await dropIndexIfExists(conn, 'products', 'uniq_products_tenant_plu');
+            await ensureIndex(conn, 'products', 'idx_products_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureIndex(conn, 'purchase_items', 'idx_purchase_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_branch_canonical'))) {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                     ADD UNIQUE KEY uniq_products_tenant_branch_canonical (\`${TENANT_COLUMN}\`, branch_id, canonical_key)`
+                );
+            }
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'products', 'uniq_products_tenant_branch_plu'))) {
+                try {
+                    await conn.query(
+                        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.products
+                         ADD UNIQUE KEY uniq_products_tenant_branch_plu (\`${TENANT_COLUMN}\`, branch_id, plu)`
+                    );
+                } catch (error) {
+                    if (error?.code === 'ER_DUP_ENTRY') {
+                        console.warn('[DB] No se pudo crear uniq_products_tenant_branch_plu porque existen PLU duplicados por sucursal.');
+                    } else if (error?.code !== 'ER_DUP_KEYNAME') {
+                        throw error;
+                    }
+                }
+            }
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.branch_product_prices (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+                    branch_id       INT NOT NULL,
+                    product_id      INT NOT NULL,
+                    price           DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    plu             VARCHAR(20),
+                    source          VARCHAR(50),
+                    effective_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uniq_branch_product_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
+                    UNIQUE KEY uniq_branch_product_price (\`${TENANT_COLUMN}\`, branch_id, product_id),
+                    INDEX idx_bpp_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
+                    INDEX idx_bpp_tenant_product (\`${TENANT_COLUMN}\`, product_id)
+                )
+            `);
             await ensureColumn(conn, 'stock', 'product_id', '`product_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'stock', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'animal_lots', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'animal_lots', 'idx_animal_lots_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'clients', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'clients', 'idx_clients_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'suppliers', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'suppliers', 'idx_suppliers_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'ventas_items', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'ventas_items', 'idx_ventas_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'compras', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'compras', 'idx_compras_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'compras_items', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'compras_items', 'idx_compras_items_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'despostada_logs', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'despostada_logs', 'idx_despostada_logs_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'menu_digital', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'menu_digital', 'idx_menu_digital_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await ensureColumn(conn, 'supplier_item_tax_profiles', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'supplier_item_tax_profiles', 'idx_sitp_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await dropIndexIfExists(conn, 'supplier_item_tax_profiles', 'uniq_sitp_tenant_supplier_product');
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'supplier_item_tax_profiles', 'uniq_sitp_tenant_branch_supplier_product'))) {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.supplier_item_tax_profiles
+                     ADD UNIQUE KEY uniq_sitp_tenant_branch_supplier_product (\`${TENANT_COLUMN}\`, branch_id, supplier_name(100), product_name(100))`
+                );
+            }
             await ensureColumn(conn, 'stock', 'usage', '`usage` VARCHAR(50) NULL AFTER `type`');
             await ensureColumn(conn, 'stock', 'barcode', '`barcode` VARCHAR(64) NULL AFTER `reference`');
             await ensureColumn(conn, 'stock', 'presentation', '`presentation` VARCHAR(50) NULL AFTER `barcode`');
@@ -1971,16 +2201,29 @@ async function ensureOperationalTenantIsolation() {
                 CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_users (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
                     \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+                    branch_id       INT NULL,
                     slot_no         TINYINT UNSIGNED NOT NULL,
                     display_name    VARCHAR(100) NOT NULL,
                     active          TINYINT(1) DEFAULT 1,
                     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+                    UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no),
                     UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
-                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`),
+                    INDEX idx_scale_users_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
                 )
             `);
+            await ensureColumn(conn, 'scale_users', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'scale_users', 'idx_scale_users_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await dropIndexIfExists(conn, 'scale_users', 'uniq_scale_users_tenant_slot');
+            try {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_users
+                     ADD UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no)`
+                );
+            } catch (error) {
+                if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY'].includes(error?.code)) throw error;
+            }
 
             // ── Bridge sync state tables (antes creadas por el propio bridge) ──
             await conn.query(`
@@ -2060,6 +2303,9 @@ async function ensureOperationalTenantIsolation() {
             `);
 
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'product_prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureColumn(conn, 'branch_stock_snapshots', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'despostada_logs', 'processed_weight', '`processed_weight` DECIMAL(12,3) NULL AFTER `total_weight`');
             await ensureColumn(conn, 'despostada_logs', 'merma_weight', '`merma_weight` DECIMAL(12,3) NULL AFTER `yield_percentage`');
             await ensureColumn(conn, 'despostada_logs', 'merma_percentage', '`merma_percentage` DECIMAL(5,2) NULL AFTER `merma_weight`');
@@ -2155,44 +2401,127 @@ async function ensureOperationalTenantIsolation() {
                 'idx_caja_summary',
                 '`tenant_id`, `branch_id`, `cash_account`, `payment_method`, `date`'
             );
+            await ensureIndex(conn, 'prices', 'idx_prices_tenant_branch', '`tenant_id`, `branch_id`');
+            await ensureIndex(conn, 'product_prices', 'idx_pp_tenant_branch', '`tenant_id`, `branch_id`');
+            await ensureIndex(conn, 'branch_stock_snapshots', 'idx_bss_tenant_branch', '`tenant_id`, `branch_id`');
 
-            // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
-            await conn.query(
-                `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
-                 WHERE product_id REGEXP '[A-Z ]'`
-            );
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                // Normalize prices.product_id: lowercase + spaces to underscores (one-time migration)
+                await conn.query(
+                    `UPDATE prices SET product_id = LOWER(REPLACE(product_id, ' ', '_'))
+                     WHERE product_id REGEXP '[A-Z ]'`
+                );
 
-            await conn.query(
-                `UPDATE ventas
-                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
-                 WHERE branch_id IS NULL
-                   AND receipt_code REGEXP '^[0-9]{4}-'`
-            );
-            await conn.query(
-                `UPDATE caja_movimientos
-                 SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
-                 WHERE branch_id IS NULL
-                   AND receipt_code REGEXP '^[0-9]{4}-'`
-            );
-            await conn.query(
-                `UPDATE branch_transfers
-                 SET document_type = 'remito'
-                 WHERE document_type IS NULL OR TRIM(document_type) = ''`
-            );
-            await conn.query(
-                `UPDATE branch_transfers
-                 SET document_code = CONCAT('R-', remito_code)
-                 WHERE (document_code IS NULL OR TRIM(document_code) = '')
-                   AND remito_code IS NOT NULL
-                   AND TRIM(remito_code) <> ''`
-            );
+                await conn.query(
+                    `UPDATE prices pr
+                     JOIN products p
+                       ON p.tenant_id = pr.tenant_id
+                      AND p.id = pr.product_ref_id
+                     SET pr.branch_id = p.branch_id
+                     WHERE pr.branch_id IS NULL
+                       AND p.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE product_prices pp
+                     JOIN products p
+                       ON p.tenant_id = pp.tenant_id
+                      AND p.id = pp.product_id
+                     SET pp.branch_id = p.branch_id
+                     WHERE pp.branch_id IS NULL
+                       AND p.branch_id IS NOT NULL`
+                );
+
+                await conn.query(
+                    `UPDATE ventas
+                     SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                     WHERE branch_id IS NULL
+                       AND receipt_code REGEXP '^[0-9]{4}-'`
+                );
+                await conn.query(
+                    `UPDATE caja_movimientos
+                     SET branch_id = CAST(SUBSTRING_INDEX(receipt_code, '-', 1) AS UNSIGNED)
+                     WHERE branch_id IS NULL
+                       AND receipt_code REGEXP '^[0-9]{4}-'`
+                );
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_type = 'remito'
+                     WHERE document_type IS NULL OR TRIM(document_type) = ''`
+                );
+                await conn.query(
+                    `UPDATE branch_transfers
+                     SET document_code = CONCAT('R-', remito_code)
+                     WHERE (document_code IS NULL OR TRIM(document_code) = '')
+                       AND remito_code IS NOT NULL
+                       AND TRIM(remito_code) <> ''`
+                );
+                await conn.query(
+                    `UPDATE ventas_items vi
+                     JOIN ventas v
+                       ON v.\`${TENANT_COLUMN}\` = vi.\`${TENANT_COLUMN}\`
+                      AND v.id = vi.venta_id
+                     SET vi.branch_id = v.branch_id
+                     WHERE vi.branch_id IS NULL
+                       AND v.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE compras_items ci
+                     JOIN compras c
+                       ON c.\`${TENANT_COLUMN}\` = ci.\`${TENANT_COLUMN}\`
+                      AND c.id = ci.purchase_id
+                     SET ci.branch_id = c.branch_id
+                     WHERE ci.branch_id IS NULL
+                       AND c.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE despostada_logs dl
+                     JOIN animal_lots al
+                       ON al.\`${TENANT_COLUMN}\` = dl.\`${TENANT_COLUMN}\`
+                      AND al.id = dl.lot_id
+                     SET dl.branch_id = al.branch_id
+                     WHERE dl.branch_id IS NULL
+                       AND al.branch_id IS NOT NULL`
+                );
+                await conn.query(
+                    `UPDATE clients c
+                     JOIN (
+                        SELECT \`${TENANT_COLUMN}\`, client_id, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
+                        FROM ventas
+                        WHERE client_id IS NOT NULL AND branch_id IS NOT NULL
+                        GROUP BY \`${TENANT_COLUMN}\`, client_id
+                     ) src
+                       ON src.\`${TENANT_COLUMN}\` = c.\`${TENANT_COLUMN}\`
+                      AND src.client_id = c.id
+                     SET c.branch_id = src.branch_id
+                     WHERE c.branch_id IS NULL
+                       AND src.branch_count = 1`
+                );
+                await conn.query(
+                    `UPDATE suppliers s
+                     JOIN (
+                        SELECT \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier)) AS supplier_key, MIN(branch_id) AS branch_id, COUNT(DISTINCT branch_id) AS branch_count
+                        FROM compras
+                        WHERE supplier IS NOT NULL AND TRIM(supplier) <> '' AND branch_id IS NOT NULL
+                        GROUP BY \`${TENANT_COLUMN}\`, LOWER(TRIM(supplier))
+                     ) src
+                       ON src.\`${TENANT_COLUMN}\` = s.\`${TENANT_COLUMN}\`
+                      AND src.supplier_key = LOWER(TRIM(s.name))
+                     SET s.branch_id = src.branch_id
+                     WHERE s.branch_id IS NULL
+                       AND src.branch_count = 1`
+                );
+            } else {
+                console.warn('[DB] Reparaciones automaticas de datos desactivadas (BOOTSTRAP_DATA_REPAIRS_ENABLED=false). Solo se aplica esquema.');
+            }
 
             for (const tableName of TENANT_ID_TABLES) {
                 await ensureTenantIdColumn(conn, tableName);
             }
 
-            for (const tableName of TENANT_ID_TABLES) {
-                await backfillTenantId(conn, tableName);
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                for (const tableName of TENANT_ID_TABLES) {
+                    await backfillTenantId(conn, tableName);
+                }
             }
 
             const fksToDrop = [
@@ -2224,8 +2553,11 @@ async function ensureOperationalTenantIsolation() {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
 
-            await ensureProductCategoriesIntegrity(conn);
-            await ensureProductCatalogIntegrity(conn);
+            if (BOOTSTRAP_DATA_REPAIRS_ENABLED) {
+                await ensureProductCategoriesIntegrity(conn);
+                await ensureProductCatalogIntegrity(conn);
+                await reconcileClientCurrentAccountBalances(conn);
+            }
             await ensureTenantScopedForeignKeys(conn);
         } finally {
             await conn.end();
@@ -3197,6 +3529,40 @@ async function listClientBranches(clientId) {
     }
 }
 
+function hasMultipleActiveBranches(branches = []) {
+    if (!Array.isArray(branches)) return false;
+    return branches.filter((branch) => {
+        const branchId = Number(branch?.id);
+        return Number.isFinite(branchId) && branchId > 0;
+    }).length > 1;
+}
+
+function buildBranchScopeClause({ column = 'branch_id', branchId, allowLegacyNullFallback = false } = {}) {
+    const resolvedBranchId = Number(branchId);
+    if (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0) {
+        return { sql: '', params: [] };
+    }
+
+    if (allowLegacyNullFallback) {
+        return {
+            sql: `(${column} = ? OR ${column} IS NULL)`,
+            params: [resolvedBranchId],
+        };
+    }
+
+    return {
+        sql: `${column} = ?`,
+        params: [resolvedBranchId],
+    };
+}
+
+function warnBranchScopeFallback(event, payload = {}) {
+    console.warn(`[BRANCH SCOPE] ${event}`, {
+        strict: STRICT_BRANCH_SCOPING,
+        ...payload,
+    });
+}
+
 function getRequestedActiveBranchId(req) {
     const rawValue = req?.headers?.['x-mm-active-branch-id'] ?? req?.query?.activeBranchId ?? req?.body?.activeBranchId;
     const branchId = Number(rawValue);
@@ -3300,6 +3666,31 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
     }
 
     return null;
+}
+
+async function assertAssignableUserBranch({ clientId, role, branchId }) {
+    const normalizedRole = String(role || '').trim().toLowerCase();
+    if (normalizedRole !== 'employee') {
+        return;
+    }
+
+    const clientBranches = await listClientBranches(clientId);
+    const normalizedBranchId = Number(branchId);
+    const hasAssignedBranch = Number.isFinite(normalizedBranchId) && normalizedBranchId > 0;
+
+    if (clientBranches.length > 1 && !hasAssignedBranch) {
+        const error = new Error('Este cliente tiene varias sucursales. Asignale una sucursal al usuario antes de guardar.');
+        error.statusCode = 400;
+        error.code = 'BRANCH_REQUIRED';
+        throw error;
+    }
+
+    if (hasAssignedBranch && !clientBranches.some((branch) => Number(branch.id) === normalizedBranchId)) {
+        const error = new Error('La sucursal elegida no pertenece a este cliente.');
+        error.statusCode = 400;
+        error.code = 'INVALID_BRANCH';
+        throw error;
+    }
 }
 
 function tenantWhereClause(table, tenantId, prefix = '') {
@@ -3670,6 +4061,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS suppliers (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             name            VARCHAR(150),
             cuit            VARCHAR(20),
             iva_condition   VARCHAR(50),
@@ -3685,11 +4077,13 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_suppliers_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_suppliers_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_suppliers_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_suppliers_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS products (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             canonical_key   VARCHAR(191) NOT NULL,
             name            VARCHAR(150) NOT NULL,
             category_id     INT,
@@ -3705,14 +4099,16 @@ function getSchemaTables() {
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_products_tenant_id (\`${TENANT_COLUMN}\`, id),
-            UNIQUE KEY uniq_products_tenant_canonical (\`${TENANT_COLUMN}\`, canonical_key),
-            UNIQUE KEY uniq_products_tenant_plu (\`${TENANT_COLUMN}\`, plu),
+            UNIQUE KEY uniq_products_tenant_branch_canonical (\`${TENANT_COLUMN}\`, branch_id, canonical_key),
+            UNIQUE KEY uniq_products_tenant_branch_plu (\`${TENANT_COLUMN}\`, branch_id, plu),
             INDEX idx_products_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_products_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_products_tenant_category (\`${TENANT_COLUMN}\`, category_id)
         )`,
         `CREATE TABLE IF NOT EXISTS purchase_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             name            VARCHAR(150) NOT NULL,
             product_id      INT,
             category_id     INT,
@@ -3726,6 +4122,7 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_purchase_items_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_purchase_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_purchase_items_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_purchase_items_tenant_category (\`${TENANT_COLUMN}\`, category_id),
             CONSTRAINT purchase_items_ibfk_1 FOREIGN KEY (\`${TENANT_COLUMN}\`, category_id) REFERENCES categories(\`${TENANT_COLUMN}\`, id) ON DELETE SET NULL
         )`,
@@ -3752,6 +4149,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS clients (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             name            VARCHAR(150) NOT NULL,
             first_name      VARCHAR(100),
             last_name       VARCHAR(100),
@@ -3777,7 +4175,8 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_clients_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_clients_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_clients_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_clients_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS ventas (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
@@ -3807,6 +4206,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS ventas_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             venta_id        INT NOT NULL,
             product_id      INT,
             product_name    VARCHAR(150),
@@ -3819,6 +4219,7 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_ventas_items_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_ventas_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_ventas_items_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_ventas_items_tenant_venta (\`${TENANT_COLUMN}\`, venta_id),
             INDEX idx_ventas_items_tenant_promo (\`${TENANT_COLUMN}\`, promo_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, venta_id) REFERENCES ventas(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
@@ -3826,6 +4227,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS compras (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             date            DATETIME NOT NULL,
             supplier        VARCHAR(150),
             supplier_id     INT,
@@ -3836,11 +4238,13 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_compras_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_compras_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_compras_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_compras_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS compras_items (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             purchase_id     INT NOT NULL,
             product_id      INT,
             product_name    VARCHAR(150),
@@ -3852,22 +4256,26 @@ function getSchemaTables() {
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_compras_items_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_compras_items_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_compras_items_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_compras_items_tenant_purchase (\`${TENANT_COLUMN}\`, purchase_id),
             FOREIGN KEY (\`${TENANT_COLUMN}\`, purchase_id) REFERENCES compras(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
         `CREATE TABLE IF NOT EXISTS supplier_item_tax_profiles (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             supplier_name   VARCHAR(150) NOT NULL,
             product_name    VARCHAR(150) NOT NULL,
             last_iva_rate   DECIMAL(5,2) DEFAULT 10.5,
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_sitp_tenant_supplier_product (\`${TENANT_COLUMN}\`, supplier_name(100), product_name(100)),
-            INDEX idx_sitp_tenant (\`${TENANT_COLUMN}\`)
+            UNIQUE KEY uniq_sitp_tenant_branch_supplier_product (\`${TENANT_COLUMN}\`, branch_id, supplier_name(100), product_name(100)),
+            INDEX idx_sitp_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_sitp_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS animal_lots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             purchase_id     INT,
             supplier        VARCHAR(150),
             date            DATETIME,
@@ -3876,11 +4284,13 @@ function getSchemaTables() {
             status          VARCHAR(50),
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_animal_lots_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_animal_lots_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_animal_lots_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_animal_lots_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS despostada_logs (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id           INT,
             type                VARCHAR(50),
             date                DATETIME,
             supplier            VARCHAR(150),
@@ -3889,7 +4299,8 @@ function getSchemaTables() {
             lot_id              INT,
             synced              TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_despostada_logs_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_despostada_logs_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_despostada_logs_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_despostada_logs_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS pedidos (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -3940,6 +4351,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS menu_digital (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT,
             product_id      INT,
             product_name    VARCHAR(150),
             price           DECIMAL(12,2),
@@ -3947,7 +4359,8 @@ function getSchemaTables() {
             is_offer        TINYINT(1) DEFAULT 0,
             synced          TINYINT(1) DEFAULT 0,
             UNIQUE KEY uniq_menu_digital_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_menu_digital_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_menu_digital_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS promotions (
             id                  INT AUTO_INCREMENT PRIMARY KEY,
@@ -4171,13 +4584,15 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             product_ref_id  INT,
             product_id      VARCHAR(191),
             price           DECIMAL(12,2),
             plu             VARCHAR(20),
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_prices_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_prices_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         // Tabla canónica de historial de precios (reemplaza a prices a mediano plazo).
         // Cada fila es un evento de precio: no se actualiza, se inserta una nueva.
@@ -4185,6 +4600,7 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS product_prices (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             product_id      INT NOT NULL,
             price           DECIMAL(12,2) NOT NULL DEFAULT 0,
             plu             VARCHAR(20),
@@ -4193,7 +4609,24 @@ function getSchemaTables() {
             created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             UNIQUE KEY uniq_product_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_pp_tenant_product_eff (\`${TENANT_COLUMN}\`, product_id, effective_at),
+            INDEX idx_pp_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_pp_tenant_plu (\`${TENANT_COLUMN}\`, plu)
+        )`,
+        `CREATE TABLE IF NOT EXISTS branch_product_prices (
+            id              INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NOT NULL,
+            product_id      INT NOT NULL,
+            price           DECIMAL(12,2) NOT NULL DEFAULT 0,
+            plu             VARCHAR(20),
+            source          VARCHAR(50),
+            effective_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_branch_product_prices_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_branch_product_price (\`${TENANT_COLUMN}\`, branch_id, product_id),
+            INDEX idx_bpp_tenant_branch (\`${TENANT_COLUMN}\`, branch_id),
+            INDEX idx_bpp_tenant_product (\`${TENANT_COLUMN}\`, product_id)
         )`,
         `CREATE TABLE IF NOT EXISTS users (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -4209,14 +4642,16 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS scale_users (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             slot_no         TINYINT UNSIGNED NOT NULL,
             display_name    VARCHAR(100) NOT NULL,
             active          TINYINT(1) DEFAULT 1,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+            UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no),
             UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_scale_users_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS user_permissions (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -4853,7 +5288,7 @@ const ALLOWED_TABLES = new Set([
     'settings', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'products', 'purchase_items',
     'stock', 'clients', 'ventas', 'ventas_items', 'compras', 'compras_items',
     'animal_lots', 'despostada_logs', 'pedidos', 'repartidores', 'menu_digital',
-    'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'users', 'user_permissions',
+    'caja_movimientos', 'cash_closures', 'supplier_item_tax_profiles', 'prices', 'product_prices', 'branch_product_prices', 'users', 'user_permissions',
     'deleted_sales_history', 'branch_stock_snapshots', 'branch_transfers', 'branch_transfer_items', 'promotions', 'scale_users',
 ]);
 
@@ -4880,6 +5315,51 @@ function deserializeRow(row) {
         out[key] = value;
     }
     return out;
+}
+
+async function applyBranchProductPrices(pool, tenantId, branchId, rows) {
+    const resolvedBranchId = Number(branchId);
+    if (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0 || !Array.isArray(rows) || rows.length === 0) {
+        return rows;
+    }
+
+    const productIds = rows
+        .map((row) => Number(row?.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+    if (productIds.length === 0) return rows;
+
+    const placeholders = productIds.map(() => '?').join(', ');
+    let priceRows;
+    try {
+        const [rows] = await pool.query(
+            `SELECT product_id, price, plu, source, effective_at, updated_at
+             FROM branch_product_prices
+             WHERE \`${TENANT_COLUMN}\` = ?
+               AND branch_id = ?
+               AND product_id IN (${placeholders})`,
+            [tenantId, resolvedBranchId, ...productIds]
+        );
+        priceRows = rows;
+    } catch (error) {
+        if (!isUnknownBranchColumnError(error)) {
+            throw error;
+        }
+        return rows;
+    }
+    const byProductId = new Map(priceRows.map((row) => [Number(row.product_id), row]));
+
+    return rows.map((row) => {
+        const branchPrice = byProductId.get(Number(row?.id));
+        if (!branchPrice) return row;
+        return {
+            ...row,
+            global_price: row.current_price,
+            current_price: branchPrice.price,
+            branch_price: branchPrice.price,
+            branch_price_source: branchPrice.source || null,
+            branch_price_effective_at: branchPrice.effective_at || branchPrice.updated_at || null,
+        };
+    });
 }
 
 function isDateLikeColumn(columnType) {
@@ -4951,7 +5431,12 @@ function normalizePluValue(value) {
     return String(numeric);
 }
 
-async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
+function isUnknownBranchColumnError(error) {
+    const message = String(error?.message || '').toLowerCase();
+    return error?.code === 'ER_BAD_FIELD_ERROR' && message.includes('branch_id');
+}
+
+async function findProductByPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
     const normalizedPlu = normalizePluValue(plu);
     if (!normalizedPlu) return null;
 
@@ -4964,18 +5449,45 @@ async function findProductByPlu(pool, tenantId, plu, excludeProductId = null) {
                     plu = ?
                     OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
                  )`;
+    const normalizedBranchId = Number(branchId);
+    if (Number.isFinite(normalizedBranchId) && normalizedBranchId > 0) {
+        sql += ' AND branch_id = ?';
+        params.push(normalizedBranchId);
+    }
     if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
         sql += ' AND id <> ?';
         params.push(Number(excludeProductId));
     }
     sql += ' ORDER BY id ASC LIMIT 1';
 
-    const [rows] = await pool.query(sql, params);
-    return rows?.[0] || null;
+    try {
+        const [rows] = await pool.query(sql, params);
+        return rows?.[0] || null;
+    } catch (error) {
+        if (!isUnknownBranchColumnError(error) || !(Number.isFinite(normalizedBranchId) && normalizedBranchId > 0)) {
+            throw error;
+        }
+        const retryParams = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+        let retrySql = `SELECT id, name, plu
+                        FROM products
+                        WHERE tenant_id = ?
+                          AND COALESCE(active, 1) = 1
+                          AND (
+                             plu = ?
+                             OR (plu REGEXP '^[0-9]+$' AND CAST(plu AS UNSIGNED) = ?)
+                          )`;
+        if (Number.isFinite(Number(excludeProductId)) && Number(excludeProductId) > 0) {
+            retrySql += ' AND id <> ?';
+            retryParams.push(Number(excludeProductId));
+        }
+        retrySql += ' ORDER BY id ASC LIMIT 1';
+        const [rows] = await pool.query(retrySql, retryParams);
+        return rows?.[0] || null;
+    }
 }
 
-async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null) {
-    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId);
+async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
+    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId, branchId);
     if (!conflict) return;
 
     const normalizedPlu = normalizePluValue(plu);
@@ -5308,6 +5820,14 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const resolvedBranchId = validCols.includes('branch_id') && BRANCH_SCOPED_TABLES.has(table)
                 ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: rec || {} })
                 : null;
+            if (validCols.includes('branch_id') && STRICT_BRANCH_SCOPED_TABLES.has(table)) {
+                const requestedBranchId = Number(rec?.branch_id ?? rec?.branchId ?? resolvedBranchId);
+                if (!Number.isFinite(requestedBranchId) || requestedBranchId <= 0) {
+                    const error = new Error(`Debe especificar branch_id para ${table}`);
+                    error.statusCode = 400;
+                    throw error;
+                }
+            }
             for (const col of validCols) {
                 if (AUTO_COLS.has(col)) continue;
                 if (excludeId && col === 'id') continue;
@@ -5361,7 +5881,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             await assertCashMovementBranch(filtered);
             if (table === 'products') {
                 filtered.plu = normalizePluValue(filtered.plu);
-                await assertUniqueProductPlu(pool, tenantId, filtered.plu);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu, null, filtered.branch_id);
             }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
@@ -5385,9 +5905,11 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             } catch (insertError) {
                 if (insertError?.code === 'ER_DUP_ENTRY' && table === 'products' && filtered.canonical_key) {
                     const scope = tenantWhereClause(table, tenantId);
+                    const branchClause = Number(filtered.branch_id) > 0 ? ' AND branch_id = ?' : '';
+                    const branchParams = Number(filtered.branch_id) > 0 ? [Number(filtered.branch_id)] : [];
                     const [existingRows] = await pool.query(
-                        `SELECT id, active FROM \`${table}\` WHERE canonical_key = ? AND ${scope.sql} LIMIT 1`,
-                        [filtered.canonical_key, ...scope.params]
+                        `SELECT id, active FROM \`${table}\` WHERE canonical_key = ? AND ${scope.sql}${branchClause} LIMIT 1`,
+                        [filtered.canonical_key, ...scope.params, ...branchParams]
                     );
                     const existing = existingRows?.[0] || null;
                     const existingId = existing?.id;
@@ -5425,10 +5947,18 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             await assertCashMovementBranch(filtered, numId);
             if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
                 filtered.plu = normalizePluValue(filtered.plu);
-                await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId);
+                await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId, filtered.branch_id);
             }
             const scope = tenantWhereClause(table, tenantId);
-            await pool.query(`UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}`, [filtered, numId, ...scope.params]);
+            const strictBranchId = Number(filtered.branch_id);
+            const strictBranchSql = STRICT_BRANCH_SCOPED_TABLES.has(table) && Number.isFinite(strictBranchId) && strictBranchId > 0
+                ? ' AND `branch_id` = ?'
+                : '';
+            const strictBranchParams = strictBranchSql ? [strictBranchId] : [];
+            await pool.query(
+                `UPDATE \`${table}\` SET ? WHERE id = ? AND ${scope.sql}${strictBranchSql}`,
+                [filtered, numId, ...scope.params, ...strictBranchParams]
+            );
             await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: filtered, id: numId });
             return res.json({ ok: true });
         }
@@ -5437,6 +5967,15 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             const numId = parseInt(id, 10);
             if (!numId) return res.status(400).json({ error: 'id numérico requerido para delete' });
             const scope = tenantWhereClause(table, tenantId);
+            let strictBranchSql = '';
+            let strictBranchParams = [];
+            if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
+                const resolvedBranchId = await resolveOperationalBranchId({ pool, tenantId, accessContext, record: {} });
+                if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+                    strictBranchSql = ' AND `branch_id` = ?';
+                    strictBranchParams = [resolvedBranchId];
+                }
+            }
             if (table === 'products') {
                 const [result] = await pool.query(
                     `UPDATE \`${table}\`
@@ -5445,13 +5984,13 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                          archived_plu = COALESCE(archived_plu, plu),
                          plu = NULL,
                          updated_at = NOW()
-                     WHERE id = ? AND ${scope.sql}`,
-                    [numId, ...scope.params]
+                     WHERE id = ? AND ${scope.sql}${strictBranchSql}`,
+                    [numId, ...scope.params, ...strictBranchParams]
                 );
                 await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
                 return res.json({ ok: true, archived: Number(result?.affectedRows || 0) > 0 });
             }
-            await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}`, [numId, ...scope.params]);
+            await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}${strictBranchSql}`, [numId, ...scope.params, ...strictBranchParams]);
             await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
             return res.json({ ok: true });
         }
@@ -5459,18 +5998,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         if (operation === 'upsert') {
             // Para settings (PK = key) u otras tablas con ON DUPLICATE KEY UPDATE
             if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
-            const validCols = await getTableColumns(pool, dbName, table);
-            const filtered = {};
-            for (const col of validCols) {
-                if (AUTO_COLS.has(col)) continue;
-                if (col === TENANT_COLUMN) {
-                    filtered[col] = tenantId;
-                    continue;
-                }
-                if (normalizedRecord[col] !== undefined && normalizedRecord[col] !== null) {
-                    filtered[col] = normalizeColumnValue(normalizedRecord[col], tableDesc.get(col) || '');
-                }
-            }
+            const filtered = await filterRecord(normalizedRecord, false);
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para upsert' });
             }
@@ -5587,7 +6115,7 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
         const params = [tenantId, end];
 
         if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
-            where.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+            where.push('`branch_id` = ?');
             params.push(resolvedBranchId);
         }
 
@@ -5636,6 +6164,29 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
                 start, end,
                 ...params,
             ]
+        );
+
+        const saleWhere = [
+            '`tenant_id` = ?',
+            '`date` IS NOT NULL',
+            '`date` >= ?',
+            '`date` <= ?',
+            '`clientId` IS NOT NULL',
+        ];
+        const saleParams = [tenantId, start, end];
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            saleWhere.push('`branch_id` = ?');
+            saleParams.push(resolvedBranchId);
+        }
+        const [currentAccountSaleRows] = await pool.query(
+            `SELECT total, payment_method, payment_breakdown
+             FROM ventas
+             WHERE ${saleWhere.join(' AND ')}`,
+            saleParams
+        );
+        const currentAccountSales = currentAccountSaleRows.reduce(
+            (sum, sale) => sum + currentAccountAmountFromStoredSale(sale),
+            0
         );
 
         const byCashAccount = {};
@@ -5702,6 +6253,7 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
             branchId: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null,
             includesLegacyGlobalMovements: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0,
             accumulatedBalance: totals.accumulated,
+            currentAccountSales,
             dailyBalance: {
                 opening: totals.opening,
                 sales: totals.sales,
@@ -5759,11 +6311,33 @@ app.get('/api/caja/report-data', verifyFirebaseToken, async (req, res) => {
             })
             : null;
 
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        const requiresExplicitBranch = hasMultipleActiveBranches(activeBranches);
+        if (requiresExplicitBranch && (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0)) {
+            if (STRICT_BRANCH_SCOPING) {
+                return res.status(400).json({
+                    error: 'Debe especificar branch_id para consultar caja',
+                    code: 'BRANCH_REQUIRED',
+                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                });
+            }
+            warnBranchScopeFallback('cash-report-without-branch', {
+                tenantId,
+                clientId: accessContext?.client?.id ?? null,
+                userId: accessContext?.user?.id ?? null,
+                path: req.path,
+            });
+        }
+
         const where = ['tenant_id = ?'];
         const params = [tenantId];
-        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
-            where.push('(branch_id = ? OR branch_id IS NULL)');
-            params.push(resolvedBranchId);
+        const branchScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: false,
+        });
+        if (branchScope.sql) {
+            where.push(branchScope.sql);
+            params.push(...branchScope.params);
         }
 
         const cashAccountWhere = selectedCashAccount
@@ -5919,10 +6493,14 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
         const dayEnd = `${selectedDate} 23:59:59`;
         const openingDate = `${selectedDate} 08:00:00`;
         const branchId = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null;
+        const branchDeleteScope = buildBranchScopeClause({
+            branchId,
+            allowLegacyNullFallback: false,
+        });
 
         await conn.beginTransaction();
-        const branchDeleteSql = branchId ? 'AND (branch_id = ? OR branch_id IS NULL)' : 'AND branch_id IS NULL';
-        const branchDeleteParams = branchId ? [branchId] : [];
+        const branchDeleteSql = branchDeleteScope.sql ? `AND ${branchDeleteScope.sql}` : 'AND branch_id IS NULL';
+        const branchDeleteParams = branchDeleteScope.params;
         await conn.query(
             `DELETE FROM caja_movimientos
              WHERE tenant_id = ?
@@ -6018,16 +6596,24 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         const requiresExplicitBranch = activeBranches.length > 0;
         if (!hasResolvedBranch) {
             if (requiresExplicitBranch) {
-                return res.status(400).json({
-                    code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
-                    error: 'Seleccioná una sucursal antes de transferir entre cajas',
-                    receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
-                    receivedActiveBranchId: req.body?.activeBranchId ?? null,
-                    headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
-                    userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
-                    activeBranchId: accessContext?.activeBranch?.id ?? null,
-                    activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
-                    role: accessContext?.user?.role ?? null,
+                if (STRICT_BRANCH_SCOPING) {
+                    return res.status(400).json({
+                        code: 'CASHBOX_TRANSFER_BRANCH_REQUIRED',
+                        error: 'Seleccioná una sucursal antes de transferir entre cajas',
+                        receivedBranchId: req.body?.branchId ?? req.body?.branch_id ?? null,
+                        receivedActiveBranchId: req.body?.activeBranchId ?? null,
+                        headerActiveBranchId: req.headers?.['x-mm-active-branch-id'] ?? null,
+                        userBranchId: accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId ?? null,
+                        activeBranchId: accessContext?.activeBranch?.id ?? null,
+                        activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+                        role: accessContext?.user?.role ?? null,
+                    });
+                }
+                warnBranchScopeFallback('cash-transfer-without-branch', {
+                    tenantId,
+                    clientId: accessContext?.client?.id ?? null,
+                    userId: accessContext?.user?.id ?? null,
+                    path: req.path,
                 });
             }
 
@@ -6042,8 +6628,12 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         conn = await pool.getConnection();
         await conn.beginTransaction();
 
-        const branchWhereSql = hasResolvedBranch ? 'AND (branch_id = ? OR branch_id IS NULL)' : '';
-        const branchWhereParams = hasResolvedBranch ? [resolvedBranchId] : [];
+        const branchScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: false,
+        });
+        const branchWhereSql = branchScope.sql ? `AND ${branchScope.sql}` : '';
+        const branchWhereParams = branchScope.params;
         const [balanceRows] = await conn.query(
             `SELECT SUM(CASE
                 WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
@@ -6282,16 +6872,45 @@ app.get('/api/bootstrap', verifyFirebaseToken, async (req, res) => {
 
         const tables = requestedTables.length > 0
             ? requestedTables.filter((t) => ALLOWED_TABLES.has(t))
-            : ['settings', 'users', 'user_permissions', 'scale_users', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'prices', 'promotions', 'stock'];
+            : ['settings', 'users', 'user_permissions', 'scale_users', 'payment_methods', 'categories', 'product_categories', 'suppliers', 'purchase_items', 'clients', 'products', 'product_prices', 'branch_product_prices', 'prices', 'promotions', 'stock'];
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
 
         const payload = {};
         for (const table of tables) {
             const scope = tenantWhereClause(table, tenantId);
-            const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}`, scope.params);
-            payload[table] = rows.map(deserializeRow);
+            const validCols = await getTableColumns(pool, dbName, table);
+            const scopedBranchId = Number(
+                accessContext?.activeBranch?.id
+                ?? accessContext?.user?.branchRecordId
+                ?? accessContext?.user?.branchId
+            );
+            const branchScoped = BRANCH_SCOPED_TABLES.has(table) && validCols.includes('branch_id') && Number.isFinite(scopedBranchId) && scopedBranchId > 0;
+            const strictWithoutBranch = BRANCH_SCOPED_TABLES.has(table) && STRICT_BRANCH_SCOPED_TABLES.has(table) && validCols.includes('branch_id') && !branchScoped;
+            const branchSql = strictWithoutBranch
+                ? ' AND 1 = 0'
+                : branchScoped
+                    ? (STRICT_BRANCH_SCOPED_TABLES.has(table) ? ' AND `branch_id` = ?' : ' AND (`branch_id` = ? OR `branch_id` IS NULL)')
+                    : '';
+            const branchParams = branchScoped ? [scopedBranchId] : [];
+            try {
+                const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}${branchSql}`, [...scope.params, ...branchParams]);
+                payload[table] = rows.map(deserializeRow);
+            } catch (error) {
+                if (!isUnknownBranchColumnError(error) || !validCols.includes('branch_id')) {
+                    throw error;
+                }
+                const [rows] = await pool.query(`SELECT * FROM \`${table}\` WHERE ${scope.sql}`, scope.params);
+                payload[table] = rows.map(deserializeRow);
+            }
         }
 
         return res.json({
@@ -6315,13 +6934,44 @@ app.get('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         const limit = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50, 500));
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const resolvedBranchId = await resolveOperationalBranchId({
+            pool,
+            tenantId,
+            accessContext,
+            record: {
+                branch_id: req.query?.branch_id,
+                branchId: req.query?.branchId,
+            },
+        });
+        const productCols = await getTableColumns(pool, dbName, 'products');
+        const priceCols = await getTableColumns(pool, dbName, 'product_prices');
+        if (productCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            const [[product]] = await pool.query(
+                `SELECT id FROM products WHERE tenant_id = ? AND id = ? AND branch_id = ? LIMIT 1`,
+                [tenantId, productId, resolvedBranchId]
+            );
+            if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
+        }
+        const branchFilterSql = priceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? ' AND branch_id = ?'
+            : '';
+        const params = priceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? [tenantId, productId, resolvedBranchId, limit]
+            : [tenantId, productId, limit];
         const [rows] = await pool.query(
             `SELECT id, product_id, price, plu, source, effective_at, created_at
              FROM product_prices
-             WHERE tenant_id = ? AND product_id = ?
+             WHERE tenant_id = ? AND product_id = ?${branchFilterSql}
              ORDER BY effective_at DESC, id DESC
              LIMIT ?`,
-            [tenantId, productId, limit]
+            params
         );
         return res.json({ ok: true, prices: rows });
     } catch (err) {
@@ -6332,7 +6982,7 @@ app.get('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
 
 // ── RUTA: POST /api/products/:id/prices ───────────────────────────────────
 // Registra un nuevo precio para un producto (append-only, nunca modifica histórico).
-// Body: { price, plu?, source? }
+// Body: { price, plu?, source?, branchId? }
 app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
     try {
         const productId = parseInt(req.params.id, 10);
@@ -6347,27 +6997,98 @@ app.post('/api/products/:id/prices', verifyFirebaseToken, async (req, res) => {
         const source = String(req.body?.source || 'manual').trim().slice(0, 50);
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const resolvedBranchId = await resolveOperationalBranchId({
+            pool,
+            tenantId,
+            accessContext,
+            record: {
+                branch_id: req.body?.branch_id,
+                branchId: req.body?.branchId,
+            },
+        });
+
+        const productCols = await getTableColumns(pool, dbName, 'products');
+        const productsHaveBranchId = productCols.includes('branch_id');
 
         // Verificar que el producto pertenece a este tenant
+        const productWhere = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 && productsHaveBranchId
+            ? 'tenant_id = ? AND id = ? AND branch_id = ?'
+            : 'tenant_id = ? AND id = ?';
+        const productParams = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 && productsHaveBranchId
+            ? [tenantId, productId, resolvedBranchId]
+            : [tenantId, productId];
         const [[product]] = await pool.query(
-            'SELECT id FROM products WHERE tenant_id = ? AND id = ? LIMIT 1',
-            [tenantId, productId]
+            `SELECT id FROM products WHERE ${productWhere} LIMIT 1`,
+            productParams
         );
         if (!product) return res.status(404).json({ error: 'Producto no encontrado' });
-        await assertUniqueProductPlu(pool, tenantId, plu, productId);
+        await assertUniqueProductPlu(pool, tenantId, plu, productId, productsHaveBranchId ? resolvedBranchId : null);
 
         const now = new Date();
-        const [result] = await pool.query(
-            `INSERT INTO product_prices (tenant_id, product_id, price, plu, source, effective_at, created_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [tenantId, productId, price, plu, source, now, now]
-        );
-        // Actualizar snapshot en products.current_price
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            const [result] = await pool.query(
+                `INSERT INTO branch_product_prices
+                    (tenant_id, branch_id, product_id, price, plu, source, effective_at, created_at, updated_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ON DUPLICATE KEY UPDATE
+                    price = VALUES(price),
+                    plu = VALUES(plu),
+                    source = VALUES(source),
+                    effective_at = VALUES(effective_at),
+                    updated_at = VALUES(updated_at)`,
+                [tenantId, resolvedBranchId, productId, price, plu, source, now, now, now]
+            );
+            await pool.query(
+                `INSERT INTO product_prices
+                    (tenant_id, branch_id, product_id, price, plu, source, effective_at, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+                [tenantId, resolvedBranchId, productId, price, plu, source, now, now]
+            );
+            await pool.query(
+                'UPDATE products SET current_price = ?, plu = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+                [price, plu, now, tenantId, productId]
+            );
+            await queueScaleProductSyncIfNeeded({
+                pool,
+                tenantId,
+                table: 'branch_product_prices',
+                operation: 'upsert',
+                record: { product_id: productId, branch_id: resolvedBranchId, price, plu, source },
+                id: result.insertId || productId,
+            });
+            return res.json({ ok: true, id: result.insertId || productId, branchId: resolvedBranchId });
+        }
+
+        const productPriceCols = await getTableColumns(pool, dbName, 'product_prices');
+        const productPriceInsertSql = productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? `INSERT INTO product_prices (tenant_id, branch_id, product_id, price, plu, source, effective_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+            : `INSERT INTO product_prices (tenant_id, product_id, price, plu, source, effective_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`;
+        const productPriceParams = productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0
+            ? [tenantId, resolvedBranchId, productId, price, plu, source, now, now]
+            : [tenantId, productId, price, plu, source, now, now];
+        const [result] = await pool.query(productPriceInsertSql, productPriceParams);
         await pool.query(
-            'UPDATE products SET current_price = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
-            [price, now, tenantId, productId]
+            'UPDATE products SET current_price = ?, plu = ?, updated_at = ? WHERE tenant_id = ? AND id = ?',
+            [price, plu, now, tenantId, productId]
         );
-        return res.json({ ok: true, id: result.insertId });
+        await queueScaleProductSyncIfNeeded({
+            pool,
+            tenantId,
+            table: 'product_prices',
+            operation: 'insert',
+            record: { product_id: productId, price, plu, source },
+            id: result.insertId,
+        });
+        return res.json({ ok: true, id: result.insertId, branchId: null });
     } catch (err) {
         console.error('[PRODUCT PRICES WRITE ERROR]', err.message);
         res.status(err.statusCode || 500).json({ error: err.message });
@@ -6396,6 +7117,7 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
         const scope = tenantWhereClause(table, tenantId);
         const extraWhere = [];
         const extraParams = [];
+        let scopedBranchIdForRead = null;
 
         if (table === 'products' && validCols.includes('active') && !includeInactive) {
             extraWhere.push('COALESCE(active, 1) = 1');
@@ -6415,9 +7137,34 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 ?? accessContext?.user?.branchId
             );
             if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
-                // Sucursal activa o empleado atado a sucursal: devuelve esa sucursal + filas globales.
-                extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+                // Catálogos/stock estrictos: una sucursal no ve artículos de otra ni filas globales heredadas.
+                if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
+                    extraWhere.push('`branch_id` = ?');
+                } else {
+                    extraWhere.push('(`branch_id` = ? OR `branch_id` IS NULL)');
+                }
                 extraParams.push(scopedBranchId);
+                scopedBranchIdForRead = scopedBranchId;
+            } else if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
+                extraWhere.push('1 = 0');
+            }
+        }
+
+        if (table === 'products') {
+            const accessContext = await getClientAccessContext({
+                uid: req.firebaseUser.uid,
+                email: req.firebaseUser.email,
+                _internalAdmin: req.firebaseUser?._internalAdmin || null,
+                _supportClientId: req.firebaseUser?._supportClientId || null,
+            });
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+            const productReadBranchId = Number(
+                accessContext?.activeBranch?.id
+                ?? accessContext?.user?.branchRecordId
+                ?? accessContext?.user?.branchId
+            );
+            if (Number.isFinite(productReadBranchId) && productReadBranchId > 0) {
+                scopedBranchIdForRead = productReadBranchId;
             }
         }
 
@@ -6425,10 +7172,31 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
             ? `${scope.sql} AND ${extraWhere.join(' AND ')}`
             : scope.sql;
 
-        let [rows] = await pool.query(
-            `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
-            [...scope.params, ...extraParams, limit, offset]
-        );
+        let rows;
+        try {
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${whereSql} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                [...scope.params, ...extraParams, limit, offset]
+            );
+        } catch (error) {
+            if (!isUnknownBranchColumnError(error) || !validCols.includes('branch_id')) {
+                throw error;
+            }
+            const fallbackWhere = table === 'products' && validCols.includes('active') && !includeInactive
+                ? `${scope.sql} AND COALESCE(active, 1) = 1`
+                : scope.sql;
+            [rows] = await pool.query(
+                `SELECT * FROM \`${table}\` WHERE ${fallbackWhere} ORDER BY \`${safeOrderBy}\` ${direction} LIMIT ? OFFSET ?`,
+                table === 'products' && validCols.includes('active') && !includeInactive
+                    ? [...scope.params, limit, offset]
+                    : [...scope.params, limit, offset]
+            );
+            scopedBranchIdForRead = null;
+        }
+
+        if (table === 'products') {
+            rows = await applyBranchProductPrices(pool, tenantId, scopedBranchIdForRead, rows);
+        }
 
         // Si faltan medios de pago predeterminados para este tenant, agregarlos sin pisar datos existentes
         if (table === 'payment_methods') {
@@ -7236,14 +8004,22 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
         }
 
         const purchaseDate = date ? new Date(String(date).split('T')[0] + 'T12:00:00') : new Date();
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: { branch_id: req.body?.branch_id },
+            })
+            : null;
 
         // 1. INSERT compras
         const [compraResult] = await conn.query(
             `INSERT INTO compras
-             (tenant_id, date, supplier, invoice_num, total, payment_method, is_account, items_detail)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+             (tenant_id, branch_id, date, supplier, invoice_num, total, payment_method, is_account, items_detail)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                tenantId, purchaseDate, String(supplier || '').trim(),
+                tenantId, resolvedBranchId || null, purchaseDate, String(supplier || '').trim(),
                 invoice_num || null, parseFloat(total) || 0,
                 payment_method || null, is_account ? 1 : 0,
                 JSON.stringify(items),
@@ -7259,11 +8035,11 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             const netSubtotal = parseFloat(item.net_subtotal) || (subtotal - ivaAmount);
             await conn.query(
                 `INSERT INTO compras_items
-                 (tenant_id, purchase_id, product_id, product_name, quantity, weight,
+                 (tenant_id, branch_id, purchase_id, product_id, product_name, quantity, weight,
                   unit_price, subtotal, iva_rate, iva_amount, net_subtotal, destination)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    tenantId, purchaseId,
+                    tenantId, resolvedBranchId || null, purchaseId,
                     item.product_id || null,
                     String(item.product_name || '').trim(),
                     parseFloat(item.quantity) || 0,
@@ -7275,18 +8051,23 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             );
         }
 
-        const resolvedBranchId = accessContext
-            ? await resolveOperationalBranchId({
-                pool,
-                tenantId,
-                accessContext,
-                record: { branch_id: req.body?.branch_id },
-            })
-            : null;
-
         // 3. Stock / animal_lots por item
         for (const item of items) {
-            const isDespostada = item.type === 'despostada';
+            let effectiveType = item.type;
+            let effectiveSpecies = item.species || 'vaca';
+            if (item.product_id) {
+                const [[productRule]] = await conn.query(
+                    `SELECT use_for_despostada, despostada_species
+                     FROM products
+                     WHERE tenant_id = ? AND id = ?
+                     LIMIT 1`,
+                    [tenantId, item.product_id]
+                );
+                if (Number(productRule?.use_for_despostada || 0) === 1 && effectiveType === 'despostada') {
+                    effectiveSpecies = productRule.despostada_species || effectiveSpecies || 'vaca';
+                }
+            }
+            const isDespostada = effectiveType === 'despostada';
             const isInternal = item.destination === 'interno';
 
             // Despostada → crear lotes (solo si tiene módulo)
@@ -7298,10 +8079,10 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                 for (let i = 0; i < numLots; i++) {
                     await conn.query(
                         `INSERT INTO animal_lots
-                         (tenant_id, purchase_id, supplier, date, species, weight, status)
-                         VALUES (?, ?, ?, ?, ?, ?, 'disponible')`,
-                        [tenantId, purchaseId, String(supplier || '').trim(),
-                         purchaseDate, item.species || 'vaca', weightPerLot]
+                         (tenant_id, branch_id, purchase_id, supplier, date, species, weight, status)
+                         VALUES (?, ?, ?, ?, ?, ?, ?, 'disponible')`,
+                        [tenantId, resolvedBranchId || null, purchaseId, String(supplier || '').trim(),
+                         purchaseDate, effectiveSpecies || 'vaca', weightPerLot]
                     );
                 }
                 continue; // no va al stock de venta
@@ -7323,7 +8104,7 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                     resolvedBranchId,
                     item.product_id || null,
                     String(item.product_name || '').trim(),
-                    item.species || item.type || 'vaca',
+                    effectiveSpecies || effectiveType || 'vaca',
                     stockQty,
                     item.unit || 'kg',
                     `compra_${purchaseId}`,
@@ -7332,12 +8113,22 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
 
             // Dual-write: registrar precio de costo en product_prices (source='compra')
             if (item.product_id && parseFloat(item.unit_price) > 0) {
-                await conn.query(
-                    `INSERT INTO product_prices
-                     (tenant_id, product_id, price, source, effective_at, created_at)
-                     VALUES (?, ?, ?, 'compra', ?, NOW())`,
-                    [tenantId, item.product_id, parseFloat(item.unit_price), purchaseDate]
-                );
+                const productPriceCols = await getTableColumns(conn, dbName, 'product_prices');
+                if (productPriceCols.includes('branch_id') && Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+                    await conn.query(
+                        `INSERT INTO product_prices
+                         (tenant_id, branch_id, product_id, price, source, effective_at, created_at)
+                         VALUES (?, ?, ?, ?, 'compra', ?, NOW())`,
+                        [tenantId, resolvedBranchId, item.product_id, parseFloat(item.unit_price), purchaseDate]
+                    );
+                } else {
+                    await conn.query(
+                        `INSERT INTO product_prices
+                         (tenant_id, product_id, price, source, effective_at, created_at)
+                         VALUES (?, ?, ?, 'compra', ?, NOW())`,
+                        [tenantId, item.product_id, parseFloat(item.unit_price), purchaseDate]
+                    );
+                }
             }
         }
 
@@ -7378,9 +8169,9 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
                     await pool.query(
                         `UPDATE purchase_items
                          SET last_price = ?, \`usage\` = ?, default_iva_rate = ?
-                         WHERE tenant_id = ? AND id = ?`,
+                         WHERE tenant_id = ? AND id = ? AND branch_id <=> ?`,
                         [parseFloat(cu.last_price), cu.usage || 'venta',
-                         parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id]
+                         parseFloat(cu.default_iva_rate) || 10.5, tenantId, cu.purchase_item_id, resolvedBranchId || null]
                     );
                 } catch (e) {
                     console.warn('[POST /api/compras] last_price update skipped:', e.message);
@@ -7394,10 +8185,10 @@ app.post('/api/compras', verifyFirebaseToken, async (req, res) => {
             try {
                 await pool.query(
                     `INSERT INTO supplier_item_tax_profiles
-                     (tenant_id, supplier_name, product_name, last_iva_rate, updated_at)
-                     VALUES (?, ?, ?, ?, NOW())
+                     (tenant_id, branch_id, supplier_name, product_name, last_iva_rate, updated_at)
+                     VALUES (?, ?, ?, ?, ?, NOW())
                      ON DUPLICATE KEY UPDATE last_iva_rate = VALUES(last_iva_rate), updated_at = NOW()`,
-                    [tenantId, String(supplier || '').trim(),
+                    [tenantId, resolvedBranchId || null, String(supplier || '').trim(),
                      String(item.product_name || '').trim(), parseFloat(item.iva_rate) || 0]
                 );
             } catch (e) {
@@ -7431,6 +8222,104 @@ const isCurrentAccountPayment = (paymentMethodName, paymentMethodType) => {
     const normalizedType = String(paymentMethodType || '').trim().toLowerCase();
     return normalizedType === 'cuenta_corriente' || normalizedName.includes('cuenta corriente');
 };
+
+const getCurrentAccountAmountFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
+    const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
+    if (!breakdown || breakdown.length === 0) {
+        const safeTotal = parseFloat(totalAmount) || 0;
+        if (safeTotal <= 0) return 0;
+        return isCurrentAccountPayment(paymentMethod, paymentMethodType) ? safeTotal : 0;
+    }
+
+    return breakdown.reduce((sum, part) => {
+        const methodName = String(
+            part?.method_name || part?.name || paymentMethod || 'Efectivo'
+        ).trim();
+        const methodType = String(
+            part?.method_type || part?.type || inferPaymentTypeByName(methodName)
+        ).trim();
+        if (!isCurrentAccountPayment(methodName, methodType)) return sum;
+        return sum + (parseFloat(part?.amount_charged ?? part?.amount ?? part?.total ?? 0) || 0);
+    }, 0);
+};
+
+async function resolveClientBalanceTargetId(conn, tenantId, clientId, branchId = null) {
+    const normalizedClientId = Number(clientId);
+    if (!Number.isFinite(normalizedClientId) || normalizedClientId <= 0) return null;
+
+    const normalizedBranchId = Number(branchId);
+    if (Number.isFinite(normalizedBranchId) && normalizedBranchId > 0) {
+        const [rows] = await conn.query(
+            `SELECT id
+             FROM clients
+             WHERE tenant_id = ?
+               AND id = ?
+               AND branch_id = ?
+             LIMIT 1`,
+            [tenantId, normalizedClientId, normalizedBranchId]
+        );
+        if (rows?.[0]?.id) return Number(rows[0].id);
+        return null;
+    }
+
+    const [fallbackRows] = await conn.query(
+        `SELECT id
+         FROM clients
+         WHERE tenant_id = ?
+           AND id = ?
+         LIMIT 1`,
+        [tenantId, normalizedClientId]
+    );
+    return fallbackRows?.[0]?.id ? Number(fallbackRows[0].id) : null;
+}
+
+async function assertClientBelongsToBranch(conn, { tenantId, clientId, branchId, label = 'cliente' } = {}) {
+    const normalizedClientId = Number(clientId);
+    if (!Number.isFinite(normalizedClientId) || normalizedClientId <= 0) return null;
+
+    const normalizedBranchId = Number(branchId);
+    if (!Number.isFinite(normalizedBranchId) || normalizedBranchId <= 0) {
+        const error = new Error(`Debe especificar branch_id para validar ${label}`);
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const [[client]] = await conn.query(
+        `SELECT id, branch_id
+         FROM clients
+         WHERE tenant_id = ?
+           AND id = ?
+           AND branch_id = ?
+         LIMIT 1`,
+        [tenantId, normalizedClientId, normalizedBranchId]
+    );
+
+    if (!client) {
+        const error = new Error(`El ${label} no pertenece a la sucursal activa`);
+        error.statusCode = 409;
+        throw error;
+    }
+
+    return client;
+}
+
+async function applyClientBalanceDelta(conn, { tenantId, clientId, branchId = null, delta = 0 } = {}) {
+    const amount = Number(delta);
+    if (!Number.isFinite(amount) || Math.abs(amount) <= 0.0001) return false;
+
+    const targetClientId = await resolveClientBalanceTargetId(conn, tenantId, clientId, branchId);
+    if (!targetClientId) return false;
+
+    await conn.query(
+        `UPDATE clients
+         SET balance = COALESCE(balance, 0) + ?,
+             last_updated = NOW()
+         WHERE tenant_id = ?
+           AND id = ?`,
+        [amount, tenantId, targetClientId]
+    );
+    return true;
+}
 
 const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreakdown, totalAmount }) => {
     const breakdown = Array.isArray(paymentBreakdown) ? paymentBreakdown : null;
@@ -7531,6 +8420,25 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             if (n >= 100) return 100;
             return n;
         };
+
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool,
+                tenantId,
+                accessContext,
+                record: { branch_id: req.body?.branch_id, receipt_code },
+            })
+            : null;
+
+        if (safeClientId) {
+            await assertClientBelongsToBranch(conn, {
+                tenantId,
+                clientId: safeClientId,
+                branchId: resolvedBranchId,
+                label: 'cliente de cuenta corriente',
+            });
+        }
+
         let safeDiscountClientId = null;
         let safeClientDiscountPct = 0;
         let safeClientDiscountAmount = 0;
@@ -7539,9 +8447,11 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             const [[discountClient]] = await conn.query(
                 `SELECT id, employee_discount_enabled, employee_discount_pct
                  FROM clients
-                 WHERE tenant_id = ? AND id = ?
+                 WHERE tenant_id = ?
+                   AND id = ?
+                   AND branch_id = ?
                  LIMIT 1`,
-                [tenantId, requestedDiscountClientId]
+                [tenantId, requestedDiscountClientId, resolvedBranchId]
             );
             const discountEnabled = Number(discountClient?.employee_discount_enabled) === 1
                 || discountClient?.employee_discount_enabled === true;
@@ -7585,15 +8495,6 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             }
         }
 
-        const resolvedBranchId = accessContext
-            ? await resolveOperationalBranchId({
-                pool,
-                tenantId,
-                accessContext,
-                record: { branch_id: req.body?.branch_id, receipt_code },
-            })
-            : null;
-
         // 1. INSERT ventas
         const [ventaResult] = await conn.query(
             `INSERT INTO ventas
@@ -7630,6 +8531,10 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 2. INSERT ventas_items
         const promoUsageById = new Map();
+        const isGenericScaleTicketItem = (item) => (
+            Boolean(item?.is_scale_offline_ticket)
+            || /^ticket.*balanza.*offline/i.test(String(item?.product_name || '').trim())
+        );
         for (const item of items) {
             const itemSubtotal = parseFloat(item.subtotal) || (parseFloat(item.price) * parseFloat(item.quantity));
             const promoId = item?.promo_payload?.id != null
@@ -7641,11 +8546,11 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
             await conn.query(
                 `INSERT INTO ventas_items
-                 (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal, promo_id, promo_kg_applied, promo_payload)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 (tenant_id, branch_id, venta_id, product_id, product_name, quantity, price, subtotal, promo_id, promo_kg_applied, promo_payload)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    tenantId, saleId,
-                    item.product_id || null,
+                    tenantId, resolvedBranchId || null, saleId,
+                    isGenericScaleTicketItem(item) ? null : (item.product_id || null),
                     String(item.product_name || '').trim(),
                     parseFloat(item.quantity) || 0,
                     parseFloat(item.price) || 0,
@@ -7673,12 +8578,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 3. INSERT movimientos negativos en stock (descuento)
         for (const item of items) {
+            if (isGenericScaleTicketItem(item)) {
+                continue;
+            }
             // Resolver product_id por FK si no vino desde el frontend
             let productId = item.product_id || null;
             if (!productId && item.product_name) {
                 const [[prod]] = await conn.query(
-                    `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
-                    [tenantId, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
+                    `SELECT id FROM products
+                     WHERE tenant_id = ?
+                       AND branch_id <=> ?
+                       AND canonical_key = ?
+                     LIMIT 1`,
+                    [tenantId, resolvedBranchId || null, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
                 );
                 if (prod) productId = prod.id;
             }
@@ -7702,16 +8614,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         // 4. Actualizar balance del cliente (solo cuenta corriente)
         if (safeClientId) {
-            const isCurrentAccount = payment_method === 'Cuenta Corriente'
-                || (Array.isArray(payment_breakdown) && payment_breakdown.some(
-                    (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
-                ));
-            if (isCurrentAccount) {
-                await conn.query(
-                    `UPDATE clients SET balance = balance - ?, last_updated = NOW()
-                     WHERE tenant_id = ? AND id = ?`,
-                    [safeTotal, tenantId, safeClientId]
-                );
+            const currentAccountAmount = getCurrentAccountAmountFromSale({
+                paymentMethod: payment_method,
+                paymentMethodType: null,
+                paymentBreakdown: payment_breakdown,
+                totalAmount: safeTotal,
+            });
+            if (currentAccountAmount > 0) {
+                await applyClientBalanceDelta(conn, {
+                    tenantId,
+                    clientId: safeClientId,
+                    branchId: resolvedBranchId || null,
+                    delta: -currentAccountAmount,
+                });
             }
         }
 
@@ -7840,36 +8755,33 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
 
         // 2. Revertir balance cliente (solo cta cte)
         if (venta.clientId) {
-            const isCurrentAccount = venta.payment_method === 'Cuenta Corriente'
-                || (() => {
-                    try {
-                        const pb = typeof venta.payment_breakdown === 'string'
-                            ? JSON.parse(venta.payment_breakdown) : venta.payment_breakdown;
-                        return Array.isArray(pb) && pb.some(
-                            (p) => p.method_type === 'cuenta_corriente' || p.method_name === 'Cuenta Corriente'
-                        );
-                    } catch { return false; }
-                })();
-            if (isCurrentAccount) {
-                await conn.query(
-                    `UPDATE clients SET balance = balance + ?, last_updated = NOW()
-                     WHERE tenant_id = ? AND id = ?`,
-                    [parseFloat(venta.total) || 0, tenantId, venta.clientId]
-                );
+            const ventaBreakdown = (() => {
+                try {
+                    if (!venta.payment_breakdown) return null;
+                    return typeof venta.payment_breakdown === 'string'
+                        ? JSON.parse(venta.payment_breakdown)
+                        : venta.payment_breakdown;
+                } catch {
+                    return null;
+                }
+            })();
+            const currentAccountAmount = getCurrentAccountAmountFromSale({
+                paymentMethod: venta.payment_method,
+                paymentMethodType: null,
+                paymentBreakdown: ventaBreakdown,
+                totalAmount: venta.total,
+            });
+            if (currentAccountAmount > 0) {
+                await applyClientBalanceDelta(conn, {
+                    tenantId,
+                    clientId: venta.clientId,
+                    branchId: venta.branch_id || null,
+                    delta: currentAccountAmount,
+                });
             }
         }
 
         // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
-        const ventaBreakdown = (() => {
-            try {
-                if (!venta.payment_breakdown) return null;
-                return typeof venta.payment_breakdown === 'string'
-                    ? JSON.parse(venta.payment_breakdown)
-                    : venta.payment_breakdown;
-            } catch {
-                return null;
-            }
-        })();
         const reversalParts = buildCajaPartsFromSale({
             paymentMethod: venta.payment_method,
             paymentMethodType: null,
@@ -8067,10 +8979,50 @@ app.get('/api/internal-admin/clients', verifyInternalAdminSession, async (req, r
                  LIMIT 1000`,
                 search ? [searchLike, searchLike, searchLike] : []
             );
+            const clientIds = rows
+                .map((client) => Number(client.id))
+                .filter((clientId) => Number.isFinite(clientId) && clientId > 0);
+            let branchRows = [];
+            if (clientIds.length) {
+                const placeholders = clientIds.map(() => '?').join(', ');
+                [branchRows] = await conn.query(
+                    `SELECT
+                        id,
+                        clientId,
+                        name,
+                        internalCode,
+                        address,
+                        isBillable,
+                        status
+                     FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+                     WHERE clientId IN (${placeholders})
+                       AND status = 'ACTIVE'
+                     ORDER BY clientId ASC, id ASC`,
+                    clientIds
+                );
+            }
+            const branchesByClientId = new Map();
+            branchRows.forEach((branch) => {
+                const clientId = Number(branch.clientId);
+                if (!branchesByClientId.has(clientId)) branchesByClientId.set(clientId, []);
+                branchesByClientId.get(clientId).push({
+                    id: branch.id,
+                    clientId: branch.clientId,
+                    name: String(branch.name || '').trim() || `Sucursal ${branch.id}`,
+                    internalCode: branch.internalCode || null,
+                    address: branch.address || null,
+                    isBillable: branch.isBillable === 1 || branch.isBillable === true,
+                    status: branch.status || 'ACTIVE',
+                });
+            });
+            const clients = rows.map((client) => ({
+                ...client,
+                branches: branchesByClientId.get(Number(client.id)) || [],
+            }));
 
             return res.json({
                 ok: true,
-                clients: rows,
+                clients,
             });
         } finally {
             conn.release();
@@ -8339,6 +9291,12 @@ app.post('/api/firebase-users', verifyFirebaseToken, async (req, res) => {
                 return res.status(400).json({ error: 'Ese email ya existe para este cliente' });
             }
 
+            await assertAssignableUserBranch({
+                clientId: ownerData.clientId,
+                role: normalizedRole,
+                branchId: newUserBranchId,
+            });
+
             const [result] = await conn.query(
                 `INSERT INTO \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  (clientId, branchId, firebaseUid, name, lastname, email, role, status, isSynced, createdAt, updatedAt)
@@ -8489,6 +9447,12 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         const writeConn = await clientsControlPool.getConnection();
         let job;
         try {
+            await assertAssignableUserBranch({
+                clientId: ownerData.clientId,
+                role: nextRole,
+                branchId: nextBranchId,
+            });
+
             await writeConn.query(
                 `UPDATE \`${CLIENTS_DB_NAME}\`.\`${CLIENT_USERS_TABLE}\`
                  SET name = ?, email = ?, role = ?, branchId = ?, status = ?, isSynced = 0, updatedAt = CURRENT_TIMESTAMP
@@ -9111,13 +10075,18 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
                 if (qty <= 0) continue;
 
                 if (item.product_id) {
+                    const stockBranchScope = buildBranchScopeClause({
+                        branchId: transfer.from_branch_id,
+                        allowLegacyNullFallback: false,
+                    });
+                    const stockBranchWhereSql = stockBranchScope.sql || 'branch_id IS NULL';
                     const [[stockRow]] = await conn.query(
                         `SELECT COALESCE(SUM(quantity), 0) AS total
                          FROM stock
                          WHERE tenant_id = ?
                            AND product_id = ?
-                           AND (branch_id = ? OR branch_id IS NULL)`,
-                        [tenantId, item.product_id, transfer.from_branch_id]
+                           AND ${stockBranchWhereSql}`,
+                        [tenantId, item.product_id, ...stockBranchScope.params]
                     );
                     const available = Number(stockRow?.total || 0);
                     if (available < qty) {
@@ -9942,39 +10911,81 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
     try {
         const pool = getOperationalPool();
         const tenantId = req.bridge.tenantId;
+        const requestedBranchId = Number(req.bridge.branchId || 0);
+        const activeBranches = req.bridge.clientId ? await listClientBranches(req.bridge.clientId) : [];
+        const requiresExplicitBranch = hasMultipleActiveBranches(activeBranches);
+        const resolvedBranchId = Number.isFinite(requestedBranchId) && requestedBranchId > 0
+            ? requestedBranchId
+            : (activeBranches.length === 1 ? Number(activeBranches[0]?.id || 0) : null);
+        if (requiresExplicitBranch && (!Number.isFinite(resolvedBranchId) || resolvedBranchId <= 0)) {
+            if (STRICT_BRANCH_SCOPING) {
+                return res.status(400).json({
+                    error: 'El bridge requiere una sucursal asignada',
+                    code: 'BRIDGE_BRANCH_REQUIRED',
+                });
+            }
+            warnBranchScopeFallback('bridge-catalog-without-branch', {
+                tenantId,
+                clientId: req.bridge.clientId ?? null,
+                deviceId: req.bridge.deviceId ?? null,
+                path: req.path,
+            });
+        }
+        const promotionScope = buildBranchScopeClause({
+            branchId: resolvedBranchId,
+            allowLegacyNullFallback: false,
+        });
+        const promotionWhereSql = promotionScope.sql ? `AND ${promotionScope.sql}` : 'AND branch_id IS NULL';
 
         const [duplicateRows] = await pool.query(
             `SELECT effective_plu_code, COUNT(*) AS qty
              FROM (
                 SELECT COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
-                FROM products
-                WHERE \`${TENANT_COLUMN}\` = ?
-                  AND COALESCE(active, 1) = 1
-                  AND deleted_at IS NULL
-                  AND COALESCE(current_price, 0) > 0
+                FROM (
+                    SELECT p.id, p.plu, COALESCE(bpp.price, p.current_price) AS effective_price
+                    FROM products p
+                    LEFT JOIN branch_product_prices bpp
+                      ON bpp.tenant_id = p.tenant_id
+                     AND bpp.product_id = p.id
+                                         AND bpp.branch_id = ?
+                    WHERE p.\`${TENANT_COLUMN}\` = ?
+                      AND p.branch_id = ?
+                      AND COALESCE(p.active, 1) = 1
+                      AND p.deleted_at IS NULL
+                ) products_with_price
+                WHERE 1 = 1
+                  AND COALESCE(effective_price, 0) > 0
                 UNION ALL
                 SELECT TRIM(CAST(promo_plu AS CHAR)) AS effective_plu_code
                 FROM promotions
                 WHERE \`${TENANT_COLUMN}\` = ?
+                  ${promotionWhereSql}
                   AND COALESCE(active, 1) = 1
                   AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
              ) x
              GROUP BY effective_plu_code
              HAVING COUNT(*) > 1
              ORDER BY effective_plu_code`,
-            [tenantId, tenantId]
+            [resolvedBranchId, tenantId, resolvedBranchId, tenantId, ...promotionScope.params]
         );
 
         const [productRows] = await pool.query(
-            `SELECT id, plu, name, category, unit, current_price, updated_at,
-                    COALESCE(NULLIF(TRIM(CAST(plu AS CHAR)), ''), CAST(id AS CHAR)) AS effective_plu_code
-             FROM products
-             WHERE \`${TENANT_COLUMN}\` = ?
-               AND COALESCE(active, 1) = 1
-               AND deleted_at IS NULL
-               AND COALESCE(current_price, 0) > 0
-             ORDER BY updated_at ASC, id ASC`,
-            [tenantId]
+            `SELECT p.id, p.plu, p.name, p.category, p.unit,
+                    COALESCE(bpp.price, p.current_price) AS current_price,
+                    COALESCE(bpp.updated_at, p.updated_at) AS updated_at,
+                    COALESCE(NULLIF(TRIM(CAST(p.plu AS CHAR)), ''), CAST(p.id AS CHAR)) AS effective_plu_code
+             FROM products p
+             LEFT JOIN branch_product_prices bpp
+               ON bpp.tenant_id = p.tenant_id
+              AND bpp.product_id = p.id
+                            AND bpp.branch_id = ?
+             WHERE p.\`${TENANT_COLUMN}\` = ?
+               AND p.branch_id = ?
+               AND COALESCE(p.active, 1) = 1
+               AND p.deleted_at IS NULL
+               AND COALESCE(bpp.price, p.current_price, 0) > 0
+             ORDER BY COALESCE(bpp.updated_at, p.updated_at) ASC, p.id ASC`,
+            [resolvedBranchId, tenantId, resolvedBranchId]
         );
 
         let promotionRows = [];
@@ -9983,9 +10994,10 @@ app.get('/api/bridge/catalog', verifyBridgeDeviceToken, async (req, res) => {
                 `SELECT *
                  FROM promotions
                  WHERE \`${TENANT_COLUMN}\` = ?
+                   ${promotionWhereSql}
                    AND TRIM(COALESCE(CAST(promo_plu AS CHAR), '')) <> ''
                  ORDER BY updated_at ASC, id ASC`,
-                [tenantId]
+                [tenantId, ...promotionScope.params]
             );
             promotionRows = rows;
         } catch (error) {
@@ -10379,6 +11391,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
         `UPDATE scale_bridge_ticket_map t
          LEFT JOIN scale_users u
            ON u.\`${TENANT_COLUMN}\` = t.tenant_id
+          AND u.branch_id <=> t.branch_id
           AND COALESCE(u.active, 1) = 1
           AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
          SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
@@ -10393,6 +11406,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
         `UPDATE scale_bridge_sales_item s
          LEFT JOIN scale_users u
            ON u.\`${TENANT_COLUMN}\` = s.tenant_id
+          AND u.branch_id <=> s.branch_id
           AND COALESCE(u.active, 1) = 1
           AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
          SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
@@ -10636,10 +11650,11 @@ app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
             `SELECT id, slot_no, display_name, active
              FROM scale_users
              WHERE \`${TENANT_COLUMN}\` = ?
+               AND branch_id <=> ?
                AND COALESCE(active, 1) = 1
              ORDER BY slot_no ASC, id ASC
              LIMIT 4`,
-            [req.bridge.tenantId]
+            [req.bridge.tenantId, req.bridge.branchId || null]
         );
         const bySlot = [];
         for (let slot = 1; slot <= 4; slot += 1) {

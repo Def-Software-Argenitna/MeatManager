@@ -13,6 +13,7 @@ const TYPE_META = {
     cerdo: { name: 'Cerdo', icon: '🐷', color: '#ec4899' },
     pollo: { name: 'Pollo', icon: '🐔', color: '#f59e0b' },
     pescado: { name: 'Pescado', icon: '🐟', color: '#3b82f6' },
+    'despostada-pendiente': { name: 'Pendiente de despostada', icon: '🥩', color: '#ef4444' },
     'pre-elaborado': { name: 'Pre-elaborados', icon: '🍖', color: '#8b5cf6' },
     almacen: { name: 'Almacen', icon: '📦', color: '#f97316' },
     limpieza: { name: 'Limpieza', icon: '🧴', color: '#06b6d4' },
@@ -21,7 +22,7 @@ const TYPE_META = {
     otros: { name: 'Otros', icon: '📁', color: '#64748b' },
 };
 
-const TYPE_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'pre-elaborado', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
+const TYPE_PRIORITY = ['vaca', 'cerdo', 'pollo', 'pescado', 'despostada-pendiente', 'pre-elaborado', 'almacen', 'limpieza', 'bebidas', 'insumo', 'otros'];
 
 const normalizeStockType = (value) => {
     const normalized = String(value || '').trim().toLowerCase().replace(/_/g, '-');
@@ -30,8 +31,8 @@ const normalizeStockType = (value) => {
 };
 
 const Stock = () => {
-    const { accessProfile } = useUser();
-    const currentBranchId = accessProfile?.branch?.id ? Number(accessProfile.branch.id) : null;
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
     const [isImporting, setIsImporting] = useState(false);
@@ -42,14 +43,17 @@ const Stock = () => {
     const [editingPriceId, setEditingPriceId] = useState('');
     const [editingPriceValue, setEditingPriceValue] = useState('');
     const [allStock, setAllStock] = useState([]);
+    const [animalLots, setAnimalLots] = useState([]);
 
     const loadStockAndPrices = async () => {
-        const [stockRows, productRows] = await Promise.all([
+        const [stockRows, productRows, lotRows] = await Promise.all([
             fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
             fetchProductsSafe(),
+            fetchTable('animal_lots', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
         ]);
         setAllStock(Array.isArray(stockRows) ? stockRows : []);
         setProducts(Array.isArray(productRows) ? productRows : []);
+        setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
     };
 
     useEffect(() => {
@@ -57,9 +61,10 @@ const Stock = () => {
 
         const loadPrices = async () => {
             try {
-                const [stockRows, productRows] = await Promise.all([
+                const [stockRows, productRows, lotRows] = await Promise.all([
                     fetchTable('stock', { limit: 5000, orderBy: 'updated_at', direction: 'DESC' }),
                     fetchProductsSafe(),
+                    fetchTable('animal_lots', { limit: 5000, orderBy: 'date', direction: 'DESC' }),
                 ]);
                 await syncLegacyProductsToCatalog({
                     products: productRows,
@@ -75,12 +80,14 @@ const Stock = () => {
                 if (!cancelled) {
                     setAllStock(Array.isArray(stockRows) ? stockRows : []);
                     setProducts(Array.isArray(refreshedProducts) ? refreshedProducts : []);
+                    setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
                 }
             } catch (error) {
                 console.error('[STOCK] No se pudieron cargar stock/precios desde la API', error);
                 if (!cancelled) {
                     setAllStock([]);
                     setProducts([]);
+                    setAnimalLots([]);
                 }
             }
         };
@@ -105,9 +112,9 @@ const Stock = () => {
 
     const branchStockRows = React.useMemo(() => {
         if (!Array.isArray(allStock)) return [];
-        if (!currentBranchId) return allStock;
+        if (!currentBranchId) return [];
         return allStock.filter((row) => (
-            row.branch_id == null || Number(row.branch_id) === currentBranchId
+            Number(row.branch_id) === currentBranchId
         ));
     }, [allStock, currentBranchId]);
 
@@ -161,9 +168,45 @@ const Stock = () => {
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
     }, [branchStockRows, products]);
 
+    const pendingDespostadaStock = React.useMemo(() => {
+        if (!Array.isArray(animalLots)) return [];
+
+        return animalLots
+            .filter((lot) => String(lot?.status || '').toLowerCase() === 'disponible')
+            .map((lot) => {
+                const species = normalizeStockType(lot?.species || 'vaca');
+                const speciesLabel = TYPE_META[species]?.name || species;
+                return {
+                    id: `animal-lot:${lot.id}`,
+                    lot_id: lot.id,
+                    name: `${speciesLabel} para despostada`,
+                    type: 'despostada-pendiente',
+                    species,
+                    supplier: lot.supplier || '',
+                    unit: 'kg',
+                    quantity: Number(lot.weight) || 0,
+                    updated_at: lot.date || lot.updated_at,
+                    price: null,
+                    plu: '',
+                    isDespostadaPending: true,
+                };
+            })
+            .filter((item) => Math.abs(item.quantity) > 0.0001)
+            .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+    }, [animalLots]);
+
+    const inventoryStock = React.useMemo(() => (
+        [...consolidatedStock, ...pendingDespostadaStock]
+    ), [consolidatedStock, pendingDespostadaStock]);
+
     // Filtrar stock consolidado
-    const filteredStock = consolidatedStock.filter(item => {
-        const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const filteredStock = inventoryStock.filter(item => {
+        const searchText = [
+            item.name,
+            item.supplier,
+            item.lot_id ? `lote ${item.lot_id}` : '',
+        ].join(' ').toLowerCase();
+        const matchesSearch = searchText.includes(searchTerm.toLowerCase());
         const matchesType = filterType === 'all' || normalizeStockType(item.type) === filterType;
         return matchesSearch && matchesType;
     });
@@ -195,7 +238,7 @@ const Stock = () => {
 
     // Tipos disponibles
     const types = React.useMemo(() => {
-        const dynamicTypes = [...new Set((consolidatedStock || []).map((item) => normalizeStockType(item.type)))];
+        const dynamicTypes = [...new Set((inventoryStock || []).map((item) => normalizeStockType(item.type)))];
         dynamicTypes.sort((a, b) => {
             const ia = TYPE_PRIORITY.indexOf(a);
             const ib = TYPE_PRIORITY.indexOf(b);
@@ -213,7 +256,7 @@ const Stock = () => {
                 color: TYPE_META[id]?.color || '#64748b',
             })),
         ];
-    }, [consolidatedStock]);
+    }, [inventoryStock]);
 
     const getTypeInfo = (type) => {
         const normalized = normalizeStockType(type);
@@ -246,6 +289,7 @@ const Stock = () => {
                 category: quickProduct.category,
                 unit: quickProduct.unit,
                 source: 'stock_manual',
+                branchId: currentBranchId,
             });
             product = {
                 id: `product:${createdProduct?.id || Date.now()}`,
@@ -281,8 +325,10 @@ const Stock = () => {
         const rows = filteredStock.map(item => ({
             'Código': item.id,
             'Nombre': item.name,
+            'Origen': item.isDespostadaPending ? `Lote despostada ${item.lot_id || ''}`.trim() : 'Stock venta',
             'PLU': item.plu || '',
             'Categoría': item.type,
+            'Proveedor': item.supplier || '',
             'Cantidad': item.quantity,
             'Unidad': item.unit,
             'Precio ($)': item.price ?? '',
@@ -356,6 +402,7 @@ const Stock = () => {
                     price: validPrice ? art.price : null,
                     plu: art.plu,
                     source: 'importacion_balanza',
+                    branchId: currentBranchId,
                 });
                 if (validPrice) updatedCount++;
 
@@ -449,6 +496,7 @@ const Stock = () => {
     }, [productsForAdjustment, adjustmentSearchTerm, adjustment.productId]);
 
     const startPriceEdit = (item) => {
+        if (item?.isDespostadaPending) return;
         setEditingPriceId(item.id);
         setEditingPriceValue(item.price ? String(item.price) : '');
     };
@@ -459,6 +507,7 @@ const Stock = () => {
     };
 
     const savePriceEdit = async (item) => {
+        if (item?.isDespostadaPending) return;
         const numericPrice = Number(editingPriceValue);
         if (!Number.isFinite(numericPrice) || numericPrice < 0) {
             showStatus('error', 'Ingresá un precio válido');
@@ -476,6 +525,7 @@ const Stock = () => {
                 price: numericPrice,
                 plu: item.plu,
                 source: 'stock_manual',
+                branchId: currentBranchId,
             });
 
             await loadStockAndPrices();
@@ -658,45 +708,63 @@ const Stock = () => {
                                                 <div className="item-info">
                                                     <div className="item-name">{item.name}</div>
                                                     <div className="item-meta">
-                                                        <span className="item-plu">
-                                                            PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
-                                                        </span>
-                                                        <span className="item-price">
-                                                            Precio: {editingPriceId === item.id ? (
-                                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                    <input
-                                                                        type="number"
-                                                                        min="0"
-                                                                        step="0.01"
-                                                                        className="neo-input"
-                                                                        style={{ width: '120px', marginBottom: 0, padding: '0.35rem 0.55rem' }}
-                                                                        value={editingPriceValue}
-                                                                        onChange={(e) => setEditingPriceValue(e.target.value)}
-                                                                    />
-                                                                    <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}>
-                                                                        <Save size={14} />
-                                                                    </button>
-                                                                    <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}>
-                                                                        <X size={14} />
-                                                                    </button>
+                                                        {item.isDespostadaPending ? (
+                                                            <>
+                                                                <span className="item-plu">
+                                                                    Lote: <strong>#{item.lot_id}</strong>
                                                                 </span>
-                                                            ) : (
-                                                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                    <strong>{Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}</strong>
-                                                                    <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
-                                                                        <Pencil size={14} />
-                                                                    </button>
+                                                                <span className="item-price">
+                                                                    Estado: <strong>Pendiente de despostada</strong>
                                                                 </span>
-                                                            )}
-                                                        </span>
+                                                                {item.supplier && (
+                                                                    <span className="item-price">
+                                                                        Proveedor: <strong>{item.supplier}</strong>
+                                                                    </span>
+                                                                )}
+                                                            </>
+                                                        ) : (
+                                                            <>
+                                                                <span className="item-plu">
+                                                                    PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
+                                                                </span>
+                                                                <span className="item-price">
+                                                                    Precio: {editingPriceId === item.id ? (
+                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                            <input
+                                                                                type="number"
+                                                                                min="0"
+                                                                                step="0.01"
+                                                                                className="neo-input"
+                                                                                style={{ width: '120px', marginBottom: 0, padding: '0.35rem 0.55rem' }}
+                                                                                value={editingPriceValue}
+                                                                                onChange={(e) => setEditingPriceValue(e.target.value)}
+                                                                            />
+                                                                            <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}>
+                                                                                <Save size={14} />
+                                                                            </button>
+                                                                            <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}>
+                                                                                <X size={14} />
+                                                                            </button>
+                                                                        </span>
+                                                                    ) : (
+                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                                            <strong>{Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}</strong>
+                                                                            <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
+                                                                                <Pencil size={14} />
+                                                                            </button>
+                                                                        </span>
+                                                                    )}
+                                                                </span>
+                                                            </>
+                                                        )}
                                                         <span className="item-date">
-                                                            {new Date(item.updated_at).toLocaleDateString('es-AR', {
+                                                            {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', {
                                                                 day: '2-digit',
                                                                 month: '2-digit',
                                                                 year: 'numeric',
                                                                 hour: '2-digit',
                                                                 minute: '2-digit'
-                                                            })}
+                                                            }) : 'Sin fecha'}
                                                         </span>
                                                     </div>
                                                 </div>
@@ -860,7 +928,7 @@ const Stock = () => {
 
             {/* ── Modal Diagnóstico Balanza ─────────────────────────────────── */}
             {showDiag && (
-                <div style={{
+                <div className="app-modal-overlay" style={{
                     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
                     zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
                 }}>

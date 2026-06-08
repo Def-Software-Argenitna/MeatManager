@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { fetchTable, getNextRemoteReceiptData, saveTableRecord } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
+import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import './Clientes.css';
 
@@ -25,7 +27,8 @@ const emptyClientForm = {
     employeeDiscountEnabled: false,
     employeeDiscountPct: '0',
     hasInitialBalance: false,
-    balance: ''
+    balance: '',
+    branchId: ''
 };
 
 const cleanValue = (value) => String(value || '').trim();
@@ -55,8 +58,8 @@ const toClientForm = (client) => {
     const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
     const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
     return {
-        first_name: cleanValue(client?.first_name) || fallbackFirstName,
-        last_name: cleanValue(client?.last_name) || fallbackLastName,
+        first_name: (cleanValue(client?.first_name) || fallbackFirstName).toUpperCase(),
+        last_name: (cleanValue(client?.last_name) || fallbackLastName).toUpperCase(),
         street: cleanValue(client?.street),
         street_number: cleanValue(client?.street_number),
         zip_code: cleanValue(client?.zip_code),
@@ -70,6 +73,7 @@ const toClientForm = (client) => {
         employeeDiscountPct: employeeDiscountEnabled ? String(employeeDiscountPct) : '0',
         hasInitialBalance: Boolean(client?.has_initial_balance),
         balance: String(getBalanceValue(client) || ''),
+        branchId: String(client?.branch_id || ''),
     };
 };
 
@@ -110,13 +114,43 @@ const formatAddress = (client) => {
 const hasCurrentAccount = (client) => client?.has_current_account !== false;
 const getBalanceValue = (client) => Number(client?.balance) || 0;
 const getClientFullName = (client) =>
-    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ') || cleanValue(client.name);
+    [cleanValue(client.first_name), cleanValue(client.last_name)].filter(Boolean).join(' ').toUpperCase() || cleanValue(client.name).toUpperCase();
 const formatReceiptCode = (branchNumber = 1, receiptNumber = 0) =>
     `${String(branchNumber || 1).padStart(4, '0')}-${String(receiptNumber || 0).padStart(6, '0')}`;
 const getMovementPaymentMethod = (movement) => {
     if (cleanValue(movement.payment_method)) return cleanValue(movement.payment_method);
     const match = String(movement.description || '').match(/\(([^()]+)\)\s*$/);
     return cleanValue(match?.[1]);
+};
+
+const isCurrentAccountPart = (part) => {
+    const methodType = cleanValue(part?.method_type || part?.type).toLowerCase();
+    const methodName = cleanValue(part?.method_name || part?.name).toLowerCase();
+    return methodType === 'cuenta_corriente' || methodName === 'cuenta corriente';
+};
+
+const getCurrentAccountAmountFromVenta = (venta) => {
+    const breakdown = Array.isArray(venta?.payment_breakdown) ? venta.payment_breakdown : null;
+    if (breakdown?.length) {
+        return breakdown.reduce((sum, part) => (
+            isCurrentAccountPart(part)
+                ? sum + (Number(part?.amount_charged ?? part?.amount ?? part?.total) || 0)
+                : sum
+        ), 0);
+    }
+
+    return cleanValue(venta?.payment_method).toLowerCase() === 'cuenta corriente'
+        ? (Number(venta?.total) || 0)
+        : 0;
+};
+
+const isCustomerPaymentMovement = (movement, clientName) => {
+    const kind = cleanValue(movement?.money_flow_kind).toLowerCase();
+    if (kind === 'customer_payment') return true;
+
+    return cleanValue(movement?.type).toLowerCase() === 'ingreso'
+        && cleanValue(movement?.category) === 'Cobro Pendientes'
+        && String(movement?.description || '').includes(`cliente: ${clientName}`);
 };
 
 const getClientLedgerPaymentMethod = (row) => {
@@ -127,6 +161,9 @@ const getClientLedgerPaymentMethod = (row) => {
 };
 
 const Clientes = () => {
+    const { currentUser, accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClientId, setEditingClientId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -136,27 +173,36 @@ const Clientes = () => {
     const [payLoading, setPayLoading] = useState(false);
     const [paymentMethodId, setPaymentMethodId] = useState('');
     const [paymentQuickMode, setPaymentQuickMode] = useState(false);
-    const [newClient, setNewClient] = useState(emptyClientForm);
     const [expandedLedgerRowId, setExpandedLedgerRowId] = useState(null);
+    const [newClient, setNewClient] = useState(emptyClientForm);
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
+    const [branches, setBranches] = useState([]);
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
     const paymentInputRef = useRef(null);
     const isEditingClient = Boolean(editingClientId);
 
-    const loadCoreData = async () => {
-        const [clientsRows, paymentMethodRows] = await Promise.all([
+    const clientBelongsToCurrentBranch = useCallback((client) => {
+        if (!currentBranchId) return false;
+        return Number(client?.branch_id) === Number(currentBranchId);
+    }, [currentBranchId]);
+
+    const loadCoreData = useCallback(async () => {
+        const [clientsRows, paymentMethodRows, branchPayload] = await Promise.all([
             fetchTable('clients', { limit: 1000, orderBy: 'id', direction: 'ASC' }),
-            fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' })
+            fetchTable('payment_methods', { limit: 100, orderBy: 'id', direction: 'ASC' }),
+            fetchClientBranches(),
         ]);
         const allowedNames = ['Posnet', 'Postnet', 'Mercado Pago', 'Cuenta DNI', 'Efectivo', 'Transferencia'];
-        setClients(clientsRows);
+        const branchClients = (Array.isArray(clientsRows) ? clientsRows : []).filter(clientBelongsToCurrentBranch);
+        setClients(branchClients);
         setPaymentMethods(paymentMethodRows.filter((method) => method.enabled && allowedNames.includes(method.name)));
-        return clientsRows;
-    };
+        setBranches(Array.isArray(branchPayload?.branches) ? branchPayload.branches : []);
+        return branchClients;
+    }, [clientBelongsToCurrentBranch]);
 
     const loadLedger = useCallback(async (clientRef = historyClient, monthRef = historyMonth) => {
-        if (!clientRef) {
+        if (!clientRef || !clientBelongsToCurrentBranch(clientRef)) {
             setClientLedger({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
             return;
         }
@@ -174,30 +220,27 @@ const Clientes = () => {
         const saleRows = ventas
             .filter((venta) => {
                 if (Number(venta.clientId) !== clientId) return false;
-
-                const hasCurrentAccountInBreakdown = Array.isArray(venta.payment_breakdown)
-                    && venta.payment_breakdown.some((part) => part.method_type === 'cuenta_corriente' || part.method_name === 'Cuenta Corriente');
-
-                return venta.payment_method === 'Cuenta Corriente' || hasCurrentAccountInBreakdown;
+                return getCurrentAccountAmountFromVenta(venta) > 0;
             })
-            .map((venta) => ({
+            .map((venta) => {
+                const currentAccountAmount = getCurrentAccountAmountFromVenta(venta);
+                return ({
                 id: `sale-${venta.id}`,
                 timestamp: new Date(venta.date).getTime(),
                 fecha: new Date(venta.date),
                 comprobante: `Venta ${venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id)}`,
-                debe: Number(venta.total) || 0,
+                debe: currentAccountAmount,
                 haber: 0,
-                delta: -(Number(venta.total) || 0),
+                delta: -currentAccountAmount,
                 items: ventasItems.filter((item) => Number(item.venta_id) === Number(venta.id))
-            }));
+            });
+            });
 
         const paymentRows = movimientos
+            .filter((mov) => isCustomerPaymentMovement(mov, clientName))
             .filter((mov) =>
-                (Number(mov.client_id) === clientId) ||
-                (
-                    mov.category === 'Cobro Pendientes' &&
-                    String(mov.description || '').includes(`cliente: ${clientName}`)
-                )
+                Number(mov.client_id) === clientId
+                || String(mov.description || '').includes(`cliente: ${clientName}`)
             )
             .map((mov) => ({
                 id: `payment-${mov.id}`,
@@ -248,21 +291,26 @@ const Clientes = () => {
             paymentTotal,
             currentBalance: monthEndBalance
         });
-    }, [historyClient, historyMonth]);
+    }, [historyClient, historyMonth, clientBelongsToCurrentBranch]);
 
     const refreshHistoryClient = async () => {
         if (!historyClient) return;
         const latestClients = await loadCoreData();
         const updated = latestClients.find((client) => Number(client.id) === Number(historyClient.id));
         if (updated) setHistoryClient(updated);
+        return updated || null;
     };
 
     const historyClientData = historyClient;
     const effectiveHistoryBalance = clientLedger ? (Number(clientLedger.currentBalance) || 0) : getBalanceValue(historyClientData);
 
     useEffect(() => {
+        setHistoryClient(null);
+        setClientLedger({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
+        setSearchTerm('');
+        setExpandedLedgerRowId(null);
         loadCoreData();
-    }, []);
+    }, [loadCoreData]);
 
     useEffect(() => {
         loadLedger();
@@ -298,6 +346,7 @@ const Clientes = () => {
     }, [historyMonth]);
 
     const openHistory = (client, options = {}) => {
+        if (!clientBelongsToCurrentBranch(client)) return;
         if (!hasCurrentAccount(client)) return;
         setHistoryClient(client);
         setHistoryMonth(currentMonth());
@@ -323,7 +372,10 @@ const Clientes = () => {
 
     const openCreateClientModal = () => {
         setEditingClientId(null);
-        setNewClient(emptyClientForm);
+        setNewClient({
+            ...emptyClientForm,
+            branchId: currentBranchId ? String(currentBranchId) : '',
+        });
         setIsModalOpen(true);
     };
 
@@ -369,8 +421,13 @@ const Clientes = () => {
 
     const handleSaveClient = async (e) => {
         e.preventDefault();
-        const firstName = cleanValue(newClient.first_name);
-        const lastName = cleanValue(newClient.last_name);
+        const selectedBranchId = Number(newClient.branchId || currentBranchId || 0);
+        if (!Number.isFinite(selectedBranchId) || selectedBranchId <= 0) {
+            alert('No se pudo determinar la sucursal activa para guardar el cliente.');
+            return;
+        }
+        const firstName = cleanValue(newClient.first_name).toUpperCase();
+        const lastName = cleanValue(newClient.last_name).toUpperCase();
         const fullName = [firstName, lastName].filter(Boolean).join(' ');
         if (!fullName) return;
 
@@ -407,8 +464,9 @@ const Clientes = () => {
             has_current_account: newClient.hasCurrentAccount,
             employee_discount_enabled: employeeDiscountEnabled,
             employee_discount_pct: employeeDiscountPct,
+            branch_id: selectedBranchId,
             last_updated: new Date().toISOString(),
-            synced: 0
+            synced: 0,
         };
 
         if (isEditingClient) {
@@ -462,8 +520,8 @@ const Clientes = () => {
             });
             setPayInput('');
             setPaymentMethodId('');
-            await refreshHistoryClient();
-            await loadLedger(historyClient, historyMonth);
+            const updatedClient = await refreshHistoryClient();
+            await loadLedger(updatedClient || historyClient, historyMonth);
         } finally {
             setPayLoading(false);
         }
@@ -517,16 +575,18 @@ const Clientes = () => {
             </DirectionalReveal>
 
             <DirectionalReveal className="neo-card" style={{ marginBottom: '1.5rem', padding: '1rem' }} from="left" delay={0.1}>
-                <div style={{ position: 'relative' }}>
-                    <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
-                    <input
-                        type="text"
-                        placeholder="Buscar cliente por nombre, telefono, mail o direccion..."
-                        className="neo-input"
-                        style={{ paddingLeft: '3rem', marginBottom: 0 }}
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+                <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+                    <div style={{ position: 'relative', flex: 1 }}>
+                        <Search className="text-muted" size={20} style={{ position: 'absolute', left: '1rem', top: '50%', transform: 'translateY(-50%)' }} />
+                        <input
+                            type="text"
+                            placeholder="Buscar cliente por nombre, telefono, mail o direccion..."
+                            className="neo-input"
+                            style={{ paddingLeft: '3rem', marginBottom: 0 }}
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
                 </div>
             </DirectionalReveal>
 
@@ -615,15 +675,15 @@ const Clientes = () => {
                 })}
             </div>
 
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={closeClientModal}>
+            {isModalOpen && createPortal((
+                <div className="modal-overlay clients-modal-overlay" onClick={closeClientModal}>
                     <div className="modal-content neo-card clients-modal-content" onClick={(e) => e.stopPropagation()}>
                         <div className="clients-modal-header">
                             <h2 className="clients-modal-title">{isEditingClient ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
                             <button onClick={closeClientModal} className="clients-modal-close"><X size={24} /></button>
                         </div>
 
-                        <form onSubmit={handleSaveClient}>
+                        <form className="clients-modal-form" onSubmit={handleSaveClient}>
                             <div className="clients-form-group">
                                 <div className="clients-form-grid">
                                     <div className="clients-form-group">
@@ -722,6 +782,22 @@ const Clientes = () => {
                                 )}
                             </div>
 
+                            {isAdmin && (
+                                <div className="clients-form-group clients-form-group-last">
+                                    <label className="clients-form-label">Sucursal</label>
+                                    <select
+                                        className="neo-input"
+                                        value={newClient.branchId}
+                                        onChange={(e) => updateNewClient('branchId', e.target.value)}
+                                    >
+                                        {branches.map((b) => (
+                                            <option key={b.id} value={String(b.id)}>{b.name || `Sucursal ${b.id}`}</option>
+                                        ))}
+                                    </select>
+                                    <small className="clients-form-hint">Por defecto se asigna a la sucursal activa.</small>
+                                </div>
+                            )}
+
                             {newClient.employeeDiscountEnabled && (
                                 <div className="clients-form-group clients-form-group-last">
                                     <label className="clients-form-label">Descuento empleado (%)</label>
@@ -774,7 +850,7 @@ const Clientes = () => {
                         </form>
                     </div>
                 </div>
-            )}
+            ), document.body)}
 
             {historyClient && (
                 <div className="modal-overlay" onClick={() => setHistoryClient(null)}>

@@ -1,4 +1,4 @@
-import { fetchTable, saveTableRecord } from './apiClient';
+import { fetchTable, saveProductPrice, saveTableRecord } from './apiClient';
 
 export const normalizeProductName = (value) => String(value || '').trim().toLowerCase().replace(/\s+/g, ' ');
 export const normalizeProductKey = (value) => normalizeProductName(value).replace(/\s+/g, '_');
@@ -17,6 +17,8 @@ const toNumber = (value) => {
     const parsed = Number(value);
     return Number.isFinite(parsed) ? parsed : 0;
 };
+
+const isGenericScaleTicketName = (value) => /^ticket.*balanza.*offline/i.test(String(value || '').trim());
 
 const toTimestamp = (value) => {
     if (!value) return 0;
@@ -178,6 +180,9 @@ export const ensureUnifiedProduct = async ({
     source,
     categoryId = null,
     preferredProductId = null,
+    branchId = null,
+    useForDespostada = null,
+    despostadaSpecies = null,
     resolveConflict = promptPriceConflictResolution,
 }) => {
     const trimmedName = String(name || '').trim();
@@ -213,17 +218,27 @@ export const ensureUnifiedProduct = async ({
         ? parsedCategoryId
         : (existingProduct?.category_id ?? null);
 
+    const effectiveBranchId = Number(branchId);
+    const hasBranchScope = Number.isFinite(effectiveBranchId) && effectiveBranchId > 0;
     const payload = {
         canonical_key: canonicalKey,
         name: trimmedName,
         category_id: resolvedCategoryId,
         category: existingProduct?.category || trimmedCategory,
         unit: existingProduct?.unit || trimmedUnit,
-        current_price: resolvedPrice > 0 ? resolvedPrice : null,
         plu: trimmedPlu || existingProduct?.plu || null,
         source: source || existingProduct?.source || 'manual',
         updated_at: new Date().toISOString(),
     };
+    if (useForDespostada !== null) {
+        payload.use_for_despostada = useForDespostada ? 1 : 0;
+        payload.despostada_species = useForDespostada
+            ? (String(despostadaSpecies || existingProduct?.despostada_species || '').trim() || null)
+            : null;
+    }
+    if (!hasBranchScope) {
+        payload.current_price = resolvedPrice > 0 ? resolvedPrice : null;
+    }
 
     let productRecord = existingProduct;
     if (existingProduct?.id) {
@@ -234,14 +249,28 @@ export const ensureUnifiedProduct = async ({
         productRecord = { id: result?.insertId, ...payload };
     }
 
-    await upsertLegacyPriceMirror({
-        prices,
-        name: trimmedName,
-        category: productRecord.category,
-        price: productRecord.current_price,
-        plu: productRecord.plu,
-        productId: productRecord.id,
-    });
+    if (hasBranchScope && productRecord?.id && resolvedPrice > 0) {
+        await saveProductPrice(productRecord.id, {
+            branchId: effectiveBranchId,
+            price: resolvedPrice,
+            plu: productRecord.plu,
+            source: source || 'manual',
+        });
+        productRecord = {
+            ...productRecord,
+            current_price: resolvedPrice,
+            branch_price: resolvedPrice,
+        };
+    } else {
+        await upsertLegacyPriceMirror({
+            prices,
+            name: trimmedName,
+            category: productRecord.category,
+            price: productRecord.current_price,
+            plu: productRecord.plu,
+            productId: productRecord.id,
+        });
+    }
 
     return productRecord;
 };
@@ -255,6 +284,7 @@ export const syncLegacyProductsToCatalog = async ({ products, stockRows, prices 
     stockList.forEach((item) => {
         const trimmedName = String(item?.name || '').trim();
         if (!trimmedName) return;
+        if (isGenericScaleTicketName(trimmedName)) return;
         const canonicalKey = buildProductCanonicalKey(trimmedName);
         if (!grouped.has(canonicalKey)) {
             grouped.set(canonicalKey, {

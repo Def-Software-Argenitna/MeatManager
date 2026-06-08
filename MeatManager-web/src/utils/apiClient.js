@@ -379,6 +379,20 @@ export const saveTableRecord = async (table, operation, record, id) => {
     return res.json();
 };
 
+export const saveProductPrice = async (productId, payload = {}) => {
+    const res = await apiFetch(`/api/products/${encodeURIComponent(productId)}/prices`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo guardar el precio del producto');
+    }
+
+    return res.json();
+};
+
 export const fetchUsersBundle = async () => {
     const res = await apiFetch('/api/users');
     if (!res.ok) {
@@ -578,7 +592,9 @@ export const createFirebaseUser = async (record) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo crear el usuario web');
+        const error = new Error(err.error || 'No se pudo crear el usuario web');
+        error.code = err.code || null;
+        throw error;
     }
 
     return res.json();
@@ -592,7 +608,9 @@ export const updateFirebaseUser = async (userId, record) => {
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'No se pudo actualizar el usuario web');
+        const error = new Error(err.error || 'No se pudo actualizar el usuario web');
+        error.code = err.code || null;
+        throw error;
     }
 
     return res.json();

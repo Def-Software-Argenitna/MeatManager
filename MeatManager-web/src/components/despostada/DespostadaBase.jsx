@@ -1,13 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, Check, DollarSign, Package, RotateCcw, Save, Scale, ScanLine, ShieldCheck, Sparkles, TrendingUp } from 'lucide-react';
 import { useLicense } from '../../context/LicenseContext';
+import { useUser } from '../../context/UserContext';
 import DirectionalReveal from '../DirectionalReveal';
 import ModuleLicenseGate from '../ModuleLicenseGate';
+import ErrorBoundary from '../ErrorBoundary';
 import { scaleService } from '../../utils/SerialScaleService';
 import { buildDespostadaLogPayload } from '../../utils/despostadaSession';
 import { fetchTable, saveTableRecord } from '../../utils/apiClient';
-import { buildDespostadaPricingSummary, DEFAULT_DESPOSTADA_MARGIN } from '../../utils/despostadaPricing';
+import { buildDespostadaPricingSummary } from '../../utils/despostadaPricing';
 import { ensureUnifiedProduct, fetchProductsSafe } from '../../utils/productCatalog';
 import './DespostadaBase.css';
 
@@ -93,6 +95,8 @@ const DespostadaBase = ({
     purchaseHints = [],
     accent = '#ef4444',
 }) => {
+    const { accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const { hasModule } = useLicense();
     const navigate = useNavigate();
     const hasDespostadaModule = hasModule('despostada');
@@ -105,12 +109,27 @@ const DespostadaBase = ({
     const [availableLots, setAvailableLots] = useState([]);
     const [compras, setCompras] = useState([]);
     const [selectedCutId, setSelectedCutId] = useState(null);
+    const [editingLogId, setEditingLogId] = useState(null);
     const [currentWeight, setCurrentWeight] = useState('');
     const [isScaleConnected, setIsScaleConnected] = useState(false);
     const [isSimulated, setIsSimulated] = useState(false);
     const [logs, setLogs] = useState([]);
     const [isSaving, setIsSaving] = useState(false);
-    const [marginPercentage, setMarginPercentage] = useState(DEFAULT_DESPOSTADA_MARGIN);
+    const [toastMsg, setToastMsg] = useState(null);
+    const toastTimerRef = useRef(null);
+    const showToast = useCallback((text, type = 'error') => {
+        if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+        setToastMsg({ text, type });
+        toastTimerRef.current = setTimeout(() => setToastMsg(null), 4000);
+    }, []);
+
+    useEffect(() => {
+        return () => {
+            if (toastTimerRef.current) {
+                clearTimeout(toastTimerRef.current);
+            }
+        };
+    }, []);
 
     const loadDespostadaData = React.useCallback(async () => {
         const [lotRows, comprasRows] = await Promise.all([
@@ -124,7 +143,7 @@ const DespostadaBase = ({
 
     useEffect(() => {
         loadDespostadaData().catch((error) => console.error(`Error cargando despostada ${species}:`, error));
-    }, [loadDespostadaData, species]);
+    }, [loadDespostadaData]);
 
     const processedWeight = logs.reduce((acc, log) => acc + toNumber(log.weight), 0);
     const totalWeight = toNumber(initialWeight);
@@ -139,8 +158,7 @@ const DespostadaBase = ({
         cuts: logs,
         totalInputWeight: totalWeight,
         originCostPerKg: costPerKg,
-        marginPercentage,
-    }), [costPerKg, logs, marginPercentage, species, totalWeight]);
+    }), [costPerKg, logs, species, totalWeight]);
     const selectedCut = cutMap.find((cut) => cut.id === selectedCutId) || null;
     const scaleState = connectionLabel(isScaleConnected, isSimulated);
     const hasWorkingState = isSessionStarted && Boolean(selectedCutId);
@@ -159,7 +177,6 @@ const DespostadaBase = ({
         setCurrentWeight('');
         setIsScaleConnected(false);
         setIsSimulated(false);
-        setMarginPercentage(DEFAULT_DESPOSTADA_MARGIN);
     };
 
     const handleSelectLot = (lot) => {
@@ -171,7 +188,7 @@ const DespostadaBase = ({
 
     const startSession = async () => {
         if (!initialWeight || totalWeight <= 0) {
-            window.alert(noWeightMessage);
+            showToast(noWeightMessage, 'warning');
             return;
         }
         setIsSessionStarted(true);
@@ -197,12 +214,9 @@ const DespostadaBase = ({
                     unit: 'kg',
                     price: row.suggestedPricePerKg,
                     source: 'despostada',
+                    branchId: currentBranchId,
                     resolveConflict: ({ incomingPrice, existingPrice }) => incomingPrice || existingPrice,
                 });
-
-                if (unifiedProduct?.id && !products.some((item) => Number(item?.id) === Number(unifiedProduct.id))) {
-                    products.push(unifiedProduct);
-                }
 
                 const matchingLogs = logs.filter((log) => log.cutId === row.cutId && Number(log.stockEntryId) > 0);
                 for (const log of matchingLogs) {
@@ -232,10 +246,10 @@ const DespostadaBase = ({
 
             await loadDespostadaData();
             resetSession(false);
-            window.alert(finishSuccess);
+            showToast(finishSuccess, 'success');
         } catch (error) {
             console.error(`Error finalizando despostada ${species}:`, error);
-            window.alert(finishFailure);
+            showToast(finishFailure, 'error');
         } finally {
             setIsSaving(false);
         }
@@ -243,17 +257,31 @@ const DespostadaBase = ({
 
     const handleCutClick = (id) => {
         if (!isSessionStarted) return;
-        setSelectedCutId(id);
-        setCurrentWeight('');
-        if (isScaleConnected || isSimulated) {
-            handleReadScale();
+        const existingLog = logs.find((log) => log.cutId === id);
+        if (existingLog) {
+            setEditingLogId(existingLog.id);
+            setSelectedCutId(id);
+            setCurrentWeight(String(existingLog.weight));
+        } else {
+            setEditingLogId(null);
+            setSelectedCutId(id);
+            setCurrentWeight('');
+            if (isScaleConnected || isSimulated) {
+                handleReadScale();
+            }
         }
+    };
+
+    const cancelEdit = () => {
+        setEditingLogId(null);
+        setSelectedCutId(null);
+        setCurrentWeight('');
     };
 
     const handleConnectScale = async () => {
         const success = await scaleService.requestPort();
         if (!success) {
-            window.alert('⚠️ No se detectó ninguna balanza.\n\nVerificá que:\n• La balanza esté encendida\n• El cable USB esté conectado\n• Instalaste el driver del fabricante\n\nSi no tenés balanza, usá el Modo Test.');
+            showToast('No se detectó ninguna balanza. Verificá que esté encendida, conectada por USB y con los drivers instalados. Si no tenés balanza, usá el Modo Test.', 'warning');
             return;
         }
 
@@ -261,9 +289,9 @@ const DespostadaBase = ({
         setIsScaleConnected(connected);
         if (connected) {
             setIsSimulated(false);
-            window.alert('✅ Balanza conectada correctamente.');
+            showToast('Balanza conectada correctamente.', 'success');
         } else {
-            window.alert('⚠️ No se pudo abrir el puerto serie. Probá desconectar y volver a conectar el cable.');
+            showToast('No se pudo abrir el puerto serie. Probá desconectar y volver a conectar el cable.', 'error');
         }
     };
 
@@ -292,31 +320,45 @@ const DespostadaBase = ({
 
         setIsSaving(true);
         try {
-            const stockResult = await saveTableRecord('stock', 'insert', {
-                name: cutInfo.name,
-                type: species,
-                quantity: weightVal,
-                unit: 'kg',
-                price: 0,
-                updated_at: new Date().toISOString(),
-            });
+            if (editingLogId) {
+                const existing = logs.find((log) => log.id === editingLogId);
+                if (existing && existing.stockEntryId) {
+                    await saveTableRecord('stock', 'update', {
+                        quantity: weightVal,
+                        updated_at: new Date().toISOString(),
+                    }, existing.stockEntryId);
+                }
+                setLogs((prev) => prev.map((log) => log.id === editingLogId ? { ...log, weight: weightVal, timestamp: new Date() } : log));
+                showToast(`Corte "${cutInfo.name}" actualizado.`, 'success');
+            } else {
+                const stockResult = await saveTableRecord('stock', 'insert', {
+                    name: cutInfo.name,
+                    type: species,
+                    quantity: weightVal,
+                    unit: 'kg',
+                    price: 0,
+                    updated_at: new Date().toISOString(),
+                });
 
-            const newLog = {
-                cutId: selectedCutId,
-                cutNumber: cutInfo.number,
-                cutName: cutInfo.name,
-                cutCategory: cutInfo.category,
-                weight: weightVal,
-                stockEntryId: stockResult?.insertId || null,
-                timestamp: new Date()
-            };
+                const newLog = {
+                    id: `log-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    cutId: selectedCutId,
+                    cutNumber: cutInfo.number,
+                    cutName: cutInfo.name,
+                    cutCategory: cutInfo.category,
+                    weight: weightVal,
+                    stockEntryId: stockResult?.insertId || null,
+                    timestamp: new Date()
+                };
 
-            setLogs((prev) => [newLog, ...prev]);
+                setLogs((prev) => [newLog, ...prev]);
+            }
             setSelectedCutId(null);
+            setEditingLogId(null);
             setCurrentWeight('');
         } catch (error) {
             console.error(`Error guardando corte ${species}:`, error);
-            window.alert('No se pudo guardar el corte en stock.');
+            showToast('No se pudo guardar el corte en stock.', 'error');
         } finally {
             setIsSaving(false);
         }
@@ -326,7 +368,7 @@ const DespostadaBase = ({
     const totalCuts = logs.length;
 
     return (
-        <ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
+        <><ErrorBoundary><ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
         <div
             className="despostada-module animate-fade-in"
             style={{
@@ -455,21 +497,6 @@ const DespostadaBase = ({
                         </div>
                     </div>
 
-                    <div className="despostada-field">
-                        <label>Margen sugerido</label>
-                        <div className="despostada-number-row">
-                            <input
-                                type="number"
-                                className="despostada-number"
-                                placeholder="30"
-                                value={marginPercentage}
-                                disabled={isSaving}
-                                onChange={(event) => setMarginPercentage(event.target.value)}
-                            />
-                            <span>%</span>
-                        </div>
-                    </div>
-
                     <div className="despostada-actions">
                         {!isSessionStarted ? (
                             <button className="despostada-button" onClick={startSession}>
@@ -552,7 +579,6 @@ const DespostadaBase = ({
                                     <th>Kg</th>
                                     <th>Indice</th>
                                     <th>Costo</th>
-                                    <th>Margen</th>
                                     <th>Sugerido</th>
                                 </tr>
                             </thead>
@@ -566,7 +592,6 @@ const DespostadaBase = ({
                                         <td>{formatKg(row.weight, 2)}</td>
                                         <td>{toNumber(row.valueIndex).toFixed(2)}</td>
                                         <td>{formatCurrency(row.specificCostPerKg)}</td>
-                                        <td>{toNumber(marginPercentage).toFixed(0)}%</td>
                                         <td>{formatCurrency(row.suggestedPricePerKg)}</td>
                                     </tr>
                                 ))}
@@ -640,7 +665,7 @@ const DespostadaBase = ({
                         <div className="despostada-work-card-body">
                             <div className="despostada-status-line">
                                 <div>
-                                    <div className="state">Despostando</div>
+                                    <div className="state">{editingLogId ? 'Editando corte' : 'Despostando'}</div>
                                     <div className="cut-name">
                                         {selectedCut ? `${selectedCut.number}. ${selectedCut.name}` : 'Esperando selección'}
                                     </div>
@@ -649,9 +674,17 @@ const DespostadaBase = ({
                                     <button
                                         className="despostada-button-ghost"
                                         style={{ minHeight: '2.4rem', paddingInline: '0.8rem' }}
-                                        onClick={() => setSelectedCutId(null)}
+                                        onClick={() => {
+                                            if (editingLogId) {
+                                                cancelEdit();
+                                                return;
+                                            }
+                                            if (currentWeight && currentWeight !== '0' && !window.confirm('¿Cancelar este corte? Se perderá el peso ingresado.')) return;
+                                            setSelectedCutId(null);
+                                            setCurrentWeight('');
+                                        }}
                                     >
-                                        Cancelar
+                                        {editingLogId ? 'Salir' : 'Cancelar'}
                                     </button>
                                 )}
                             </div>
@@ -723,7 +756,7 @@ const DespostadaBase = ({
                                             disabled={!currentWeight || isSaving}
                                             style={{ flex: '1 1 180px' }}
                                         >
-                                            <Save size={16} /> Registrar corte
+                                            <Save size={16} /> {editingLogId ? 'Actualizar corte' : 'Registrar corte'}
                                         </button>
                                     </div>
                                 </>
@@ -766,7 +799,24 @@ const DespostadaBase = ({
                 </div>
             </DirectionalReveal>
         </div>
-        </ModuleLicenseGate>
+        </ModuleLicenseGate></ErrorBoundary>
+        {toastMsg && (
+            <div
+                onClick={() => setToastMsg(null)}
+                style={{
+                    position: 'fixed', bottom: '1.5rem', right: '1.5rem', zIndex: 99999,
+                    padding: '0.75rem 1.25rem', borderRadius: '10px',
+                    background: toastMsg.type === 'success' ? '#166534' : toastMsg.type === 'warning' ? '#854d0e' : '#991b1b',
+                    color: '#fff', fontSize: '0.9rem', fontWeight: 600,
+                    boxShadow: '0 4px 24px rgba(0,0,0,0.5)',
+                    cursor: 'pointer',
+                    maxWidth: '420px',
+                }}
+            >
+                {toastMsg.text}
+            </div>
+        )}
+    </>
     );
 };
 

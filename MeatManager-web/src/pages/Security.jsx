@@ -228,7 +228,9 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
             toast('success', successText);
             setTimeout(() => onClose(), 300);
         } catch (err) {
-            const errorText = 'Error al guardar: ' + err.message;
+            const errorText = err?.code === 'BRANCH_REQUIRED'
+                ? err.message
+                : 'Error al guardar: ' + err.message;
             setSubmitFeedback({ type: 'error', text: errorText });
             toast('error', errorText);
         } finally {
@@ -237,7 +239,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
     };
 
     return (
-        <div style={{
+        <div className="app-modal-overlay" style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000,
             display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
             padding: '2rem 1rem', overflowY: 'auto',
@@ -557,9 +559,10 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
 
 /* ── Main component ─────────────────────── */
 const Security = () => {
-    const { currentUser, accessProfile, users, licensePool, refreshUsers, refreshClientBranches, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
+    const { currentUser, accessProfile, activeBranch, users, licensePool, refreshUsers, refreshClientBranches, saveTableRecord: saveRecord, replaceUserPermissions } = useUser();
     const { licenseMode, isPro, isSuperUser, installationId, licenses, modules, featureFlags } = useLicense();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? accessProfile?.branchId ?? 0) || null;
     const hasBaseLicense = licensePool.some((assignment) => isBaseLicense(assignment?.license));
     const hasAssignedSuperUserLicense = licenses.some((license) => isSuperUserLicense(license));
     const availablePerUserLicenses = licensePool.filter((assignment) => String(assignment?.license?.billingScope || '').trim() === 'per_user');
@@ -685,6 +688,7 @@ const Security = () => {
         try {
             for (const row of scaleUsers) {
                 const payload = {
+                    branch_id: currentBranchId,
                     slot_no: Number(row.slot_no),
                     display_name: String(row.display_name || '').trim() || `VENDEDOR ${row.slot_no}`,
                     active: Number(row.active ?? 1) === 0 ? 0 : 1,
