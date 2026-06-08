@@ -49,6 +49,7 @@ const ALL_PATHS = ALL_ROUTES.map(r => r.path);
 
 const UserContext = createContext(null);
 const ACTIVE_BRANCH_KEY = 'mm_active_branch';
+const ADMIN_GLOBAL_KEY = 'mm_admin_global';
 
 const normalizeToken = (value) => String(value || '').trim().toLowerCase();
 const normalizeLicenseKey = (value) => normalizeToken(value).replace(/[^a-z0-9]/g, '');
@@ -105,14 +106,14 @@ const restoreSession = () => {
         const p = sessionStorage.getItem('mm_perms');
         const a = sessionStorage.getItem('mm_access_profile');
         const b = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
+        const g = sessionStorage.getItem(ADMIN_GLOBAL_KEY);
         
         const user = u ? JSON.parse(u) : null;
         const perms = p ? JSON.parse(p) : [];
         const accessProfile = a ? JSON.parse(a) : null;
         let activeBranch = b ? JSON.parse(b) : null;
+        const adminGlobalMode = g === 'true';
         
-        // Si no hay sucursal guardada pero el accessProfile tiene una, usarla
-        // (esto pasa cuando el usuario no es admin y tiene sucursal asignada)
         if (!activeBranch && accessProfile?.branch?.id) {
             activeBranch = accessProfile.branch;
         }
@@ -122,9 +123,10 @@ const restoreSession = () => {
             perms,
             accessProfile,
             activeBranch,
+            adminGlobalMode,
         };
     } catch {
-        return { user: null, perms: [], accessProfile: null, activeBranch: null };
+        return { user: null, perms: [], accessProfile: null, activeBranch: null, adminGlobalMode: false };
     }
 };
 
@@ -132,11 +134,12 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const UserProvider = ({ children }) => {
     const { tenant, loading: loadingTenant, authToken } = useTenant();
-    const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile, activeBranch: savedActiveBranch } = restoreSession();
+    const { user: savedUser, perms: savedPerms, accessProfile: savedAccessProfile, activeBranch: savedActiveBranch, adminGlobalMode: savedAdminGlobalMode } = restoreSession();
     const [currentUser, setCurrentUser] = useState(savedUser);
     const [userPerms, setUserPerms] = useState(savedPerms);
     const [accessProfile, setAccessProfile] = useState(savedAccessProfile);
     const [activeBranch, setActiveBranch] = useState(savedActiveBranch);
+    const [adminGlobalMode, setAdminGlobalModeRaw] = useState(savedAdminGlobalMode);
     const [loadingUser, setLoadingUser] = useState(false);
     const [users, setUsers] = useState([]);
     const [licensePool, setLicensePool] = useState([]);
@@ -149,20 +152,24 @@ export const UserProvider = ({ children }) => {
         let activeBranchToUse = null;
         
         if (userData?.role === 'admin') {
-            // Para admins: priorizar sucursal guardada si existe y es válida
-            const savedBranch = (() => {
-                try {
-                    const raw = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
-                    return raw ? JSON.parse(raw) : null;
-                } catch {
-                    return null;
-                }
-            })();
-            const canUseSavedBranch = (
-                savedBranch?.id
-                && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
-            );
-            activeBranchToUse = canUseSavedBranch ? savedBranch : (userData?.branch || null);
+            const savedAdminGlobal = sessionStorage.getItem(ADMIN_GLOBAL_KEY) === 'true';
+            if (savedAdminGlobal) {
+                activeBranchToUse = null;
+            } else {
+                const savedBranch = (() => {
+                    try {
+                        const raw = sessionStorage.getItem(ACTIVE_BRANCH_KEY);
+                        return raw ? JSON.parse(raw) : null;
+                    } catch {
+                        return null;
+                    }
+                })();
+                const canUseSavedBranch = (
+                    savedBranch?.id
+                    && (!savedBranch?.clientId || String(savedBranch.clientId) === String(userData?.clientId || ''))
+                );
+                activeBranchToUse = canUseSavedBranch ? savedBranch : (userData?.branch || null);
+            }
         } else {
             // Para usuarios normales: SIEMPRE usar la sucursal que viene del API
             activeBranchToUse = userData?.branch || null;
@@ -283,15 +290,37 @@ export const UserProvider = ({ children }) => {
         setUserPerms([]);
         setAccessProfile(null);
         setActiveBranch(null);
+        setAdminGlobalModeRaw(false);
         setUsers([]);
         setLicensePool([]);
         sessionStorage.removeItem('mm_user');
         sessionStorage.removeItem('mm_perms');
         sessionStorage.removeItem('mm_access_profile');
         sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
+        sessionStorage.removeItem(ADMIN_GLOBAL_KEY);
+    }, []);
+
+    const setAdminGlobalMode = useCallback((mode) => {
+        setAdminGlobalModeRaw(mode);
+        if (mode) {
+            sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
+            setActiveBranch(null);
+            sessionStorage.setItem(ADMIN_GLOBAL_KEY, 'true');
+            setAccessProfile((currentProfile) => {
+                if (!currentProfile) return currentProfile;
+                const nextProfile = { ...currentProfile, branch: null };
+                sessionStorage.setItem('mm_access_profile', JSON.stringify(nextProfile));
+                return nextProfile;
+            });
+        } else {
+            sessionStorage.setItem(ADMIN_GLOBAL_KEY, 'false');
+        }
     }, []);
 
     const selectActiveBranch = useCallback((branch) => {
+        // When selecting a specific branch, exit global mode
+        setAdminGlobalModeRaw(false);
+        sessionStorage.setItem(ADMIN_GLOBAL_KEY, 'false');
         const normalizedBranch = branch?.id ? {
             id: Number(branch.id),
             clientId: branch.clientId ?? accessProfile?.clientId ?? null,
@@ -509,6 +538,8 @@ export const UserProvider = ({ children }) => {
             licensePool,
             activeBranch,
             selectActiveBranch,
+            adminGlobalMode,
+            setAdminGlobalMode,
             refreshClientBranches,
             refreshUsers,
             saveTableRecord: saveUserRecord,

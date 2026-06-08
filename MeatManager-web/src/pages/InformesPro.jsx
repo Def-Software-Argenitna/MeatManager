@@ -553,6 +553,7 @@ const InformesPro = () => {
     const avgCowYield = ranking.length > 0 ? (ranking.reduce((acc, r) => acc + parseFloat(r.avgYield), 0) / ranking.length).toFixed(1) : 0;
 
     return (
+        <>
         <ModuleLicenseGate locked={!hasInformesProModule} moduleName="Rendimiento PRO">
         <div className="informes-pro-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>
@@ -1163,6 +1164,7 @@ const InformesPro = () => {
             </DirectionalReveal>
         </div>
         </ModuleLicenseGate>
+        </>
     );
 };
 

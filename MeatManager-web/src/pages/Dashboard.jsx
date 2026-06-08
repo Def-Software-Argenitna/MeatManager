@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
@@ -89,7 +89,6 @@ const Dashboard = () => {
     const { hasModule } = useLicense();
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
-    const activeBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
     const [ventasDia, setVentasDia] = useState([]);
     const [allVentas, setAllVentas] = useState([]);
@@ -100,6 +99,7 @@ const Dashboard = () => {
     const [proLogs, setProLogs] = useState([]);
     const [branchSnapshots, setBranchSnapshots] = useState([]);
     const [tenantBranches, setTenantBranches] = useState([]);
+    const effectiveBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
 
     useEffect(() => {
         const start = new Date();
@@ -129,8 +129,8 @@ const Dashboard = () => {
                 if (cancelled) return;
 
                 const branchMatches = (row) => {
-                    if (!activeBranchId) return true;
-                    return Number(row?.branch_id) === Number(activeBranchId);
+                    if (!effectiveBranchId) return true;
+                    return Number(row?.branch_id) === Number(effectiveBranchId);
                 };
 
                 const salesList = (Array.isArray(ventasRows) ? ventasRows : []).filter(branchMatches);
@@ -190,7 +190,7 @@ const Dashboard = () => {
         return () => {
             cancelled = true;
         };
-    }, [activeBranchId]);
+    }, [effectiveBranchId]);
 
     const totalVentasDia = ventasDia.reduce((acc, sale) => acc + toNumber(sale.total), 0);
     const totalComprasMes = comprasMes.reduce((acc, compra) => acc + toNumber(compra.total), 0);

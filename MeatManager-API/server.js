@@ -7139,13 +7139,15 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 _supportClientId: req.firebaseUser?._supportClientId || null,
             });
             accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
-            const scopedBranchId = Number(
-                accessContext?.activeBranch?.id
-                ?? accessContext?.user?.branchRecordId
+            const isAdminGlobal = String(req.query.admin_global || '').trim() === '1';
+            const isAdminUser = accessContext?.user?.role === 'admin';
+            const requestedBranchId = accessContext?.activeBranch?.id;
+            const userBranchId = Number(
+                accessContext?.user?.branchRecordId
                 ?? accessContext?.user?.branchId
             );
+            const scopedBranchId = requestedBranchId || userBranchId || NaN;
             if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
-                // Catálogos/stock estrictos: una sucursal no ve artículos de otra ni filas globales heredadas.
                 if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
                     extraWhere.push('`branch_id` = ?');
                 } else {
@@ -7153,6 +7155,8 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 }
                 extraParams.push(scopedBranchId);
                 scopedBranchIdForRead = scopedBranchId;
+            } else if (isAdminGlobal && isAdminUser) {
+                // Admin global mode: no scoping, returns all branches
             } else if (STRICT_BRANCH_SCOPED_TABLES.has(table)) {
                 extraWhere.push('1 = 0');
             }
@@ -7166,13 +7170,18 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
                 _supportClientId: req.firebaseUser?._supportClientId || null,
             });
             accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
-            const productReadBranchId = Number(
-                accessContext?.activeBranch?.id
-                ?? accessContext?.user?.branchRecordId
+            const isAdminGlobal = String(req.query.admin_global || '').trim() === '1';
+            const isAdminUser = accessContext?.user?.role === 'admin';
+            const requestedBranchId = accessContext?.activeBranch?.id;
+            const userBranchId = Number(
+                accessContext?.user?.branchRecordId
                 ?? accessContext?.user?.branchId
             );
+            const productReadBranchId = requestedBranchId || userBranchId || NaN;
             if (Number.isFinite(productReadBranchId) && productReadBranchId > 0) {
                 scopedBranchIdForRead = productReadBranchId;
+            } else if (isAdminGlobal && isAdminUser) {
+                scopedBranchIdForRead = null;
             }
         }
 

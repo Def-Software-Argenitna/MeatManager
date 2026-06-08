@@ -539,7 +539,6 @@ const Stock = () => {
 
     return (
         <div className="stock-container animate-fade-in">
-
             {/* Import Status Toast */}
             {importStatus && (
                 <div style={{

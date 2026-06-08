@@ -161,7 +161,7 @@ const getClientLedgerPaymentMethod = (row) => {
 };
 
 const Clientes = () => {
-    const { currentUser, accessProfile, activeBranch } = useUser();
+    const { currentUser, accessProfile, activeBranch, adminGlobalMode } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -183,9 +183,10 @@ const Clientes = () => {
     const isEditingClient = Boolean(editingClientId);
 
     const clientBelongsToCurrentBranch = useCallback((client) => {
+        if (adminGlobalMode) return true;
         if (!currentBranchId) return false;
         return Number(client?.branch_id) === Number(currentBranchId);
-    }, [currentBranchId]);
+    }, [currentBranchId, adminGlobalMode]);
 
     const loadCoreData = useCallback(async () => {
         const [clientsRows, paymentMethodRows, branchPayload] = await Promise.all([

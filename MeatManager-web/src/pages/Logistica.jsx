@@ -463,6 +463,7 @@ const getOrderCoordinates = (pedido) => {
     };
 
     return (
+        <>
         <ModuleLicenseGate locked={!hasLogisticsModule} moduleName="Logística">
         <div className="logistica-container animate-fade-in">
             <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
@@ -829,6 +830,7 @@ const getOrderCoordinates = (pedido) => {
             )}
         </div>
         </ModuleLicenseGate>
+        </>
     );
 };
 
