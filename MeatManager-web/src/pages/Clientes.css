@@ -20,7 +20,13 @@
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
 }
 
+.clients-modal-overlay {
+    align-items: flex-start !important;
+    justify-content: center !important;
+}
+
 .clients-modal-form {
+    flex: 1;
     min-height: 0;
     overflow-y: auto;
     padding-right: 0.35rem;

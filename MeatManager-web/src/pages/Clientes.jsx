@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
@@ -674,8 +675,8 @@ const Clientes = () => {
                 })}
             </div>
 
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={closeClientModal}>
+            {isModalOpen && createPortal((
+                <div className="modal-overlay clients-modal-overlay" onClick={closeClientModal}>
                     <div className="modal-content neo-card clients-modal-content" onClick={(e) => e.stopPropagation()}>
                         <div className="clients-modal-header">
                             <h2 className="clients-modal-title">{isEditingClient ? 'Editar Cliente' : 'Nuevo Cliente'}</h2>
@@ -849,7 +850,7 @@ const Clientes = () => {
                         </form>
                     </div>
                 </div>
-            )}
+            ), document.body)}
 
             {historyClient && (
                 <div className="modal-overlay" onClick={() => setHistoryClient(null)}>
