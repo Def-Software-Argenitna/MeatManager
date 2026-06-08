@@ -928,7 +928,7 @@ const Stock = () => {
 
             {/* ── Modal Diagnóstico Balanza ─────────────────────────────────── */}
             {showDiag && (
-                <div style={{
+                <div className="app-modal-overlay" style={{
                     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
                     zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
                 }}>

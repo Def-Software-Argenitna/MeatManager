@@ -2495,6 +2495,7 @@ const Ventas = () => {
         )}
         {showClientList && (
             <div
+                className="app-modal-overlay"
                 style={{ position: 'fixed', inset: 0, zIndex: 9998, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
                 onClick={() => setShowClientList(false)}
             >
@@ -3374,7 +3375,7 @@ const Ventas = () => {
 
         {/* ─── MODAL ELIMINAR TICKET ────────────────────────────────────────────── */}
         {showDeleteTicketModal && (
-            <div style={{
+            <div className="app-modal-overlay" style={{
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -3529,7 +3530,7 @@ const Ventas = () => {
 
         {/* ─── MODAL PREVIEW TICKET MULTI-ITEM (balanza) ──────────────────── */}
         {showTicketPreview && (
-            <div style={{
+            <div className="app-modal-overlay" style={{
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',

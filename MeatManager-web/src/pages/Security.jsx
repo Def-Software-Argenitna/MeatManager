@@ -239,7 +239,7 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
     };
 
     return (
-        <div style={{
+        <div className="app-modal-overlay" style={{
             position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', zIndex: 1000,
             display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
             padding: '2rem 1rem', overflowY: 'auto',
