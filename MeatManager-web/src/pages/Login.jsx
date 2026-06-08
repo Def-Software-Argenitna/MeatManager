@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Beef, LogIn, AlertCircle, ShieldCheck, Search, MapPin } from 'lucide-react';
 import { useTenant } from '../context/TenantContext';
-import { useUser } from '../context/UserContext';
+import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import '../styles/Login.css';
 
 const Login = () => {
@@ -46,7 +46,7 @@ const Login = () => {
     const [selectedSupportBranchId, setSelectedSupportBranchId] = useState('');
     const [loading, setLoading] = useState(false);
     const from = location.state?.from?.pathname || '/';
-    const isAdminUser = currentUser?.role === 'admin';
+    const isAdminUser = isEffectiveAdminUser(currentUser, accessProfile);
     const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !hasBranchBlockingError;
     const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
     const hasBranchBlockingError = tenant && currentUser && isAdminUser && branchCheckComplete && Boolean(branchError);
@@ -118,7 +118,7 @@ const Login = () => {
         return () => {
             cancelled = true;
         };
-    }, [tenant, currentUser, isAdminUser, loadingUser, activeBranch?.id, refreshClientBranches, selectActiveBranch]);
+    }, [tenant, currentUser, accessProfile, loadingUser, activeBranch?.id, refreshClientBranches, selectActiveBranch]);
 
     const handleTenantSubmit = async (e) => {
         e.preventDefault();
