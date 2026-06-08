@@ -144,7 +144,9 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
         });
 
         if (result.ok && Number(result.fetched || 0) > 0) {
-            state.lastTicketSyncAt = result.latestSaleAt || new Date().toISOString();
+            const latestMs = new Date(result.latestSaleAt || Date.now()).getTime();
+            const nowMs = Date.now();
+            state.lastTicketSyncAt = new Date(Math.min(latestMs, nowMs)).toISOString();
             stateStore.save(state);
             if (Number(result.newTickets || 0) > 0) {
                 logger.info('Pulso de ventas: tickets nuevos sincronizados', {
@@ -152,6 +154,7 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
                     fetched: result.fetched,
                     tickets: result.tickets,
                     newTickets: result.newTickets,
+                    stored: result.stored,
                 });
             }
         }
