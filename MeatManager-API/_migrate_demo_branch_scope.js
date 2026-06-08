@@ -23,13 +23,14 @@ const BRANCH_COLUMNS = [
     ['branch_stock_snapshots', '`branch_id` INT NULL AFTER `tenant_id`'],
     ['prices', '`branch_id` INT NULL AFTER `tenant_id`'],
     ['product_prices', '`branch_id` INT NULL AFTER `tenant_id`'],
+    ['scale_users', '`branch_id` INT NULL AFTER `tenant_id`'],
 ];
 
 const BACKUP_TABLES = [
     'products', 'stock', 'ventas_items', 'purchase_items', 'compras', 'compras_items',
     'suppliers', 'supplier_item_tax_profiles', 'caja_movimientos', 'animal_lots',
     'despostada_logs', 'menu_digital', 'branch_stock_snapshots',
-    'prices', 'product_prices', 'branch_product_prices',
+    'prices', 'product_prices', 'branch_product_prices', 'scale_users',
 ];
 
 const getConn = async () => mysql.createConnection({
@@ -117,6 +118,22 @@ async function ensureBranchColumns(conn) {
         if (await indexExists(conn, 'products', 'uniq_products_tenant_plu')) {
             if (APPLY) await dropIndexIfExists(conn, 'products', 'uniq_products_tenant_plu');
             changes.push({ table: 'products', action: 'drop_legacy_unique_plu' });
+        }
+    }
+    if (await tableExists(conn, 'scale_users')) {
+        if (await indexExists(conn, 'scale_users', 'uniq_scale_users_tenant_slot')) {
+            if (APPLY) await dropIndexIfExists(conn, 'scale_users', 'uniq_scale_users_tenant_slot');
+            changes.push({ table: 'scale_users', action: 'drop_legacy_unique_tenant_slot' });
+        }
+        if (!(await indexExists(conn, 'scale_users', 'uniq_scale_users_tenant_branch_slot'))) {
+            if (APPLY) {
+                try {
+                    await conn.query('CREATE UNIQUE INDEX uniq_scale_users_tenant_branch_slot ON scale_users (tenant_id, branch_id, slot_no)');
+                } catch (error) {
+                    if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY'].includes(error?.code)) throw error;
+                }
+            }
+            changes.push({ table: 'scale_users', action: 'ensure_tenant_branch_slot_unique' });
         }
     }
     return changes;
@@ -571,6 +588,17 @@ async function runDataBackfill(conn) {
     );
     summary.defaultTaxProfilesWithoutCatalogMatch = Number(defaultTaxProfiles.affectedRows || 0);
 
+    if (await columnExists(conn, 'scale_users', 'branch_id')) {
+        const [defaultScaleUsers] = await conn.query(
+            `UPDATE scale_users
+             SET branch_id = ?
+             WHERE tenant_id = ?
+               AND branch_id IS NULL`,
+            [DEFAULT_BRANCH_ID, TENANT_ID]
+        );
+        summary.defaultScaleUsersWithoutBranch = Number(defaultScaleUsers.affectedRows || 0);
+    }
+
     return summary;
 }
 
@@ -624,7 +652,7 @@ async function getDistribution(conn, table) {
             }
         }
 
-        const tables = ['clients', 'ventas', 'ventas_items', 'caja_movimientos', 'stock', 'products', 'purchase_items', 'compras', 'compras_items', 'animal_lots', 'despostada_logs', 'suppliers', 'supplier_item_tax_profiles', 'menu_digital', 'branch_stock_snapshots', 'prices', 'product_prices', 'branch_product_prices'];
+        const tables = ['clients', 'ventas', 'ventas_items', 'caja_movimientos', 'stock', 'products', 'purchase_items', 'compras', 'compras_items', 'animal_lots', 'despostada_logs', 'suppliers', 'supplier_item_tax_profiles', 'menu_digital', 'branch_stock_snapshots', 'prices', 'product_prices', 'branch_product_prices', 'scale_users'];
         const distributions = {};
         for (const table of tables) {
             distributions[table] = await getDistribution(conn, table);

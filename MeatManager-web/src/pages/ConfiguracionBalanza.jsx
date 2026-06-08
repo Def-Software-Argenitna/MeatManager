@@ -71,7 +71,8 @@ const normalizeMarqueeLines = (raw) => {
 };
 
 const ConfiguracionBalanza = () => {
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? accessProfile?.branchId ?? 0) || null;
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
@@ -187,6 +188,7 @@ const ConfiguracionBalanza = () => {
         try {
             for (const row of scaleUsers) {
                 await saveTableRecord('scale_users', 'upsert', {
+                    branch_id: currentBranchId,
                     slot_no: Number(row.slot_no),
                     display_name: String(row.display_name || '').trim() || `VENDEDOR ${row.slot_no}`,
                     active: Number(row.active ?? 1) === 0 ? 0 : 1,

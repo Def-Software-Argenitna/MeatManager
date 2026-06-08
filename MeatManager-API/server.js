@@ -987,13 +987,13 @@ const BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
     'clients', 'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
-    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots', 'scale_users',
 ]);
 const STRICT_BRANCH_SCOPED_TABLES = new Set([
     'ventas', 'ventas_items', 'compras', 'compras_items', 'caja_movimientos', 'pedidos', 'cash_closures',
     'stock', 'promotions', 'products', 'purchase_items', 'animal_lots', 'despostada_logs',
     'suppliers', 'menu_digital', 'supplier_item_tax_profiles',
-    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots',
+    'prices', 'product_prices', 'branch_product_prices', 'branch_stock_snapshots', 'scale_users',
 ]);
 
 function isTenantScopedTable(table) {
@@ -2198,16 +2198,29 @@ async function ensureOperationalTenantIsolation() {
                 CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_users (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
                     \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+                    branch_id       INT NULL,
                     slot_no         TINYINT UNSIGNED NOT NULL,
                     display_name    VARCHAR(100) NOT NULL,
                     active          TINYINT(1) DEFAULT 1,
                     created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
                     updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+                    UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no),
                     UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
-                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+                    INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`),
+                    INDEX idx_scale_users_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
                 )
             `);
+            await ensureColumn(conn, 'scale_users', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
+            await ensureIndex(conn, 'scale_users', 'idx_scale_users_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
+            await dropIndexIfExists(conn, 'scale_users', 'uniq_scale_users_tenant_slot');
+            try {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_users
+                     ADD UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no)`
+                );
+            } catch (error) {
+                if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY'].includes(error?.code)) throw error;
+            }
 
             // ── Bridge sync state tables (antes creadas por el propio bridge) ──
             await conn.query(`
@@ -4618,14 +4631,16 @@ function getSchemaTables() {
         `CREATE TABLE IF NOT EXISTS scale_users (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            branch_id       INT NULL,
             slot_no         TINYINT UNSIGNED NOT NULL,
             display_name    VARCHAR(100) NOT NULL,
             active          TINYINT(1) DEFAULT 1,
             created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
             updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-            UNIQUE KEY uniq_scale_users_tenant_slot (\`${TENANT_COLUMN}\`, slot_no),
+            UNIQUE KEY uniq_scale_users_tenant_branch_slot (\`${TENANT_COLUMN}\`, branch_id, slot_no),
             UNIQUE KEY uniq_scale_users_tenant_id (\`${TENANT_COLUMN}\`, id),
-            INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`)
+            INDEX idx_scale_users_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_scale_users_tenant_branch (\`${TENANT_COLUMN}\`, branch_id)
         )`,
         `CREATE TABLE IF NOT EXISTS user_permissions (
             id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -5972,18 +5987,7 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
         if (operation === 'upsert') {
             // Para settings (PK = key) u otras tablas con ON DUPLICATE KEY UPDATE
             if (!normalizedRecord) return res.status(400).json({ error: 'record requerido' });
-            const validCols = await getTableColumns(pool, dbName, table);
-            const filtered = {};
-            for (const col of validCols) {
-                if (AUTO_COLS.has(col)) continue;
-                if (col === TENANT_COLUMN) {
-                    filtered[col] = tenantId;
-                    continue;
-                }
-                if (normalizedRecord[col] !== undefined && normalizedRecord[col] !== null) {
-                    filtered[col] = normalizeColumnValue(normalizedRecord[col], tableDesc.get(col) || '');
-                }
-            }
+            const filtered = await filterRecord(normalizedRecord, false);
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para upsert' });
             }
@@ -11341,6 +11345,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
         `UPDATE scale_bridge_ticket_map t
          LEFT JOIN scale_users u
            ON u.\`${TENANT_COLUMN}\` = t.tenant_id
+          AND u.branch_id <=> t.branch_id
           AND COALESCE(u.active, 1) = 1
           AND CAST(u.slot_no AS UNSIGNED) = CAST(t.vendor_code AS UNSIGNED)
          SET t.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), t.vendor_name)
@@ -11355,6 +11360,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
         `UPDATE scale_bridge_sales_item s
          LEFT JOIN scale_users u
            ON u.\`${TENANT_COLUMN}\` = s.tenant_id
+          AND u.branch_id <=> s.branch_id
           AND COALESCE(u.active, 1) = 1
           AND CAST(u.slot_no AS UNSIGNED) = CAST(s.vendor_code AS UNSIGNED)
          SET s.vendor_name = COALESCE(NULLIF(TRIM(u.display_name), ''), s.vendor_name),
@@ -11598,10 +11604,11 @@ app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
             `SELECT id, slot_no, display_name, active
              FROM scale_users
              WHERE \`${TENANT_COLUMN}\` = ?
+               AND branch_id <=> ?
                AND COALESCE(active, 1) = 1
              ORDER BY slot_no ASC, id ASC
              LIMIT 4`,
-            [req.bridge.tenantId]
+            [req.bridge.tenantId, req.bridge.branchId || null]
         );
         const bySlot = [];
         for (let slot = 1; slot <= 4; slot += 1) {
