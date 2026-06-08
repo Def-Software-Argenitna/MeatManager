@@ -9,10 +9,21 @@
 .clients-modal-content {
     max-width: 560px;
     width: 94%;
+    max-height: calc(100dvh - 2rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 1rem auto;
     background: var(--color-bg-card) !important;
     color: var(--color-text-main) !important;
     border: 1px solid var(--color-border) !important;
     box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.clients-modal-form {
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.35rem;
 }
 
 .clients-history-modal {
@@ -61,6 +72,7 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    flex-shrink: 0;
     margin-bottom: 1.5rem;
 }
 

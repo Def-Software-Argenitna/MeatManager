@@ -682,7 +682,7 @@ const Clientes = () => {
                             <button onClick={closeClientModal} className="clients-modal-close"><X size={24} /></button>
                         </div>
 
-                        <form onSubmit={handleSaveClient}>
+                        <form className="clients-modal-form" onSubmit={handleSaveClient}>
                             <div className="clients-form-group">
                                 <div className="clients-form-grid">
                                     <div className="clients-form-group">

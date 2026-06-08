@@ -250,7 +250,7 @@ tr:hover td {
 .modal-content {
     padding: 2rem;
     animation: slideUp 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
-    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
     overflow-y: auto;
     margin: auto;
     position: relative;
