@@ -174,7 +174,6 @@ const Clientes = () => {
     const [paymentQuickMode, setPaymentQuickMode] = useState(false);
     const [expandedLedgerRowId, setExpandedLedgerRowId] = useState(null);
     const [newClient, setNewClient] = useState(emptyClientForm);
-    const [showUnassignedOnly, setShowUnassignedOnly] = useState(false);
     const [clients, setClients] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState([]);
     const [branches, setBranches] = useState([]);
@@ -184,7 +183,7 @@ const Clientes = () => {
 
     const clientBelongsToCurrentBranch = useCallback((client) => {
         if (!currentBranchId) return false;
-        return !client?.branch_id || Number(client.branch_id) === Number(currentBranchId);
+        return Number(client?.branch_id) === Number(currentBranchId);
     }, [currentBranchId]);
 
     const loadCoreData = useCallback(async () => {
@@ -372,7 +371,10 @@ const Clientes = () => {
 
     const openCreateClientModal = () => {
         setEditingClientId(null);
-        setNewClient(emptyClientForm);
+        setNewClient({
+            ...emptyClientForm,
+            branchId: currentBranchId ? String(currentBranchId) : '',
+        });
         setIsModalOpen(true);
     };
 
@@ -418,6 +420,11 @@ const Clientes = () => {
 
     const handleSaveClient = async (e) => {
         e.preventDefault();
+        const selectedBranchId = Number(newClient.branchId || currentBranchId || 0);
+        if (!Number.isFinite(selectedBranchId) || selectedBranchId <= 0) {
+            alert('No se pudo determinar la sucursal activa para guardar el cliente.');
+            return;
+        }
         const firstName = cleanValue(newClient.first_name).toUpperCase();
         const lastName = cleanValue(newClient.last_name).toUpperCase();
         const fullName = [firstName, lastName].filter(Boolean).join(' ');
@@ -456,9 +463,9 @@ const Clientes = () => {
             has_current_account: newClient.hasCurrentAccount,
             employee_discount_enabled: employeeDiscountEnabled,
             employee_discount_pct: employeeDiscountPct,
+            branch_id: selectedBranchId,
             last_updated: new Date().toISOString(),
             synced: 0,
-            ...(isAdmin ? { branch_id: newClient.branchId ? Number(newClient.branchId) : null } : {}),
         };
 
         if (isEditingClient) {
@@ -520,7 +527,6 @@ const Clientes = () => {
     };
 
     const filteredClients = clients?.filter((c) => {
-        if (showUnassignedOnly && c.branch_id) return false;
         const term = searchTerm.toLowerCase();
         return (
             getClientFullName(c).toLowerCase().includes(term) ||
@@ -580,20 +586,6 @@ const Clientes = () => {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    {isAdmin && (
-                        <button
-                            className="neo-button"
-                            onClick={() => setShowUnassignedOnly(!showUnassignedOnly)}
-                            style={{
-                                fontSize: '0.8rem', padding: '0.4rem 0.75rem', whiteSpace: 'nowrap',
-                                background: showUnassignedOnly ? 'var(--color-primary)' : 'transparent',
-                                color: showUnassignedOnly ? '#fff' : 'var(--color-text-main)',
-                                border: '1px solid var(--color-border)'
-                            }}
-                        >
-                            Sin sucursal
-                        </button>
-                    )}
                 </div>
             </DirectionalReveal>
 
@@ -620,23 +612,6 @@ const Clientes = () => {
                                     </div>
                                     {clientAddress && (
                                         <div className="client-extra-data">{clientAddress}</div>
-                                    )}
-                                    {!client.branch_id && (
-                                        <div style={{
-                                            marginTop: '0.35rem',
-                                            fontSize: '0.72rem',
-                                            fontWeight: '800',
-                                            color: '#fbbf24',
-                                            background: 'rgba(251,191,36,0.12)',
-                                            border: '1px solid rgba(251,191,36,0.3)',
-                                            borderRadius: '999px',
-                                            padding: '0.18rem 0.5rem',
-                                            display: 'inline-flex',
-                                            alignItems: 'center',
-                                            gap: '0.3rem'
-                                        }}>
-                                            Sin sucursal
-                                        </div>
                                     )}
                                     <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
                                         {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
@@ -814,12 +789,11 @@ const Clientes = () => {
                                         value={newClient.branchId}
                                         onChange={(e) => updateNewClient('branchId', e.target.value)}
                                     >
-                                        <option value="">Sin asignar (visible en todas las sucursales)</option>
                                         {branches.map((b) => (
                                             <option key={b.id} value={String(b.id)}>{b.name || `Sucursal ${b.id}`}</option>
                                         ))}
                                     </select>
-                                    <small className="clients-form-hint">Solo el admin puede asignar la sucursal.</small>
+                                    <small className="clients-form-hint">Por defecto se asigna a la sucursal activa.</small>
                                 </div>
                             )}
 
