@@ -12,6 +12,7 @@ import { fetchTable, saveTableRecord } from '../../utils/apiClient';
 import { buildDespostadaPricingSummary } from '../../utils/despostadaPricing';
 import { ensureUnifiedProduct, fetchProductsSafe } from '../../utils/productCatalog';
 import './DespostadaBase.css';
+import BranchFilter from '../BranchFilter';
 
 const toNumber = (value) => {
     const numeric = Number(value);
@@ -369,6 +370,7 @@ const DespostadaBase = ({
 
     return (
         <><ErrorBoundary><ModuleLicenseGate locked={!hasDespostadaModule} moduleName="Despostada">
+        <BranchFilter />
         <div
             className="despostada-module animate-fade-in"
             style={{

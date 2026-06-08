@@ -14,6 +14,7 @@ import {
 import { fetchCajaReportData } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import './InformesCaja.css';
+import BranchFilter from '../components/BranchFilter';
 
 const CASH_ACCOUNTS = [
     { value: 'all', label: 'Todas las cajas' },
@@ -1124,6 +1125,7 @@ const InformesCaja = () => {
 
     return (
         <div className="informes-caja-container animate-fade-in">
+            <BranchFilter />
             <DirectionalReveal className="informes-caja-header" from="up" delay={0.04}>
                 <div>
                     <h1>Informes de Caja</h1>

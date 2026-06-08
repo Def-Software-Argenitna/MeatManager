@@ -10,6 +10,7 @@ import { buildProductId, normalizeProductKey } from '../utils/productMatching';
 import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
 import './Pedidos.css';
+import BranchFilter from '../components/BranchFilter';
 
 const getLocalDateStr = () => {
     const n = new Date();
@@ -418,6 +419,7 @@ const Pedidos = () => {
 
     return (
         <div className="pedidos-container animate-fade-in">
+            <BranchFilter />
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 

@@ -100,8 +100,7 @@ const Dashboard = () => {
     const [proLogs, setProLogs] = useState([]);
     const [branchSnapshots, setBranchSnapshots] = useState([]);
     const [tenantBranches, setTenantBranches] = useState([]);
-    const [dashboardBranchFilter, setDashboardBranchFilter] = useState(null);
-    const effectiveBranchId = dashboardBranchFilter || Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const effectiveBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
 
     useEffect(() => {
         const start = new Date();
@@ -296,7 +295,7 @@ const Dashboard = () => {
                 
                 </header>
 
-            <BranchFilter onBranchChange={(branchId) => setDashboardBranchFilter(branchId)} />
+            <BranchFilter />
             <div className="dashboard-stats-grid">
                 <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" delay={0.02} from="left" />
                 <StatCard title="Compras (Mes)" value={formatCurrency(totalComprasMes)} icon={ShoppingCart} trend="Mensual" isNegative delay={0.08} from="up" />

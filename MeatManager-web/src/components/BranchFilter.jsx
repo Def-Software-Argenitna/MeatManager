@@ -1,28 +1,34 @@
 import React, { useState, useEffect } from 'react';
 import { MapPin } from 'lucide-react';
 import { fetchClientBranches } from '../utils/apiClient';
-import { useUser } from '../context/UserContext';
+import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 
 const BranchFilter = ({ onBranchChange }) => {
-  const { adminGlobalMode } = useUser();
+  const { currentUser, accessProfile, activeBranch, selectActiveBranch } = useUser();
+  const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
   const [branches, setBranches] = useState([]);
-  const [selectedBranchId, setSelectedBranchId] = useState('');
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!adminGlobalMode) return;
+    if (!isAdmin) return;
+    setLoading(true);
     fetchClientBranches().then((data) => {
-      const list = Array.isArray(data?.branches) ? data.branches : [];
+      const list = Array.isArray(data?.branches) ? data.branches : Array.isArray(data) ? data : [];
       setBranches(list);
-    }).catch(() => {});
-  }, [adminGlobalMode]);
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [isAdmin]);
 
-  useEffect(() => {
+  const handleChange = (e) => {
+    const val = e.target.value;
     if (onBranchChange) {
-      onBranchChange(selectedBranchId ? Number(selectedBranchId) : null);
+      onBranchChange(val ? Number(val) : null);
+    } else {
+      const branch = branches.find((b) => String(b.id) === val);
+      selectActiveBranch(branch || null);
     }
-  }, [selectedBranchId, onBranchChange]);
+  };
 
-  if (!adminGlobalMode || branches.length <= 1) return null;
+  if (!isAdmin || loading || branches.length <= 1) return null;
 
   return (
     <div style={{
@@ -37,10 +43,10 @@ const BranchFilter = ({ onBranchChange }) => {
       fontSize: '0.8rem',
     }}>
       <MapPin size={16} style={{ color: '#22c55e', flexShrink: 0 }} />
-      <span style={{ color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>Filtrar sucursal:</span>
+      <span style={{ color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>Sucursal:</span>
       <select
-        value={selectedBranchId}
-        onChange={(e) => setSelectedBranchId(e.target.value)}
+        value={activeBranch?.id || ''}
+        onChange={handleChange}
         style={{
           flex: 1,
           fontSize: '0.8rem',
@@ -52,7 +58,7 @@ const BranchFilter = ({ onBranchChange }) => {
           cursor: 'pointer',
         }}
       >
-        <option value="">Todas las sucursales</option>
+        <option value="">Seleccionar sucursal...</option>
         {branches.map((branch) => (
           <option key={branch.id} value={branch.id}>
             {branch.name}

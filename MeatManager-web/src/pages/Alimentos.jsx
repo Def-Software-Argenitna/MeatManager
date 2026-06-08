@@ -3,6 +3,7 @@ import { Plus, Trash2, Package } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Alimentos.css';
+import BranchFilter from '../components/BranchFilter';
 
 // Tipos de productos pre-elaborados
 const PRODUCT_TYPES = [
@@ -183,6 +184,7 @@ const Alimentos = () => {
 
     return (
         <div className="alimentos-container animate-fade-in">
+            <BranchFilter />
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 

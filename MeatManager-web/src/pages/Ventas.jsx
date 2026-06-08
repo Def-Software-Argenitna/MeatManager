@@ -15,6 +15,7 @@ import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigit
 import { scaleService } from '../utils/SerialScaleService';
 import { CERDO_CUTS, PESCADO_CUTS, POLLO_CUTS, VACA_CUTS } from './despostadaData';
 import './Ventas.css';
+import BranchFilter from '../components/BranchFilter';
 
 const CATEGORY_META = {
     vaca: { label: 'Vaca', icon: '🐄' },
@@ -2059,6 +2060,7 @@ const Ventas = () => {
 
     return (
         <>
+        <BranchFilter />
         {/* TOAST — reemplaza todos los alert() nativos para no perder foco en Electron */}
         {toastMsg && (
             <div

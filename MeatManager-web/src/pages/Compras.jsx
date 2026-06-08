@@ -6,6 +6,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord, createCompra } from '../utils/apiClient';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import './Compras.css';
+import BranchFilter from '../components/BranchFilter';
 
 const IVA_OPTIONS = [10.5, 21];
 
@@ -566,6 +567,7 @@ const Compras = () => {
 
     return (
         <div className="compras-container animate-fade-in">
+            <BranchFilter />
             <DirectionalReveal from="up" delay={0.04}>
             <header className="compras-header">
                 
