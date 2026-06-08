@@ -48,9 +48,9 @@ const Login = () => {
     const [loading, setLoading] = useState(false);
     const from = location.state?.from?.pathname || '/';
     const isAdminUser = isEffectiveAdminUser(currentUser, accessProfile);
-    const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !hasBranchBlockingError;
-    const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
     const hasBranchBlockingError = tenant && currentUser && isAdminUser && branchCheckComplete && Boolean(branchError);
+    const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
+    const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !hasBranchBlockingError;
     const selectedSupportClient = useMemo(
         () => supportClients.find((client) => String(client.id) === String(selectedClientId)) || null,
         [supportClients, selectedClientId]
@@ -61,10 +61,10 @@ const Login = () => {
     );
 
     useEffect(() => {
-        if (tenant && currentUser && !loadingUser && !waitingForBranchCheck && !requiresBranchSelection && !hasBranchBlockingError) {
+        if (tenant && currentUser && !loadingUser && branchCheckComplete && !requiresBranchSelection && !hasBranchBlockingError) {
             navigate(from, { replace: true });
         }
-    }, [tenant, currentUser, loadingUser, waitingForBranchCheck, requiresBranchSelection, hasBranchBlockingError, navigate, from]);
+    }, [tenant, currentUser, loadingUser, branchCheckComplete, requiresBranchSelection, hasBranchBlockingError, navigate, from]);
 
     useEffect(() => {
         let cancelled = false;
