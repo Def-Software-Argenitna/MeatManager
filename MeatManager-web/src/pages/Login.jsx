@@ -21,7 +21,9 @@ const Login = () => {
         currentUser,
         loadingUser,
         activeBranch,
+        adminGlobalMode,
         selectActiveBranch,
+        setAdminGlobalMode,
         refreshClientBranches,
     } = useUser();
     const [mode, setMode] = useState('tenant');
@@ -45,7 +47,7 @@ const Login = () => {
     const [loading, setLoading] = useState(false);
     const from = location.state?.from?.pathname || '/';
     const isAdminUser = currentUser?.role === 'admin';
-    const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !activeBranch?.id;
+    const requiresBranchSelection = tenant && currentUser && isAdminUser && clientBranches.length > 1 && !hasBranchBlockingError;
     const waitingForBranchCheck = tenant && currentUser && isAdminUser && !branchCheckComplete;
     const hasBranchBlockingError = tenant && currentUser && isAdminUser && branchCheckComplete && Boolean(branchError);
     const selectedSupportClient = useMemo(
@@ -93,9 +95,11 @@ const Login = () => {
                 if (branches.length === 1 && !activeBranch?.id) {
                     selectActiveBranch(branches[0]);
                 } else if (branches.length > 1) {
-                    setSelectedBranchId(String(
-                        savedBranchStillExists ? activeBranch.id : branches[0]?.id || ''
-                    ));
+                    setSelectedBranchId(
+                        adminGlobalMode ? 'all' : String(
+                            savedBranchStillExists ? activeBranch.id : branches[0]?.id || ''
+                        )
+                    );
                 }
             } catch (error) {
                 if (!cancelled) {
@@ -197,6 +201,11 @@ const Login = () => {
     };
 
     const handleBranchAccess = () => {
+        if (selectedBranchId === 'all') {
+            setAdminGlobalMode(true);
+            navigate(from, { replace: true });
+            return;
+        }
         const selectedBranch = clientBranches.find((branch) => String(branch.id) === String(selectedBranchId));
         if (!selectedBranch) {
             setBranchError('Seleccioná una sucursal para continuar');
@@ -247,6 +256,7 @@ const Login = () => {
                                         onChange={(e) => setSelectedBranchId(e.target.value)}
                                         disabled={branchLoading}
                                     >
+                                        <option value="all">🌐 Todas las sucursales</option>
                                         {clientBranches.map((branch) => (
                                             <option key={branch.id} value={branch.id}>
                                                 {branch.name}{branch.internalCode ? ` (${branch.internalCode})` : ''}
@@ -268,7 +278,7 @@ const Login = () => {
                                 disabled={branchLoading || !selectedBranchId || hasBranchBlockingError}
                                 style={{ opacity: branchLoading || !selectedBranchId || hasBranchBlockingError ? 0.7 : 1 }}
                             >
-                                <LogIn size={18} /> Entrar a la sucursal
+                                <LogIn size={18} /> {selectedBranchId === 'all' ? 'Entrar a todas las sucursales' : 'Entrar a la sucursal'}
                             </button>
                         </div>
                     ) : (
