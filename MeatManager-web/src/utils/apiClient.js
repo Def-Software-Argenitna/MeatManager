@@ -3,6 +3,8 @@ import { buildApiUrl } from './runtimeConfig';
 
 const isAdminGlobalSession = () => sessionStorage.getItem('mm_admin_global') === 'true';
 
+export const SUPPORT_SESSION_EXPIRED_EVENT = 'mm:support-session-expired';
+
 export const hasTenantSession = () => !!sessionStorage.getItem('mm_tenant');
 export const getStoredAuthToken = () => sessionStorage.getItem('mm_auth_token');
 const getStoredTenantSession = () => {
