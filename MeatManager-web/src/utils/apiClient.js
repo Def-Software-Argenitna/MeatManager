@@ -1,7 +1,7 @@
 import { auth } from '../firebase';
 import { buildApiUrl } from './runtimeConfig';
 
-export const SUPPORT_SESSION_EXPIRED_EVENT = 'mm:support-session-expired';
+const isAdminGlobalSession = () => sessionStorage.getItem('mm_admin_global') === 'true';
 
 export const hasTenantSession = () => !!sessionStorage.getItem('mm_tenant');
 export const getStoredAuthToken = () => sessionStorage.getItem('mm_auth_token');
@@ -188,9 +188,14 @@ const getCachedToken = (forceRefresh = false) => {
 
 export const apiFetch = async (path, options = {}) => {
     const tenant = getStoredTenantSession();
-    const scopedPath = isSupportSession(tenant) && tenant?.clientId
+    let scopedPath = isSupportSession(tenant) && tenant?.clientId
         ? appendSupportClientIdToPath(path, tenant.clientId)
         : path;
+
+    if (isAdminGlobalSession() && String(options?.noAdminGlobal || '').trim() !== '1') {
+        const sep = scopedPath.includes('?') ? '&' : '?';
+        scopedPath = `${scopedPath}${sep}admin_global=1`;
+    }
     const scopedBody = isSupportSession(tenant) && tenant?.clientId
         ? injectSupportClientIdIntoBody(options.body, tenant.clientId)
         : options.body;
@@ -285,6 +290,8 @@ export const fetchTable = async (table, options = {}) => {
     if (options.orderBy) query.set('orderBy', options.orderBy);
     if (options.direction) query.set('direction', options.direction);
     if (options.includeInactive) query.set('include_inactive', '1');
+    if (options.adminGlobal) query.set('admin_global', '1');
+    if (options.activeBranchId) query.set('activeBranchId', String(options.activeBranchId));
 
     const suffix = query.toString() ? `?${query.toString()}` : '';
     const res = await apiFetch(`/api/table/${table}${suffix}`);

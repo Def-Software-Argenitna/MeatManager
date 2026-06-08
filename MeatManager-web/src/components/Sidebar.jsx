@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -32,19 +32,20 @@ import {
   Cpu,
   Lock,
   HelpCircle,
-  Crown
+  Crown,
+  Globe
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useTenant } from '../context/TenantContext';
-import { getRemoteSetting } from '../utils/apiClient';
+import { getRemoteSetting, fetchClientBranches } from '../utils/apiClient';
 import './Sidebar.css';
 
 const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isPro, hasModule } = useLicense();
-  const { currentUser, accessProfile, hasAccess, logout, activeBranch } = useUser();
+  const { currentUser, accessProfile, hasAccess, logout, activeBranch, adminGlobalMode, setAdminGlobalMode, selectActiveBranch } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
@@ -56,6 +57,7 @@ const Sidebar = ({ isCollapsed }) => {
     produccion: false,
     configuracion: false,
   });
+  const [branches, setBranches] = useState([]);
 
   React.useEffect(() => {
     const checkMaster = async () => {
@@ -84,6 +86,15 @@ const Sidebar = ({ isCollapsed }) => {
       window.removeEventListener('offline', handleStatusChange);
     };
   }, []);
+
+  React.useEffect(() => {
+    if (isEffectiveAdmin) {
+      fetchClientBranches().then((data) => {
+        const branchList = Array.isArray(data?.branches) ? data.branches : [];
+        setBranches(branchList);
+      }).catch(() => {});
+    }
+  }, [isEffectiveAdmin]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -338,11 +349,48 @@ const Sidebar = ({ isCollapsed }) => {
               <span className="user-role" style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 {isEffectiveAdmin ? 'Administrador' : currentUser ? 'Operador' : 'Empresa'}
               </span>
-              {activeBranch?.name && (
+              {activeBranch?.name ? (
                 <span className="user-branch" style={{ fontSize: '0.6rem', color: 'var(--color-accent)', fontWeight: '600', marginTop: '1px' }}>
                   {activeBranch.name}
                 </span>
+              ) : adminGlobalMode && (
+                <span className="user-branch" style={{ fontSize: '0.6rem', color: '#22c55e', fontWeight: '600', marginTop: '1px' }}>
+                  <Globe size={10} style={{ marginRight: 3, verticalAlign: 'middle' }} /> Todas las sucursales
+                </span>
               )}
+            </div>
+          )}
+          {!isCollapsed && isEffectiveAdmin && branches.length > 1 && (
+            <div style={{ position: 'relative', marginTop: '0.4rem', marginBottom: '0.4rem' }}>
+              <select
+                value={adminGlobalMode ? 'all' : (activeBranch?.id ? String(activeBranch.id) : '')}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  if (val === 'all') {
+                    setAdminGlobalMode(true);
+                  } else if (val) {
+                    const branch = branches.find((b) => String(b.id) === val);
+                    if (branch) selectActiveBranch(branch);
+                  }
+                }}
+                style={{
+                  width: '100%',
+                  fontSize: '0.7rem',
+                  padding: '0.25rem 0.4rem',
+                  background: 'rgba(255,255,255,0.05)',
+                  color: 'var(--color-text-main)',
+                  border: '1px solid rgba(255,255,255,0.12)',
+                  borderRadius: '6px',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="all">🌐 Todas las sucursales</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
             </div>
           )}
           <button

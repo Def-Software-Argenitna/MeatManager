@@ -61,10 +61,12 @@ const Login = () => {
     );
 
     useEffect(() => {
-        if (tenant && currentUser && !loadingUser && branchCheckComplete && !requiresBranchSelection && !hasBranchBlockingError) {
+        const branchesLoaded = clientBranches.length > 0 || hasBranchBlockingError;
+        const readyToNavigate = tenant && currentUser && !loadingUser && branchCheckComplete && !requiresBranchSelection && !hasBranchBlockingError;
+        if (readyToNavigate && (!isAdminUser || branchesLoaded)) {
             navigate(from, { replace: true });
         }
-    }, [tenant, currentUser, loadingUser, branchCheckComplete, requiresBranchSelection, hasBranchBlockingError, navigate, from]);
+    }, [tenant, currentUser, loadingUser, branchCheckComplete, requiresBranchSelection, hasBranchBlockingError, isAdminUser, clientBranches.length, navigate, from]);
 
     useEffect(() => {
         let cancelled = false;
