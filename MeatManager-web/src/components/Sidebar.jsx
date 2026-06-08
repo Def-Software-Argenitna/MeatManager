@@ -32,8 +32,7 @@ import {
   Cpu,
   Lock,
   HelpCircle,
-  Crown,
-  Globe
+  Crown
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
@@ -45,7 +44,7 @@ const Sidebar = ({ isCollapsed }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isPro, hasModule } = useLicense();
-  const { currentUser, accessProfile, hasAccess, logout, activeBranch, adminGlobalMode, setAdminGlobalMode, selectActiveBranch } = useUser();
+  const { currentUser, accessProfile, hasAccess, logout, activeBranch, selectActiveBranch } = useUser();
   const { tenant, logout: tenantLogout } = useTenant();
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [branchNotif, setBranchNotif] = useState(0);
@@ -95,9 +94,12 @@ const Sidebar = ({ isCollapsed }) => {
       fetchClientBranches().then((data) => {
         const branchList = Array.isArray(data?.branches) ? data.branches : [];
         setBranches(branchList);
+        if (!activeBranch?.id && branchList.length > 0) {
+          selectActiveBranch(branchList[0]);
+        }
       }).catch(() => {});
     }
-  }, [isEffectiveAdmin]);
+  }, [activeBranch?.id, isEffectiveAdmin, selectActiveBranch]);
 
   const isActive = (path) => location.pathname === path;
 
@@ -352,11 +354,7 @@ const Sidebar = ({ isCollapsed }) => {
                 <span className="user-branch" style={{ fontSize: '0.6rem', color: 'var(--color-accent)', fontWeight: '600', marginTop: '1px' }}>
                   {activeBranch.name}
                 </span>
-              ) : adminGlobalMode && (
-                <span className="user-branch" style={{ fontSize: '0.6rem', color: '#22c55e', fontWeight: '600', marginTop: '1px' }}>
-                  <Globe size={10} style={{ marginRight: 3, verticalAlign: 'middle' }} /> Todas las sucursales
-                </span>
-              )}
+              ) : null}
             </div>
           )}
           <button
@@ -370,12 +368,10 @@ const Sidebar = ({ isCollapsed }) => {
           {!isCollapsed && isEffectiveAdmin && branches.length > 1 && (
             <div className="sidebar-branch-select">
               <select
-                value={adminGlobalMode ? 'all' : (activeBranch?.id ? String(activeBranch.id) : '')}
+                value={activeBranch?.id ? String(activeBranch.id) : ''}
                 onChange={(e) => {
                   const val = e.target.value;
-                  if (val === 'all') {
-                    setAdminGlobalMode(true);
-                  } else if (val) {
+                  if (val) {
                     const branch = branches.find((b) => String(b.id) === val);
                     if (branch) selectActiveBranch(branch);
                   }
@@ -391,7 +387,6 @@ const Sidebar = ({ isCollapsed }) => {
                   cursor: 'pointer'
                 }}
               >
-                <option value="all">🌐 Todas las sucursales</option>
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
                     {branch.name}
