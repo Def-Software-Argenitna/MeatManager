@@ -17,7 +17,6 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import './CierreCaja.css';
-import BranchFilter from '../components/BranchFilter';
 
 const OUTFLOW_CATEGORIES = [
     'Retiro de caja',
@@ -756,7 +755,6 @@ const CierreCaja = () => {
 
     return (
         <div className="cierre-container animate-fade-in">
-            <BranchFilter />
             <DirectionalReveal from="up" delay={0.04}>
             <header className="cierre-header">
                 <div>

@@ -7,7 +7,6 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
 import './Stock.css';
-import BranchFilter from '../components/BranchFilter';
 
 const TYPE_META = {
     vaca: { name: 'Vaca', icon: '🐄', color: '#dc2626' },
@@ -540,8 +539,6 @@ const Stock = () => {
 
     return (
         <div className="stock-container animate-fade-in">
-            <BranchFilter />
-
             {/* Import Status Toast */}
             {importStatus && (
                 <div style={{

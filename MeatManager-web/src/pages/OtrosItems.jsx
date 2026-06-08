@@ -4,7 +4,6 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import './Stock.css'; // Reusing Stock styles for consistency
 import './OtrosItems.css';
-import BranchFilter from '../components/BranchFilter';
 
 const PRESENTATION_OPTIONS = [
     { value: 'unidades', label: 'Unidades' },
@@ -86,7 +85,6 @@ const OtrosItems = () => {
 
     return (
         <div className="stock-container animate-fade-in">
-            <BranchFilter />
             <DirectionalReveal className="neo-card" from="left" delay={0.1} style={{ padding: '1.5rem', marginBottom: '2rem' }}>
                 <h3 style={{ marginBottom: '1rem' }}>{editingItemId ? 'Editar Insumo' : 'Agregar Nuevo Insumo'}</h3>
                 <form onSubmit={handleAddItem} style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>

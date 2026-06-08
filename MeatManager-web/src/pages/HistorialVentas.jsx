@@ -3,7 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt, Search } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
-import BranchFilter from '../components/BranchFilter';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -141,7 +140,6 @@ const HistorialVentas = () => {
 
     return (
         <div className="animate-fade-in">
-            <BranchFilter />
             <header className="page-header" style={{ marginBottom: '1.5rem' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
                     <button

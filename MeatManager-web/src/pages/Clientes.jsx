@@ -6,7 +6,6 @@ import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranc
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import './Clientes.css';
-import BranchFilter from '../components/BranchFilter';
 
 const currentMonth = () => {
     const n = new Date();
@@ -164,7 +163,6 @@ const getClientLedgerPaymentMethod = (row) => {
 const Clientes = () => {
     const { currentUser, accessProfile, activeBranch, adminGlobalMode } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
-    const [clientsBranchFilter, setClientsBranchFilter] = useState(null);
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClientId, setEditingClientId] = useState(null);
@@ -567,7 +565,6 @@ const Clientes = () => {
 
     return (
         <div className="clients-container animate-fade-in">
-            <BranchFilter />
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 

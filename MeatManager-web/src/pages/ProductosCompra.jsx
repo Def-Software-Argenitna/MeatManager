@@ -7,7 +7,6 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useUser } from '../context/UserContext';
-import BranchFilter from '../components/BranchFilter';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
@@ -404,7 +403,6 @@ const ProductosCompra = () => {
 
     return (
         <div className="animate-fade-in">
-            <BranchFilter />
             <header className="page-header">
                 <div className="page-header-actions">
                     <button className="neo-button" onClick={openNew}>

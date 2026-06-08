@@ -7,7 +7,6 @@ import { fetchTable } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import './InformesPro.css';
-import BranchFilter from '../components/BranchFilter';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
 const formatPercent = (value) => `${(Number(value) || 0).toFixed(1)}%`;
@@ -555,7 +554,6 @@ const InformesPro = () => {
 
     return (
         <>
-        <BranchFilter />
         <ModuleLicenseGate locked={!hasInformesProModule} moduleName="Rendimiento PRO">
         <div className="informes-pro-container animate-fade-in">
             <DirectionalReveal from="up" delay={0.04}>

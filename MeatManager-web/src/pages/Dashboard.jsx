@@ -6,7 +6,6 @@ import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
-import BranchFilter from '../components/BranchFilter';
 import './Dashboard.css';
 
 const toNumber = (value) => {
@@ -295,7 +294,6 @@ const Dashboard = () => {
                 
                 </header>
 
-            <BranchFilter />
             <div className="dashboard-stats-grid">
                 <StatCard title="Ventas del Día" value={formatCurrency(totalVentasDia)} icon={Banknote} trend="Hoy" delay={0.02} from="left" />
                 <StatCard title="Compras (Mes)" value={formatCurrency(totalComprasMes)} icon={ShoppingCart} trend="Mensual" isNegative delay={0.08} from="up" />

@@ -8,7 +8,6 @@ import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContex
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting, saveTableRecord } from '../utils/apiClient';
 import './Security.css';
-import BranchFilter from '../components/BranchFilter';
 
 /* ── Helpers ────────────────────────────── */
 const ALL_GROUPS = [...new Set(ALL_ROUTES.map(r => r.group))];
@@ -808,7 +807,6 @@ const Security = () => {
 
     return (
         <div className="security-container animate-fade-in">
-            <BranchFilter />
             <header className="security-header">
                 <ShieldCheck size={32} className="text-gold" />
                 <div>

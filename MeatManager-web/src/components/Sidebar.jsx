@@ -359,6 +359,14 @@ const Sidebar = ({ isCollapsed }) => {
               )}
             </div>
           )}
+          <button
+            type="button"
+            className="sidebar-logout-button"
+            onClick={handleLogout}
+            title="Cerrar Sesion"
+          >
+            <LogOut size={18} />
+          </button>
           {!isCollapsed && isEffectiveAdmin && branches.length > 1 && (
             <div className="sidebar-branch-select">
               <select
@@ -392,14 +400,6 @@ const Sidebar = ({ isCollapsed }) => {
               </select>
             </div>
           )}
-          <button
-            type="button"
-            className="sidebar-logout-button"
-            onClick={handleLogout}
-            title="Cerrar Sesion"
-          >
-            <LogOut size={18} />
-          </button>
         </div>
         {!isCollapsed && (
           <div style={{ marginTop: '0.75rem', textAlign: 'center', opacity: 0.3, fontSize: '0.55rem', letterSpacing: '0.1em', fontWeight: '700' }}>
