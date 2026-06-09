@@ -745,6 +745,36 @@ const DELIVERY_STATUS_MAP = {
 
 const ACTIVE_DELIVERY_STATUSES = ['assigned', 'on_route', 'arrived'];
 
+function computeEan13CheckDigit(base12) {
+    const digits = String(base12 || '').replace(/\D/g, '').slice(0, 12).padEnd(12, '0');
+    let sum = 0;
+    for (let i = 0; i < digits.length; i += 1) {
+        const digit = Number.parseInt(digits[i], 10) || 0;
+        sum += digit * (i % 2 === 0 ? 1 : 3);
+    }
+    return String((10 - (sum % 10)) % 10);
+}
+
+function buildScaleBarcodeCandidates(rawBarcode) {
+    const raw = String(rawBarcode || '').trim();
+    const digits = raw.replace(/\D/g, '');
+    const candidates = new Set();
+
+    if (raw) candidates.add(raw);
+    if (digits) candidates.add(digits);
+
+    if (digits.length >= 13) {
+        candidates.add(digits.slice(0, 13));
+        candidates.add(digits.slice(0, 12));
+    }
+
+    if (digits.length === 12) {
+        candidates.add(`${digits}${computeEan13CheckDigit(digits)}`);
+    }
+
+    return Array.from(candidates).filter(Boolean);
+}
+
 function normalizeDeliveryStatus(value) {
     return DELIVERY_STATUS_MAP[String(value || '').trim().toLowerCase()] || 'pending';
 }
@@ -7554,6 +7584,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         if (!barcode) return res.status(400).json({ error: 'barcode requerido' });
         lookupBarcode = barcode;
         const barcodeDigits = barcode.replace(/\D/g, '');
+        const barcodeCandidates = buildScaleBarcodeCandidates(barcode);
         const isScaleSummaryBarcode = barcodeDigits.length >= 12 && barcodeDigits.startsWith('22');
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
@@ -7573,18 +7604,22 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         let [ticketRows] = await pool.query(
             `SELECT ${ticketSelect}
              FROM scale_bridge_ticket_map
-             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)${openTicketFilter}
+             WHERE tenant_id = ?
+               AND UPPER(ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})${openTicketFilter}
+             ORDER BY sale_at DESC
              LIMIT 1`,
-            [tenantId, barcode]
+            [tenantId, ...barcodeCandidates]
         );
 
         if (!ticketRows.length && scaleSchema.ticketPrintedBarcode) {
             [ticketRows] = await pool.query(
                 `SELECT ${ticketSelect}
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(printed_ticket_barcode) = UPPER(?)${openTicketFilter}
+                 WHERE tenant_id = ?
+                   AND UPPER(printed_ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})${openTicketFilter}
+                 ORDER BY sale_at DESC
                  LIMIT 1`,
-                [tenantId, barcode]
+                [tenantId, ...barcodeCandidates]
             );
         }
 
@@ -7605,15 +7640,15 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                      FROM scale_bridge_ticket_map
                      WHERE tenant_id = ?
                        AND (
-                            UPPER(ticket_barcode) = UPPER(?)
-                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                            UPPER(ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})
+                            ${scaleSchema.ticketPrintedBarcode ? ` OR UPPER(printed_ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})` : ''}
                        )
                        ${openTicketFilter}
                      ORDER BY sale_at DESC
                      LIMIT 1`,
                     scaleSchema.ticketPrintedBarcode
-                        ? [tenantId, barcode, barcode]
-                        : [tenantId, barcode]
+                        ? [tenantId, ...barcodeCandidates, ...barcodeCandidates]
+                        : [tenantId, ...barcodeCandidates]
                 );
             }
             appendScaleLatencyLog('lookup_retry_window_done', {
@@ -7630,25 +7665,25 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                      FROM scale_bridge_ticket_map
                      WHERE tenant_id = ?
                        AND (
-                            UPPER(ticket_barcode) = UPPER(?)
-                            ${scaleSchema.ticketPrintedBarcode ? ' OR UPPER(printed_ticket_barcode) = UPPER(?)' : ''}
+                            UPPER(ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})
+                            ${scaleSchema.ticketPrintedBarcode ? ` OR UPPER(printed_ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})` : ''}
                        )
                        ${openTicketFilter}
                      ORDER BY sale_at DESC
                      LIMIT 1`,
                     scaleSchema.ticketPrintedBarcode
-                        ? [tenantId, barcode, barcode]
-                        : [tenantId, barcode]
+                        ? [tenantId, ...barcodeCandidates, ...barcodeCandidates]
+                        : [tenantId, ...barcodeCandidates]
                 );
             }
         }
 
         if (!ticketRows.length && scaleSchema.ticketStatus) {
-            const statusConditions = ['UPPER(ticket_barcode) = UPPER(?)'];
-            const statusParams = [tenantId, barcode];
+            const statusConditions = [`UPPER(ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})`];
+            const statusParams = [tenantId, ...barcodeCandidates];
             if (scaleSchema.ticketPrintedBarcode) {
-                statusConditions.push('UPPER(printed_ticket_barcode) = UPPER(?)');
-                statusParams.push(barcode);
+                statusConditions.push(`UPPER(printed_ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})`);
+                statusParams.push(...barcodeCandidates);
             }
             const [anyStatusRows] = await pool.query(
                 `SELECT ${ticketSelect}
@@ -7833,9 +7868,11 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             const [ventaRows] = await pool.query(
                 `SELECT ${ventasSelect}
                  FROM ventas
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
+                 WHERE tenant_id = ?
+                   AND UPPER(ticket_barcode) IN (${barcodeCandidates.map(() => 'UPPER(?)').join(', ')})
+                 ORDER BY date DESC
                  LIMIT 1`,
-                [tenantId, barcode]
+                [tenantId, ...barcodeCandidates]
             );
             if (ventaRows.length) {
                 const venta = ventaRows[0];
@@ -7942,11 +7979,13 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         // algunos firmwares/lectores pueden desalinear el identificador interno,
         // pero los barcodes del ticket siguen siendo estables.
         if (!itemRows.length) {
-            const barcodeConditions = ['UPPER(s.ticket_barcode) = UPPER(?)'];
-            const barcodeParams = [tenantId, ticket.ticket_barcode];
+            const ticketBarcodeCandidates = buildScaleBarcodeCandidates(ticket.ticket_barcode);
+            const barcodeConditions = [`UPPER(s.ticket_barcode) IN (${ticketBarcodeCandidates.map(() => 'UPPER(?)').join(', ')})`];
+            const barcodeParams = [tenantId, ...ticketBarcodeCandidates];
             if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
-                barcodeConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
-                barcodeParams.push(ticket.printed_ticket_barcode);
+                const printedBarcodeCandidates = buildScaleBarcodeCandidates(ticket.printed_ticket_barcode);
+                barcodeConditions.push(`UPPER(s.printed_ticket_barcode) IN (${printedBarcodeCandidates.map(() => 'UPPER(?)').join(', ')})`);
+                barcodeParams.push(...printedBarcodeCandidates);
             }
             [itemRows] = await pool.query(
                 `${itemBaseSql}
@@ -7967,12 +8006,14 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 anyIdParams.push(ticket.ticket_id);
             }
             if (ticket.ticket_barcode) {
-                anyIdConditions.push('UPPER(s.ticket_barcode) = UPPER(?)');
-                anyIdParams.push(ticket.ticket_barcode);
+                const ticketBarcodeCandidates = buildScaleBarcodeCandidates(ticket.ticket_barcode);
+                anyIdConditions.push(`UPPER(s.ticket_barcode) IN (${ticketBarcodeCandidates.map(() => 'UPPER(?)').join(', ')})`);
+                anyIdParams.push(...ticketBarcodeCandidates);
             }
             if (scaleSchema.itemPrintedBarcode && ticket.printed_ticket_barcode) {
-                anyIdConditions.push('UPPER(s.printed_ticket_barcode) = UPPER(?)');
-                anyIdParams.push(ticket.printed_ticket_barcode);
+                const printedBarcodeCandidates = buildScaleBarcodeCandidates(ticket.printed_ticket_barcode);
+                anyIdConditions.push(`UPPER(s.printed_ticket_barcode) IN (${printedBarcodeCandidates.map(() => 'UPPER(?)').join(', ')})`);
+                anyIdParams.push(...printedBarcodeCandidates);
             }
 
             if (anyIdConditions.length > 0) {
