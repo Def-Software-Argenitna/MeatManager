@@ -7429,6 +7429,7 @@ async function getScaleTicketLookupSchema(conn) {
 
 function buildScaleTicketLookupSelect(schema) {
     return [
+        'id',
         'device_id',
         'ticket_id',
         'ticket_barcode',
@@ -7440,6 +7441,7 @@ function buildScaleTicketLookupSelect(schema) {
         'item_count',
         schema.ticketScaleAddress ? 'scale_address' : 'NULL AS scale_address',
         schema.ticketStatus ? 'ticket_status' : "'open' AS ticket_status",
+        'charged_sale_id',
     ].join(', ');
 }
 
