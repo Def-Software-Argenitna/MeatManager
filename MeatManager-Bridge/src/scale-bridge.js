@@ -89,6 +89,16 @@ class ScaleBridge {
         }
     }
 
+    buildTotalBarcodeFormat() {
+        const configured = String(this.config.scale.barcodeConfig?.saleTotalFormat || '22AAIIIIIIII');
+        const address = Number(this.state.detectedScaleAddress || this.config.scale.address);
+        const addrStr = String(address).padStart(2, '0');
+        if (configured.startsWith('22') && configured.length >= 12) {
+            return `22${addrStr}${configured.slice(4)}`;
+        }
+        return configured;
+    }
+
     async ping() {
         try {
             const response = await this.scale.send(23, '');
@@ -140,12 +150,14 @@ class ScaleBridge {
         }
         const match = String(response.data || '').match(/S(\d{4})/);
         const protocolVersion = match ? Number.parseInt(match[1], 10) : 0;
+        const detectedAddress = Number(response.address) || null;
         return {
             ok: response.crc.ok && !String(response.data || '').startsWith('E'),
             fn: response.fn,
             data: response.data,
             crc: response.crc,
             protocolVersion,
+            detectedAddress,
             scaleReachable: true,
         };
     }
@@ -621,6 +633,10 @@ class ScaleBridge {
         // los detecta y los borra incrementalmente, sin parar el flujo normal.
         const protocolVersion = Number(signature.protocolVersion || 0);
         const useLegacyPlu4 = protocolVersion === 0 || protocolVersion < 620;
+        if (signature.detectedAddress) {
+            this.state.detectedScaleAddress = signature.detectedAddress;
+            this.stateStore.save(this.state);
+        }
         const runtimeScaleConfig = options.runtimeScaleConfig || await this.loadRuntimeScaleConfig().catch(() => ({
             ticketHeader: { line1: '', line2: '', line3: '' },
             sectionMappings: [],
@@ -1050,7 +1066,7 @@ class ScaleBridge {
                 fingerprint,
             });
             const printedTicketBarcode = formatPrintedTicketBarcode({
-                format: this.config.scale.barcodeConfig?.saleTotalFormat,
+                format: this.buildTotalBarcodeFormat(),
                 itemCount: ticket.itemCount,
                 totalAmount: Number(ticket.totalAmount.toFixed(2)) / Math.max(1, Number(this.config.scale.legacyPriceMultiplier || 1)),
             });

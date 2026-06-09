@@ -9,6 +9,7 @@ const defaultState = () => ({
     lastRunStatus: 'idle',
     lastRunMessage: null,
     lastError: null,
+    detectedScaleAddress: null,
     barcodeConfigFingerprint: null,
     priceFormatFingerprint: null,
     vendorConfigFingerprint: null,
