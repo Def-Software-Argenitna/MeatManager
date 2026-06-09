@@ -7429,6 +7429,7 @@ async function getScaleTicketLookupSchema(conn) {
 
 function buildScaleTicketLookupSelect(schema) {
     return [
+        'id',
         'device_id',
         'ticket_id',
         'ticket_barcode',
@@ -7440,6 +7441,7 @@ function buildScaleTicketLookupSelect(schema) {
         'item_count',
         schema.ticketScaleAddress ? 'scale_address' : 'NULL AS scale_address',
         schema.ticketStatus ? 'ticket_status' : "'open' AS ticket_status",
+        'charged_sale_id',
     ].join(', ');
 }
 
@@ -7649,23 +7651,56 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 statusParams.push(barcode);
             }
             const [anyStatusRows] = await pool.query(
-                `SELECT ticket_status
+                `SELECT ${ticketSelect}
                  FROM scale_bridge_ticket_map
                  WHERE tenant_id = ? AND (${statusConditions.join(' OR ')})
-                 LIMIT 1`,
+                 ORDER BY sale_at DESC`,
                 statusParams
             );
-            if (anyStatusRows.length && String(anyStatusRows[0].ticket_status || '').toLowerCase() !== 'open') {
-                appendScaleLatencyLog('lookup_ticket_not_open', {
-                    tenantId,
-                    barcode,
-                    status: String(anyStatusRows[0].ticket_status || '').toLowerCase(),
-                    elapsedMs: Date.now() - lookupStartedAt,
-                });
-                return res.status(409).json({
-                    ok: false,
-                    error: `Ese ticket ya fue ${String(anyStatusRows[0].ticket_status || '').toLowerCase()} y no debe reutilizarse`,
-                });
+            if (anyStatusRows.length) {
+                const openCandidate = anyStatusRows.find(
+                    (r) => String(r.ticket_status || '').toLowerCase() === 'open'
+                );
+                if (openCandidate) {
+                    ticketRows = [openCandidate];
+                } else {
+                    const nonOpenRow = anyStatusRows[0];
+                    const nonOpenStatus = String(nonOpenRow.ticket_status || '').toLowerCase();
+                    if (nonOpenStatus === 'charged' && nonOpenRow.charged_sale_id) {
+                        const [saleCheck] = await pool.query(
+                            `SELECT id FROM ventas WHERE tenant_id = ? AND id = ? LIMIT 1`,
+                            [tenantId, nonOpenRow.charged_sale_id]
+                        );
+                        if (saleCheck.length === 0) {
+                            await pool.query(
+                                `UPDATE scale_bridge_ticket_map
+                                 SET ticket_status = 'open', charged_sale_id = NULL, charged_at = NULL
+                                 WHERE tenant_id = ? AND id = ?`,
+                                [tenantId, nonOpenRow.id]
+                            );
+                            nonOpenRow.ticket_status = 'open';
+                            ticketRows = [nonOpenRow];
+                            appendScaleLatencyLog('lookup_auto_liberated_phantom', {
+                                tenantId,
+                                barcode,
+                                ticketId: nonOpenRow.id,
+                                elapsedMs: Date.now() - lookupStartedAt,
+                            });
+                        }
+                    }
+                    if (!ticketRows.length) {
+                        appendScaleLatencyLog('lookup_ticket_not_open', {
+                            tenantId,
+                            barcode,
+                            status: nonOpenStatus,
+                            elapsedMs: Date.now() - lookupStartedAt,
+                        });
+                        return res.status(409).json({
+                            ok: false,
+                            error: `Ese ticket ya fue ${nonOpenStatus} y no debe reutilizarse`,
+                        });
+                    }
+                }
             }
         }
 
