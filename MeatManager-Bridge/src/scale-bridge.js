@@ -90,13 +90,7 @@ class ScaleBridge {
     }
 
     buildTotalBarcodeFormat() {
-        const configured = String(this.config.scale.barcodeConfig?.saleTotalFormat || '22AAIIIIIIII');
-        const address = Number(this.state.detectedScaleAddress || this.config.scale.address);
-        const addrStr = String(address).padStart(2, '0');
-        if (configured.startsWith('22') && configured.length >= 12) {
-            return `22${addrStr}${configured.slice(4)}`;
-        }
-        return configured;
+        return String(this.config.scale.barcodeConfig?.saleTotalFormat || '22AAIIIIIIII');
     }
 
     async ping() {
