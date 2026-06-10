@@ -141,6 +141,9 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
             fromDate: from,
             toDate: now,
             closeAfter: options.closeAfter === true,
+            // En pulsos rapidos limitamos los fallbacks anual/vacio de fn72 (ver
+            // pullSales); pulls manuales/startup siguen haciendo la cadena completa.
+            pulse: reason === 'sales-pulse',
         });
 
         if (result.ok && Number(result.fetched || 0) > 0) {
@@ -351,11 +354,15 @@ async function main() {
     if (config.salesPulseEnabled) {
         const scheduleSalesPulse = (delayMs = config.salesPulseIntervalMs) => {
             if (!schedulerActive) return;
-            const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+            const nextDelay = Math.max(200, Number(delayMs) || 200);
             salesPulseTimer = setTimeout(async () => {
                 salesPulseTimer = null;
-                await runSalesPulse('sales-pulse');
-                scheduleSalesPulse(config.salesPulseIntervalMs);
+                const pulse = await runSalesPulse('sales-pulse');
+                // Modo rafaga: si acaba de entrar un ticket suelen venir mas
+                // (cola de clientes); re-pulsamos casi de inmediato para que el
+                // proximo ticket quede online antes de que lo escaneen.
+                const newTickets = Number(pulse?.result?.newTickets || 0);
+                scheduleSalesPulse(newTickets > 0 ? 150 : config.salesPulseIntervalMs);
             }, nextDelay);
         };
         scheduleSalesPulse(config.salesPulseIntervalMs);

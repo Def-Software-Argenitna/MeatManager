@@ -7633,7 +7633,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             const retryUntil = Date.now() + 15000;
             let retryCount = 0;
             while (!ticketRows.length && Date.now() < retryUntil) {
-                await new Promise((resolve) => setTimeout(resolve, 500));
+                // 300ms: el bridge pulsa cada ~0.5s; sondear mas fino que el pulso
+                // recorta la latencia percibida del escaneo sin cargar la DB.
+                await new Promise((resolve) => setTimeout(resolve, 300));
                 retryCount += 1;
                 [ticketRows] = await pool.query(
                     `SELECT ${ticketSelect}
