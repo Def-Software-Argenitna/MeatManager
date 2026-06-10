@@ -373,7 +373,7 @@ const Dashboard = () => {
                 <DashboardReveal className="dashboard-panel" from="left" delay={0.18}>
                     <div className="dashboard-panel-header">
                         <h3 className="dashboard-section-title">Últimas Ventas</h3>
-                        <Link to="/ventas" className="dashboard-link-btn">Ver todas</Link>
+                        <Link to="/ventas/historial" className="dashboard-link-btn">Ver todas</Link>
                     </div>
 
                     {visibleVentas.length === 0 ? (
