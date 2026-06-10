@@ -327,6 +327,10 @@ class ScaleBridge {
         }
 
         this.state.vendorConfigFingerprint = fingerprint;
+        // Los nombres cambiaron: invalidamos el cache que usa pullSales para
+        // etiquetar tickets, asi la proxima venta ya sale con el nombre nuevo
+        // en vez de esperar el TTL de 60s.
+        this._vendorCache = null;
         this.logger.info('Vendedores sincronizados en balanza', { synced, vendors: bySlot });
         return { ok: true, synced };
     }

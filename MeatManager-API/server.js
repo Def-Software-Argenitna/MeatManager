@@ -230,7 +230,9 @@ function shouldQueueScaleProductSync(table, operation, record = {}) {
 
     if (normalizedTable === 'settings') {
         const key = String(record?.key || '').trim();
-        return key.startsWith('scale_');
+        // precio_formato no usa el prefijo scale_ pero define como se escriben
+        // los PLUs en la balanza (4d2d vs 6d) y fuerza re-escritura del catalogo.
+        return key.startsWith('scale_') || key === 'precio_formato';
     }
 
     return false;
