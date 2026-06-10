@@ -116,10 +116,14 @@ const config = {
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
     autoGeneralSyncEnabled: boolEnv('AUTO_GENERAL_SYNC_ENABLED', false),
     salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
-    // Gap entre pulsos de ventas. El tiempo real de deteccion ~= lectura fn72
-    // (1-2s con memoria llena) + este gap + POST al API; el cajero escanea el
-    // ticket ~2s despues de cerrar la venta, asi que el gap debe ser chico.
-    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 500),
+    // Gap entre pulsos de ventas. OJO: el pesaje tiene PRIORIDAD sobre la
+    // sincronizacion. Con 500ms (2 consultas/seg) el firmware CUORA MAX S0060
+    // se saturaba y la balanza respondia lenta AL PESAR — el cliente lo sufrio
+    // en mostrador, y el protocolo lo confirma con errores E3 ("se
+    // desatendieron datos"). 2500ms deja la balanza fluida; la deteccion del
+    // ticket queda en ~3-4s y la ventana de reintentos del lookup en la API
+    // (15s) cubre el escaneo del cajero sin "ticket no encontrado".
+    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 2500),
     // El heartbeat es el canal de "demanda": el sistema encola cambios (vendedores,
     // settings, productos) y el bridge los descubre aca. 5s acota la espera entre
     // guardar en la web y que impacte en la balanza. Es solo un POST liviano.
@@ -129,12 +133,13 @@ const config = {
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
     // Cierre de ventas (fn32) despues de cada lectura exitosa: mantiene la
-    // memoria de la balanza casi vacia, asi cada fn72 transmite solo lo nuevo
-    // (~0.3s) en vez de retransmitir todo el dia (1-2s y creciendo). Costo: los
-    // acumulados/reporte Z propios de la balanza dejan de servir — los numeros
-    // salen de MeatManager (decision de producto: el sistema es la fuente de
-    // verdad). Se puede desactivar por cliente con SCALE_CLOSE_SALES_AFTER_PULL=false.
-    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', true),
+    // memoria de la balanza casi vacia (lecturas de ~60ms), PERO el protocolo
+    // avisa que fn32 "puede demorar unos instantes" y en el CUORA MAX S0060 ese
+    // cierre tras cada venta + pulso agresivo hacia LENTO EL PESAJE en el
+    // mostrador (errores E3 en el log). Default OFF: el pesaje manda. Activable
+    // por cliente con SCALE_CLOSE_SALES_AFTER_PULL=true si su firmware lo
+    // tolera (verificar con el operario pesando, no solo con la sync).
+    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
     // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
     // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".

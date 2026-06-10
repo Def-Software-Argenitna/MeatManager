@@ -11857,19 +11857,59 @@ app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
         // forward-compat (próxima fase: persistir un registro por balanza).
         const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
         const pool = getOperationalPool();
+        // Comandos de control remoto sistema -> bridge. Cada uno es un seq en
+        // settings; el bridge ejecuta cuando ve un seq mayor al que persistio.
+        const commandKeys = [
+            SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+            'scale_bridge_restart_seq',
+            'scale_bridge_restart_app_seq',
+            'scale_bridge_apply_update_seq',
+        ];
         const [rows] = await pool.query(
-            'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
-            [req.bridge.tenantId, SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY]
+            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` IN (?, ?, ?, ?)',
+            [req.bridge.tenantId, ...commandKeys]
         );
-        const productSyncSeq = Number(rows?.[0]?.value || 0) || 0;
-        const commands = productSyncSeq > 0
-            ? [{ type: 'sync_products', seq: productSyncSeq }]
-            : [];
+        const byKey = Object.fromEntries(rows.map((r) => [String(r.key), Number(r.value || 0) || 0]));
+        const commands = [];
+        if (byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] > 0) commands.push({ type: 'sync_products', seq: byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] });
+        if (byKey.scale_bridge_restart_seq > 0) commands.push({ type: 'restart_bridge', seq: byKey.scale_bridge_restart_seq });
+        if (byKey.scale_bridge_restart_app_seq > 0) commands.push({ type: 'restart_app', seq: byKey.scale_bridge_restart_app_seq });
+        if (byKey.scale_bridge_apply_update_seq > 0) commands.push({ type: 'apply_update', seq: byKey.scale_bridge_apply_update_seq });
 
         return res.json({ ok: true, scales, lastSeenAt: new Date().toISOString(), commands });
     } catch (error) {
         console.error('[BRIDGE HEARTBEAT ERROR]', error?.message || error);
         return res.status(500).json({ error: 'No se pudo procesar heartbeat del bridge' });
+    }
+});
+
+// Encola un comando de control remoto para el bridge del tenant (lo levanta
+// por heartbeat en <=5s). Tipos: restart (reinicia el proceso que habla con la
+// balanza), restart_app (reinicia la app desktop completa), apply_update
+// (busca la ultima release y la instala+relanza automaticamente).
+app.post('/api/scale/bridge/command', verifyFirebaseToken, async (req, res) => {
+    try {
+        const type = String(req.body?.type || '').trim().toLowerCase();
+        const keyByType = {
+            restart: 'scale_bridge_restart_seq',
+            restart_app: 'scale_bridge_restart_app_seq',
+            apply_update: 'scale_bridge_apply_update_seq',
+            sync_products: SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+        };
+        const key = keyByType[type];
+        if (!key) return res.status(400).json({ error: `Tipo de comando invalido: ${type}` });
+
+        const { tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getOperationalPool();
+        const seq = Date.now();
+        await pool.query(
+            'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+            [tenantId, key, String(seq)]
+        );
+        return res.json({ ok: true, type, seq, note: 'El bridge lo ejecuta en el proximo heartbeat (<=5s)' });
+    } catch (error) {
+        console.error('[BRIDGE COMMAND ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo encolar el comando' });
     }
 });
 
