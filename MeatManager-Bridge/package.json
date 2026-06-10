@@ -1,6 +1,6 @@
 {
   "name": "meatmanager-bridge",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "private": true,
   "author": "Def-Software",
   "description": "Bridge local directo USB para balanzas Systel CUORA MAX + MySQL cloud",
@@ -17,7 +17,7 @@
     "dev:desktop": "electron . --hidden",
     "once": "node src/index.js --once",
     "lint": "echo \"No lint configured yet\"",
-    "test": "node --test tools/test_barcode_format.js",
+    "test": "node --test tools/test_barcode_format.js tools/test_pull_sales.js",
     "pack:desktop": "electron-builder --dir",
     "dist:desktop": "electron-builder --win nsis"
   },
