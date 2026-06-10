@@ -7836,51 +7836,12 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
 
             if (!ticketRows.length) {
-                for (const totalAmount of totalCandidates) {
-                    const [amountMatches] = await pool.query(
-                        `SELECT ${ticketSelect}
-                         FROM scale_bridge_ticket_map
-                         WHERE tenant_id = ?
-                           ${scaleSchema.ticketStatus ? "AND ticket_status = 'open'" : ''}
-                           AND ABS(total_amount - ?) < 0.01
-                           AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
-                         ORDER BY sale_at DESC
-                         LIMIT 3`,
-                        [tenantId, totalAmount]
-                    );
-                    if (amountMatches.length === 1) {
-                        ticketRows = [amountMatches[0]];
-                        appendScaleLatencyLog('lookup_amount_only_fallback_match', {
-                            tenantId,
-                            barcode,
-                            ticketId: amountMatches[0]?.ticket_id || null,
-                            ticketBarcode: amountMatches[0]?.ticket_barcode || null,
-                            printedTicketBarcode: amountMatches[0]?.printed_ticket_barcode || null,
-                            totalAmount,
-                            elapsedMs: Date.now() - lookupStartedAt,
-                        });
-                        break;
-                    }
-                    if (amountMatches.length > 1) {
-                        appendScaleLatencyLog('lookup_amount_only_fallback_conflict', {
-                            tenantId,
-                            barcode,
-                            totalAmount,
-                            candidates: amountMatches.length,
-                            elapsedMs: Date.now() - lookupStartedAt,
-                        });
-                        return res.status(409).json({
-                            ok: false,
-                            error: 'Hay mas de un ticket posible para ese importe. Reimprima ticket con codigo unico o escanee codigo MM.',
-                            candidates: amountMatches.map((row) => ({
-                                ticketId: row.ticket_id,
-                                printedBarcode: row.printed_ticket_barcode || null,
-                                saleAt: row.sale_at,
-                                total: Number(row.total_amount || 0),
-                            })),
-                        });
-                    }
-                }
+                appendScaleLatencyLog('lookup_amount_only_fallback_skipped', {
+                    tenantId,
+                    barcode,
+                    totals: totalCandidates,
+                    elapsedMs: Date.now() - lookupStartedAt,
+                });
             }
         }
 
@@ -7979,7 +7940,11 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
         });
         const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
-             LEFT JOIN scale_bridge_product_map m
+             LEFT JOIN (
+                SELECT device_id, tenant_id, plu_code, MIN(product_id) AS product_id
+                  FROM scale_bridge_product_map
+                 GROUP BY device_id, tenant_id, plu_code
+             ) m
                ON m.device_id = s.device_id
               AND m.tenant_id = s.tenant_id
               AND CAST(m.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
@@ -7987,10 +7952,21 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                ON p.tenant_id = s.tenant_id
               AND (
                    (m.product_id IS NOT NULL AND p.id = m.product_id)
-                   OR (m.product_id IS NULL AND (
-                        CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                        OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
-                   ))
+                   OR (
+                        m.product_id IS NULL
+                        AND p.id = (
+                            SELECT p2.id
+                              FROM products p2
+                             WHERE p2.tenant_id = s.tenant_id
+                               AND (p2.branch_id <=> s.branch_id OR p2.branch_id IS NULL)
+                               AND (
+                                    CAST(p2.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                                    OR CAST(p2.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                               )
+                             ORDER BY CASE WHEN p2.branch_id <=> s.branch_id THEN 0 ELSE 1 END, p2.id DESC
+                             LIMIT 1
+                        )
+                   )
               )
              WHERE s.tenant_id = ?`;
 
@@ -8051,6 +8027,37 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                     anyIdParams
                 );
             }
+        }
+
+        const expectedItemCount = Number(ticket.item_count || 0);
+        const expectedTotalAmount = Number(ticket.total_amount || 0);
+        const itemRowsTotal = Number(itemRows.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(2));
+        const itemCountMismatch = expectedItemCount > 0 && itemRows.length !== expectedItemCount;
+        const itemTotalMismatch = expectedTotalAmount > 0 && Math.abs(itemRowsTotal - expectedTotalAmount) >= 0.01;
+        if (itemRows.length > 0 && (itemCountMismatch || itemTotalMismatch)) {
+            appendScaleLatencyLog('lookup_items_integrity_mismatch', {
+                tenantId,
+                barcode,
+                deviceId: ticket.device_id,
+                ticketId: ticket.ticket_id,
+                ticketBarcode: ticket.ticket_barcode,
+                printedTicketBarcode: ticket.printed_ticket_barcode || null,
+                expectedItemCount,
+                actualItemCount: itemRows.length,
+                expectedTotalAmount,
+                actualTotalAmount: itemRowsTotal,
+                elapsedMs: Date.now() - lookupStartedAt,
+            });
+            return res.status(409).json({
+                ok: false,
+                error: 'El detalle sincronizado del ticket no coincide con la cabecera. Reintentá en unos segundos o reimprimí el ticket con código único MM.',
+                details: {
+                    expectedItemCount,
+                    actualItemCount: itemRows.length,
+                    expectedTotalAmount,
+                    actualTotalAmount: itemRowsTotal,
+                },
+            });
         }
 
         const items = itemRows.map((row) => {
@@ -11690,6 +11697,17 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
             ticketsUpserted += 1;
 
             const lines = Array.isArray(ticket?.lines) ? ticket.lines : [];
+            if (lines.length > 0) {
+                await pool.query(
+                    `DELETE FROM scale_bridge_sales_item
+                     WHERE device_id = ?
+                       AND tenant_id = ?
+                       AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
+                       AND ticket_id = ?
+                       AND line_no > ?`,
+                    [deviceId, tenantId, branchId, branchId, ticketId, lines.length]
+                );
+            }
             for (const line of lines) {
                 const lineNo = Number.parseInt(line?.lineNo, 10);
                 if (!Number.isFinite(lineNo)) continue;
