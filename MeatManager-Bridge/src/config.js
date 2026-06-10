@@ -116,7 +116,10 @@ const config = {
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
     autoGeneralSyncEnabled: boolEnv('AUTO_GENERAL_SYNC_ENABLED', false),
     salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
-    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 1500),
+    // Gap entre pulsos de ventas. El tiempo real de deteccion ~= lectura fn72
+    // (1-2s con memoria llena) + este gap + POST al API; el cajero escanea el
+    // ticket ~2s despues de cerrar la venta, asi que el gap debe ser chico.
+    salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 500),
     heartbeatIntervalMs: intEnv('HEARTBEAT_INTERVAL_MS', 10000),
     productSyncIntervalMs: intEnv('PRODUCT_SYNC_INTERVAL_MS', 10000),
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),

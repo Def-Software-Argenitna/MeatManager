@@ -839,20 +839,40 @@ class ScaleBridge {
         };
     }
 
-    async pullSales({ fromDate, toDate, closeAfter = false }) {
-        const pullStartedAt = Date.now();
-        this.logTicketLatency('bridge_pull_sales_start', {
-            fromDate: new Date(fromDate).toISOString(),
-            toDate: new Date(toDate).toISOString(),
-            closeAfter,
-        });
+    // Cache corto de vendedores: pullSales corre cada ~0.5s en el pulso y un
+    // round-trip al API por pulso solo para nombres de vendedor (que cambian
+    // casi nunca) agrega 200-500ms de latencia de deteccion por ticket.
+    async getVendorMapCached() {
+        const ttlMs = 60_000;
+        const now = Date.now();
+        if (this._vendorCache && (now - this._vendorCache.at) < ttlMs) {
+            return this._vendorCache.map;
+        }
         const { vendors: vendorRows = [] } = await this.api.getVendors().catch(() => ({ vendors: [] }));
-        const vendorByCode = new Map(
+        const map = new Map(
             vendorRows.map((row) => [
                 String(Number.parseInt(row.slot, 10) || 0).padStart(2, '0'),
                 String(row.displayName || '').trim(),
             ])
         );
+        // Si el API fallo (mapa vacio) reintentamos antes del TTL completo.
+        this._vendorCache = { at: map.size > 0 ? now : (now - ttlMs + 5000), map };
+        return map;
+    }
+
+    async pullSales({ fromDate, toDate, closeAfter = false, pulse = false }) {
+        const pullStartedAt = Date.now();
+        // En pulsos (2/seg) las trazas por-pulso inflarian el log de latencia
+        // ~35MB/dia; solo trazamos pulls manuales/startup y eventos con tickets.
+        const trace = !pulse;
+        if (trace) {
+            this.logTicketLatency('bridge_pull_sales_start', {
+                fromDate: new Date(fromDate).toISOString(),
+                toDate: new Date(toDate).toISOString(),
+                closeAfter,
+            });
+        }
+        const vendorByCode = await this.getVendorMapCached();
         const resolveVendorName = (vendorCodeRaw) => {
             const parsed = Number.parseInt(String(vendorCodeRaw || '').trim(), 10);
             const code2 = String(Number.isFinite(parsed) ? parsed : 0).padStart(2, '0');
@@ -874,18 +894,30 @@ class ScaleBridge {
         const yearTo = new Date(year, 11, 31, 23, 59, 59);
         const annualPayload = buildSales72Payload(yearFrom, yearTo);
 
+        // Rate-limit de fallbacks en pulsos: con la memoria de ventas vacia (E7,
+        // p.ej. despues del cierre diario) la cadena anual+vacio agrega 2 lecturas
+        // seriales (~2s) a CADA pulso sin aportar nada — este firmware ignora el
+        // filtro de fecha, asi que si el incremental dice E7 el anual tambien.
+        // En pulsos solo probamos la cadena 1 vez por minuto; pulls manuales,
+        // startup y backfill siguen haciendo la cadena completa siempre.
+        const allowFallbacks = !pulse || (Date.now() - Number(this._lastFn72FallbackAt || 0)) >= 60_000;
+        const markFallback = () => { this._lastFn72FallbackAt = Date.now(); };
+
         const scaleReadStartedAt = Date.now();
-        this.logTicketLatency('bridge_scale_fn72_start', { payload });
+        if (trace) this.logTicketLatency('bridge_scale_fn72_start', { payload });
         let response = await this.scale.send(72, payload, { timeoutMs: 30000 });
         if (!response.crc.ok) throw new Error('CRC invalido al leer ventas (funcion 72)');
         let responseData = String(response.data || '');
-        this.logTicketLatency('bridge_scale_fn72_done', {
-            elapsedMs: elapsedMs(scaleReadStartedAt),
-            responseChars: responseData.length,
-            crcOk: response.crc.ok,
-            fallback: 'none',
-        });
-        if (responseData.startsWith('E7')) {
+        if (trace) {
+            this.logTicketLatency('bridge_scale_fn72_done', {
+                elapsedMs: elapsedMs(scaleReadStartedAt),
+                responseChars: responseData.length,
+                crcOk: response.crc.ok,
+                fallback: 'none',
+            });
+        }
+        if (responseData.startsWith('E7') && allowFallbacks) {
+            markFallback();
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),
@@ -924,15 +956,17 @@ class ScaleBridge {
             }
         }
         if (responseData.startsWith('E7')) {
-            this.logger.info('Funcion 72 sin datos', {
-                from: new Date(fromDate).toISOString(),
-                to: new Date(toDate).toISOString(),
-                payload,
-                response: responseData,
-            });
-            this.logTicketLatency('bridge_pull_sales_no_data', {
-                elapsedMs: elapsedMs(pullStartedAt),
-            });
+            if (trace || allowFallbacks) {
+                this.logger.info('Funcion 72 sin datos', {
+                    from: new Date(fromDate).toISOString(),
+                    to: new Date(toDate).toISOString(),
+                    payload,
+                    response: responseData,
+                });
+                this.logTicketLatency('bridge_pull_sales_no_data', {
+                    elapsedMs: elapsedMs(pullStartedAt),
+                });
+            }
             return { ok: true, fetched: 0, stored: 0, tickets: 0, noData: true };
         }
         if (responseData.startsWith('E')) {
@@ -947,7 +981,8 @@ class ScaleBridge {
 
         const parseStartedAt = Date.now();
         let rows = parseSales72(responseData);
-        if (rows.length === 0 && payload !== annualPayload) {
+        if (rows.length === 0 && payload !== annualPayload && allowFallbacks) {
+            markFallback();
             this.logger.info('Funcion 72 devolvio vacio en rango incremental, intentando fallback anual', {
                 payload,
                 annualPayload,
@@ -981,20 +1016,38 @@ class ScaleBridge {
             }
             rows = parseSales72(responseData);
         }
-        this.logTicketLatency('bridge_sales_parse_done', {
-            elapsedMs: elapsedMs(parseStartedAt),
-            rows: rows.length,
-            responseChars: responseData.length,
-        });
+        if (trace) {
+            this.logTicketLatency('bridge_sales_parse_done', {
+                elapsedMs: elapsedMs(parseStartedAt),
+                rows: rows.length,
+                responseChars: responseData.length,
+            });
+        }
 
-        const rawRecordCount = countRawRecords(responseData);
+        let rawRecordCount = countRawRecords(responseData);
         if (rawRecordCount > rows.length) {
-            this.logger.warn('Funcion 72 devolvio registros con formato no reconocido', {
+            // Lectura parcial: el registro perdido suele ser el PRIMERO de la
+            // respuesta = el ticket MAS NUEVO, justo el que estan por escanear.
+            // Reintentamos una vez de inmediato en vez de esperar al proximo pulso.
+            this.logger.warn('Funcion 72 devolvio registros con formato no reconocido, reintentando lectura', {
                 rawRecords: rawRecordCount,
                 parsedRows: rows.length,
                 preview: String(responseData || '').slice(0, 220),
             });
+            const retryResponse = await this.scale.send(72, payload, { timeoutMs: 30000 });
+            if (retryResponse.crc.ok) {
+                const retryData = String(retryResponse.data || '');
+                if (!retryData.startsWith('E')) {
+                    const retryRows = parseSales72(retryData);
+                    if (retryRows.length > rows.length) {
+                        rows = retryRows;
+                        responseData = retryData;
+                        rawRecordCount = countRawRecords(retryData);
+                    }
+                }
+            }
         }
+        const partialRead = rawRecordCount > rows.length;
 
         let latestSaleAt = null;
         const tickets = new Map();
@@ -1144,14 +1197,27 @@ class ScaleBridge {
         // Podamos: nos quedamos solo con ticketIds que la balanza todavia tiene
         // en memoria. Si la balanza purgo un ticket viejo, lo olvidamos tambien
         // (el API ya lo tiene almacenado). Esto evita que knownTicketFingerprints
-        // crezca sin limite.
-        const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketId));
-        const prunedFingerprints = {};
-        for (const ticketId of presentTicketIds) {
-            if (knownFingerprints[ticketId]) prunedFingerprints[ticketId] = knownFingerprints[ticketId];
+        // crezca sin limite. OJO: con lectura parcial NO podamos — un ticket
+        // ausente por truncamiento serial no fue purgado por la balanza, y
+        // podarlo provoca que se re-postee al API en el proximo pulso.
+        if (!partialRead) {
+            const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketId));
+            const prunedFingerprints = {};
+            for (const ticketId of presentTicketIds) {
+                if (knownFingerprints[ticketId]) prunedFingerprints[ticketId] = knownFingerprints[ticketId];
+            }
+            const pruneChanged = Object.keys(prunedFingerprints).length
+                !== Object.keys(this.state.knownTicketFingerprints || {}).length;
+            this.state.knownTicketFingerprints = prunedFingerprints;
+            // state.json se escribe sincronicamente; con pulsos cada ~0.5s solo
+            // grabamos cuando algo cambio de verdad.
+            if (ticketsToSend.length > 0 || pruneChanged) {
+                this.stateStore.save(this.state);
+            }
+        } else if (ticketsToSend.length > 0) {
+            this.state.knownTicketFingerprints = knownFingerprints;
+            this.stateStore.save(this.state);
         }
-        this.state.knownTicketFingerprints = prunedFingerprints;
-        this.stateStore.save(this.state);
 
         if (closeAfter && rows.length > 0) {
             const close = await this.scale.send(32, '', { timeoutMs: 60000 });
@@ -1168,10 +1234,12 @@ class ScaleBridge {
             newTickets: ticketsToSend.length,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
-        this.logTicketLatency('bridge_pull_sales_done', {
-            elapsedMs: elapsedMs(pullStartedAt),
-            ...result,
-        });
+        if (trace || ticketsToSend.length > 0) {
+            this.logTicketLatency('bridge_pull_sales_done', {
+                elapsedMs: elapsedMs(pullStartedAt),
+                ...result,
+            });
+        }
         return result;
     }
 
