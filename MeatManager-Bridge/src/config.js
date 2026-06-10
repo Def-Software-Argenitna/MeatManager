@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const dotenv = require('dotenv');
+const { defaultTotalBarcodeFormat } = require('./helpers');
 
 const rootDir = path.resolve(__dirname, '..');
 const runtimeRootDir = String(process.env.BRIDGE_APP_DATA_DIR || '').trim()
@@ -61,6 +62,11 @@ const installationTenantId = Number(installation.tenantId);
 const installationClientId = Number(installation.clientId);
 const installationBranchId = Number(installation.branchId);
 
+// La direccion de balanza define el default del barcode de total (ver
+// defaultTotalBarcodeFormat). Se calcula aca arriba para reusarla tanto en
+// `scale.address` como en el default de `saleTotalFormat`.
+const scaleAddress = intEnv('SCALE_ADDRESS', 20);
+
 const config = {
     rootDir,
     runtimeRootDir,
@@ -91,7 +97,7 @@ const config = {
     scale: {
         port: strEnv('SCALE_PORT', 'COM3'),
         baudRate: intEnv('SCALE_BAUD_RATE', 115200),
-        address: intEnv('SCALE_ADDRESS', 20),
+        address: scaleAddress,
         frameGapMs: intEnv('SCALE_FRAME_GAP_MS', 20),
         responseTimeoutMs: intEnv('SCALE_RESPONSE_TIMEOUT_MS', 5000),
         interCommandDelayMs: intEnv('SCALE_INTER_COMMAND_DELAY_MS', 30),
@@ -104,7 +110,7 @@ const config = {
             enabled: boolEnv('SCALE_BARCODE_CONFIG_ENABLED', true),
             saleByWeightFormat: strEnv('SCALE_BARCODE_WEIGHT_FORMAT', '20PPPPIIIIII'),
             saleByUnitFormat: strEnv('SCALE_BARCODE_UNIT_FORMAT', '21PPPPIIIIII'),
-            saleTotalFormat: strEnv('SCALE_BARCODE_TOTAL_FORMAT', '22AAIIIIIIII'),
+            saleTotalFormat: strEnv('SCALE_BARCODE_TOTAL_FORMAT', defaultTotalBarcodeFormat(scaleAddress)),
         },
     },
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),

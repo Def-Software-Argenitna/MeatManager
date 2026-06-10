@@ -36,6 +36,21 @@ function computeEan13CheckDigit(base12) {
     return String((10 - (sum % 10)) % 10);
 }
 
+// Formato por defecto del barcode "total" que imprime la balanza Systel CUORA:
+// `22` (prefijo de total) + direccion de balanza (2 digitos) + `AA` (itemCount)
+// + `IIIIII` (monto). La direccion va embebida en el barcode fisico, asi que el
+// default DEBE derivarse de SCALE_ADDRESS y no ser una constante: si se hardcodea
+// `22AAIIIIIIII` (sin direccion), el barcode que el bridge reproduce no coincide
+// con el que la balanza imprime y el escaneo en el POS no encuentra el ticket.
+// SCALE_ADDRESS lo escribe el wizard (Paso 3) y sobrevive al reset de overrides,
+// por eso es la fuente confiable (a diferencia del auto-detect en runtime que se
+// reintrodujo y revirtio por inestable).
+function defaultTotalBarcodeFormat(scaleAddress) {
+    const parsed = Number.parseInt(scaleAddress, 10);
+    const address = Number.isFinite(parsed) && parsed >= 1 && parsed <= 99 ? parsed : 20;
+    return `22${String(address).padStart(2, '0')}AAIIIIII`;
+}
+
 function formatPrintedTicketBarcode({ format, itemCount, totalAmount }) {
     const pattern = String(format || '')
         .toUpperCase()
@@ -96,6 +111,7 @@ module.exports = {
     padTicketId,
     formatTicketBarcode,
     formatPrintedTicketBarcode,
+    defaultTotalBarcodeFormat,
     toNumber,
     toDate,
 };
