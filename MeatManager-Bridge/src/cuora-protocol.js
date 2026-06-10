@@ -206,6 +206,50 @@ function buildBarcodeConfigPayload(type, format) {
     return `${allowedType}${normalizedFormat}`;
 }
 
+// fn16: pone en hora la balanza. Payload HHMMSSDDMMAA (12 digitos).
+function buildClock16Payload(date) {
+    const d = date instanceof Date ? date : new Date(date);
+    if (Number.isNaN(d.getTime())) throw new Error('Fecha invalida para funcion 16');
+    const p2 = (n) => String(n).padStart(2, '0');
+    return `${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}${p2(d.getDate())}${p2(d.getMonth() + 1)}${p2(d.getFullYear() % 100)}`;
+}
+
+// fn28: la balanza responde "HH:MM:SS DD/MM/AA".
+function parseClock28(data) {
+    const match = String(data || '').match(/(\d{2}):(\d{2}):(\d{2})\s+(\d{2})\/(\d{2})\/(\d{2})/);
+    if (!match) return null;
+    const [, hh, mi, ss, dd, mm, yy] = match.map((v) => Number.parseInt(v, 10));
+    const parsed = new Date(2000 + yy, mm - 1, dd, hh, mi, ss);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+// fn39: configuracion completa del equipo. Campos "Clave=valor" separados por ';'.
+// Nos interesan los templates EAN13 reales (E_P/E_U/E_S) — son la fuente de
+// verdad de lo que la balanza IMPRIME — y Cpr (posicion de la coma de precio).
+// OJO: Pub/Enc1/Enc2 son texto libre que puede contener ';', por eso solo
+// parseamos la porcion estructurada (hasta ';Pub=').
+function parseEquipmentConfig39(data) {
+    const text = String(data || '');
+    if (!text) return null;
+    const pubIdx = text.indexOf(';Pub=');
+    const structured = pubIdx >= 0 ? text.slice(0, pubIdx) : text;
+    const grab = (key) => {
+        const match = structured.match(new RegExp(`(?:^|;)${key}=([^;]*)`));
+        return match ? String(match[1]).trim() : null;
+    };
+    const fmt = (value) => {
+        const clean = String(value || '').toUpperCase().replace(/\s+/g, '');
+        return /^[0-9A-Z]{10,12}$/.test(clean) ? clean.padEnd(12, '0').slice(0, 12) : null;
+    };
+    return {
+        priceCommaPosition: Number.parseInt(grab('Cpr') ?? '', 10),
+        barcodeWeightFormat: fmt(grab('E_P')),
+        barcodeUnitFormat: fmt(grab('E_U')),
+        barcodeTotalFormat: fmt(grab('E_S')),
+        raw: structured,
+    };
+}
+
 function buildSales72Payload(dateFrom, dateTo) {
     const from = new Date(dateFrom);
     const to = new Date(dateTo);
@@ -295,4 +339,7 @@ module.exports = {
     buildBarcodeConfigPayload,
     buildSales72Payload,
     parseSales72,
+    buildClock16Payload,
+    parseClock28,
+    parseEquipmentConfig39,
 };

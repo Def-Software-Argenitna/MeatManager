@@ -15,6 +15,9 @@ const {
     inferSaleType,
     normalizeAscii,
     parseSales72,
+    buildClock16Payload,
+    parseClock28,
+    parseEquipmentConfig39,
 } = require('./cuora-protocol');
 
 function asDateParts(valueDate, valueTime) {
@@ -90,13 +93,79 @@ class ScaleBridge {
     }
 
     buildTotalBarcodeFormat() {
-        // stampTotalBarcodeFormat reproduce el render real del firmware (A -> 0);
-        // sin esto el estampado lleva itemCount donde el papel imprime 00 y el
-        // escaneo del ticket no matchea en la DB.
+        // Prioridad: el template que la balanza REPORTA tener (fn39, campo E_S)
+        // — es la fuente de verdad de lo que imprime el papel — luego el
+        // configurado, luego el derivado de la direccion. stampTotalBarcodeFormat
+        // reproduce el render real del firmware (A -> 0): sin eso el estampado
+        // lleva itemCount donde el papel imprime 00 y el escaneo no matchea.
         return stampTotalBarcodeFormat(
-            this.config.scale.barcodeConfig?.saleTotalFormat
+            this.state.scaleReportedBarcodeFormats?.total
+            || this.config.scale.barcodeConfig?.saleTotalFormat
             || defaultTotalBarcodeFormat(this.config.scale.address)
         );
+    }
+
+    // fn39: lee la configuracion real del equipo y persiste los templates de
+    // barcode que la balanza dice tener. Elimina la clase entera de bugs de
+    // "asumimos un template que la balanza no tiene".
+    async readScaleEquipmentConfig() {
+        const response = await this.scale.send(39, '');
+        if (!response.crc.ok) throw new Error('CRC invalido al leer configuracion del equipo (funcion 39)');
+        const data = String(response.data || '');
+        if (data.startsWith('E')) throw new Error(`Error balanza al leer configuracion (funcion 39): ${data}`);
+        const parsed = parseEquipmentConfig39(data);
+        if (!parsed) throw new Error('Respuesta de funcion 39 vacia o no parseable');
+
+        const formats = {
+            weight: parsed.barcodeWeightFormat,
+            unit: parsed.barcodeUnitFormat,
+            total: parsed.barcodeTotalFormat,
+        };
+        const changed = JSON.stringify(this.state.scaleReportedBarcodeFormats || null) !== JSON.stringify(formats);
+        if (changed) {
+            this.state.scaleReportedBarcodeFormats = formats;
+            this.stateStore.save(this.state);
+            this.logger.info('Templates de barcode reportados por la balanza (fn 39)', {
+                ...formats,
+                priceCommaPosition: parsed.priceCommaPosition,
+            });
+        }
+        return parsed;
+    }
+
+    // fn28/fn16: el reloj de la balanza es la fuente de sale_at (identidad del
+    // ticket y reportes); si deriva, ensucia los datos. Chequeamos cada 12h y
+    // solo escribimos si el desvio supera el umbral.
+    async syncScaleClock({ maxDriftMs = 60_000, checkIntervalMs = 12 * 60 * 60 * 1000 } = {}) {
+        const lastCheck = this.state.lastClockSyncCheckAt ? new Date(this.state.lastClockSyncCheckAt).getTime() : 0;
+        if (lastCheck && (Date.now() - lastCheck) < checkIntervalMs) {
+            return { ok: true, skipped: true, reason: 'recent' };
+        }
+
+        const readResponse = await this.scale.send(28, '');
+        if (!readResponse.crc.ok) throw new Error('CRC invalido al leer fecha/hora (funcion 28)');
+        const scaleClock = parseClock28(readResponse.data);
+        if (!scaleClock) throw new Error(`Respuesta de funcion 28 no parseable: ${String(readResponse.data || '').slice(0, 40)}`);
+
+        const driftMs = scaleClock.getTime() - Date.now();
+        this.state.lastClockSyncCheckAt = new Date().toISOString();
+
+        if (Math.abs(driftMs) <= maxDriftMs) {
+            this.stateStore.save(this.state);
+            return { ok: true, skipped: true, reason: 'in_sync', driftMs };
+        }
+
+        const setResponse = await this.scale.send(16, buildClock16Payload(new Date()));
+        if (!setResponse.crc.ok) throw new Error('CRC invalido al poner en hora (funcion 16)');
+        if (String(setResponse.data || '').startsWith('E')) {
+            throw new Error(`Error balanza al poner en hora (funcion 16): ${setResponse.data}`);
+        }
+        this.stateStore.save(this.state);
+        this.logger.info('Reloj de balanza corregido', {
+            driftMs,
+            scaleClock: scaleClock.toISOString(),
+        });
+        return { ok: true, adjusted: true, driftMs };
     }
 
     async ping() {
@@ -391,6 +460,21 @@ class ScaleBridge {
             }
         } catch (error) {
             this.logger.warn('No se pudo aplicar formato de precio en balanza', { error: error.message });
+        }
+
+        // Leemos la config REAL del equipo (fn39) — los templates de barcode que
+        // la balanza dice tener son la fuente de verdad para estampar tickets,
+        // incluso si algun push de fn8 fallo o el equipo venia configurado de antes.
+        try {
+            await this.readScaleEquipmentConfig();
+        } catch (error) {
+            this.logger.warn('No se pudo leer configuracion real del equipo (fn 39)', { error: error.message });
+        }
+
+        try {
+            await this.syncScaleClock();
+        } catch (error) {
+            this.logger.warn('No se pudo verificar/poner en hora la balanza', { error: error.message });
         }
 
         return {
@@ -1223,8 +1307,19 @@ class ScaleBridge {
             this.stateStore.save(this.state);
         }
 
-        if (closeAfter && rows.length > 0) {
-            const close = await this.scale.send(32, '', { timeoutMs: 60000 });
+        // Cierre tras lectura: vacia la memoria de ventas de la balanza para que
+        // la proxima fn72 transmita solo lo nuevo (lecturas de ~0.3s en vez de
+        // retransmitir todo el dia). Solo despues de un POST exitoso (si postSales
+        // fallo, ya lanzamos antes de llegar aca) y NUNCA con lectura parcial:
+        // cerrar perderia el registro que no pudimos parsear.
+        if (closeAfter && rows.length > 0 && !partialRead) {
+            const close = await this.scale.send(32, '', {
+                timeoutMs: 60000,
+                // fn32 responde "I" (inicio) y un ACK final: hay que esperar el ACK
+                // dentro del mismo turno para que no se mezcle con la proxima lectura.
+                expectAckAfterInit: true,
+                ackTimeoutMs: 30000,
+            });
             if (String(close.data || '').startsWith('E')) {
                 this.logger.warn('La balanza devolvio error al cerrar ventas', { data: close.data });
             }

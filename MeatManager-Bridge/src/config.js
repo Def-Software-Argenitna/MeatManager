@@ -128,7 +128,13 @@ const config = {
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
-    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
+    // Cierre de ventas (fn32) despues de cada lectura exitosa: mantiene la
+    // memoria de la balanza casi vacia, asi cada fn72 transmite solo lo nuevo
+    // (~0.3s) en vez de retransmitir todo el dia (1-2s y creciendo). Costo: los
+    // acumulados/reporte Z propios de la balanza dejan de servir — los numeros
+    // salen de MeatManager (decision de producto: el sistema es la fuente de
+    // verdad). Se puede desactivar por cliente con SCALE_CLOSE_SALES_AFTER_PULL=false.
+    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', true),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
     // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
     // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".
