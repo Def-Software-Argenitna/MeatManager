@@ -211,14 +211,49 @@ async function runProductSync(reason = 'on-demand') {
 async function processHeartbeatCommands(payload) {
     const commands = Array.isArray(payload?.commands) ? payload.commands : [];
     for (const command of commands) {
-        if (command?.type !== 'sync_products') continue;
-        const seq = Number(command.seq || 0) || 0;
-        if (!seq || Number(state.lastProductSyncCommandSeq || 0) >= seq) continue;
+        const type = String(command?.type || '');
+        const seq = Number(command?.seq || 0) || 0;
+        if (!seq) continue;
 
-        const result = await runProductSync(`heartbeat-command:${seq}`);
-        if (result.ok) {
-            state.lastProductSyncCommandSeq = seq;
+        if (type === 'sync_products') {
+            if (Number(state.lastProductSyncCommandSeq || 0) >= seq) continue;
+            const result = await runProductSync(`heartbeat-command:${seq}`);
+            if (result.ok) {
+                state.lastProductSyncCommandSeq = seq;
+                stateStore.save(state);
+            }
+            continue;
+        }
+
+        // Comandos de control remoto (sistema -> bridge). El seq se persiste
+        // ANTES de ejecutar: si reiniciamos y el seq no quedo grabado, el
+        // proximo heartbeat re-dispararia el mismo comando en loop infinito.
+        if (type === 'restart_bridge') {
+            if (Number(state.lastRestartCommandSeq || 0) >= seq) continue;
+            state.lastRestartCommandSeq = seq;
             stateStore.save(state);
+            logger.info('Comando remoto: reinicio del bridge solicitado', { seq });
+            // El desktop (watchdog de exit) nos relanza en ~2s.
+            setTimeout(() => process.exit(0), 250);
+            return;
+        }
+
+        if (type === 'restart_app') {
+            if (Number(state.lastRestartAppCommandSeq || 0) >= seq) continue;
+            state.lastRestartAppCommandSeq = seq;
+            stateStore.save(state);
+            logger.info('Comando remoto: reinicio de la app completa solicitado', { seq });
+            if (process.send) process.send({ type: 'bridge-command', command: 'restart_app' });
+            continue;
+        }
+
+        if (type === 'apply_update') {
+            if (Number(state.lastApplyUpdateCommandSeq || 0) >= seq) continue;
+            state.lastApplyUpdateCommandSeq = seq;
+            stateStore.save(state);
+            logger.info('Comando remoto: buscar y aplicar actualizacion', { seq });
+            if (process.send) process.send({ type: 'bridge-command', command: 'apply_update' });
+            continue;
         }
     }
 }
@@ -358,15 +393,17 @@ async function main() {
     if (config.salesPulseEnabled) {
         const scheduleSalesPulse = (delayMs = config.salesPulseIntervalMs) => {
             if (!schedulerActive) return;
-            const nextDelay = Math.max(200, Number(delayMs) || 200);
+            // Piso 1000ms: pulsar mas rapido que esto satura el firmware y la
+            // balanza se pone lenta AL PESAR (E3 "se desatendieron datos").
+            const nextDelay = Math.max(1000, Number(delayMs) || 1000);
             salesPulseTimer = setTimeout(async () => {
                 salesPulseTimer = null;
                 const pulse = await runSalesPulse('sales-pulse');
-                // Modo rafaga: si acaba de entrar un ticket suelen venir mas
-                // (cola de clientes); re-pulsamos casi de inmediato para que el
-                // proximo ticket quede online antes de que lo escaneen.
+                // Modo rafaga moderado: si acaba de entrar un ticket suelen
+                // venir mas (cola de clientes); acortamos el proximo pulso pero
+                // sin martillar el puerto serie mientras el operario pesa.
                 const newTickets = Number(pulse?.result?.newTickets || 0);
-                scheduleSalesPulse(newTickets > 0 ? 150 : config.salesPulseIntervalMs);
+                scheduleSalesPulse(newTickets > 0 ? 1500 : config.salesPulseIntervalMs);
             }, nextDelay);
         };
         scheduleSalesPulse(config.salesPulseIntervalMs);

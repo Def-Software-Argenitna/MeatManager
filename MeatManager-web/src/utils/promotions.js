@@ -109,7 +109,11 @@ const getRemainingKgByStockMode = ({ promo, currentStockQty }) => {
 
 export const isPromotionAvailable = ({ promo, currentStockQty, now = new Date() }) => {
     if (!promo?.active) return false;
-    if (!(Number(currentStockQty) > 0)) return false;
+
+    if (promo.stock_mode === PROMO_STOCK_MODES.FIXED) {
+        const remainingByStockMode = getRemainingKgByStockMode({ promo, currentStockQty });
+        if (remainingByStockMode <= 0) return false;
+    }
 
     if (promo.end_condition === PROMO_END_CONDITIONS.DATE) {
         const endDate = parseDate(promo.end_date);
@@ -162,17 +166,6 @@ export const resolveCartLinePricing = ({ item, promotions, stockQtyByItem, now =
     const unitPrice = Number(item?.price) || 0;
     const baseSubtotal = round2(unitPrice * quantity);
     const forcedPromoId = Number(item?.forcedPromo?.id);
-
-    if (item?.priceLocked && quantity > 0 && unitPrice > 0) {
-        return {
-            quantity,
-            unitPrice,
-            subtotal: baseSubtotal,
-            baseSubtotal,
-            discount: 0,
-            promo: null,
-        };
-    }
 
     if (item?.promoLocked && quantity > 0 && unitPrice > 0) {
         return {

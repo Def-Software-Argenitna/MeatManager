@@ -237,15 +237,28 @@ async function fetchBridgeStatus() {
             updatedAt: new Date().toISOString(),
         };
 
-        if (bridgeProc && !bridgeProc.killed) {
-            consecutiveHealthFailures += 1;
-            if (consecutiveHealthFailures >= HEALTH_WATCHDOG_FAILS) {
-                consecutiveHealthFailures = 0;
-                logDesktop(`health watchdog: bridge hijo vivo (pid=${bridgeProc.pid}) pero /health no responde hace ${HEALTH_WATCHDOG_FAILS} polls — kill + relanzar`);
-                try {
-                    bridgeProc.kill('SIGKILL');
-                } catch (_) { /* best effort: el handler de exit relanza */ }
+        consecutiveHealthFailures += 1;
+        if (consecutiveHealthFailures >= HEALTH_WATCHDOG_FAILS && !onboardingActive && !isQuitting) {
+            consecutiveHealthFailures = 0;
+            const pid = bridgeProc?.pid || null;
+            logDesktop(`health watchdog: /health no responde hace ${HEALTH_WATCHDOG_FAILS} polls (hijo pid=${pid}) — kill + relanzar`);
+            // No dependemos del handler de 'exit': si el hijo ya murio antes
+            // (kill externo/crash), ese evento ya se consumio y no se re-emite,
+            // asi que kill() solo seria un no-op y nadie relanzaria. Matamos
+            // best-effort, limpiamos la referencia y forkeamos nosotros.
+            const dead = bridgeProc;
+            bridgeProc = null;
+            if (dead) {
+                try { dead.removeAllListeners('exit'); } catch (_) { /* noop */ }
+                try { dead.kill('SIGKILL'); } catch (_) { /* noop */ }
             }
+            setTimeout(() => {
+                lastStatus.bridgeProcess = {
+                    ...lastStatus.bridgeProcess,
+                    restarts: Number(lastStatus.bridgeProcess.restarts || 0) + 1,
+                };
+                startBridgeProcess();
+            }, 2000);
         }
     }
     sendStatusToRenderer();
@@ -296,7 +309,28 @@ function startBridgeProcess() {
         running: true,
         pid: bridgeProc.pid || null,
     };
-    bridgeProc.on('exit', () => {
+    // Canal de control remoto: el hijo recibe comandos del API via heartbeat
+    // (sistema -> bridge) y nos los reenvia por IPC. Permite operar el equipo
+    // sin acceso fisico: aplicar updates y reiniciar la app completa.
+    bridgeProc.on('message', (message) => {
+        if (message?.type !== 'bridge-command') return;
+        const command = String(message.command || '');
+        logDesktop(`comando remoto recibido del hijo: ${command}`);
+        if (command === 'apply_update') {
+            checkForUpdatesNow(false);
+        } else if (command === 'restart_app') {
+            app.relaunch({ args: process.argv.slice(1).includes('--hidden') ? ['--hidden'] : [] });
+            quitApp();
+        }
+    });
+    bridgeProc.on('exit', (code, signal) => {
+        logDesktop(`bridge hijo termino (code=${code} signal=${signal})`);
+        // CRITICO: limpiar la referencia. Sin esto, startBridgeProcess() ve
+        // `bridgeProc && !bridgeProc.killed` (killed solo se setea si NOSOTROS
+        // llamamos .kill()) y retorna sin forkear — el "relanzamiento" era un
+        // no-op silencioso para crashes reales o kills externos. Visto en prod:
+        // el bridge quedaba muerto para siempre tras un crash del hijo.
+        bridgeProc = null;
         lastStatus.bridgeProcess = {
             ...lastStatus.bridgeProcess,
             running: false,
@@ -408,13 +442,29 @@ function configureAutoUpdate() {
         }
     });
 
-    autoUpdater.on('update-downloaded', () => {
+    autoUpdater.on('update-downloaded', (info) => {
         if (mainWindow && !mainWindow.isDestroyed()) {
             mainWindow.webContents.send('update-event', {
                 status: 'downloaded',
-                message: 'Actualización lista. Reiniciá desde la UI para aplicarla.',
+                message: `Actualización ${info?.version || ''} descargada. Se aplicará automáticamente en unos segundos...`,
             });
         }
+        // Auto-aplicar: este equipo corre desatendido en el mostrador — nadie
+        // va a "reiniciar desde la UI". Sin esto, las updates se descargaban y
+        // quedaban pendientes para siempre (visto en prod: el cliente seguia en
+        // 0.4.11 con 4 releases descargados sin aplicar). El bridge tarda ~10s
+        // en volver y el pulso de ventas re-lee lo que se haya perdido.
+        if (onboardingActive) return;
+        logDesktop(`update ${info?.version || '?'} descargada — aplicando automaticamente (quitAndInstall)`);
+        setTimeout(() => {
+            isQuitting = true;
+            try {
+                autoUpdater.quitAndInstall(true, true);
+            } catch (error) {
+                isQuitting = false;
+                logDesktop(`quitAndInstall fallo: ${error?.message || error}`);
+            }
+        }, 5000);
     });
 
     autoUpdater.on('update-not-available', () => {

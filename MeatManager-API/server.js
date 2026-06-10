@@ -7408,6 +7408,7 @@ async function ensureScaleTicketItemColumns(conn) {
           AND t.tenant_id = s.tenant_id
           AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
           AND t.ticket_id = s.ticket_id
+          AND t.sale_at = s.sale_at
          SET s.printed_ticket_barcode = COALESCE(t.printed_ticket_barcode, s.printed_ticket_barcode),
              s.vendor_name = COALESCE(t.vendor_name, s.vendor_name),
              s.ticket_total_amount = CASE
@@ -7836,51 +7837,12 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             }
 
             if (!ticketRows.length) {
-                for (const totalAmount of totalCandidates) {
-                    const [amountMatches] = await pool.query(
-                        `SELECT ${ticketSelect}
-                         FROM scale_bridge_ticket_map
-                         WHERE tenant_id = ?
-                           ${scaleSchema.ticketStatus ? "AND ticket_status = 'open'" : ''}
-                           AND ABS(total_amount - ?) < 0.01
-                           AND sale_at >= DATE_SUB(NOW(), INTERVAL 2 DAY)
-                         ORDER BY sale_at DESC
-                         LIMIT 3`,
-                        [tenantId, totalAmount]
-                    );
-                    if (amountMatches.length === 1) {
-                        ticketRows = [amountMatches[0]];
-                        appendScaleLatencyLog('lookup_amount_only_fallback_match', {
-                            tenantId,
-                            barcode,
-                            ticketId: amountMatches[0]?.ticket_id || null,
-                            ticketBarcode: amountMatches[0]?.ticket_barcode || null,
-                            printedTicketBarcode: amountMatches[0]?.printed_ticket_barcode || null,
-                            totalAmount,
-                            elapsedMs: Date.now() - lookupStartedAt,
-                        });
-                        break;
-                    }
-                    if (amountMatches.length > 1) {
-                        appendScaleLatencyLog('lookup_amount_only_fallback_conflict', {
-                            tenantId,
-                            barcode,
-                            totalAmount,
-                            candidates: amountMatches.length,
-                            elapsedMs: Date.now() - lookupStartedAt,
-                        });
-                        return res.status(409).json({
-                            ok: false,
-                            error: 'Hay mas de un ticket posible para ese importe. Reimprima ticket con codigo unico o escanee codigo MM.',
-                            candidates: amountMatches.map((row) => ({
-                                ticketId: row.ticket_id,
-                                printedBarcode: row.printed_ticket_barcode || null,
-                                saleAt: row.sale_at,
-                                total: Number(row.total_amount || 0),
-                            })),
-                        });
-                    }
-                }
+                appendScaleLatencyLog('lookup_amount_only_fallback_skipped', {
+                    tenantId,
+                    barcode,
+                    totals: totalCandidates,
+                    elapsedMs: Date.now() - lookupStartedAt,
+                });
             }
         }
 
@@ -7977,9 +7939,49 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             saleToLookupMs: diffMs(ticket.sale_at, lookupStartedAt),
             elapsedMs: Date.now() - lookupStartedAt,
         });
+
+        // Lazy normalization: sync item barcodes/metadata from ticket_map if stale.
+        // The bridge's fingerprint dedup can prevent re-sending old tickets, leaving
+        // items with outdated barcodes.  This one-time fix per lookup keeps the data
+        // consistent without waiting for a re-sync.
+        try {
+            await pool.query(
+                `UPDATE scale_bridge_sales_item s
+                 INNER JOIN scale_bridge_ticket_map t
+                    ON t.device_id = s.device_id
+                   AND t.tenant_id = s.tenant_id
+                   AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+                   AND t.ticket_id = s.ticket_id
+                   AND t.sale_at = s.sale_at
+                 SET s.ticket_barcode         = t.ticket_barcode,
+                     s.printed_ticket_barcode = t.printed_ticket_barcode,
+                     s.vendor_name            = t.vendor_name,
+                     s.ticket_total_amount    = t.total_amount,
+                     s.ticket_item_count      = t.item_count,
+                     s.synced_at              = NOW()
+                 WHERE s.device_id = ?
+                   AND s.tenant_id = ?
+                   AND s.ticket_id = ?
+                   AND s.sale_at = ?
+                   AND (
+                        s.ticket_barcode IS NULL
+                        OR s.ticket_barcode <> t.ticket_barcode
+                        OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
+                        OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
+                        OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
+                        OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
+                   )`,
+                [ticket.device_id, tenantId, ticket.ticket_id, ticket.sale_at]
+            );
+        } catch (_) { /* best-effort */ }
+
         const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
-             LEFT JOIN scale_bridge_product_map m
+             LEFT JOIN (
+                SELECT device_id, tenant_id, plu_code, MIN(product_id) AS product_id
+                  FROM scale_bridge_product_map
+                 GROUP BY device_id, tenant_id, plu_code
+             ) m
                ON m.device_id = s.device_id
               AND m.tenant_id = s.tenant_id
               AND CAST(m.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
@@ -7987,10 +7989,21 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                ON p.tenant_id = s.tenant_id
               AND (
                    (m.product_id IS NOT NULL AND p.id = m.product_id)
-                   OR (m.product_id IS NULL AND (
-                        CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
-                        OR CAST(p.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
-                   ))
+                   OR (
+                        m.product_id IS NULL
+                        AND p.id = (
+                            SELECT p2.id
+                              FROM products p2
+                             WHERE p2.tenant_id = s.tenant_id
+                               AND (p2.branch_id <=> s.branch_id OR p2.branch_id IS NULL)
+                               AND (
+                                    CAST(p2.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                                    OR CAST(p2.plu AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci = TRIM(LEADING '0' FROM CAST(s.plu_code AS CHAR CHARACTER SET utf8mb4)) COLLATE utf8mb4_unicode_ci
+                               )
+                             ORDER BY CASE WHEN p2.branch_id <=> s.branch_id THEN 0 ELSE 1 END, p2.id DESC
+                             LIMIT 1
+                        )
+                   )
               )
              WHERE s.tenant_id = ?`;
 
@@ -7998,8 +8011,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             `${itemBaseSql}
                AND s.device_id = ?
                AND s.ticket_id = ?
+               AND s.sale_at = ?
              ORDER BY s.line_no ASC`,
-            [tenantId, ticket.device_id, ticket.ticket_id]
+            [tenantId, ticket.device_id, ticket.ticket_id, ticket.sale_at]
         );
 
         // Fallback defensivo:
@@ -8017,8 +8031,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             [itemRows] = await pool.query(
                 `${itemBaseSql}
                    AND (${barcodeConditions.join(' OR ')})
+                   AND s.sale_at = ?
                  ORDER BY s.line_no ASC`,
-                barcodeParams
+                [...barcodeParams, ticket.sale_at]
             );
         }
 
@@ -8047,10 +8062,42 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 [itemRows] = await pool.query(
                     `${itemBaseSql}
                        AND (${anyIdConditions.join(' OR ')})
+                       AND s.sale_at = ?
                      ORDER BY s.sale_at DESC, s.line_no ASC`,
-                    anyIdParams
+                    [...anyIdParams, ticket.sale_at]
                 );
             }
+        }
+
+        const expectedItemCount = Number(ticket.item_count || 0);
+        const expectedTotalAmount = Number(ticket.total_amount || 0);
+        const itemRowsTotal = Number(itemRows.reduce((sum, row) => sum + Number(row.amount || 0), 0).toFixed(2));
+        const itemCountMismatch = expectedItemCount > 0 && itemRows.length !== expectedItemCount;
+        const itemTotalMismatch = expectedTotalAmount > 0 && Math.abs(itemRowsTotal - expectedTotalAmount) >= 0.01;
+        if (itemRows.length > 0 && (itemCountMismatch || itemTotalMismatch)) {
+            appendScaleLatencyLog('lookup_items_integrity_mismatch', {
+                tenantId,
+                barcode,
+                deviceId: ticket.device_id,
+                ticketId: ticket.ticket_id,
+                ticketBarcode: ticket.ticket_barcode,
+                printedTicketBarcode: ticket.printed_ticket_barcode || null,
+                expectedItemCount,
+                actualItemCount: itemRows.length,
+                expectedTotalAmount,
+                actualTotalAmount: itemRowsTotal,
+                elapsedMs: Date.now() - lookupStartedAt,
+            });
+            return res.status(409).json({
+                ok: false,
+                error: 'El detalle sincronizado del ticket no coincide con la cabecera. Reintentá en unos segundos o reimprimí el ticket con código único MM.',
+                details: {
+                    expectedItemCount,
+                    actualItemCount: itemRows.length,
+                    expectedTotalAmount,
+                    actualTotalAmount: itemRowsTotal,
+                },
+            });
         }
 
         const items = itemRows.map((row) => {
@@ -11480,6 +11527,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
            AND t.tenant_id = s.tenant_id
            AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
            AND t.ticket_id = s.ticket_id
+           AND t.sale_at = s.sale_at
          SET s.ticket_barcode         = t.ticket_barcode,
              s.printed_ticket_barcode = t.printed_ticket_barcode,
              s.vendor_name            = t.vendor_name,
@@ -11503,18 +11551,19 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
     await pool.query(
         `UPDATE scale_bridge_sales_item s
          INNER JOIN (
-            SELECT device_id, tenant_id, COALESCE(branch_id, 0) AS branch_id_key, ticket_id,
+            SELECT device_id, tenant_id, COALESCE(branch_id, 0) AS branch_id_key, ticket_id, sale_at,
                    ROUND(SUM(amount), 2) AS ticket_total_amount,
                    COUNT(*)              AS ticket_item_count
               FROM scale_bridge_sales_item
              WHERE device_id = ? AND tenant_id = ?
                AND COALESCE(branch_id, 0) = COALESCE(?, 0)
-             GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id
+             GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id, sale_at
          ) totals
             ON totals.device_id     = s.device_id
            AND totals.tenant_id     = s.tenant_id
            AND totals.branch_id_key = COALESCE(s.branch_id, 0)
            AND totals.ticket_id     = s.ticket_id
+           AND totals.sale_at       = s.sale_at
          SET s.ticket_total_amount = totals.ticket_total_amount,
              s.ticket_item_count   = totals.ticket_item_count,
              s.synced_at           = NOW()
@@ -11683,13 +11732,26 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                  WHERE device_id = ?
                    AND tenant_id = ?
                    AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
-                   AND ticket_id = ?`,
-                [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId]
+                   AND ticket_id = ?
+                   AND sale_at = ?`,
+                [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId, saleAt]
             );
 
             ticketsUpserted += 1;
 
             const lines = Array.isArray(ticket?.lines) ? ticket.lines : [];
+            if (lines.length > 0) {
+                await pool.query(
+                    `DELETE FROM scale_bridge_sales_item
+                     WHERE device_id = ?
+                       AND tenant_id = ?
+                       AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
+                       AND ticket_id = ?
+                       AND sale_at = ?
+                       AND line_no > ?`,
+                    [deviceId, tenantId, branchId, branchId, ticketId, saleAt, lines.length]
+                );
+            }
             for (const line of lines) {
                 const lineNo = Number.parseInt(line?.lineNo, 10);
                 if (!Number.isFinite(lineNo)) continue;
@@ -11795,19 +11857,59 @@ app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
         // forward-compat (próxima fase: persistir un registro por balanza).
         const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
         const pool = getOperationalPool();
+        // Comandos de control remoto sistema -> bridge. Cada uno es un seq en
+        // settings; el bridge ejecuta cuando ve un seq mayor al que persistio.
+        const commandKeys = [
+            SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+            'scale_bridge_restart_seq',
+            'scale_bridge_restart_app_seq',
+            'scale_bridge_apply_update_seq',
+        ];
         const [rows] = await pool.query(
-            'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
-            [req.bridge.tenantId, SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY]
+            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` IN (?, ?, ?, ?)',
+            [req.bridge.tenantId, ...commandKeys]
         );
-        const productSyncSeq = Number(rows?.[0]?.value || 0) || 0;
-        const commands = productSyncSeq > 0
-            ? [{ type: 'sync_products', seq: productSyncSeq }]
-            : [];
+        const byKey = Object.fromEntries(rows.map((r) => [String(r.key), Number(r.value || 0) || 0]));
+        const commands = [];
+        if (byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] > 0) commands.push({ type: 'sync_products', seq: byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] });
+        if (byKey.scale_bridge_restart_seq > 0) commands.push({ type: 'restart_bridge', seq: byKey.scale_bridge_restart_seq });
+        if (byKey.scale_bridge_restart_app_seq > 0) commands.push({ type: 'restart_app', seq: byKey.scale_bridge_restart_app_seq });
+        if (byKey.scale_bridge_apply_update_seq > 0) commands.push({ type: 'apply_update', seq: byKey.scale_bridge_apply_update_seq });
 
         return res.json({ ok: true, scales, lastSeenAt: new Date().toISOString(), commands });
     } catch (error) {
         console.error('[BRIDGE HEARTBEAT ERROR]', error?.message || error);
         return res.status(500).json({ error: 'No se pudo procesar heartbeat del bridge' });
+    }
+});
+
+// Encola un comando de control remoto para el bridge del tenant (lo levanta
+// por heartbeat en <=5s). Tipos: restart (reinicia el proceso que habla con la
+// balanza), restart_app (reinicia la app desktop completa), apply_update
+// (busca la ultima release y la instala+relanza automaticamente).
+app.post('/api/scale/bridge/command', verifyFirebaseToken, async (req, res) => {
+    try {
+        const type = String(req.body?.type || '').trim().toLowerCase();
+        const keyByType = {
+            restart: 'scale_bridge_restart_seq',
+            restart_app: 'scale_bridge_restart_app_seq',
+            apply_update: 'scale_bridge_apply_update_seq',
+            sync_products: SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+        };
+        const key = keyByType[type];
+        if (!key) return res.status(400).json({ error: `Tipo de comando invalido: ${type}` });
+
+        const { tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getOperationalPool();
+        const seq = Date.now();
+        await pool.query(
+            'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+            [tenantId, key, String(seq)]
+        );
+        return res.json({ ok: true, type, seq, note: 'El bridge lo ejecuta en el proximo heartbeat (<=5s)' });
+    } catch (error) {
+        console.error('[BRIDGE COMMAND ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo encolar el comando' });
     }
 });
 
