@@ -72,6 +72,30 @@ test('pulso con E7 sin fallback reciente: corre la cadena completa una vez', asy
     assert.equal(second.calls.length, 1);
 });
 
+test('firmware con filtro de fecha roto: detecta el patron y pasa a consulta anual directa', async () => {
+    const ANNUAL = '010126311226'; // ene-dic del anio actual (2026 en CI del proyecto)
+    const state = {};
+    // Pulso 1: incremental E7 -> fallback anual trae datos -> flag persistido
+    const first = makeBridge({ sendQueue: ['E7', `${REC_T1}F`], state });
+    const r1 = await first.bridge.pullSales({ ...range, pulse: true });
+    assert.equal(r1.newTickets, 1);
+    assert.equal(state.fn72PreferAnnualPayload, true);
+    assert.equal(first.calls[1].payload, ANNUAL);
+
+    // Pulso 2: con el flag, la PRIMARIA ya es la anual — una sola lectura
+    const second = makeBridge({ sendQueue: [`${REC_T1}F`], state });
+    const r2 = await second.bridge.pullSales({ ...range, pulse: true });
+    assert.equal(second.calls.length, 1);
+    assert.equal(second.calls[0].payload, ANNUAL);
+    assert.equal(r2.fetched, 1);
+
+    // Pulso 3: anual E7 = memoria realmente vacia -> noData sin fallbacks extra
+    const third = makeBridge({ sendQueue: ['E7'], state });
+    const r3 = await third.bridge.pullSales({ ...range, pulse: true });
+    assert.equal(third.calls.length, 1);
+    assert.equal(r3.noData, true);
+});
+
 test('pull manual (sin pulse) conserva la cadena de fallbacks completa', async () => {
     const { bridge, calls } = makeBridge({ sendQueue: ['E7', 'E7', 'E7'] });
     const result = await bridge.pullSales({ ...range });

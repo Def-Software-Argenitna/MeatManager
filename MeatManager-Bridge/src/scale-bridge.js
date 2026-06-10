@@ -975,19 +975,33 @@ class ScaleBridge {
             .map((part) => String(part || '').trim())
             .filter((part) => part.length > 0).length;
 
-        const payload = buildSales72Payload(fromDate, toDate);
+        const incrementalPayload = buildSales72Payload(fromDate, toDate);
         const now = new Date();
         const year = now.getFullYear();
         const yearFrom = new Date(year, 0, 1, 0, 0, 0);
         const yearTo = new Date(year, 11, 31, 23, 59, 59);
         const annualPayload = buildSales72Payload(yearFrom, yearTo);
 
-        // Rate-limit de fallbacks en pulsos: con la memoria de ventas vacia (E7,
-        // p.ej. despues del cierre diario) la cadena anual+vacio agrega 2 lecturas
-        // seriales (~2s) a CADA pulso sin aportar nada — este firmware ignora el
-        // filtro de fecha, asi que si el incremental dice E7 el anual tambien.
-        // En pulsos solo probamos la cadena 1 vez por minuto; pulls manuales,
-        // startup y backfill siguen haciendo la cadena completa siempre.
+        // Adaptativo: el firmware S0060 responde E7 a la consulta del DIA aunque
+        // haya ventas de hoy (malinterpreta el filtro de fecha), pero la consulta
+        // anual devuelve todo. Cuando detectamos ese patron (incremental vacio +
+        // anual con datos) persistimos el flag y de ahi en mas consultamos anual
+        // como PRIMARIA en cada pulso (es barata: la balanza transmite su memoria
+        // completa igual). Sin esto, el rate-limit de fallbacks dejaba la unica
+        // lectura util en 1/min y la deteccion de tickets subia hasta ~60s.
+        const preferAnnual = this.state.fn72PreferAnnualPayload === true;
+        const payload = preferAnnual ? annualPayload : incrementalPayload;
+        const markIncrementalBroken = (context) => {
+            if (this.state.fn72PreferAnnualPayload === true) return;
+            this.state.fn72PreferAnnualPayload = true;
+            this.stateStore.save(this.state);
+            this.logger.info('fn72: el filtro de fecha del firmware no devuelve las ventas del dia; usando consulta anual como primaria', { context });
+        };
+
+        // Rate-limit de fallbacks en pulsos: si la PRIMARIA dice E7/vacio, la
+        // cadena anual+vacio agrega lecturas seriales a cada pulso. En pulsos
+        // solo probamos la cadena 1 vez por minuto; pulls manuales, startup y
+        // backfill siguen haciendo la cadena completa siempre.
         const allowFallbacks = !pulse || (Date.now() - Number(this._lastFn72FallbackAt || 0)) >= 60_000;
         const markFallback = () => { this._lastFn72FallbackAt = Date.now(); };
 
@@ -1004,8 +1018,10 @@ class ScaleBridge {
                 fallback: 'none',
             });
         }
-        if (responseData.startsWith('E7') && allowFallbacks) {
+        let usedAnnualFallback = false;
+        if (responseData.startsWith('E7') && allowFallbacks && payload !== annualPayload) {
             markFallback();
+            usedAnnualFallback = true;
             this.logger.info('Funcion 72 sin datos en rango solicitado, intentando fallback anual', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),
@@ -1071,6 +1087,7 @@ class ScaleBridge {
         let rows = parseSales72(responseData);
         if (rows.length === 0 && payload !== annualPayload && allowFallbacks) {
             markFallback();
+            usedAnnualFallback = true;
             this.logger.info('Funcion 72 devolvio vacio en rango incremental, intentando fallback anual', {
                 payload,
                 annualPayload,
@@ -1103,6 +1120,11 @@ class ScaleBridge {
                 throw new Error(`Error al leer ventas en fallback: ${responseData}`);
             }
             rows = parseSales72(responseData);
+        }
+        // El incremental fallo pero el anual trajo filas: el filtro de fecha de
+        // este firmware no sirve. Persistimos para consultar anual directo.
+        if (usedAnnualFallback && rows.length > 0) {
+            markIncrementalBroken('annual_fallback_yielded_rows');
         }
         if (trace) {
             this.logTicketLatency('bridge_sales_parse_done', {
