@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode } = require('./helpers');
+const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode, defaultTotalBarcodeFormat } = require('./helpers');
 const { CuoraClient } = require('./cuora-client');
 const {
     buildPlu4Payload,
@@ -90,7 +90,10 @@ class ScaleBridge {
     }
 
     buildTotalBarcodeFormat() {
-        return String(this.config.scale.barcodeConfig?.saleTotalFormat || '22AAIIIIIIII');
+        return String(
+            this.config.scale.barcodeConfig?.saleTotalFormat
+            || defaultTotalBarcodeFormat(this.config.scale.address)
+        );
     }
 
     async ping() {
