@@ -140,3 +140,23 @@ test('cache de vendedores: un solo getVendors en pulsos consecutivos', async () 
     await bridge.pullSales({ ...range, pulse: true });
     assert.equal(vendorCalls, 1);
 });
+
+test('syncVendors invalida el cache: el ticket siguiente sale con el nombre nuevo', async () => {
+    // 4 respuestas fn38 (un slot por vendedor) + 1 lectura fn72 con un ticket
+    const { bridge, posts } = makeBridge({ sendQueue: ['OK', 'OK', 'OK', 'OK', `${REC_T1}F`] });
+    let name = 'DIEGO';
+    bridge.api.getVendors = async () => ({ vendors: [{ slot: 1, displayName: name }] });
+
+    // Pulso inicial llena el cache con el nombre viejo
+    bridge._vendorCache = { at: Date.now(), map: new Map([['01', 'DIEGO']]) };
+
+    // El sistema renombra al vendedor y manda la demanda (heartbeat -> syncVendors)
+    name = 'GERMAN';
+    const syncResult = await bridge.syncVendors();
+    assert.equal(syncResult.synced, 4);
+    assert.equal(bridge._vendorCache, null);
+
+    // El proximo ticket ya sale etiquetado con el nombre nuevo
+    await bridge.pullSales({ ...range, pulse: true });
+    assert.equal(posts[0].tickets[0].vendorName, 'GERMAN');
+});

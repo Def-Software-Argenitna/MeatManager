@@ -120,7 +120,10 @@ const config = {
     // (1-2s con memoria llena) + este gap + POST al API; el cajero escanea el
     // ticket ~2s despues de cerrar la venta, asi que el gap debe ser chico.
     salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 500),
-    heartbeatIntervalMs: intEnv('HEARTBEAT_INTERVAL_MS', 10000),
+    // El heartbeat es el canal de "demanda": el sistema encola cambios (vendedores,
+    // settings, productos) y el bridge los descubre aca. 5s acota la espera entre
+    // guardar en la web y que impacte en la balanza. Es solo un POST liviano.
+    heartbeatIntervalMs: intEnv('HEARTBEAT_INTERVAL_MS', 5000),
     productSyncIntervalMs: intEnv('PRODUCT_SYNC_INTERVAL_MS', 10000),
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),
