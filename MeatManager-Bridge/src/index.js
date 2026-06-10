@@ -140,7 +140,11 @@ async function runSalesPulse(reason = 'sales-pulse', options = {}) {
         const result = await bridge.pullSales({
             fromDate: from,
             toDate: now,
-            closeAfter: options.closeAfter === true,
+            // El pulso hereda el default de config (cierre tras lectura); un pull
+            // manual puede forzarlo o evitarlo con options.closeAfter explicito.
+            closeAfter: options.closeAfter === undefined
+                ? config.closeSalesAfterPull
+                : options.closeAfter === true,
             // En pulsos rapidos limitamos los fallbacks anual/vacio de fn72 (ver
             // pullSales); pulls manuales/startup siguen haciendo la cadena completa.
             pulse: reason === 'sales-pulse',

@@ -66,6 +66,29 @@ class CuoraClient {
         }
     }
 
+    waitFrame(fn, timeoutMs) {
+        return new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                if (this.pending) {
+                    this.pending = null;
+                    reject(new Error(`Timeout esperando respuesta de funcion ${fn}`));
+                }
+            }, timeoutMs);
+
+            this.pending = {
+                buffer: Buffer.alloc(0),
+                resolve: (payload) => {
+                    clearTimeout(timeout);
+                    resolve(payload);
+                },
+                reject: (error) => {
+                    clearTimeout(timeout);
+                    reject(error);
+                },
+            };
+        });
+    }
+
     send(fn, data = '', options = {}) {
         // Serializa los send concurrentes sobre el puerto serie: el ciclo general
         // y el sales pulse pueden invocarlo en paralelo y la cola garantiza que
@@ -75,26 +98,7 @@ class CuoraClient {
             await this.open();
 
             const frame = encodeFrame(address, fn, data);
-            const responsePromise = new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => {
-                    if (this.pending) {
-                        this.pending = null;
-                        reject(new Error(`Timeout esperando respuesta de funcion ${fn}`));
-                    }
-                }, options.timeoutMs || this.config.responseTimeoutMs);
-
-                this.pending = {
-                    buffer: Buffer.alloc(0),
-                    resolve: (payload) => {
-                        clearTimeout(timeout);
-                        resolve(payload);
-                    },
-                    reject: (error) => {
-                        clearTimeout(timeout);
-                        reject(error);
-                    },
-                };
-            });
+            const responsePromise = this.waitFrame(fn, options.timeoutMs || this.config.responseTimeoutMs);
 
             await new Promise((resolve, reject) => {
                 this.port.write(frame, (error) => (error ? reject(error) : resolve()));
@@ -103,7 +107,24 @@ class CuoraClient {
                 this.port.drain((error) => (error ? reject(error) : resolve()));
             });
 
-            const response = await responsePromise;
+            let response = await responsePromise;
+
+            // Algunas funciones (fn32, cierre de ventas) responden DOS tramas:
+            // una "I" inmediata (inicio de actividad) y el ACK final cuando
+            // termina. Si liberamos la cola tras la "I", el ACK tardio se mezcla
+            // con la respuesta del siguiente comando y corrompe esa lectura.
+            // Esperamos el ACK dentro del mismo turno de cola.
+            if (options.expectAckAfterInit && String(response.data || '').trim() === 'I') {
+                try {
+                    response = await this.waitFrame(fn, options.ackTimeoutMs || 30000);
+                } catch (error) {
+                    this.logger.warn('No llego el ACK final tras la trama de inicio', {
+                        fn,
+                        error: error.message,
+                    });
+                }
+            }
+
             await new Promise((resolve) => setTimeout(resolve, this.config.interCommandDelayMs));
             return response;
         };
