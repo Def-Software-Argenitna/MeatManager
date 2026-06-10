@@ -38,8 +38,8 @@ function makeBridge({ sendQueue, state = {} }) {
         },
     });
     bridge.scale = {
-        send: async (fn, payload) => {
-            calls.push({ fn, payload });
+        send: async (fn, payload, options = {}) => {
+            calls.push({ fn, payload, options });
             const next = sendQueue.shift();
             if (!next) throw new Error('test: sendQueue agotada');
             return { fn, crc: { ok: true }, data: next };
@@ -139,6 +139,44 @@ test('cache de vendedores: un solo getVendors en pulsos consecutivos', async () 
     await bridge.pullSales({ ...range, pulse: true });
     await bridge.pullSales({ ...range, pulse: true });
     assert.equal(vendorCalls, 1);
+});
+
+test('closeAfter: cierra ventas (fn32 con espera de ACK) tras POST exitoso', async () => {
+    const { bridge, calls, posts } = makeBridge({ sendQueue: [`${REC_T1}F`, 'OK'] });
+    const result = await bridge.pullSales({ ...range, pulse: true, closeAfter: true });
+    assert.equal(result.newTickets, 1);
+    assert.equal(posts.length, 1);
+    const closeCall = calls.find((c) => c.fn === 32);
+    assert.ok(closeCall, 'debe enviar fn32');
+    assert.equal(closeCall.options.expectAckAfterInit, true);
+    // El cierre va DESPUES del POST (si el POST falla, no se cierra y no se pierde nada)
+    assert.ok(calls.findIndex((c) => c.fn === 32) > 0);
+});
+
+test('closeAfter: NO cierra con lectura parcial (perderia el registro no parseado)', async () => {
+    const { bridge, calls } = makeBridge({
+        sendQueue: [
+            `${TRUNCATED};${REC_T1}F`,    // lectura parcial
+            `${TRUNCATED};${REC_T1}F`,    // reintento tambien parcial
+        ],
+    });
+    await bridge.pullSales({ ...range, pulse: true, closeAfter: true });
+    assert.equal(calls.some((c) => c.fn === 32), false);
+});
+
+test('closeAfter: NO cierra cuando no hubo filas', async () => {
+    const { bridge, calls } = makeBridge({ sendQueue: ['E7'] });
+    bridge._lastFn72FallbackAt = Date.now();
+    await bridge.pullSales({ ...range, pulse: true, closeAfter: true });
+    assert.equal(calls.some((c) => c.fn === 32), false);
+});
+
+test('estampado prioriza el template reportado por la balanza (fn39) con A->0', async () => {
+    const state = { scaleReportedBarcodeFormats: { weight: null, unit: null, total: '2201AAIIIIII' } };
+    const { bridge, posts } = makeBridge({ sendQueue: [`${REC_T1}F`], state });
+    await bridge.pullSales({ ...range, pulse: true });
+    // REC_T1: total $11.025 -> 2201 00 011025 + check = papel real del template 2201
+    assert.equal(posts[0].tickets[0].printedTicketBarcode, '2201000110258');
 });
 
 test('syncVendors invalida el cache: el ticket siguiente sale con el nombre nuevo', async () => {

@@ -2301,7 +2301,7 @@ async function ensureOperationalTenantIsolation() {
                     item_quantity_unit VARCHAR(8) NOT NULL DEFAULT 'un',
                     raw_payload JSON NULL,
                     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE KEY ux_scale_sale_line (device_id, ticket_id, line_no),
+                    UNIQUE KEY ux_scale_sale_line_at (device_id, ticket_id, line_no, sale_at),
                     KEY ix_scale_sale_date (device_id, sale_at),
                     KEY ix_scale_sale_tenant (tenant_id, branch_id, sale_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -2330,12 +2330,35 @@ async function ensureOperationalTenantIsolation() {
                     fingerprint VARCHAR(128) NOT NULL,
                     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY ux_scale_ticket_device (device_id, ticket_id),
+                    UNIQUE KEY ux_scale_ticket_device_at (device_id, ticket_id, sale_at),
                     UNIQUE KEY ux_scale_ticket_barcode (ticket_barcode),
                     KEY ix_scale_ticket_addr (tenant_id, scale_address, sale_at),
                     KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             `);
+
+            // Identidad de tickets de balanza: la numeracion de tickets se REINICIA
+            // cuando la balanza hace cierre de ventas (fn32) — observado en prod
+            // (el 09/06 la numeracion volvio a 000000001 tras el cierre nocturno).
+            // Con UNIQUE(device, ticket) sin instante, el upsert de un ticket
+            // re-numerado PISA al anterior (incluidos ya cobrados). Y con el cierre
+            // tras cada lectura la numeracion se reinicia varias veces por dia, asi
+            // que la identidad correcta es (device, ticket, sale_at). Agregamos la
+            // clave nueva ANTES de soltar la vieja para no dejar ventana sin unicidad.
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'ux_scale_ticket_device_at'))) {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_bridge_ticket_map
+                     ADD UNIQUE KEY ux_scale_ticket_device_at (device_id, ticket_id, sale_at)`
+                );
+            }
+            await dropIndexIfExists(conn, 'scale_bridge_ticket_map', 'ux_scale_ticket_device');
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ux_scale_sale_line_at'))) {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_bridge_sales_item
+                     ADD UNIQUE KEY ux_scale_sale_line_at (device_id, ticket_id, line_no, sale_at)`
+                );
+            }
+            await dropIndexIfExists(conn, 'scale_bridge_sales_item', 'ux_scale_sale_line');
 
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
