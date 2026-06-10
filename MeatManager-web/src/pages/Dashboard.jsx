@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
@@ -373,7 +373,7 @@ const Dashboard = () => {
                 <DashboardReveal className="dashboard-panel" from="left" delay={0.18}>
                     <div className="dashboard-panel-header">
                         <h3 className="dashboard-section-title">Últimas Ventas</h3>
-                        <button onClick={() => navigate('/ventas/historial')} className="dashboard-link-btn">Ver todas</button>
+                        <Link to="/ventas" className="dashboard-link-btn">Ver todas</Link>
                     </div>
 
                     {visibleVentas.length === 0 ? (
