@@ -7939,6 +7939,42 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             saleToLookupMs: diffMs(ticket.sale_at, lookupStartedAt),
             elapsedMs: Date.now() - lookupStartedAt,
         });
+
+        // Lazy normalization: sync item barcodes/metadata from ticket_map if stale.
+        // The bridge's fingerprint dedup can prevent re-sending old tickets, leaving
+        // items with outdated barcodes.  This one-time fix per lookup keeps the data
+        // consistent without waiting for a re-sync.
+        try {
+            await pool.query(
+                `UPDATE scale_bridge_sales_item s
+                 INNER JOIN scale_bridge_ticket_map t
+                    ON t.device_id = s.device_id
+                   AND t.tenant_id = s.tenant_id
+                   AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
+                   AND t.ticket_id = s.ticket_id
+                   AND t.sale_at = s.sale_at
+                 SET s.ticket_barcode         = t.ticket_barcode,
+                     s.printed_ticket_barcode = t.printed_ticket_barcode,
+                     s.vendor_name            = t.vendor_name,
+                     s.ticket_total_amount    = t.total_amount,
+                     s.ticket_item_count      = t.item_count,
+                     s.synced_at              = NOW()
+                 WHERE s.device_id = ?
+                   AND s.tenant_id = ?
+                   AND s.ticket_id = ?
+                   AND s.sale_at = ?
+                   AND (
+                        s.ticket_barcode IS NULL
+                        OR s.ticket_barcode <> t.ticket_barcode
+                        OR COALESCE(s.printed_ticket_barcode, '') <> COALESCE(t.printed_ticket_barcode, '')
+                        OR COALESCE(s.vendor_name, '') <> COALESCE(t.vendor_name, '')
+                        OR ABS(COALESCE(s.ticket_total_amount, 0) - COALESCE(t.total_amount, 0)) >= 0.01
+                        OR COALESCE(s.ticket_item_count, 0) <> COALESCE(t.item_count, 0)
+                   )`,
+                [ticket.device_id, tenantId, ticket.ticket_id, ticket.sale_at]
+            );
+        } catch (_) { /* best-effort */ }
+
         const itemBaseSql = `SELECT ${itemSelect}
              FROM scale_bridge_sales_item s
              LEFT JOIN (
