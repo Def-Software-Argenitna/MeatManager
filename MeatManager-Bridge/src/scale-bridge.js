@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode, defaultTotalBarcodeFormat } = require('./helpers');
+const { hashObject, formatTicketBarcode, formatPrintedTicketBarcode, defaultTotalBarcodeFormat, stampTotalBarcodeFormat } = require('./helpers');
 const { CuoraClient } = require('./cuora-client');
 const {
     buildPlu4Payload,
@@ -90,7 +90,10 @@ class ScaleBridge {
     }
 
     buildTotalBarcodeFormat() {
-        return String(
+        // stampTotalBarcodeFormat reproduce el render real del firmware (A -> 0);
+        // sin esto el estampado lleva itemCount donde el papel imprime 00 y el
+        // escaneo del ticket no matchea en la DB.
+        return stampTotalBarcodeFormat(
             this.config.scale.barcodeConfig?.saleTotalFormat
             || defaultTotalBarcodeFormat(this.config.scale.address)
         );

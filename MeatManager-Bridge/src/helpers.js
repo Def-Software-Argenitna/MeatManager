@@ -45,10 +45,26 @@ function computeEan13CheckDigit(base12) {
 // SCALE_ADDRESS lo escribe el wizard (Paso 3) y sobrevive al reset de overrides,
 // por eso es la fuente confiable (a diferencia del auto-detect en runtime que se
 // reintrodujo y revirtio por inestable).
+// El campo "AA" va como `00` LITERAL y no como placeholder: el firmware CUORA
+// MAX (S0060) no soporta `A` (articulos) y lo imprime como 0 — verificado con
+// tickets fisicos de 2 y 4 articulos que dicen `2220 00 <total6>`. Usar `00`
+// literal hace que el template enviado a la balanza (fn 8) y el barcode
+// estampado en la DB sean identicos por construccion.
 function defaultTotalBarcodeFormat(scaleAddress) {
     const parsed = Number.parseInt(scaleAddress, 10);
     const address = Number.isFinite(parsed) && parsed >= 1 && parsed <= 99 ? parsed : 20;
-    return `22${String(address).padStart(2, '0')}AAIIIIII`;
+    return `22${String(address).padStart(2, '0')}00IIIIII`;
+}
+
+// El firmware CUORA MAX (S0060) NO soporta el placeholder `A` (articulos) en el
+// barcode de total: lo imprime literalmente como `0`. Verificado contra tickets
+// fisicos: con 2 y 4 articulos el papel dice `2220 00 <total6>`, nunca `2220 02`
+// ni `2220 04`. Por eso, al REPRODUCIR el barcode impreso (estampado que se
+// guarda en la DB y luego se busca al escanear), los `A` del template deben
+// renderizarse como `0` — igual que hace la balanza. El template que se envia a
+// la balanza (fn 8) se manda sin tocar.
+function stampTotalBarcodeFormat(format) {
+    return String(format || '').toUpperCase().replace(/A/g, '0');
 }
 
 function formatPrintedTicketBarcode({ format, itemCount, totalAmount }) {
@@ -112,6 +128,7 @@ module.exports = {
     formatTicketBarcode,
     formatPrintedTicketBarcode,
     defaultTotalBarcodeFormat,
+    stampTotalBarcodeFormat,
     toNumber,
     toDate,
 };
