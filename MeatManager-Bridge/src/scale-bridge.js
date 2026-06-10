@@ -1145,9 +1145,11 @@ class ScaleBridge {
 
             const ticketId = String(row.ticketId || '').trim();
             if (!ticketId) continue;
-            if (!tickets.has(ticketId)) {
+            const ticketKey = `${ticketId}|${saleAt.toISOString()}`;
+            if (!tickets.has(ticketKey)) {
                 const vendorCode = String(row.vendor || '').trim();
-                tickets.set(ticketId, {
+                tickets.set(ticketKey, {
+                    ticketKey,
                     ticketId,
                     vendorCode,
                     vendorName: resolveVendorName(vendorCode),
@@ -1157,7 +1159,7 @@ class ScaleBridge {
                     lines: [],
                 });
             }
-            const ticket = tickets.get(ticketId);
+            const ticket = tickets.get(ticketKey);
             const lineNo = ticket.lines.length + 1;
             ticket.totalAmount += Number((row.amountTimes100 || 0) / 100);
             ticket.itemCount += 1;
@@ -1213,6 +1215,7 @@ class ScaleBridge {
             });
 
             ticketsPayload.push({
+                ticketKey: ticket.ticketKey,
                 ticketId: ticket.ticketId,
                 vendorCode: ticket.vendorCode || null,
                 vendorName: ticket.vendorName || null,
@@ -1251,7 +1254,8 @@ class ScaleBridge {
             : {};
 
         const ticketsToSend = ticketsPayload.filter((ticket) => {
-            const stored = knownFingerprints[ticket.ticketId];
+            const dedupeKey = ticket.ticketKey || `${ticket.ticketId}|${ticket.saleAt}`;
+            const stored = knownFingerprints[dedupeKey];
             return !stored || stored !== ticket.fingerprint;
         });
 
@@ -1278,7 +1282,8 @@ class ScaleBridge {
             });
 
             for (const ticket of ticketsToSend) {
-                knownFingerprints[ticket.ticketId] = ticket.fingerprint;
+                const dedupeKey = ticket.ticketKey || `${ticket.ticketId}|${ticket.saleAt}`;
+                knownFingerprints[dedupeKey] = ticket.fingerprint;
             }
         }
 
@@ -1289,7 +1294,7 @@ class ScaleBridge {
         // ausente por truncamiento serial no fue purgado por la balanza, y
         // podarlo provoca que se re-postee al API en el proximo pulso.
         if (!partialRead) {
-            const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketId));
+            const presentTicketIds = new Set(ticketsPayload.map((t) => t.ticketKey || `${t.ticketId}|${t.saleAt}`));
             const prunedFingerprints = {};
             for (const ticketId of presentTicketIds) {
                 if (knownFingerprints[ticketId]) prunedFingerprints[ticketId] = knownFingerprints[ticketId];

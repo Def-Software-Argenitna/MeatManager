@@ -7408,6 +7408,7 @@ async function ensureScaleTicketItemColumns(conn) {
           AND t.tenant_id = s.tenant_id
           AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
           AND t.ticket_id = s.ticket_id
+          AND t.sale_at = s.sale_at
          SET s.printed_ticket_barcode = COALESCE(t.printed_ticket_barcode, s.printed_ticket_barcode),
              s.vendor_name = COALESCE(t.vendor_name, s.vendor_name),
              s.ticket_total_amount = CASE
@@ -7974,8 +7975,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             `${itemBaseSql}
                AND s.device_id = ?
                AND s.ticket_id = ?
+               AND s.sale_at = ?
              ORDER BY s.line_no ASC`,
-            [tenantId, ticket.device_id, ticket.ticket_id]
+            [tenantId, ticket.device_id, ticket.ticket_id, ticket.sale_at]
         );
 
         // Fallback defensivo:
@@ -7993,8 +7995,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
             [itemRows] = await pool.query(
                 `${itemBaseSql}
                    AND (${barcodeConditions.join(' OR ')})
+                   AND s.sale_at = ?
                  ORDER BY s.line_no ASC`,
-                barcodeParams
+                [...barcodeParams, ticket.sale_at]
             );
         }
 
@@ -8023,8 +8026,9 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                 [itemRows] = await pool.query(
                     `${itemBaseSql}
                        AND (${anyIdConditions.join(' OR ')})
+                       AND s.sale_at = ?
                      ORDER BY s.sale_at DESC, s.line_no ASC`,
-                    anyIdParams
+                    [...anyIdParams, ticket.sale_at]
                 );
             }
         }
@@ -11487,6 +11491,7 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
            AND t.tenant_id = s.tenant_id
            AND COALESCE(t.branch_id, 0) = COALESCE(s.branch_id, 0)
            AND t.ticket_id = s.ticket_id
+           AND t.sale_at = s.sale_at
          SET s.ticket_barcode         = t.ticket_barcode,
              s.printed_ticket_barcode = t.printed_ticket_barcode,
              s.vendor_name            = t.vendor_name,
@@ -11510,18 +11515,19 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
     await pool.query(
         `UPDATE scale_bridge_sales_item s
          INNER JOIN (
-            SELECT device_id, tenant_id, COALESCE(branch_id, 0) AS branch_id_key, ticket_id,
+            SELECT device_id, tenant_id, COALESCE(branch_id, 0) AS branch_id_key, ticket_id, sale_at,
                    ROUND(SUM(amount), 2) AS ticket_total_amount,
                    COUNT(*)              AS ticket_item_count
               FROM scale_bridge_sales_item
              WHERE device_id = ? AND tenant_id = ?
                AND COALESCE(branch_id, 0) = COALESCE(?, 0)
-             GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id
+             GROUP BY device_id, tenant_id, COALESCE(branch_id, 0), ticket_id, sale_at
          ) totals
             ON totals.device_id     = s.device_id
            AND totals.tenant_id     = s.tenant_id
            AND totals.branch_id_key = COALESCE(s.branch_id, 0)
            AND totals.ticket_id     = s.ticket_id
+           AND totals.sale_at       = s.sale_at
          SET s.ticket_total_amount = totals.ticket_total_amount,
              s.ticket_item_count   = totals.ticket_item_count,
              s.synced_at           = NOW()
@@ -11690,8 +11696,9 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                  WHERE device_id = ?
                    AND tenant_id = ?
                    AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
-                   AND ticket_id = ?`,
-                [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId]
+                   AND ticket_id = ?
+                   AND sale_at = ?`,
+                [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId, saleAt]
             );
 
             ticketsUpserted += 1;
@@ -11704,8 +11711,9 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                        AND tenant_id = ?
                        AND ((branch_id IS NULL AND ? IS NULL) OR branch_id = ?)
                        AND ticket_id = ?
+                       AND sale_at = ?
                        AND line_no > ?`,
-                    [deviceId, tenantId, branchId, branchId, ticketId, lines.length]
+                    [deviceId, tenantId, branchId, branchId, ticketId, saleAt, lines.length]
                 );
             }
             for (const line of lines) {
