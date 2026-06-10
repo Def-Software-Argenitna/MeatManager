@@ -38,6 +38,15 @@ let lastStatus = {
 const STARTUP_GRACE_POLLS = 4; // ~16s a STATUS_POLL_MS=4000
 let startupGracePollsRemaining = 0;
 
+// Watchdog de salud: el watchdog de 'exit' no cubre al hijo COLGADO (vivo pero
+// con el event loop bloqueado). Visto en prod: un hipo del USB de la balanza
+// dejo al hijo 3 horas sin responder — el puerto seguia LISTENING pero con el
+// backlog TCP lleno las conexiones se rechazaban, y como el proceso nunca
+// murio, nadie lo relanzo. Si /health falla N polls seguidos con el hijo vivo,
+// lo matamos; el handler de 'exit' lo relanza solo.
+const HEALTH_WATCHDOG_FAILS = 6; // ~24s a STATUS_POLL_MS=4000 (>> bind de ~2s)
+let consecutiveHealthFailures = 0;
+
 function runtimeDir() {
     return path.join(app.getPath('userData'), 'runtime');
 }
@@ -186,6 +195,7 @@ async function fetchBridgeStatus() {
         }
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
+        consecutiveHealthFailures = 0;
         lastStatus = {
             ...lastStatus,
             bridgeHttp: {
@@ -226,6 +236,17 @@ async function fetchBridgeStatus() {
             },
             updatedAt: new Date().toISOString(),
         };
+
+        if (bridgeProc && !bridgeProc.killed) {
+            consecutiveHealthFailures += 1;
+            if (consecutiveHealthFailures >= HEALTH_WATCHDOG_FAILS) {
+                consecutiveHealthFailures = 0;
+                logDesktop(`health watchdog: bridge hijo vivo (pid=${bridgeProc.pid}) pero /health no responde hace ${HEALTH_WATCHDOG_FAILS} polls — kill + relanzar`);
+                try {
+                    bridgeProc.kill('SIGKILL');
+                } catch (_) { /* best effort: el handler de exit relanza */ }
+            }
+        }
     }
     sendStatusToRenderer();
 }
@@ -259,6 +280,7 @@ function startBridgeProcess() {
     // puerto HTTP local no esta atado. Reseteamos el grace para no llenar
     // desktop.log con ECONNREFUSED esperables.
     startupGracePollsRemaining = STARTUP_GRACE_POLLS;
+    consecutiveHealthFailures = 0;
     const scriptPath = bridgeScriptPath();
     bridgeProc = fork(scriptPath, [], {
         env: {
