@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { LayoutList } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
 import { COVERAGE_SETTINGS_KEY, DEFAULT_COVERAGE_RULES, normalizeCoverageKey, normalizeCoverageRules } from '../utils/branchTransferCoverage';
+import { EmptyState } from '../components/ui';
 import './ConfiguracionSucursales.css';
 
 const clampPercent = (value, fallback) => {
@@ -255,7 +257,7 @@ const ConfiguracionSucursales = () => {
 
                     <div className="config-sucursales-category-list">
                         {orderedCategories.length === 0 ? (
-                            <div className="config-sucursales-empty">No hay categorías detectadas todavía.</div>
+                            <EmptyState compact icon={LayoutList} title="Sin categorías" description="No hay categorías detectadas en el stock todavía." />
                         ) : orderedCategories.map((categoryKey) => (
                             <div key={categoryKey} className="config-sucursales-category-row">
                                 <strong>{categoryKey}</strong>
