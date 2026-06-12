@@ -325,3 +325,62 @@ button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:disabled {
 @keyframes uiSpin {
     to { transform: rotate(360deg); }
 }
+
+/* ---------- EmptyState ---------- */
+
+.ui-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    gap: 0.5rem;
+    padding: 3rem 1.5rem;
+    color: var(--color-text-muted);
+}
+
+.ui-empty--compact {
+    padding: 1.75rem 1rem;
+}
+
+.ui-empty__icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 76px;
+    height: 76px;
+    margin-bottom: 0.35rem;
+    border-radius: 999px;
+    color: var(--color-primary);
+    background: radial-gradient(circle at 50% 40%, rgba(249, 115, 22, 0.16), rgba(249, 115, 22, 0.02) 70%);
+    border: 1px solid rgba(249, 115, 22, 0.18);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06), 0 0 28px rgba(249, 115, 22, 0.12);
+}
+
+.ui-empty--compact .ui-empty__icon {
+    width: 56px;
+    height: 56px;
+}
+
+.ui-empty__title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: var(--color-text-main);
+    margin: 0;
+}
+
+.ui-empty--compact .ui-empty__title {
+    font-size: 0.92rem;
+}
+
+.ui-empty__desc {
+    font-size: 0.88rem;
+    color: var(--color-text-muted);
+    max-width: 420px;
+    line-height: 1.5;
+    margin: 0;
+}
+
+.ui-empty__action {
+    margin-top: 0.85rem;
+}

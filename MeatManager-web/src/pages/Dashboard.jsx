@@ -6,7 +6,7 @@ import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
-import { BarChart } from '../components/ui';
+import { BarChart, EmptyState } from '../components/ui';
 import './Dashboard.css';
 
 const toNumber = (value) => {
@@ -427,7 +427,12 @@ const Dashboard = () => {
                     </div>
 
                     {visibleVentas.length === 0 ? (
-                        <p className="dashboard-empty">No hay ventas registradas aún.</p>
+                        <EmptyState
+                            compact
+                            icon={Banknote}
+                            title="No hay ventas registradas aún"
+                            description="Las ventas que registres van a aparecer acá."
+                        />
                     ) : (
                         <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-muted)' }}>
                             <thead>

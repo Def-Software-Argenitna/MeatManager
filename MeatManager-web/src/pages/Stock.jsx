@@ -6,7 +6,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
-import { Button, Modal } from '../components/ui';
+import { Button, Modal, EmptyState } from '../components/ui';
 import './Stock.css';
 
 const TYPE_META = {
@@ -685,11 +685,11 @@ const Stock = () => {
             {/* Stock List */}
             <DirectionalReveal className="stock-content" from="down" delay={0.22}>
                 {filteredStock.length === 0 ? (
-                    <div className="empty-state">
-                        <Package size={64} style={{ opacity: 0.3 }} />
-                        <h3>No hay productos en stock</h3>
-                        <p>Comienza despostando animales o cargando productos pre-elaborados</p>
-                    </div>
+                    <EmptyState
+                        icon={Package}
+                        title="No hay productos en stock"
+                        description="Comenzá despostando animales o cargando productos pre-elaborados."
+                    />
                 ) : (
                     <div className="stock-groups">
                         {Object.entries(stockByType).map(([type, items]) => {

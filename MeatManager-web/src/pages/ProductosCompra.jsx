@@ -6,7 +6,7 @@ import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useUser } from '../context/UserContext';
-import { Button, Modal, useToast } from '../components/ui';
+import { Button, Modal, EmptyState, useToast } from '../components/ui';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
@@ -437,9 +437,12 @@ const ProductosCompra = () => {
             </div>
 
             {groupedItems.length === 0 ? (
-                <div className="neo-card" style={{ padding: '1.25rem', color: 'var(--color-text-muted)' }}>
-                    No hay artículos para mostrar con el filtro actual.
-                </div>
+                <EmptyState
+                    compact
+                    icon={Search}
+                    title="No hay artículos para mostrar"
+                    description="No encontramos artículos con el filtro actual."
+                />
             ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                     {groupedItems.map((group) => (

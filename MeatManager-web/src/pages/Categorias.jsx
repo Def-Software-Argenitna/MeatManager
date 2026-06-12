@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Folder, FolderPlus, ChevronRight, Edit2, Trash2, Plus } from 'lucide-react';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
-import { Button, Modal, useToast } from '../components/ui';
+import { Button, Modal, EmptyState, useToast } from '../components/ui';
 
 const Categorias = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -132,11 +132,11 @@ const Categorias = () => {
 
             <div style={{ maxWidth: '800px' }}>
                 {categoryTree.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--color-text-muted)' }}>
-                        <Folder size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
-                        <p>No hay categorías definidas.</p>
-                        <p>Crea una "Principal" (ej: Carnes) y luego agrega sub-categorías dentro.</p>
-                    </div>
+                    <EmptyState
+                        icon={Folder}
+                        title="No hay categorías definidas"
+                        description='Creá una "Principal" (ej: Carnes) y luego agregá sub-categorías dentro.'
+                    />
                 ) : categoryTree.map(root => (
                     <CategoryItem key={root.id} node={root} />
                 ))}
