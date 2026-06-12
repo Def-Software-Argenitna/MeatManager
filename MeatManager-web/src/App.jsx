@@ -5,7 +5,7 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
 import { useHiddenDigitalPaymentShortcuts } from './hooks/useHiddenDigitalPayments';
-import { ToastProvider } from './components/ui';
+import { ToastProvider, Spinner } from './components/ui';
 
 const CHUNK_RELOAD_KEY = 'mm-chunk-reload-attempted';
 
@@ -72,17 +72,7 @@ const ConfiguracionBalanza = lazyWithRecovery(() => import('./pages/Configuracio
 const PUBLIC_PATHS = ['/catalogo'];
 
 const RouteLoader = () => (
-  <div style={{
-    minHeight: '40vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    color: 'var(--color-text-muted)',
-    fontWeight: 600,
-    letterSpacing: '0.03em',
-  }}>
-    Cargando modulo...
-  </div>
+  <Spinner fullHeight label="Cargando módulo..." />
 );
 
 const lazyElement = (lazyComponent) => (

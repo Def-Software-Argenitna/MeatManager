@@ -288,3 +288,40 @@ button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:disabled {
     text-transform: capitalize;
     line-height: 1;
 }
+
+/* ---------- Spinner ---------- */
+
+.ui-spinner-wrap {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.85rem;
+}
+
+.ui-spinner {
+    display: block;
+    border-style: solid;
+    border-color: rgba(255, 255, 255, 0.12);
+    border-top-color: var(--color-primary);
+    border-radius: 999px;
+    box-shadow: 0 0 22px rgba(249, 115, 22, 0.22);
+    animation: uiSpin 0.8s linear infinite;
+}
+
+.ui-spinner-label {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+}
+
+.ui-spinner-fullheight {
+    min-height: 40vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@keyframes uiSpin {
+    to { transform: rotate(360deg); }
+}
