@@ -7,6 +7,7 @@ import {
 import { ALL_ROUTES, isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, getRemoteSetting, upsertRemoteSetting, saveTableRecord } from '../utils/apiClient';
+import { Button } from '../components/ui';
 import './Security.css';
 
 /* ── Helpers ────────────────────────────── */
@@ -545,11 +546,11 @@ const UserModal = ({ user, onClose, onSaved, toast, saveRecord, replacePermissio
                     )}
 
                     <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
-                        <button type="button" onClick={onClose} className="btn-security secondary">Cancelar</button>
-                        <button type="submit" className="btn-security primary" disabled={loading}>
+                        <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+                        <Button variant="primary" type="submit" disabled={loading}>
                             {loading ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
                             {user ? 'Guardar Cambios' : 'Crear Usuario'}
-                        </button>
+                        </Button>
                     </div>
                 </form>
             </div>
