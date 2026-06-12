@@ -537,7 +537,9 @@ const Pedidos = () => {
                 <div className="modal-overlay" onClick={resetModal}>
                     <div className="modal-content neo-card pedidos-modal" onClick={(e) => e.stopPropagation()}>
                         <h2>Nuevo Pedido Manual</h2>
+                        <p className="pedidos-modal-subtitle">Completá los datos del pedido y los ítems desde el stock disponible.</p>
                         <div className="modal-form">
+                            <p className="pedido-form-section">Cliente</p>
                             <div className="pedido-form-grid">
                                 <div className="field-group">
                                     <label>Cliente existente</label>
@@ -569,6 +571,7 @@ const Pedidos = () => {
                                 </div>
                             </div>
 
+                            <p className="pedido-form-section">Ítems del pedido</p>
                             <div className="pedido-line-builder neo-card">
                                 <div className="pedido-line-builder__header"><span>Agregar items desde stock</span></div>
                                 <div className="pedido-line-builder__grid">
@@ -602,6 +605,7 @@ const Pedidos = () => {
                                 )}
                             </div>
 
+                            <p className="pedido-form-section">Entrega</p>
                             <div className="pedido-form-grid">
                                 <div className="field-group">
                                     <label>Monto estimado</label>

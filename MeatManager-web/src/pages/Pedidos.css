@@ -202,7 +202,38 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    padding: 1.5rem;
+    padding: 1.75rem;
+    background: linear-gradient(160deg, rgba(22, 22, 30, 0.98) 0%, rgba(12, 12, 18, 0.99) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.09) !important;
+    border-radius: 20px !important;
+    box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(249, 115, 22, 0.06);
+}
+
+.pedidos-modal h2 {
+    font-size: 1.35rem;
+    font-weight: 800;
+    margin: 0 0 0.25rem;
+    color: var(--color-text-main);
+    letter-spacing: -0.01em;
+}
+
+.pedidos-modal-subtitle {
+    font-size: 0.82rem;
+    color: var(--color-text-muted);
+    margin: 0 0 1.5rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.pedido-form-section {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    opacity: 0.8;
+    margin: 0.5rem 0 0.5rem;
+    padding-left: 0.1rem;
 }
 
 .pedido-form-grid {
@@ -270,9 +301,14 @@
 }
 
 .pedido-line-builder,
-.pedido-selected-items,
-.delivery-address-card {
+.pedido-selected-items {
     padding: 1rem;
+}
+
+.delivery-address-card {
+    padding: 1.25rem;
+    border-left: 3px solid var(--color-primary) !important;
+    background: rgba(249, 115, 22, 0.04) !important;
 }
 
 .pedido-line-builder__header,

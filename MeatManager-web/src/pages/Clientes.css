@@ -14,10 +14,12 @@
     flex-direction: column;
     overflow: hidden;
     margin: 1rem auto;
-    background: var(--color-bg-card) !important;
+    background: linear-gradient(160deg, rgba(22, 22, 30, 0.98) 0%, rgba(12, 12, 18, 0.99) 100%) !important;
     color: var(--color-text-main) !important;
-    border: 1px solid var(--color-border) !important;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    border: 1px solid rgba(255, 255, 255, 0.09) !important;
+    border-radius: 20px !important;
+    box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(249, 115, 22, 0.06);
+    padding: 1.75rem;
 }
 
 .clients-modal-overlay {
@@ -71,7 +73,7 @@
 .clients-modal-content input:focus {
     outline: none;
     border-color: var(--color-primary) !important;
-    box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.2);
+    box-shadow: 0 0 0 2px rgba(249, 115, 22, 0.2);
 }
 
 .clients-modal-header {
@@ -80,6 +82,19 @@
     align-items: center;
     flex-shrink: 0;
     margin-bottom: 1.5rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.clients-form-section {
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--color-primary);
+    opacity: 0.8;
+    margin: 1.1rem 0 0.6rem;
+    padding-left: 0.1rem;
 }
 
 .clients-modal-title {

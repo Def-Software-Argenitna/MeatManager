@@ -718,6 +718,7 @@ const Clientes = () => {
                         </div>
 
                         <form className="clients-modal-form" onSubmit={handleSaveClient}>
+                            <p className="clients-form-section">Datos personales</p>
                             <div className="clients-form-group">
                                 <div className="clients-form-grid">
                                     <div className="clients-form-group">
@@ -743,6 +744,7 @@ const Clientes = () => {
                                 </div>
                             </div>
 
+                            <p className="clients-form-section">Domicilio</p>
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Calle</label>
@@ -762,6 +764,7 @@ const Clientes = () => {
                                 </div>
                             </div>
 
+                            <p className="clients-form-section">Contacto</p>
                             <div className="clients-form-grid">
                                 <div className="clients-form-group">
                                     <label className="clients-form-label">Telefono 1</label>
@@ -784,6 +787,7 @@ const Clientes = () => {
                                 </div>
                             </div>
 
+                            <p className="clients-form-section">Configuración</p>
                             <div className="clients-form-toggles">
                                 <label className="clients-checkbox-row">
                                     <input
