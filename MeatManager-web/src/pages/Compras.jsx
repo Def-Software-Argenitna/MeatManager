@@ -768,17 +768,18 @@ const Compras = () => {
             {isModalOpen && createPortal(
                 <div className="modal-overlay" onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}>
                     <div className="modal-content neo-card" style={{ maxWidth: '800px', width: '95%', maxHeight: '90vh' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyItems: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold' }}>{editingPurchaseId ? 'Editar Compra' : 'Ingresar Factura / Remito'}</h2>
-                            <button onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', marginLeft: 'auto' }}>
+                        <div className="compras-modal-header">
+                            <h2>{editingPurchaseId ? 'Editar Compra' : 'Ingresar Factura / Remito'}</h2>
+                            <button className="compras-modal-header__close" onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}>
                                 <X size={24} />
                             </button>
                         </div>
 
                         <form onSubmit={guardSave(handleAddPurchase)}>
+                            <p className="compras-form-section">Referencia de compra</p>
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '1rem', marginBottom: '1rem' }}>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.8rem' }}>Proveedor</label>
+                                    <label className="compras-field-label">Proveedor</label>
                                     <select
                                         required
                                         autoFocus
@@ -791,12 +792,12 @@ const Compras = () => {
                                             <option key={s.id} value={s.name}>{s.name}</option>
                                         ))}
                                     </select>
-                                    <div style={{ fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                                    <div className="compras-field-hint">
                                         ¿No está en la lista? <span onClick={() => { window.open('#/config/proveedores', '_self') }} style={{ color: 'var(--color-primary)', cursor: 'pointer', textDecoration: 'underline' }}>Crear nuevo proveedor</span>
                                     </div>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.8rem' }}>N° Remito / Factura</label>
+                                    <label className="compras-field-label">N° Remito / Factura</label>
                                     <input
                                         type="text"
                                         className="neo-input"
@@ -806,7 +807,7 @@ const Compras = () => {
                                     />
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.8rem' }}>Tipo de compra</label>
+                                    <label className="compras-field-label">Tipo de compra</label>
                                     <select
                                         className="neo-input"
                                         value={newPurchase.destination}
@@ -818,7 +819,7 @@ const Compras = () => {
                                     </select>
                                 </div>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.8rem' }}>Fecha de Emisión</label>
+                                    <label className="compras-field-label">Fecha de Emisión</label>
                                     <input
                                         type="date"
                                         required
@@ -830,16 +831,14 @@ const Compras = () => {
                             </div>
 
                             {/* DYNAMIC ITEM ENTRY */}
-                            <div style={{ background: 'var(--color-bg-main)', padding: '1rem', borderRadius: 'var(--radius-md)', marginBottom: '1rem', border: '1px solid var(--color-border)', marginTop: '1.5rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.8rem', fontSize: '0.9rem', color: 'var(--color-primary)', fontWeight: '600' }}>
-                                    Agregar Ítem al Remito
-                                </label>
+                            <div className="compras-item-entry-box">
+                                <label className="compras-item-entry-box__title">Agregar Ítem al Remito</label>
 
                                 <div className="purchase-item-entry-grid">
 
                                     {/* 1. PRODUCT SEARCH */}
                                     <div style={{ position: 'relative' }}>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Producto</label>
+                                        <label className="compras-field-label">Producto</label>
                                         <div style={{ position: 'relative' }}>
                                             <input
                                                 ref={productSearchInputRef}
@@ -888,7 +887,7 @@ const Compras = () => {
                                     </div>
 
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Tratamiento</label>
+                                        <label className="compras-field-label">Tratamiento</label>
                                         <select
                                             className="neo-input"
                                             style={{ marginBottom: 0 }}
@@ -908,7 +907,7 @@ const Compras = () => {
 
                                     {isMixedPurchase ? (
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Destino</label>
+                                            <label className="compras-field-label">Destino</label>
                                             <select
                                                 className="neo-input"
                                                 style={{ marginBottom: 0 }}
@@ -921,7 +920,7 @@ const Compras = () => {
                                         </div>
                                     ) : (
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Destino</label>
+                                            <label className="compras-field-label">Destino</label>
                                             <div className="purchase-mode-indicator">
                                                 {newPurchase.destination === 'interno' ? 'Uso interno' : 'Para vender'}
                                             </div>
@@ -929,7 +928,7 @@ const Compras = () => {
                                     )}
 
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Especie</label>
+                                        <label className="compras-field-label">Especie</label>
                                         <select
                                             className="neo-input"
                                             style={{ marginBottom: 0 }}
@@ -946,7 +945,7 @@ const Compras = () => {
 
                                     {/* 2. QUANTITY (Units) */}
                                     <div style={{ opacity: ['kg', 'l'].includes(currentItem.unit) ? 0.3 : 1, pointerEvents: ['kg', 'l'].includes(currentItem.unit) ? 'none' : 'auto' }}>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Cant.</label>
+                                        <label className="compras-field-label">Cant.</label>
                                         <input
                                             type="number"
                                             placeholder="UN"
@@ -959,7 +958,7 @@ const Compras = () => {
 
                                     {/* 3. WEIGHT (Only for KG/L) */}
                                     <div style={{ opacity: ['kg', 'l'].includes(currentItem.unit) ? 1 : 0.3, pointerEvents: ['kg', 'l'].includes(currentItem.unit) ? 'auto' : 'none' }}>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>Total Kg</label>
+                                        <label className="compras-field-label">Total Kg</label>
                                         <div style={{ position: 'relative' }}>
                                             <input
                                                 type="number"
@@ -975,7 +974,7 @@ const Compras = () => {
 
                                     {/* 4. PRICE (Per Unit or Per KG) */}
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>
+                                            <label className="compras-field-label">
                                                 {['kg', 'l'].includes(currentItem.unit) ? '$ Precio x Kg' : '$ Precio Unit.'}
                                             </label>
                                         <input
@@ -991,7 +990,7 @@ const Compras = () => {
                                         </div>
 
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.75rem', marginBottom: '0.2rem', color: 'var(--color-text-muted)' }}>IVA compra</label>
+                                        <label className="compras-field-label">IVA compra</label>
                                         <select
                                             className="neo-input"
                                             style={{ marginBottom: 0 }}
@@ -1103,8 +1102,9 @@ const Compras = () => {
                             </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', borderTop: '1px solid var(--color-border)', paddingTop: '1rem' }}>
+                                <p className="compras-form-section" style={{ marginBottom: '0.25rem' }}>Pago</p>
                                 <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                    <label style={{ whiteSpace: 'nowrap' }}>Método de pago:</label>
+                                    <label className="compras-field-label" style={{ whiteSpace: 'nowrap', marginBottom: 0 }}>Método de pago:</label>
                                     <select
                                         className="neo-input"
                                         style={{ flex: 1, minWidth: '180px', marginBottom: 0 }}
