@@ -11992,6 +11992,9 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             assertClientAccess(accessContext);
             accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
+        const conn = await pool.getConnection();
+        try { await ensureScaleTicketLifecycleColumns(conn); } finally { conn.release(); }
+
         const { dateFrom, dateTo } = req.query;
         const params = [tenantId];
         let dateFilter = '';
