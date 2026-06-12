@@ -5,11 +5,11 @@ values:
     enabled: true
     secret: false
   - key: email
-    value: 'rc.cortesr@gmail.com'
+    value: ''
     enabled: true
     secret: false
   - key: password
-    value: pos38ric0S
+    value: ''
     enabled: true
     secret: true
   - key: branchId

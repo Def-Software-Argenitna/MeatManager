@@ -10377,8 +10377,25 @@ app.post('/api/branch-transfers/:id/receive', verifyFirebaseToken, async (req, r
     }
 });
 
+// ── RUTAS: Autorización de retiros de caja ─────────────────────────────────
+// El código de autorización es numérico de 6 dígitos con TTL corto: sin un
+// límite estricto de intentos, la verificación es vulnerable a fuerza bruta.
+const cashWithdrawalRequestLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+const cashWithdrawalVerifyLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 15,
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
 // ── RUTA: POST /api/cash/withdrawals/request-authorization ────────────────
-app.post('/api/cash/withdrawals/request-authorization', verifyFirebaseToken, async (req, res) => {
+app.post('/api/cash/withdrawals/request-authorization', cashWithdrawalRequestLimiter, verifyFirebaseToken, async (req, res) => {
     try {
         const { amount, paymentMethod, category, description } = req.body || {};
         if (Number(amount || 0) <= 0) {
@@ -10421,7 +10438,7 @@ app.post('/api/cash/withdrawals/request-authorization', verifyFirebaseToken, asy
 });
 
 // ── RUTA: POST /api/cash/withdrawals/verify-authorization ────────────────
-app.post('/api/cash/withdrawals/verify-authorization', verifyFirebaseToken, async (req, res) => {
+app.post('/api/cash/withdrawals/verify-authorization', cashWithdrawalVerifyLimiter, verifyFirebaseToken, async (req, res) => {
     try {
         const { authorizationId, code, amount, paymentMethod, category } = req.body || {};
         if (!authorizationId || !code) {
