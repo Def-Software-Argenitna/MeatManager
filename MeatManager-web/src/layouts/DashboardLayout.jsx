@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation } from 'react-router-dom';
 import Sidebar from '../components/Sidebar';
 import TopBar from '../components/TopBar';
@@ -45,14 +45,29 @@ const BlockedScreen = ({ installationId, machineId, supportNumber }) => (
     </div>
 );
 
+const MOBILE_QUERY = '(max-width: 860px)';
+const isNarrowViewport = () =>
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+        ? window.matchMedia(MOBILE_QUERY).matches
+        : false;
+
 const DashboardLayout = () => {
-    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    // En pantallas chicas el drawer arranca cerrado para no tapar el contenido;
+    // en desktop se mantiene el comportamiento de siempre (sidebar visible).
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isNarrowViewport);
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
     const location = useLocation();
 
     const toggleSidebar = () => {
-        setIsSidebarCollapsed(!isSidebarCollapsed);
+        setIsSidebarCollapsed((prev) => !prev);
     };
+
+    // Al navegar en mobile, cerrar el drawer (en desktop no aplica).
+    useEffect(() => {
+        if (isNarrowViewport()) {
+            setIsSidebarCollapsed(true);
+        }
+    }, [location.pathname]);
 
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
@@ -63,6 +78,14 @@ const DashboardLayout = () => {
             <TopBar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
             <div className={`dashboard-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
                 <Sidebar isCollapsed={isSidebarCollapsed} />
+                {!isSidebarCollapsed && (
+                    <button
+                        type="button"
+                        className="sidebar-backdrop"
+                        aria-label="Cerrar menú"
+                        onClick={() => setIsSidebarCollapsed(true)}
+                    />
+                )}
                 <main className="main-content">
                     <div className="route-stage">
                         <div className="route-shell" key={location.pathname}>

@@ -97,3 +97,57 @@
         display: none;
     }
 }
+
+/* ── Responsive: en pantallas angostas la sidebar pasa a ser un drawer
+   superpuesto para que no aplaste el contenido. Solo CSS — no cambia el
+   comportamiento en desktop ni la lógica del toggle existente.
+   El drawer se controla con la clase .sidebar-collapsed que el layout ya
+   aplica: por defecto (expandida) se muestra como overlay; al colapsar
+   (hamburguesa) se esconde fuera de pantalla. ────────────────────────── */
+@media (max-width: 860px) {
+    .dashboard-layout .sidebar {
+        position: fixed;
+        top: 0;
+        left: 0;
+        height: 100%;
+        width: 280px;
+        z-index: 1200;
+        box-shadow: 0 0 60px rgba(0, 0, 0, 0.6);
+        transition: left 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    /* Colapsada en mobile = drawer escondido (no el riel angosto de desktop) */
+    .dashboard-layout.sidebar-collapsed .sidebar {
+        left: -320px;
+        width: 280px;
+        padding: 1.5rem 1rem;
+    }
+
+    /* El contenido ocupa todo el ancho: la sidebar queda fuera del flujo */
+    .dashboard-layout .main-content {
+        width: 100%;
+    }
+
+    /* Backdrop oscuro detrás del drawer abierto */
+    .sidebar-backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 1100;
+        background: rgba(0, 0, 0, 0.55);
+        backdrop-filter: blur(2px);
+        border: none;
+        cursor: pointer;
+        animation: fadeIn 0.25s ease-out;
+    }
+}
+
+/* En desktop el backdrop nunca se muestra */
+.sidebar-backdrop {
+    display: none;
+}
+
+@media (max-width: 860px) {
+    .sidebar-backdrop {
+        display: block;
+    }
+}
