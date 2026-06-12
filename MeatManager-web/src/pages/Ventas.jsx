@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, ChevronLeft, CreditCard, Calculator } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
