@@ -1,10 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe, Printer } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe, Printer, Building2 } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
-import { Button, Modal, useToast } from '../components/ui';
+import { Button, EmptyState, Modal, useToast } from '../components/ui';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const CASH_ACCOUNTS = [
@@ -406,6 +406,13 @@ const Proveedores = () => {
                 </div>
             </div>
 
+            {filteredSuppliers?.length === 0 && (
+                <EmptyState
+                    icon={Building2}
+                    title="No hay proveedores"
+                    description={suppliers?.length === 0 ? 'Agregá tu primer proveedor con el botón de arriba.' : 'No coincide ningún proveedor con esa búsqueda.'}
+                />
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '1.5rem' }}>
                 {filteredSuppliers?.map(s => {
                     // Calcular saldo de cuenta corriente

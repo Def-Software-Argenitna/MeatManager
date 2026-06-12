@@ -22,7 +22,7 @@ import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import { useUser } from '../context/UserContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
-import { Button, useToast } from '../components/ui';
+import { Button, EmptyState, useToast } from '../components/ui';
 import './Logistica.css';
 
 const LIVE_DRIVERS_REFRESH_INTERVAL_MS = 5000;
@@ -627,10 +627,12 @@ const getOrderCoordinates = (pedido) => {
                             </div>
                         )}
                         {driversLocations.length === 0 ? (
-                            <div className="empty-delivery compact">
-                                <Truck size={28} />
-                                <p>No hay repartidores reportando ubicación.</p>
-                            </div>
+                            <EmptyState
+                                compact
+                                icon={Truck}
+                                title="Sin repartidores activos"
+                                description="Ningún repartidor está reportando ubicación ahora."
+                            />
                         ) : (
                             <div className="drivers-live-list">
                                 {driversLocations.map((driver) => {
@@ -686,10 +688,12 @@ const getOrderCoordinates = (pedido) => {
 
                     <div className="orders-list">
                         {deliveryOrders.length === 0 ? (
-                            <div className="empty-delivery compact">
-                                <Truck size={32} />
-                                <p>No hay envíos pendientes.</p>
-                            </div>
+                            <EmptyState
+                                compact
+                                icon={Truck}
+                                title="Sin envíos pendientes"
+                                description="No hay pedidos asignados para repartir."
+                            />
                         ) : (
                             deliveryOrders.map(p => (
                                 <div

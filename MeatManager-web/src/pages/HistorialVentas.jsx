@@ -1,8 +1,9 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Receipt, Search } from 'lucide-react';
+import { ArrowLeft, Receipt, Search, Package } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
+import { EmptyState } from '../components/ui';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -220,9 +221,12 @@ const HistorialVentas = () => {
                         )}
                     </div>
                     {todayProductSummary.products.length === 0 ? (
-                        <div style={{ color: 'var(--color-text-muted)', fontSize: '0.88rem' }}>
-                            No hay detalle de productos para el día. Si se cobraron tickets offline de balanza, aparecen como venta genérica.
-                        </div>
+                        <EmptyState
+                            compact
+                            icon={Package}
+                            title="Sin desglose de productos"
+                            description="Si se cobraron tickets offline de balanza, aparecen como venta genérica."
+                        />
                     ) : (
                         <div style={{ display: 'grid', gap: '0.45rem' }}>
                             {todayProductSummary.products.map((item) => (
@@ -244,9 +248,11 @@ const HistorialVentas = () => {
                 </div>
 
                 {filteredSales.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: '2rem 0' }}>
-                        No hay ventas para mostrar con ese criterio.
-                    </div>
+                    <EmptyState
+                        icon={Search}
+                        title="No hay ventas"
+                        description="No hay ventas para mostrar con ese criterio de búsqueda."
+                    />
                 ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
                         {filteredSales.map((sale) => {

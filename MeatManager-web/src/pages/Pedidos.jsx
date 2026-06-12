@@ -9,7 +9,7 @@ import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../
 import { buildProductId, normalizeProductKey } from '../utils/productMatching';
 import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
-import { Button, useToast } from '../components/ui';
+import { Button, EmptyState, useToast } from '../components/ui';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -448,7 +448,13 @@ const Pedidos = () => {
             </DirectionalReveal>
 
             <div className="pedidos-grid">
-                {filteredPedidos?.length === 0 && <div className="empty-state"><ShoppingBag size={48} /><p>No se encontraron pedidos.</p></div>}
+                {filteredPedidos?.length === 0 && (
+                    <EmptyState
+                        icon={ShoppingBag}
+                        title="No hay pedidos"
+                        description="No se encontraron pedidos con el filtro seleccionado."
+                    />
+                )}
                 {filteredPedidos?.map((pedido) => (
                     <DirectionalReveal
                         key={pedido.id}
