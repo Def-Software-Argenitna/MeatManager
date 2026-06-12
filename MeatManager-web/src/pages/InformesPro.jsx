@@ -1,12 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Download } from 'lucide-react';
+import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Download, BarChart2, Scissors, CheckCircle2 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { fetchTable } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
-import { Button, useToast } from '../components/ui';
+import { Button, EmptyState, useToast } from '../components/ui';
 import './InformesPro.css';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
@@ -604,7 +604,7 @@ const InformesPro = () => {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: '1rem' }}>
                     {executiveHighlights.length === 0 ? (
-                        <div style={{ color: 'var(--color-text-muted)' }}>Todavía no hay suficiente información para armar recomendaciones ejecutivas.</div>
+                        <EmptyState compact icon={Target} title="Sin datos suficientes" description="Todavía no hay información para armar recomendaciones ejecutivas." />
                     ) : (
                         executiveHighlights.map((item, index) => (
                             <div key={`${item.title}-${index}`} className={`summary-pill ${item.tone}`}>
@@ -751,7 +751,7 @@ const InformesPro = () => {
                                 Distribución del lote
                             </div>
                             {selectedCategoryDonut.length === 0 ? (
-                                <div style={{ color: 'var(--color-text-muted)' }}>Sin categorías suficientes para graficar.</div>
+                                <EmptyState compact icon={BarChart2} title="Sin categorías" description="No hay categorías suficientes para graficar." />
                             ) : (
                                 <div className="donut-card-layout">
                                     <div className="donut-chart" style={selectedCategoryDonutStyle}>
@@ -810,7 +810,7 @@ const InformesPro = () => {
                                 Resumen de categorías
                             </div>
                             {selectedCategoryTotals.length === 0 ? (
-                                <div style={{ color: 'var(--color-text-muted)' }}>Todavía no hay pesos por categoría guardados para esta despostada.</div>
+                                <EmptyState compact icon={BarChart2} title="Sin pesos guardados" description="No hay pesos por categoría para esta despostada." />
                             ) : (
                                 <div style={{ display: 'grid', gap: '0.6rem' }}>
                                     {[...selectedCategoryTotals]
@@ -865,9 +865,7 @@ const InformesPro = () => {
                             Desglose por pieza
                         </div>
                         {selectedCuts.length === 0 ? (
-                            <div style={{ color: 'var(--color-text-muted)' }}>
-                                Este lote no tiene piezas detalladas guardadas. Los próximos cierres de despostada ya van a registrar el detalle completo.
-                            </div>
+                            <EmptyState compact icon={Scissors} title="Sin piezas detalladas" description="Los próximos cierres de despostada van a registrar el desglose completo." />
                         ) : (
                             <div style={{ overflowX: 'auto' }}>
                                 <table className="pro-table">
@@ -991,7 +989,7 @@ const InformesPro = () => {
                         <h3>Recovery por Categoría</h3>
                     </div>
                     {categoryRecovery.length === 0 ? (
-                        <div style={{ color: 'var(--color-text-muted)' }}>Todavía no hay categorías suficientes para graficar.</div>
+                        <EmptyState compact icon={BarChart2} title="Sin datos de recovery" description="Cargá más despostadas para ver el análisis por categoría." />
                     ) : (
                         <div style={{ display: 'grid', gap: '0.85rem' }}>
                             {categoryRecovery.map((entry) => (
@@ -1015,7 +1013,7 @@ const InformesPro = () => {
                         <h3>Recovery por Corte</h3>
                     </div>
                     {cutRecovery.length === 0 ? (
-                        <div style={{ color: 'var(--color-text-muted)' }}>Todavía no hay cortes suficientes para graficar.</div>
+                        <EmptyState compact icon={BarChart2} title="Sin datos de cortes" description="Cargá más despostadas para ver el ranking de cortes." />
                     ) : (
                         <div style={{ display: 'grid', gap: '0.85rem' }}>
                             {cutRecovery.slice(0, 6).map((entry) => (
@@ -1040,7 +1038,7 @@ const InformesPro = () => {
                     <h3>Alertas Automáticas</h3>
                 </div>
                 {alerts.length === 0 ? (
-                    <div style={{ color: 'var(--color-text-muted)' }}>No se detectaron alertas críticas en el rango analizado.</div>
+                    <EmptyState compact icon={CheckCircle2} title="Sin alertas críticas" description="No se detectaron problemas en el rango analizado." />
                 ) : (
                     <div style={{ display: 'grid', gap: '0.9rem' }}>
                         {alerts.map((alert, index) => (
