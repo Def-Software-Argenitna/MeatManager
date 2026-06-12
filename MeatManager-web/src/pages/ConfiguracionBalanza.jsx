@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
+import ConciliacionBalanzaTab from './ConciliacionBalanzaTab';
 import './ConfiguracionBalanza.css';
 
 const DEFAULT_SCALE_USERS = [1, 2, 3, 4].map((slotNo) => ({
@@ -74,6 +75,7 @@ const ConfiguracionBalanza = () => {
     const { currentUser, accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? accessProfile?.branchId ?? 0) || null;
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const [activeTab, setActiveTab] = useState('configuracion');
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState(null);
@@ -244,15 +246,35 @@ const ConfiguracionBalanza = () => {
         <div className="scale-config-page">
             <div className="scale-config-header">
                 <div>
-                    <h2><Cpu size={20} /> Configuración Balanza</h2>
-                    <p>Definí vendedores, encabezado de ticket, secciones y marquesinas para sincronizar con CUORA.</p>
+                    <h2><Cpu size={20} /> Balanza</h2>
+                    <p>Configuración y conciliación de la balanza CUORA.</p>
                 </div>
-                <button className="scale-config-save-btn" onClick={saveAll} disabled={loading || saving || !isAdmin}>
-                    {saving ? <RefreshCw size={16} className="spin" /> : <Save size={16} />}
-                    Guardar configuración
+                {activeTab === 'configuracion' && (
+                    <button className="scale-config-save-btn" onClick={saveAll} disabled={loading || saving || !isAdmin}>
+                        {saving ? <RefreshCw size={16} className="spin" /> : <Save size={16} />}
+                        Guardar configuración
+                    </button>
+                )}
+            </div>
+
+            <div className="scale-page-tabs">
+                <button
+                    className={`scale-page-tab ${activeTab === 'configuracion' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('configuracion')}
+                >
+                    Configuración
+                </button>
+                <button
+                    className={`scale-page-tab ${activeTab === 'conciliacion' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('conciliacion')}
+                >
+                    Conciliación
                 </button>
             </div>
 
+            {activeTab === 'conciliacion' && <ConciliacionBalanzaTab />}
+
+            {activeTab === 'configuracion' && <>
             <div className="scale-config-warning">
                 Se requiere MeatManager Bridge instalado y en ejecucion para sincronizar esta configuracion con la balanza.
             </div>
@@ -406,6 +428,7 @@ const ConfiguracionBalanza = () => {
                     <span>{message.text}</span>
                 </div>
             )}
+            </>}
         </div>
     );
 };

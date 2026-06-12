@@ -5,6 +5,33 @@
     padding: 0.25rem;
 }
 
+.scale-page-tabs {
+    display: flex;
+    gap: 0.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 0;
+}
+
+.scale-page-tab {
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    font-size: 0.9rem;
+    font-weight: 600;
+    padding: 0.6rem 1.1rem;
+    margin-bottom: -1px;
+    transition: color 0.15s, border-color 0.15s;
+}
+
+.scale-page-tab:hover { color: var(--color-text-main); }
+
+.scale-page-tab.active {
+    color: var(--color-primary);
+    border-bottom-color: var(--color-primary);
+}
+
 .scale-config-header {
     display: flex;
     align-items: center;

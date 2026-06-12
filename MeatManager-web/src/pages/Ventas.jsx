@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, ChevronLeft, CreditCard, Calculator } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useUser } from '../context/UserContext';
@@ -198,11 +198,13 @@ const Ventas = () => {
         };
     }, []);
     const navigate = useNavigate();
+    const location = useLocation();
     const { currentUser, accessProfile, activeBranch } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
+    const [pendingTicketBarcodes, setPendingTicketBarcodes] = useState([]);
     const [selectedCategoryId, setSelectedCategoryId] = useState(null);
 
     const refreshVentasData = React.useCallback(async () => {
@@ -421,6 +423,20 @@ const Ventas = () => {
     React.useEffect(() => {
         refreshVentasData().catch((error) => console.error('Error cargando ventas:', error));
     }, [refreshVentasData]);
+
+    // Llegada desde conciliación de balanza
+    React.useEffect(() => {
+        const state = location.state;
+        if (!state) return;
+        if (state.conciliacionTicket) {
+            window.history.replaceState({}, '');
+            handleScanTicket(state.conciliacionTicket);
+        } else if (Array.isArray(state.conciliacionMultiTickets) && state.conciliacionMultiTickets.length > 0) {
+            window.history.replaceState({}, '');
+            handleLoadMultiTickets(state.conciliacionMultiTickets);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // SOUND HELPERS
     const playBeep = () => {
@@ -1820,6 +1836,56 @@ const Ventas = () => {
         }
     }, [getMethodById, isSplitPayment, selectedPaymentMethod, showPaymentModal, visiblePaymentMethods, visibleSplitMethods]);
 
+    const handleLoadMultiTickets = async (barcodes) => {
+        setIsScaleSyncing(true);
+        try {
+            const allPreviewItems = [];
+            for (const barcode of barcodes) {
+                const payload = await fetchScaleTicketByBarcode(barcode);
+                const rows = Array.isArray(payload?.items) ? payload.items : [];
+                for (const row of rows) {
+                    const pluRaw = String(row?.plu || '').trim();
+                    const pluNorm = String(parseInt(pluRaw || '0', 10));
+                    let product = products.find(p => {
+                        const pp = String(p?.plu || '').trim();
+                        return pp === pluRaw || pp === pluNorm;
+                    }) || null;
+                    if (!product && row?.product?.id != null) {
+                        const cat = productsCatalog.find(p => Number(p?.id) === Number(row.product.id));
+                        product = cat ? buildCatalogProductForVenta(cat) : null;
+                    }
+                    const quantity = Number(row?.quantity || 0);
+                    const lineAmount = Number(row?.amount || 0);
+                    const unitPrice = quantity > 0 ? Number((lineAmount / quantity).toFixed(2)) : Number(row?.product?.price || 0);
+                    const priceRecord = {
+                        id: row?.product?.id || product?.productId || null,
+                        product_id: normalizeProductKey(product?.name || row?.product?.name || `PLU ${pluNorm}`),
+                        product_ref_id: row?.product?.id || product?.productId || null,
+                        price: unitPrice,
+                        plu: pluRaw || pluNorm,
+                        updated_at: row?.saleAt || new Date().toISOString(),
+                        priceLocked: true,
+                        lockedSource: 'conciliacion',
+                        ticketAmount: lineAmount,
+                    };
+                    allPreviewItems.push({ plu: pluRaw || pluNorm, weight: quantity || 1, amount: lineAmount, priceRecord, product });
+                }
+            }
+            if (allPreviewItems.length === 0) {
+                showToast('No se pudieron resolver ítems para los tickets seleccionados.', 'warning');
+                return;
+            }
+            setPendingTicketBarcodes(barcodes);
+            setActiveScaleTicketBarcode(barcodes[0]);
+            setTicketPreviewItems(allPreviewItems);
+            setShowTicketPreview(true);
+        } catch (err) {
+            showToast(`Error cargando tickets: ${err.message}`, 'error');
+        } finally {
+            setIsScaleSyncing(false);
+        }
+    };
+
     const handleCheckout = async (methodObj, splitSummary = null) => {
         if (processingRef.current) return; // bloqueo sincrónico
         if (!methodObj) {
@@ -1882,9 +1948,11 @@ const Ventas = () => {
                 discount_client_id: numericClientId || null,
                 client_discount_pct: selectedClientEmployeeDiscountPct,
                 client_discount_amount: employeeDiscountAmount,
-                ...(activeScaleTicketBarcode
-                    ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
-                    : {}),
+                ...(pendingTicketBarcodes.length > 1
+                    ? { ticket_barcodes: pendingTicketBarcodes, source: 'conciliacion_balanza' }
+                    : activeScaleTicketBarcode
+                        ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
+                        : {}),
                 items: cart.map(i => {
                     const line = cartPricing.lineMap.get(i.id);
                     return ({
@@ -1918,6 +1986,7 @@ const Ventas = () => {
             console.log("Proceso de guardado completado.");
             playCashRegister();
             setActiveScaleTicketBarcode(null);
+            setPendingTicketBarcodes([]);
 
             // Resetear todo y devolver el foco al scanner sin abrir la confirmacion de impresion
             setCart([]);

@@ -8700,25 +8700,30 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         }
         const now = date ? new Date(date) : new Date();
         const ticketBarcode = String(ticket_barcode || '').trim() || null;
+        const rawMultiBarcodes = req.body.ticket_barcodes;
+        const ticketBarcodes = Array.isArray(rawMultiBarcodes) && rawMultiBarcodes.length > 0
+            ? rawMultiBarcodes.map(b => String(b).trim()).filter(Boolean)
+            : (ticketBarcode ? [ticketBarcode] : []);
+        const primaryBarcode = ticketBarcodes[0] || null;
 
         await ensureScaleTicketLifecycleColumns(conn);
-        if (ticketBarcode) {
+        if (ticketBarcodes.length > 0) {
             const [ticketRows] = await conn.query(
-                `SELECT ticket_status
+                `SELECT ticket_barcode, ticket_status
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
-                 LIMIT 1`,
-                [tenantId, ticketBarcode]
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
+                [tenantId, ...ticketBarcodes]
             );
-            if (!ticketRows.length) {
+            if (ticketRows.length < ticketBarcodes.length) {
                 await conn.rollback();
                 conn.release();
-                return res.status(404).json({ error: 'El ticket escaneado no existe o aun no se sincronizo' });
+                return res.status(404).json({ error: 'Uno o más tickets no existen o aún no se sincronizaron' });
             }
-            if (String(ticketRows[0].ticket_status || '').toLowerCase() !== 'open') {
+            const notOpen = ticketRows.filter(r => String(r.ticket_status || '').toLowerCase() !== 'open');
+            if (notOpen.length > 0) {
                 await conn.rollback();
                 conn.release();
-                return res.status(409).json({ error: 'Ese ticket ya fue cobrado o anulado y no puede reutilizarse' });
+                return res.status(409).json({ error: 'Uno o más tickets ya fueron cobrados o anulados' });
             }
         }
 
@@ -8740,19 +8745,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 safeDiscountClientId,
                 safeClientDiscountPct,
                 safeClientDiscountAmount,
-                qendra_ticket_id || null, ticketBarcode, source || 'manual',
+                qendra_ticket_id || null, primaryBarcode, source || 'manual',
             ]
         );
         const saleId = ventaResult.insertId;
 
-        if (ticketBarcode) {
+        if (ticketBarcodes.length > 0) {
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged',
                      charged_sale_id = ?,
                      charged_at = NOW()
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
-                [saleId, tenantId, ticketBarcode]
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
+                [saleId, tenantId, ...ticketBarcodes]
             );
         }
 
@@ -11969,6 +11974,84 @@ app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
     } catch (error) {
         console.error('[BRIDGE VENDORS ERROR]', error?.message || error);
         return res.status(500).json({ error: 'No se pudieron leer los vendedores' });
+    }
+});
+
+// ── RUTA: GET /api/conciliacion/balanza ───────────────────────────────────
+app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const branchId = accessContext?.activeBranch?.id || req.query.branchId || null;
+        const { dateFrom, dateTo } = req.query;
+        if (!dateFrom || !dateTo) {
+            return res.status(400).json({ error: 'dateFrom y dateTo son requeridos' });
+        }
+        const params = [tenantId, dateFrom, dateTo];
+        let branchFilter = '';
+        if (branchId) { branchFilter = ' AND t.branch_id = ?'; params.push(branchId); }
+
+        const [tickets] = await pool.query(`
+            SELECT
+                t.id,
+                t.ticket_barcode,
+                t.printed_ticket_barcode,
+                t.vendor_code,
+                t.vendor_name,
+                t.sale_at,
+                t.total_amount,
+                t.item_count,
+                t.ticket_status,
+                t.scale_address,
+                t.synced_at
+            FROM scale_bridge_ticket_map t
+            WHERE t.tenant_id = ?
+              AND t.ticket_status = 'open'
+              AND DATE(t.sale_at) BETWEEN ? AND ?
+              ${branchFilter}
+            ORDER BY t.sale_at DESC
+        `, params);
+
+        if (tickets.length === 0) return res.json({ tickets: [] });
+
+        const barcodes = tickets.map(t => t.ticket_barcode);
+        const [items] = await pool.query(`
+            SELECT
+                i.ticket_barcode,
+                i.line_no,
+                i.plu_code,
+                i.vendor_name,
+                i.grams,
+                i.drained_grams,
+                i.amount,
+                i.item_quantity,
+                i.item_quantity_unit,
+                i.sale_at
+            FROM scale_bridge_sales_item i
+            WHERE i.tenant_id = ?
+              AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
+            ORDER BY i.ticket_barcode, i.line_no
+        `, [tenantId, ...barcodes]);
+
+        const itemsByBarcode = {};
+        for (const item of items) {
+            if (!itemsByBarcode[item.ticket_barcode]) itemsByBarcode[item.ticket_barcode] = [];
+            itemsByBarcode[item.ticket_barcode].push(item);
+        }
+        return res.json({ tickets: tickets.map(t => ({ ...t, items: itemsByBarcode[t.ticket_barcode] || [] })) });
+    } catch (err) {
+        console.error('[GET /api/conciliacion/balanza ERROR]', err.message);
+        res.status(500).json({ error: err.message });
     }
 });
 
