@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Plus, Trash2, Package } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { EmptyState, useToast } from '../components/ui';
 import './Alimentos.css';
 
 // Tipos de productos pre-elaborados
@@ -19,6 +20,7 @@ const MEAT_TYPES = [
 ];
 
 const Alimentos = () => {
+    const toast = useToast();
     const [selectedProductType, setSelectedProductType] = useState('milanesa');
     const [selectedMeatType, setSelectedMeatType] = useState('pollo');
     const [quantity, setQuantity] = useState('');
@@ -100,7 +102,7 @@ const Alimentos = () => {
             .filter((item) => item.key === selected.key)
             .reduce((acc, item) => acc + Number(item.quantity || 0), 0);
         if ((alreadyUsed + qty) > Number(selected.quantity || 0)) {
-            alert('La cantidad supera el stock disponible para ese insumo.');
+            toast.warning('La cantidad supera el stock disponible para ese insumo.');
             return;
         }
 
@@ -121,15 +123,15 @@ const Alimentos = () => {
 
     const handleAddProduct = async () => {
         if (unitType === 'unidades' && (!quantity || quantity <= 0)) {
-            alert('Por favor ingrese la cantidad de unidades');
+            toast.warning('Ingresá la cantidad de unidades.');
             return;
         }
         if (unitType === 'peso' && (!weight || weight <= 0)) {
-            alert('Por favor ingrese el peso');
+            toast.warning('Ingresá el peso del producto.');
             return;
         }
         if (recipeItems.length === 0) {
-            alert('Seleccioná al menos un producto de stock para armar el pre-elaborado.');
+            toast.warning('Seleccioná al menos un insumo de stock para armar el pre-elaborado.');
             return;
         }
 
@@ -167,10 +169,10 @@ const Alimentos = () => {
             setRecipeDraft({ stockKey: '', quantity: '' });
             await loadPreElaborados();
 
-            alert(`✅ ${productName} agregado correctamente`);
+            toast.success(`${productName} agregado correctamente`);
         } catch (error) {
             console.error('Error al agregar producto:', error);
-            alert('Error al agregar el producto');
+            toast.error('No se pudo agregar el producto. Intentá de nuevo.');
         }
     };
 
@@ -318,9 +320,7 @@ const Alimentos = () => {
 
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                             {recipeItems.length === 0 ? (
-                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
-                                    Todavía no agregaste insumos para este pre-elaborado.
-                                </div>
+                                <EmptyState compact icon={Package} title="Sin insumos" description="Agregá al menos un producto de stock." />
                             ) : (
                                 recipeItems.map((item, index) => (
                                     <div key={`${item.key}-${index}`} className="product-item" style={{ padding: '0.85rem 1rem' }}>
@@ -361,13 +361,7 @@ const Alimentos = () => {
 
                     <div className="products-list">
                         {!preElaborados || preElaborados.length === 0 ? (
-                            <div className="empty-state">
-                                <Package size={48} style={{ opacity: 0.3 }} />
-                                <p>No hay productos cargados</p>
-                                <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)' }}>
-                                    Comienza agregando productos desde el formulario
-                                </p>
-                            </div>
+                            <EmptyState icon={Package} title="Sin productos cargados" description="Armá tu primer pre-elaborado desde el formulario." />
                         ) : (
                             preElaborados.map(product => {
                                 const meatType = MEAT_TYPES.find(m => m.id === product.meat_type);

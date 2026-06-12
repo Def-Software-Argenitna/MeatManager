@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ArrowLeftRight, Building2, MapPin, Phone, ShieldCheck, User } from 'lucide-react';
+import { ArrowLeftRight, Building2, MapPin, Phone, ShieldCheck, User, PackageOpen, PackagePlus, Inbox } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useTenant } from '../context/TenantContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { createBranchTransfer, fetchBranchTransfers, fetchClientBranches, fetchTable, getRemoteSetting, receiveBranchTransfer } from '../utils/apiClient';
+import { EmptyState } from '../components/ui';
 import { COVERAGE_SETTINGS_KEY, DEFAULT_COVERAGE_RULES, normalizeCoverageRules, resolveCoverageThresholds } from '../utils/branchTransferCoverage';
 import './Sucursales.css';
 
@@ -544,9 +545,7 @@ const Sucursales = () => {
                         </div>
                         <div className="stock-list-mini">
                             {filteredStock.length === 0 ? (
-                                <div style={{ color: 'var(--color-text-muted)', padding: '0.5rem 0.2rem' }}>
-                                    No hay items con stock para enviar.
-                                </div>
+                                <EmptyState compact icon={PackageOpen} title="Sin stock disponible" description="No hay ítems con stock para enviar." />
                             ) : (
                                 filteredStock.map((item) => (
                                     <div key={item.key} className="stock-item-pick" onClick={() => addToTransfer(item)}>
@@ -578,9 +577,7 @@ const Sucursales = () => {
                     <div className="transfer-bucket">
                         <div className="bucket-list">
                             {transferItems.length === 0 ? (
-                                <div style={{ color: 'var(--color-text-muted)' }}>
-                                    Arrastrá o clickeá productos para armar el comprobante.
-                                </div>
+                                <EmptyState compact icon={PackagePlus} title="Comprobante vacío" description="Clickeá productos del stock para agregarlos." />
                             ) : (
                                 transferItems.map((item) => (
                                     <div key={item.key} className="bucket-item">
@@ -643,9 +640,7 @@ const Sucursales = () => {
                     </div>
 
                     {pendingTransfers.length === 0 ? (
-                        <div style={{ color: 'var(--color-text-muted)' }}>
-                            No hay comprobantes pendientes para tu sucursal.
-                        </div>
+                        <EmptyState compact icon={Inbox} title="Sin comprobantes pendientes" description="No hay transferencias en espera para esta sucursal." />
                     ) : (
                         pendingTransfers.map((transfer) => (
                             <div key={transfer.id} className="branch-file-row" style={{ alignItems: 'flex-start' }}>
