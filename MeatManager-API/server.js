@@ -3176,6 +3176,18 @@ async function getClientAccessContext({ uid, email }) {
 
         let user = rows[0] || null;
 
+        // Si el usuario encontrado tiene el mismo email que el billingEmail del cliente
+        // (es decir, es el dueño), lo tratamos como admin aunque esté en client_users
+        // con otro rol. Esto evita que dueños creados como operadores pierdan acceso.
+        if (user && normalizedEmail && normalizeEmail(user.billingEmail) === normalizedEmail) {
+            user.isOwnerFallback = true;
+            user.role = 'admin';
+            user.name = user.businessName || user.name || normalizedEmail;
+            user.lastname = '';
+            user.branchId = null;
+            user.branchRecordId = null;
+        }
+
         if (!user) {
             let ownerClient = null;
 
@@ -9641,7 +9653,8 @@ app.patch('/api/firebase-users/:id', verifyFirebaseToken, async (req, res) => {
         const nextEmail = email ? normalizeEmail(email) : normalizeEmail(currentData.email);
         const nextUsername = username ? String(username).trim() : String(currentData.name || '').trim();
         const requestedRole = String(role || '').trim().toLowerCase();
-        const safeRequestedRole = isRequesterAdmin && requestedRole === 'admin' ? 'employee' : requestedRole;
+        // Solo un admin puede promover a otro usuario a admin; un no-admin nunca puede escalar privilegios
+        const safeRequestedRole = !isRequesterAdmin && requestedRole === 'admin' ? 'employee' : requestedRole;
         const nextRole = safeRequestedRole === 'admin'
             ? 'admin'
             : (safeRequestedRole === 'employee' ? 'employee' : currentData.role || 'employee');
