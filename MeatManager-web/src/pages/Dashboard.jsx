@@ -6,6 +6,7 @@ import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
+import { BarChart } from '../components/ui';
 import './Dashboard.css';
 
 const toNumber = (value) => {
@@ -244,6 +245,32 @@ const Dashboard = () => {
         ? (proLogs.reduce((acc, log) => acc + toNumber(log.yield_percentage), 0) / proLogs.length)
         : 0;
 
+    // Ventas de los últimos 7 días (a partir de los datos ya cargados, sin nuevas llamadas)
+    const weeklySales = React.useMemo(() => {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const days = [];
+        for (let i = 6; i >= 0; i -= 1) {
+            const d = new Date(today);
+            d.setDate(today.getDate() - i);
+            days.push({
+                time: d.getTime(),
+                label: d.toLocaleDateString('es-AR', { weekday: 'short' }).replace('.', ''),
+                value: 0,
+            });
+        }
+        ledgerVentas.forEach((sale) => {
+            const sd = new Date(sale.date);
+            if (Number.isNaN(sd.getTime())) return;
+            sd.setHours(0, 0, 0, 0);
+            const bucket = days.find((day) => day.time === sd.getTime());
+            if (bucket) bucket.value += toNumber(sale.total);
+        });
+        if (days.length) days[days.length - 1].highlight = true;
+        return days;
+    }, [ledgerVentas]);
+    const weeklyTotal = weeklySales.reduce((acc, day) => acc + day.value, 0);
+
     const filteredBranchSnapshots = branchSnapshots.filter((snapshot) => selectedRemoteBranch === 'all' || snapshot.branch_code === selectedRemoteBranch);
     const branchOptions = (() => {
         const optionsByValue = new Map();
@@ -277,6 +304,13 @@ const Dashboard = () => {
 
     const formatCurrency = (amount) =>
         new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(toNumber(amount));
+
+    const formatCompactCurrency = (amount) => {
+        const numeric = toNumber(amount);
+        if (numeric >= 1000000) return `$${(numeric / 1000000).toFixed(numeric >= 10000000 ? 0 : 1)}M`;
+        if (numeric >= 1000) return `$${Math.round(numeric / 1000)}k`;
+        return `$${Math.round(numeric)}`;
+    };
 
     const formatSignedCurrency = (amount) => {
         const numeric = toNumber(amount);
@@ -368,6 +402,22 @@ const Dashboard = () => {
                     <StatCard title="Caja Remota" value={formatCurrency(remoteCashInDrawer)} icon={Wallet} trend="Cierre informado" delay={0.56} from="right" />
                 )}
             </div>
+
+            <DashboardReveal className="dashboard-panel" from="up" delay={0.16} style={{ marginBottom: '1.5rem' }}>
+                <div className="dashboard-panel-header">
+                    <h3 className="dashboard-section-title">Ventas últimos 7 días</h3>
+                    <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                        Total semana: <strong style={{ color: 'var(--color-text-main)' }}>{formatCurrency(weeklyTotal)}</strong>
+                    </span>
+                </div>
+                <BarChart
+                    data={weeklySales}
+                    formatValue={formatCompactCurrency}
+                    formatTooltip={(item) => `${item.label}: ${formatCurrency(item.value)}`}
+                    height={170}
+                    emptyMessage="Todavía no hay ventas en los últimos 7 días."
+                />
+            </DashboardReveal>
 
             <div className="dashboard-main-grid">
                 <DashboardReveal className="dashboard-panel" from="left" delay={0.18}>

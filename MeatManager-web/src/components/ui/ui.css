@@ -216,3 +216,75 @@ button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:disabled {
     from { transform: translateY(0); opacity: 1; }
     to { transform: translateY(8px); opacity: 0; }
 }
+
+/* ---------- BarChart ---------- */
+
+.ui-chart-empty {
+    color: var(--color-text-muted);
+    text-align: center;
+    padding: 2rem 0;
+    font-size: 0.9rem;
+}
+
+.ui-barchart {
+    display: flex;
+    align-items: flex-end;
+    gap: 0.5rem;
+    height: calc(var(--ui-chart-height, 180px) + 2.6rem);
+    width: 100%;
+    padding-top: 0.5rem;
+}
+
+.ui-barchart__col {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.35rem;
+    height: 100%;
+}
+
+.ui-barchart__value {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    line-height: 1;
+}
+
+.ui-barchart__track {
+    flex: 1;
+    width: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.ui-barchart__bar {
+    width: 100%;
+    max-width: 46px;
+    border-radius: 8px 8px 0 0;
+    background: linear-gradient(180deg, rgba(249, 115, 22, 0.85) 0%, rgba(249, 115, 22, 0.35) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 -2px 14px rgba(249, 115, 22, 0.18);
+    transition: height 0.5s cubic-bezier(0.22, 1, 0.36, 1), filter 0.2s ease;
+    min-height: 2px;
+}
+
+.ui-barchart__col:hover .ui-barchart__bar {
+    filter: brightness(1.18);
+}
+
+.ui-barchart__bar--highlight {
+    background: linear-gradient(180deg, #fb923c 0%, var(--color-primary) 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 0 20px var(--color-primary-glow);
+}
+
+.ui-barchart__label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+    text-transform: capitalize;
+    line-height: 1;
+}
