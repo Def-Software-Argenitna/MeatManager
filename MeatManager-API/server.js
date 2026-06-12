@@ -11992,7 +11992,6 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             assertClientAccess(accessContext);
             accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
-        const branchId = accessContext?.activeBranch?.id || req.query.branchId || null;
         const { dateFrom, dateTo } = req.query;
         const params = [tenantId];
         let dateFilter = '';
@@ -12006,8 +12005,6 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             dateFilter = ' AND DATE(t.sale_at) <= ?';
             params.push(dateTo);
         }
-        let branchFilter = '';
-        if (branchId) { branchFilter = ' AND t.branch_id = ?'; params.push(branchId); }
 
         const [tickets] = await pool.query(`
             SELECT
@@ -12026,7 +12023,6 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             WHERE t.tenant_id = ?
               AND t.ticket_status = 'open'
               ${dateFilter}
-              ${branchFilter}
             ORDER BY t.sale_at DESC
         `, params);
 
