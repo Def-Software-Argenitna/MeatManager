@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { getRemoteSetting, upsertRemoteSetting } from '../utils/apiClient';
+import { Button, useToast } from '../components/ui';
 import './ConfiguracionPrecio.css';
 
 const ConfiguracionPrecio = () => {
     const [config, setConfig] = useState({
         formato: '4d2d', // '4d2d' = 4 dígitos + 2 decimales, '6d' = 6 dígitos sin decimales
     });
+    const toast = useToast();
 
     useEffect(() => {
         const load = async () => {
@@ -18,7 +20,7 @@ const ConfiguracionPrecio = () => {
 
     const handleSave = async () => {
         await upsertRemoteSetting('precio_formato', config.formato);
-        alert('Configuración guardada');
+        toast.success('Configuración guardada');
     };
 
     return (
@@ -46,7 +48,7 @@ const ConfiguracionPrecio = () => {
                     </div>
                 </div>
 
-                <button className="neo-button config-precio-btn" onClick={handleSave}>Guardar</button>
+                <Button variant="primary" className="config-precio-btn" onClick={handleSave}>Guardar</Button>
             </DirectionalReveal>
         </div>
     );

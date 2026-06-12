@@ -5,6 +5,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
+import { Button, useToast } from '../components/ui';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -181,6 +182,7 @@ const Clientes = () => {
     const [clientLedger, setClientLedger] = useState({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
     const paymentInputRef = useRef(null);
     const isEditingClient = Boolean(editingClientId);
+    const toast = useToast();
 
     const clientBelongsToCurrentBranch = useCallback((client) => {
         if (adminGlobalMode) return true;
@@ -424,7 +426,7 @@ const Clientes = () => {
         e.preventDefault();
         const selectedBranchId = Number(newClient.branchId || currentBranchId || 0);
         if (!Number.isFinite(selectedBranchId) || selectedBranchId <= 0) {
-            alert('No se pudo determinar la sucursal activa para guardar el cliente.');
+            toast.error('No se pudo determinar la sucursal activa para guardar el cliente.');
             return;
         }
         const firstName = cleanValue(newClient.first_name).toUpperCase();
@@ -568,10 +570,9 @@ const Clientes = () => {
             <DirectionalReveal from="up" delay={0.04}>
             <header className="page-header">
                 
-                <button className="neo-button" onClick={openCreateClientModal}>
-                    <UserPlus size={20} />
+                <Button variant="primary" icon={<UserPlus size={20} />} onClick={openCreateClientModal}>
                     Nuevo Cliente
-                </button>
+                </Button>
             </header>
             </DirectionalReveal>
 
@@ -869,14 +870,14 @@ const Clientes = () => {
                                 )}
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                                <button
-                                    type="button"
-                                    className="neo-button"
+                                <Button
+                                    variant="secondary"
+                                    icon={<Printer size={15} />}
                                     onClick={handlePrintClientLedger}
                                     style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
                                 >
-                                    <Printer size={15} /> Imprimir A4
-                                </button>
+                                    Imprimir A4
+                                </Button>
                                 <button onClick={() => setHistoryClient(null)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
                                     <X size={24} />
                                 </button>

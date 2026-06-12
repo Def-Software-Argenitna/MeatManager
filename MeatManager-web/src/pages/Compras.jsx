@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { Plus, Search, Calendar, DollarSign, Package, X, Trash2, Save, Scale, ArrowRight, ShieldCheck, Edit2 } from 'lucide-react';
+import { Plus, Search, Calendar, Package, X, Trash2, Save, Edit2 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord, createCompra } from '../utils/apiClient';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
+import { Button, useToast } from '../components/ui';
 import './Compras.css';
 
 const IVA_OPTIONS = [10.5, 21];
@@ -67,6 +68,7 @@ const Compras = () => {
     const { hasModule } = useLicense();
     const hasDespostadaModule = hasModule('despostada');
     const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
+    const toast = useToast();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [destinationFilter, setDestinationFilter] = useState('all');
@@ -269,18 +271,18 @@ const Compras = () => {
 
         if (isWeighable) {
             if (weight <= 0 && qty <= 0) {
-                window.alert('Ingresá el Total Kg del producto.');
+                toast.warning('Ingresá el Total Kg del producto.');
                 return;
             }
         } else {
             if (qty <= 0) {
-                window.alert('Ingresá la cantidad (unidades) del producto.');
+                toast.warning('Ingresá la cantidad (unidades) del producto.');
                 return;
             }
         }
 
         if (price <= 0) {
-            window.alert('Ingresá el precio unitario del producto.');
+            toast.warning('Ingresá el precio unitario del producto.');
             return;
         }
 
@@ -422,7 +424,7 @@ const Compras = () => {
             const shouldAffectCash = purchaseBreakdown.internal > 0 && !isAccountPurchase && normalizedPaymentMethod !== 'cta_cte';
 
             if (shouldAffectCash && !newPurchase.payment_method) {
-                window.alert('Seleccioná el medio de pago para registrar la compra interna y descontarla de caja.');
+                toast.warning('Seleccioná el medio de pago para registrar la compra interna y descontarla de caja.');
                 return;
             }
 
@@ -569,10 +571,9 @@ const Compras = () => {
             <DirectionalReveal from="up" delay={0.04}>
             <header className="compras-header">
                 
-                <button className="neo-button" onClick={() => setIsModalOpen(true)}>
-                    <Plus size={20} />
+                <Button variant="primary" icon={<Plus size={20} />} onClick={() => setIsModalOpen(true)}>
                     Registrar Compra
-                </button>
+                </Button>
             </header>
             </DirectionalReveal>
 
@@ -589,21 +590,22 @@ const Compras = () => {
                             onChange={(e) => setSearchTerm(e.target.value)}
                         />
                     </div>
-                    <button
-                        className={`neo-button ${showAdvanced ? 'active' : ''}`}
+                    <Button
+                        variant="secondary"
+                        className={showAdvanced ? 'active' : ''}
                         style={{ background: showAdvanced ? 'var(--color-bg-main)' : 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-main)' }}
                         onClick={() => setShowAdvanced(!showAdvanced)}
                     >
                         Filtros Avanzados
-                    </button>
+                    </Button>
                     {(filters.supplier || filters.month || filters.day || filters.invoice_num) && (
-                        <button
-                            className="neo-button"
+                        <Button
+                            variant="danger"
                             style={{ background: '#fee2e2', color: '#ef4444', border: 'none' }}
                             onClick={() => setFilters({ supplier: '', month: '', year: new Date().getFullYear().toString(), day: '', invoice_num: '' })}
                         >
                             Limpiar
-                        </button>
+                        </Button>
                     )}
                 </div>
 
@@ -1003,14 +1005,14 @@ const Compras = () => {
                                     </div>
 
                                     {/* ADD BUTTON */}
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="primary"
                                         onClick={addItemToPurchase}
-                                        className="neo-button purchase-item-add-button"
+                                        className="purchase-item-add-button"
                                         title="Agregar linea"
-                                    >
-                                        <Plus size={20} />
-                                    </button>
+                                        icon={<Plus size={20} />}
+                                    />
                                 </div>
                             </div>
 
@@ -1075,14 +1077,13 @@ const Compras = () => {
                                                         ${Number(item.subtotal || 0).toLocaleString()}
                                                     </td>
                                                     <td style={{ padding: '0.75rem' }}>
-                                                        <button
+                                                        <Button
                                                             type="button"
+                                                            variant="ghost"
+                                                            size="sm"
                                                             onClick={() => removeItemFromPurchase(item.id)}
-                                                            className="icon-button-danger"
-                                                            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}
-                                                        >
-                                                            <Trash2 size={16} />
-                                                        </button>
+                                                            icon={<Trash2 size={16} color="#ef4444" />}
+                                                        />
                                                     </td>
                                                 </tr>
                                             ))
@@ -1121,16 +1122,16 @@ const Compras = () => {
                                 </div>
                                 <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>
                                 <div style={{ flex: 1 }}></div>
-                                    <button
+                                    <Button
                                         type="button"
+                                        variant="secondary"
                                         onClick={() => { setIsModalOpen(false); setEditingPurchaseId(null); }}
-                                        style={{ padding: '0.75rem 1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', background: 'transparent', color: 'var(--color-text-primary)', cursor: 'pointer' }}
                                     >
                                         Cancelar
-                                    </button>
-                                    <button type="submit" className="neo-button" disabled={isSaving}>
-                                        <Save size={18} style={{ marginRight: '0.5rem' }} /> {isSaving ? 'Guardando...' : 'Guardar Compra'}
-                                    </button>
+                                    </Button>
+                                    <Button type="submit" variant="primary" disabled={isSaving} icon={<Save size={18} />}>
+                                        {isSaving ? 'Guardando...' : 'Guardar Compra'}
+                                    </Button>
                                 </div>
                             </div>
                         </form>

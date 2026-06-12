@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Edit2, Package, Plus, Trash2 } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { Button } from '../components/ui';
 import './Stock.css'; // Reusing Stock styles for consistency
 import './OtrosItems.css';
 
@@ -132,14 +133,13 @@ const OtrosItems = () => {
                             <option key={option.value} value={option.value}>{option.label}</option>
                         ))}
                     </select>
-                    <button type="submit" className="neo-button">
-                        {editingItemId ? <Edit2 size={18} /> : <Plus size={18} />}
+                    <Button type="submit" variant="primary" icon={editingItemId ? <Edit2 size={18} /> : <Plus size={18} />}>
                         {editingItemId ? 'Guardar cambios' : 'Agregar'}
-                    </button>
+                    </Button>
                     {editingItemId && (
-                        <button type="button" className="neo-button" style={{ background: 'transparent', color: 'var(--color-text-main)', border: '1px solid var(--color-border)' }} onClick={handleCancelEdit}>
+                        <Button variant="secondary" onClick={handleCancelEdit}>
                             Cancelar
-                        </button>
+                        </Button>
                     )}
                 </form>
             </DirectionalReveal>
@@ -165,12 +165,8 @@ const OtrosItems = () => {
                             )}
                         </div>
                         <div className="otros-item-actions">
-                            <button type="button" className="otros-item-action-btn" onClick={() => handleEdit(item)} title="Editar ítem">
-                                <Edit2 size={16} />
-                            </button>
-                            <button type="button" className="otros-item-action-btn danger" onClick={() => handleDelete(item.id)} title="Eliminar ítem">
-                                <Trash2 size={16} />
-                            </button>
+                            <Button variant="ghost" size="sm" icon={<Edit2 size={16} />} onClick={() => handleEdit(item)} title="Editar ítem" />
+                            <Button variant="ghost" size="sm" icon={<Trash2 size={16} color="#ef4444" />} onClick={() => handleDelete(item.id)} title="Eliminar ítem" />
                         </div>
                     </DirectionalReveal>
                 ))}

@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import * as XLSX from 'xlsx';
-import { Package, Search, Filter, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet, Pencil } from 'lucide-react';
+import { Package, Search, TrendingUp, TrendingDown, Scale, Save, X, DownloadCloud, FileSpreadsheet, Pencil } from 'lucide-react';
 import { scaleService, SCALE_PROTOCOLS } from '../utils/SerialScaleService';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
+import { Button, Modal } from '../components/ui';
 import './Stock.css';
 
 const TYPE_META = {
@@ -592,28 +593,27 @@ const Stock = () => {
             <header className="page-header">
                 
                 <div style={{ display: 'flex', gap: '0.8rem' }}>
-                    <button
-                        className="neo-button"
+                    <Button
+                        variant="secondary"
+                        icon={<FileSpreadsheet size={20} />}
                         style={{ border: '1px solid #22c55e', color: '#22c55e', background: 'transparent' }}
                         onClick={handleExportExcel}
                         title="Exportar stock visible a Excel"
                     >
-                        <FileSpreadsheet size={20} />
                         Exportar Excel
-                    </button>
-                    <button
-                        className="neo-button"
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        icon={<DownloadCloud size={20} />}
                         style={{ border: '1px solid #3b82f6', color: '#3b82f6', background: 'transparent' }}
                         onClick={handleImportFromScale}
                         disabled={isImporting}
                     >
-                        <DownloadCloud size={20} />
                         {isImporting ? 'Importando...' : 'Importar de Balanza'}
-                    </button>
-                    <button className="neo-button" onClick={() => { setIsModalOpen(true); setAdjustmentSearchTerm(''); }}>
-                        <Scale size={20} />
+                    </Button>
+                    <Button variant="primary" icon={<Scale size={20} />} onClick={() => { setIsModalOpen(true); setAdjustmentSearchTerm(''); }}>
                         Ajuste Manual
-                    </button>
+                    </Button>
                 </div>
             </header>
             </DirectionalReveal>
@@ -799,17 +799,13 @@ const Stock = () => {
             </DirectionalReveal>
 
             {/* MODAL ADJUSTMENT */}
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '450px' }} onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Ajuste de Inventario</h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}>
-                                <X size={24} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleAdjustment}>
+            <Modal
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                size="sm"
+                title="Ajuste de Inventario"
+            >
+                <form onSubmit={handleAdjustment}>
                             <div style={{ marginBottom: '1rem' }}>
                                 <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Buscar producto</label>
                                 <input
@@ -917,13 +913,11 @@ const Stock = () => {
                                 </div>
                             </div>
 
-                            <button type="submit" className="neo-button full-width">
-                                <Save size={18} /> Guardar Ajuste
-                            </button>
-                        </form>
-                    </div>
-                </div>
-            )}
+                            <Button variant="primary" type="submit" fullWidth icon={<Save size={18} />}>
+                                Guardar Ajuste
+                            </Button>
+                </form>
+            </Modal>
 
             {/* ── Modal Diagnóstico Balanza ─────────────────────────────────── */}
             {showDiag && (

@@ -6,7 +6,6 @@ import {
     MapPin,
     ChevronRight,
     Search,
-    Navigation2,
     Share2,
     Users,
     Tag,
@@ -14,9 +13,7 @@ import {
     AlertCircle,
     Mail,
     Wifi,
-    WifiOff,
-    Maximize2,
-    Minimize2
+    WifiOff
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -25,6 +22,7 @@ import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import { useUser } from '../context/UserContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
 import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
+import { Button, useToast } from '../components/ui';
 import './Logistica.css';
 
 const LIVE_DRIVERS_REFRESH_INTERVAL_MS = 5000;
@@ -122,6 +120,7 @@ const getDriverBranchLabel = (driver) => {
 
 const Logistica = () => {
     const { hasModule } = useLicense();
+    const toast = useToast();
     const { accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [filter, setFilter] = useState('all');
@@ -416,7 +415,7 @@ const getOrderCoordinates = (pedido) => {
                     : current
             ));
         } catch (error) {
-            alert(error instanceof Error ? error.message : 'No se pudo asignar el pedido.');
+            toast.error(error instanceof Error ? error.message : 'No se pudo asignar el pedido.');
         }
     };
 
@@ -459,7 +458,7 @@ const getOrderCoordinates = (pedido) => {
     const copyPortalLink = () => {
         const link = `${window.location.origin}/#/reparto`;
         navigator.clipboard.writeText(link);
-        alert('Link del Portal de Repartidores copiado! Envialo por WhatsApp.');
+        toast.success('Link del Portal de Repartidores copiado! Envialo por WhatsApp.');
     };
 
     return (
@@ -467,9 +466,9 @@ const getOrderCoordinates = (pedido) => {
         <ModuleLicenseGate locked={!hasLogisticsModule} moduleName="Logística">
         <div className="logistica-container animate-fade-in">
             <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
-                <button className="neo-button" style={{ background: '#1e293b', color: 'white' }} onClick={() => setIsDriverModalOpen(true)}>
-                    <Users size={18} /> Staff Repartidores
-                </button>
+                <Button variant="secondary" style={{ background: '#1e293b', color: 'white' }} icon={<Users size={18} />} onClick={() => setIsDriverModalOpen(true)}>
+                    Staff Repartidores
+                </Button>
                 <div className="stats-mini-grid">
                     <div className="stat-mini-card">
                         <span className="label">Flota</span>
@@ -555,8 +554,8 @@ const getOrderCoordinates = (pedido) => {
                                             onChange={(e) => setPaymentDraft((current) => ({ ...current, amountDue: e.target.value }))}
                                             placeholder="Monto a cobrar"
                                         />
-                                        <button
-                                            className="neo-button"
+                                        <Button
+                                            variant="primary"
                                             type="button"
                                             onClick={async () => {
                                                 try {
@@ -567,12 +566,12 @@ const getOrderCoordinates = (pedido) => {
                                                         amount_due: paymentDraft.status === 'paid' ? 0 : (Number(paymentDraft.amountDue) || Number(selectedPedido.total) || 0),
                                                     });
                                                 } catch (error) {
-                                                    alert(error instanceof Error ? error.message : 'No se pudo guardar la condición de cobro.');
+                                                    toast.error(error instanceof Error ? error.message : 'No se pudo guardar la condición de cobro.');
                                                 }
                                             }}
                                         >
                                             Guardar condición de cobro
-                                        </button>
+                                        </Button>
                                     </div>
                                 </div>
 
@@ -680,9 +679,9 @@ const getOrderCoordinates = (pedido) => {
                     </div>
 
                     <div style={{ padding: '0 1rem 1rem' }}>
-                        <button className="neo-button full-width" onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }}>
-                            <Share2 size={14} /> Link del Repartidor
-                        </button>
+                        <Button variant="primary" fullWidth onClick={copyPortalLink} style={{ fontSize: '0.8rem', gap: '0.5rem' }} icon={<Share2 size={14} />}>
+                            Link del Repartidor
+                        </Button>
                     </div>
 
                     <div className="orders-list">

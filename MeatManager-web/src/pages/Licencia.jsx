@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { ShieldCheck, Cpu, Crown, Copy, Check, Zap, MessageCircle, HelpCircle } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { BRAND_CONFIG } from '../brandConfig';
+import { Button } from '../components/ui';
 import './Licencia.css';
 
 const Licencia = () => {
@@ -59,9 +60,12 @@ const Licencia = () => {
                     <p className="text-muted" style={{ fontSize: '0.9rem', marginBottom: '1rem' }}>Se mantiene para soporte técnico y sincronización del equipo, no para activar módulos por código.</p>
                     <div className="copy-box">
                         <code className="inst-id">{installationId}</code>
-                        <button className="copy-btn" onClick={handleCopy}>
-                            {copied ? <Check size={18} color="#22c55e" /> : <Copy size={18} />}
-                        </button>
+                        <Button
+                            variant="ghost"
+                            size="sm"
+                            icon={copied ? <Check size={18} color="#22c55e" /> : <Copy size={18} />}
+                            onClick={handleCopy}
+                        />
                     </div>
                 </div>
             </div>
@@ -136,16 +140,17 @@ const Licencia = () => {
                         <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Si falta un módulo, la corrección se hace en Gestión de Clientes y no desde esta pantalla.</p>
                     </div>
                 </div>
-                <button
-                    className="neo-button"
-                    style={{ background: '#25D366', color: 'white', border: 'none', gap: '0.5rem' }}
+                <Button
+                    variant="success"
+                    icon={<MessageCircle size={18} />}
+                    style={{ background: '#25D366', color: 'white', border: 'none' }}
                     onClick={() => {
                         const msg = `Hola! Necesito soporte con las licencias de *${BRAND_CONFIG.brand_name}*.\nID: ${installationId}`;
                         window.open(`https://wa.me/${supportNumber}?text=${encodeURIComponent(msg)}`, '_blank');
                     }}
                 >
-                    <MessageCircle size={18} /> Contactar Soporte
-                </button>
+                    Contactar Soporte
+                </Button>
             </div>
         </div>
     );

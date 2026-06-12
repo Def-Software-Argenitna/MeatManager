@@ -1,9 +1,10 @@
 import React, { useState, useMemo } from 'react';
-import { Truck, Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe, Printer } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, X, MapPin, Phone, FileText, Globe, Printer } from 'lucide-react';
 import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
+import { Button, Modal, useToast } from '../components/ui';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const CASH_ACCOUNTS = [
@@ -26,6 +27,7 @@ const isCurrentAccountPurchase = (purchase) => (
 );
 
 const Proveedores = () => {
+    const toast = useToast();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingId, setEditingId] = useState(null);
@@ -123,7 +125,7 @@ const Proveedores = () => {
             resetForm();
         } catch (error) {
             console.error("Error saving supplier:", error);
-            alert("Error al guardar proveedor. Verifique los datos.");
+            toast.error("Error al guardar proveedor. Verifique los datos.");
         }
     };
 
@@ -313,12 +315,12 @@ const Proveedores = () => {
         e.preventDefault();
         const amount = Number(paymentForm.amount || 0);
         if (!paymentSupplier || !Number.isFinite(amount) || amount <= 0) {
-            alert('Ingrese un monto valido para registrar el pago.');
+            toast.warning('Ingrese un monto valido para registrar el pago.');
             return;
         }
         const selectedMethod = supplierPaymentMethods.find((m) => m.name === paymentForm.payment_method) || supplierPaymentMethods[0];
         if (!selectedMethod) {
-            alert('No hay medios de pago reales configurados para registrar el pago.');
+            toast.error('No hay medios de pago reales configurados para registrar el pago.');
             return;
         }
         const supplierName = String(paymentSupplier.name || '').trim();
@@ -341,11 +343,11 @@ const Proveedores = () => {
         if (isMixedPaymentMethod(selectedMethod)) {
             const total = rowsToSave.reduce((sum, row) => sum + row.amount, 0);
             if (rowsToSave.length === 0) {
-                alert('Agregue al menos un medio de pago para el pago mixto.');
+                toast.warning('Agregue al menos un medio de pago para el pago mixto.');
                 return;
             }
             if (Math.abs(total - amount) > 0.009) {
-                alert(`El detalle del pago mixto debe sumar exactamente $${amount.toLocaleString('es-AR')}. Falta o sobra $${Math.abs(amount - total).toLocaleString('es-AR')}.`);
+                toast.warning(`El detalle del pago mixto debe sumar exactamente $${amount.toLocaleString('es-AR')}. Falta o sobra $${Math.abs(amount - total).toLocaleString('es-AR')}.`);
                 return;
             }
         }
@@ -384,10 +386,9 @@ const Proveedores = () => {
             <header className="page-header">
                 
                 <div className="page-header-actions">
-                    <button className="neo-button" onClick={() => { resetForm(); setIsModalOpen(true); }}>
-                        <Plus size={20} />
+                    <Button variant="primary" icon={<Plus size={20} />} onClick={() => { resetForm(); setIsModalOpen(true); }}>
                         Nuevo Proveedor
-                    </button>
+                    </Button>
                 </div>
             </header>
 
@@ -460,16 +461,16 @@ const Proveedores = () => {
                                 <span style={{ fontWeight: 'bold', color: saldo > 0 ? '#ef4444' : '#22c55e' }}>
                                     Cuenta Corriente: ${Number(saldo || 0).toLocaleString()}
                                 </span>
-                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem' }} onClick={() => openLedger(s)}>Ver Cuenta Corriente</button>
-                                <button className="neo-button" style={{ fontSize: '0.85rem', padding: '0.3rem 0.8rem', background: '#22c55e', color: 'white' }} onClick={() => openPayment(s)}>Registrar Pago</button>
+                                <Button variant="secondary" size="sm" onClick={() => openLedger(s)}>Ver Cuenta Corriente</Button>
+                                <Button variant="success" size="sm" onClick={() => openPayment(s)}>Registrar Pago</Button>
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-                                <button onClick={() => openEdit(s)} className="neo-button" style={{ background: 'transparent', color: 'var(--color-text-main)', border: '1px solid var(--color-border)', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
-                                    <Edit2 size={16} /> Editar
-                                </button>
-                                <button onClick={() => handleDelete(s.id)} className="neo-button" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: 'none', padding: '0.4rem 0.8rem', fontSize: '0.85rem' }}>
-                                    <Trash2 size={16} /> Eliminar
-                                </button>
+                                <Button variant="secondary" size="sm" icon={<Edit2 size={16} />} onClick={() => openEdit(s)}>
+                                    Editar
+                                </Button>
+                                <Button variant="danger" size="sm" icon={<Trash2 size={16} />} onClick={() => handleDelete(s.id)}>
+                                    Eliminar
+                                </Button>
                             </div>
                         </div>
                     </div>
@@ -477,17 +478,13 @@ const Proveedores = () => {
                 })}
             </div>
 
-            {isModalOpen && createPortal(
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" onClick={e => e.stopPropagation()} style={{ maxWidth: '800px', width: '90%', padding: '2rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
-                                {editingId ? 'Editar Proveedor' : 'Nuevo Proveedor'}
-                            </h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
-                        </div>
-
-                        <form onSubmit={handleSave}>
+            <Modal
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                size="lg"
+                title={editingId ? 'Editar Proveedor' : 'Nuevo Proveedor'}
+            >
+                <form onSubmit={handleSave}>
                             <h4 style={{ marginBottom: '1rem', fontSize: '0.9rem', color: 'var(--color-primary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Datos Fiscales</h4>
                             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr)', gap: '1rem', marginBottom: '1.5rem' }}>
                                 <div style={{ gridColumn: 'span 1' }}>
@@ -576,14 +573,11 @@ const Proveedores = () => {
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem', borderTop: '1px solid var(--color-border)', paddingTop: '1.5rem' }}>
-                                <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.75rem 1.5rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancelar</button>
-                                <button type="submit" className="neo-button" style={{ padding: '0.75rem 2rem' }}>{editingId ? 'Actualizar' : 'Guardar'} Proveedor</button>
+                                <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
+                                <Button variant="primary" type="submit">{editingId ? 'Actualizar' : 'Guardar'} Proveedor</Button>
                             </div>
-                        </form>
-                    </div>
-                </div>,
-                document.body
-            )}
+                </form>
+            </Modal>
 
             {showLedgerModal && ledgerSupplier && createPortal(
                 <div className="modal-overlay" onClick={() => setShowLedgerModal(false)}>
@@ -591,14 +585,14 @@ const Proveedores = () => {
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                             <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Cuenta Corriente · {ledgerSupplier.name}</h2>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                                <button
-                                    type="button"
-                                    className="neo-button"
+                                <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    icon={<Printer size={15} />}
                                     onClick={() => handlePrintSupplierLedger(ledgerSupplier)}
-                                    style={{ fontSize: '0.85rem', padding: '0.35rem 0.75rem' }}
                                 >
-                                    <Printer size={15} /> Imprimir
-                                </button>
+                                    Imprimir
+                                </Button>
                                 <button onClick={() => setShowLedgerModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
                             </div>
                         </div>
@@ -712,14 +706,14 @@ const Proveedores = () => {
                 document.body
             )}
 
-            {showPaymentModal && paymentSupplier && createPortal(
-                <div className="modal-overlay" onClick={() => setShowPaymentModal(false)}>
-                    <div className="modal-content neo-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '720px', width: '92%', padding: '1.5rem' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                            <h2 style={{ fontSize: '1.2rem', fontWeight: 'bold' }}>Registrar Pago · {paymentSupplier.name}</h2>
-                            <button onClick={() => setShowPaymentModal(false)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}><X size={24} /></button>
-                        </div>
-                        <form onSubmit={handleRegisterPayment}>
+            {showPaymentModal && paymentSupplier && (
+            <Modal
+                open
+                onClose={() => setShowPaymentModal(false)}
+                size="lg"
+                title={`Registrar Pago · ${paymentSupplier.name}`}
+            >
+                <form onSubmit={handleRegisterPayment}>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                                 <div>
                                     <label style={{ display: 'block', marginBottom: '0.4rem' }}>Monto</label>
@@ -793,14 +787,9 @@ const Proveedores = () => {
                                                 Total cargado: ${supplierSplitTotal.toLocaleString('es-AR')} · Pendiente: ${supplierSplitPending.toLocaleString('es-AR')}
                                             </div>
                                         </div>
-                                        <button
-                                            type="button"
-                                            className="neo-button"
-                                            onClick={addSupplierSplit}
-                                            style={{ padding: '0.45rem 0.75rem', fontSize: '0.85rem' }}
-                                        >
+                                        <Button variant="secondary" size="sm" onClick={addSupplierSplit}>
                                             Agregar medio
-                                        </button>
+                                        </Button>
                                     </div>
                                     {supplierPaymentSplits.map((row, index) => (
                                         <div key={`${row.methodName}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: '0.6rem', alignItems: 'center', marginTop: '0.55rem' }}>
@@ -824,22 +813,13 @@ const Proveedores = () => {
                                                 placeholder="0.00"
                                                 required
                                             />
-                                            <button
-                                                type="button"
+                                            <Button
+                                                variant="secondary"
                                                 onClick={() => removeSupplierSplit(index)}
                                                 disabled={supplierPaymentSplits.length === 1}
-                                                style={{
-                                                    border: '1px solid var(--color-border)',
-                                                    borderRadius: 'var(--radius-md)',
-                                                    background: 'transparent',
-                                                    color: 'var(--color-text-main)',
-                                                    padding: '0.65rem 0.75rem',
-                                                    cursor: supplierPaymentSplits.length === 1 ? 'not-allowed' : 'pointer',
-                                                    opacity: supplierPaymentSplits.length === 1 ? 0.45 : 1,
-                                                }}
                                             >
                                                 Quitar
-                                            </button>
+                                            </Button>
                                         </div>
                                     ))}
                                     {splitPaymentMethods.length === 0 && (
@@ -860,13 +840,11 @@ const Proveedores = () => {
                                 />
                             </div>
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.75rem', marginTop: '1.2rem' }}>
-                                <button type="button" onClick={() => setShowPaymentModal(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.6rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancelar</button>
-                                <button type="submit" className="neo-button" style={{ background: '#22c55e', color: '#fff' }}>Guardar Pago</button>
+                                <Button variant="secondary" onClick={() => setShowPaymentModal(false)}>Cancelar</Button>
+                                <Button variant="success" type="submit">Guardar Pago</Button>
                             </div>
-                        </form>
-                    </div>
-                </div>,
-                document.body
+                </form>
+            </Modal>
             )}
         </div>
     );

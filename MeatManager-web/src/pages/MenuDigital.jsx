@@ -14,6 +14,7 @@ import {
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
+import { Button, Modal } from '../components/ui';
 import './MenuDigital.css';
 
 const formatFullPrice = (value) => `$${Number(value || 0).toLocaleString('es-AR')} /kg`;
@@ -104,9 +105,9 @@ const MenuDigital = () => {
                     <p className="page-description">Elegí qué cortes mostrar y gestioná tus precios de venta</p>
                 </div>
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button className="neo-button pro-btn" onClick={() => setIsAdding(true)}>
-                        <Plus size={20} /> Agregar Producto
-                    </button>
+                    <Button variant="primary" className="pro-btn" icon={<Plus size={20} />} onClick={() => setIsAdding(true)}>
+                        Agregar Producto
+                    </Button>
                 </div>
             </header>
             </DirectionalReveal>
@@ -191,8 +192,8 @@ const MenuDigital = () => {
                                 value={`${window.location.origin}/#/catalogo`}
                                 style={{ flex: 1 }}
                             />
-                            <button
-                                className="neo-button"
+                            <Button
+                                variant="secondary"
                                 style={{ minWidth: '120px', justifyContent: 'center', color: copiedPortal ? '#22c55e' : 'inherit' }}
                                 onClick={() => {
                                     navigator.clipboard.writeText(`${window.location.origin}/#/catalogo`);
@@ -202,23 +203,25 @@ const MenuDigital = () => {
                             >
                                 {copiedPortal ? <Check size={20} /> : <Copy size={20} />}
                                 {copiedPortal ? 'Copiado!' : 'Copiar'}
-                            </button>
+                            </Button>
                         </div>
 
                         <div style={{ background: 'var(--color-bg-secondary)', padding: '1rem', borderRadius: '12px', border: '1px dashed var(--color-border)' }}>
                             <p style={{ fontSize: '0.8rem', color: '#64748b', margin: '0 0 0.75rem 0' }}>
                                 💡 <strong>Importante:</strong> Para que tus clientes vean el portal desde sus celulares, necesitás "subirlo" a internet.
                             </p>
-                            <button
-                                className="neo-button full-width"
+                            <Button
+                                variant="secondary"
+                                fullWidth
+                                icon={<Headset size={18} />}
                                 style={{ gap: '0.5rem', background: '#1e293b', color: 'white' }}
                                 onClick={() => {
                                     const msg = `Hola! Soy de *${shopName}* y tengo el módulo Menú Digital activo en MeatManager. Me gustaría pedir un turno para configurar mi Portal de Clientes en Vercel. Mi ID de Instalación es: ${installationId || 'N/A'}`;
                                     window.open(`https://wa.me/${supportNumber}?text=${encodeURIComponent(msg)}`, '_blank');
                                 }}
                             >
-                                <Headset size={18} /> Solicitar Configuración Online
-                            </button>
+                                Solicitar Configuración Online
+                            </Button>
                         </div>
                     </DirectionalReveal>
                 </div>
@@ -323,9 +326,7 @@ const MenuDigital = () => {
                                                     </button>
                                                 </td>
                                                 <td>
-                                                    <button className="delete-btn" onClick={() => removeFromMenu(item.id)}>
-                                                        <Trash2 size={18} />
-                                                    </button>
+                                                    <Button variant="ghost" size="sm" icon={<Trash2 size={18} color="#ef4444" />} onClick={() => removeFromMenu(item.id)} />
                                                 </td>
                                             </tr>
                                         );
@@ -338,31 +339,31 @@ const MenuDigital = () => {
             </div>
 
             {/* ADD MODAL */}
-            {isAdding && (
-                <div className="modal-overlay" onClick={() => setIsAdding(false)}>
-                    <div className="modal-content neo-card" style={{ maxWidth: '450px' }} onClick={e => e.stopPropagation()}>
-                        <h2>Agregar al Menú Digital</h2>
-                        <div className="search-box">
-                            <input
-                                type="text"
-                                className="neo-input"
-                                placeholder="Buscar en catálogo..."
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                autoFocus
-                            />
-                        </div>
-                        <div className="catalog-selection-list">
-                            {catalogItems?.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase())).map(item => (
-                                <div key={item.id} className="catalog-selection-item" onClick={() => addToMenu(item)}>
-                                    <span>{item.name}</span>
-                                    <Plus size={18} />
-                                </div>
-                            ))}
-                        </div>
-                    </div>
+            <Modal
+                open={isAdding}
+                onClose={() => setIsAdding(false)}
+                size="sm"
+                title="Agregar al Menú Digital"
+            >
+                <div className="search-box">
+                    <input
+                        type="text"
+                        className="neo-input"
+                        placeholder="Buscar en catálogo..."
+                        value={searchTerm}
+                        onChange={e => setSearchTerm(e.target.value)}
+                        autoFocus
+                    />
                 </div>
-            )}
+                <div className="catalog-selection-list">
+                    {catalogItems?.filter(i => i.name.toLowerCase().includes(searchTerm.toLowerCase())).map(item => (
+                        <div key={item.id} className="catalog-selection-item" onClick={() => addToMenu(item)}>
+                            <span>{item.name}</span>
+                            <Plus size={18} />
+                        </div>
+                    ))}
+                </div>
+            </Modal>
         </div>
         </ModuleLicenseGate>
     );

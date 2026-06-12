@@ -9,6 +9,7 @@ import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../
 import { buildProductId, normalizeProductKey } from '../utils/productMatching';
 import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
+import { Button, useToast } from '../components/ui';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -66,6 +67,7 @@ const formatOrderItems = (pedido) => parseOrderItems(pedido).map((item) => item.
 
 const Pedidos = () => {
     const navigate = useNavigate();
+    const toast = useToast();
     const { accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [filter, setFilter] = useState('pending');
@@ -263,7 +265,7 @@ const Pedidos = () => {
         const quantity = Number(itemDraft.quantity);
         if (!Number.isFinite(quantity) || quantity <= 0) return;
         if (quantity > Number(selectedStockItem.quantity)) {
-            alert('La cantidad supera el stock disponible');
+            toast.warning('La cantidad supera el stock disponible');
             return;
         }
         const subtotal = selectedStockItem.price > 0 ? quantity * selectedStockItem.price : 0;
@@ -390,9 +392,9 @@ const Pedidos = () => {
                     source: 'whatsapp',
                 });
                 await refreshPedidosData();
-                alert('Pedido importado con éxito!');
+                toast.success('Pedido importado con éxito!');
             } else {
-                alert('No se detectó un formato de pedido válido en el portapapeles.');
+                toast.warning('No se detectó un formato de pedido válido en el portapapeles.');
             }
         } catch (error) {
             console.error('Error al importar:', error);
@@ -422,12 +424,12 @@ const Pedidos = () => {
             <header className="page-header">
                 
                 <div style={{ display: 'flex', gap: '1rem' }}>
-                    <button className="neo-button" style={{ background: '#25D366', color: 'white', border: 'none' }} onClick={importFromClipboard}>
-                        <ClipboardPaste size={20} /> Importar de WhatsApp
-                    </button>
-                    <button className="neo-button" onClick={() => setIsModalOpen(true)}>
-                        <Plus size={20} /> Nuevo Pedido
-                    </button>
+                    <Button variant="success" style={{ background: '#25D366', color: 'white', border: 'none' }} icon={<ClipboardPaste size={20} />} onClick={importFromClipboard}>
+                        Importar de WhatsApp
+                    </Button>
+                    <Button variant="primary" icon={<Plus size={20} />} onClick={() => setIsModalOpen(true)}>
+                        Nuevo Pedido
+                    </Button>
                 </div>
             </header>
             </DirectionalReveal>
@@ -545,7 +547,7 @@ const Pedidos = () => {
                                         <label>{qtyLabel(selectedStockItem?.unit || 'kg')}</label>
                                         <input type="number" className="neo-input" min="0" step={qtyStep(selectedStockItem?.unit || 'kg')} placeholder={selectedStockItem?.unit === 'kg' ? '0.000' : '0'} value={itemDraft.quantity} onChange={(e) => setItemDraft((prev) => ({ ...prev, quantity: e.target.value }))} />
                                     </div>
-                                    <button className="neo-button pedido-line-builder__add" type="button" onClick={addLineItem}><Plus size={18} /> Agregar</button>
+                                    <Button variant="primary" className="pedido-line-builder__add" type="button" icon={<Plus size={18} />} onClick={addLineItem}>Agregar</Button>
                                 </div>
                                 {selectedStockItem && <div className="pedido-line-builder__meta"><span>{selectedStockItem.type.toUpperCase()}</span><span>Disponible: {toNumber(selectedStockItem.quantity).toFixed(selectedStockItem.unit === 'kg' ? 3 : 0)} {qtySuffix(selectedStockItem.unit)}</span>{toNumber(selectedStockItem.price) > 0 && <span>Precio sugerido: ${toNumber(selectedStockItem.price).toLocaleString()}</span>}</div>}
                             </div>
@@ -644,7 +646,7 @@ const Pedidos = () => {
                                 </div>
                             )}
 
-                            <button className="neo-button full-width" style={{ marginTop: '1rem' }} onClick={handleSaveOrder}>Guardar Pedido</button>
+                            <Button variant="primary" fullWidth style={{ marginTop: '1rem' }} onClick={handleSaveOrder}>Guardar Pedido</Button>
                         </div>
                     </div>
                 </div>

@@ -1,11 +1,12 @@
 import React, { useMemo, useState } from 'react';
-import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Filter, Download } from 'lucide-react';
+import { TrendingUp, Users, Target, Calendar, ArrowRight, ShieldCheck, Download } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { useSearchParams } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { fetchTable } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
+import { Button, useToast } from '../components/ui';
 import './InformesPro.css';
 
 const formatKg = (value) => `${(Number(value) || 0).toFixed(2)} kg`;
@@ -21,6 +22,7 @@ const TARGET_YIELD_BY_TYPE = {
 
 const InformesPro = () => {
     const { hasModule } = useLicense();
+    const toast = useToast();
     const [filterDays, setFilterDays] = useState('30');
     const [searchParams, setSearchParams] = useSearchParams();
     const [logs, setLogs] = useState([]);
@@ -392,7 +394,7 @@ const InformesPro = () => {
                     });
 
         if (rows.length === 0) {
-            window.alert('No hay despostadas para exportar en el rango seleccionado.');
+            toast.warning('No hay despostadas para exportar en el rango seleccionado.');
             return;
         }
 
@@ -565,9 +567,9 @@ const InformesPro = () => {
                         <option value="30">Últimos 30 días</option>
                         <option value="90">Últimos 90 días</option>
                     </select>
-                    <button className="neo-button" onClick={handleExport} style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-main)' }}>
-                        <Download size={18} /> Exportar
-                    </button>
+                    <Button variant="secondary" icon={<Download size={18} />} onClick={handleExport} style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', color: 'var(--color-text-main)' }}>
+                        Exportar
+                    </Button>
                 </div>
             </header>
             </DirectionalReveal>
@@ -631,9 +633,9 @@ const InformesPro = () => {
                                 {new Date(selectedLog.date).toLocaleString()} · {selectedLog.type?.toUpperCase()} · Lote #{selectedLog.lot_id || 'N/D'}
                             </div>
                         </div>
-                        <button className="neo-button" type="button" onClick={closeLogDetail} style={{ background: 'transparent', border: '1px solid var(--color-border)' }}>
+                        <Button variant="secondary" type="button" onClick={closeLogDetail} style={{ background: 'transparent', border: '1px solid var(--color-border)' }}>
                             Cerrar detalle
-                        </button>
+                        </Button>
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem' }}>
                         <div className="log-stat">

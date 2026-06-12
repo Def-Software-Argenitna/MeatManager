@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { createPortal } from 'react-dom';
-import { PackageSearch, Plus, Search, Edit2, Trash2, X, FolderOpen, Save, ShieldCheck, ChevronDown, ChevronRight, ArrowUp } from 'lucide-react';
+import { Plus, Search, Edit2, Trash2, ShieldCheck, ChevronDown, ChevronRight } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useUser } from '../context/UserContext';
+import { Button, Modal, useToast } from '../components/ui';
 
 const IVA_OPTIONS = [10.5, 21];
 const ANIMAL_SALE_CATEGORIES = ['vaca', 'cerdo', 'pollo', 'pescado'];
@@ -30,6 +30,7 @@ const ProductosCompra = () => {
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const hasDespostadaModule = hasModule('despostada');
     const { guard: guardSave, isPending: isSaving } = useAsyncGuard();
+    const toast = useToast();
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingItem, setEditingItem] = useState(null);
@@ -136,17 +137,17 @@ const ProductosCompra = () => {
             : null;
 
         if (!editingItem && existingCatalogItem) {
-            alert(`Este articulo ya existia en el catalogo y ya esta vinculado como "${existingCatalogItem.name}".`);
+            toast.warning(`Este articulo ya existia en el catalogo y ya esta vinculado como "${existingCatalogItem.name}".`);
             return;
         }
         if (!formData.sale_price || !formData.sale_plu) {
-            alert('⚠️ Completa el precio y el PLU para ventas.');
+            toast.warning('⚠️ Completa el precio y el PLU para ventas.');
             return;
         }
 
         const salePrice = parseFloat(formData.sale_price);
         if (Number.isNaN(salePrice) || salePrice <= 0) {
-            alert('⚠️ El precio de venta debe ser un numero valido.');
+            toast.warning('⚠️ El precio de venta debe ser un numero valido.');
             return;
         }
 
@@ -157,7 +158,7 @@ const ProductosCompra = () => {
                 editingItem?.product_id || existingProductCandidate?.id || null
             );
         } catch (error) {
-            alert(`⚠️ ${error.message}`);
+            toast.warning(`⚠️ ${error.message}`);
             return;
         }
 
@@ -405,10 +406,9 @@ const ProductosCompra = () => {
         <div className="animate-fade-in">
             <header className="page-header">
                 <div className="page-header-actions">
-                    <button className="neo-button" onClick={openNew}>
-                        <Plus size={20} />
+                    <Button variant="primary" icon={<Plus size={20} />} onClick={openNew}>
                         Nuevo Producto
-                    </button>
+                    </Button>
                 </div>
             </header>
 
@@ -426,22 +426,12 @@ const ProductosCompra = () => {
                         />
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
-                        <button
-                            type="button"
-                            className="neo-button"
-                            style={{ padding: '0.5rem 0.8rem', fontSize: '0.8rem' }}
-                            onClick={expandAllGroups}
-                        >
+                        <Button variant="secondary" size="sm" onClick={expandAllGroups}>
                             Expandir todo
-                        </button>
-                        <button
-                            type="button"
-                            className="neo-button"
-                            style={{ padding: '0.5rem 0.8rem', fontSize: '0.8rem' }}
-                            onClick={collapseAllGroups}
-                        >
+                        </Button>
+                        <Button variant="secondary" size="sm" onClick={collapseAllGroups}>
                             Contraer todo
-                        </button>
+                        </Button>
                     </div>
                 </div>
             </div>
@@ -521,8 +511,8 @@ const ProductosCompra = () => {
                                             </div>
                                         </div>
                                         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                            <button onClick={() => openEdit(item)} style={{ background: 'none', border: 'none', color: '#3b82f6', cursor: 'pointer' }}><Edit2 size={18} /></button>
-                                            <button onClick={() => handleDelete(item.id)} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer' }}><Trash2 size={18} /></button>
+                                            <Button variant="ghost" size="sm" icon={<Edit2 size={18} color="#3b82f6" />} onClick={() => openEdit(item)} />
+                                            <Button variant="ghost" size="sm" icon={<Trash2 size={18} color="#ef4444" />} onClick={() => handleDelete(item.id)} />
                                         </div>
                                     </div>
                                 ))}
@@ -533,17 +523,12 @@ const ProductosCompra = () => {
                 </div>
             )}
 
-            {isModalOpen && createPortal(
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
-                                {editingItem ? 'Editar Producto' : 'Nuevo Producto de Compra'}
-                            </h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={24} /></button>
-                        </div>
-
-                        <form onSubmit={guardSave(handleSave)}>
+            <Modal
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                title={editingItem ? 'Editar Producto' : 'Nuevo Producto de Compra'}
+            >
+                <form onSubmit={guardSave(handleSave)}>
                             <div style={{ marginBottom: '1rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nombre del Producto</label>
                                 <input
@@ -755,14 +740,11 @@ const ProductosCompra = () => {
                             </div>
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.5rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancel</button>
-                                <button type="submit" className="neo-button" disabled={isSaving}>{isSaving ? 'Guardando...' : 'Guardar'}</button>
+                                <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
+                                <Button variant="primary" type="submit" disabled={isSaving}>{isSaving ? 'Guardando...' : 'Guardar'}</Button>
                             </div>
-                        </form>
-                    </div>
-                </div>,
-                document.body
-            )}
+                </form>
+            </Modal>
         </div>
     );
 };

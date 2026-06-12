@@ -3,6 +3,7 @@ import { Settings, TrendingUp, TrendingDown, Save, ChevronDown, Trash2, Plus, X,
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import { Button, useToast } from '../components/ui';
 import './ConfiguracionPagos.css';
 
 const DEFAULT_PAYMENT_METHODS = [
@@ -39,6 +40,7 @@ const ConfiguracionPagos = () => {
     const [showNewForm, setShowNewForm] = useState(false);
     const [newMethod, setNewMethod] = useState(EMPTY_NEW);
     const [isSaving, setIsSaving] = useState(false);
+    const toast = useToast();
 
     const loadMethods = useCallback(async () => {
         const rows = await fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' });
@@ -127,12 +129,12 @@ const ConfiguracionPagos = () => {
     const handleSeedDefaults = async () => {
         const existingNames = new Set((paymentMethods || []).map(m => m.name.toLowerCase()));
         const missing = DEFAULT_PAYMENT_METHODS.filter(m => !existingNames.has(m.name.toLowerCase()));
-        if (missing.length === 0) { alert('\u2705 Ya ten\u00e9s todos los m\u00e9todos predeterminados.'); return; }
+        if (missing.length === 0) { toast.info('Ya ten\u00e9s todos los m\u00e9todos predeterminados.'); return; }
         for (const method of missing) {
             await saveTableRecord('payment_methods', 'insert', method);
         }
         await loadMethods();
-        alert(`\u2705 Se agregaron ${missing.length} m\u00e9todo${missing.length > 1 ? 's' : ''}: ${missing.map(m => m.name).join(', ')}`);
+        toast.success(`Se agregaron ${missing.length} m\u00e9todo${missing.length > 1 ? 's' : ''}: ${missing.map(m => m.name).join(', ')}`);
     };
 
     const handleResetPayments = async () => {
@@ -145,9 +147,9 @@ const ConfiguracionPagos = () => {
                 await saveTableRecord('payment_methods', 'insert', method);
             }
             await loadMethods();
-            alert('\u2705 M\u00e9todos de pago reiniciados correctamente');
+            toast.success('M\u00e9todos de pago reiniciados correctamente');
         } catch (err) {
-            alert('\u274c Error al reiniciar: ' + (err.message || err));
+            toast.error('Error al reiniciar: ' + (err.message || err));
         }
     };
 
@@ -176,34 +178,32 @@ const ConfiguracionPagos = () => {
                     </p>
                 </div>
                 <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-                    <button
-                        className="neo-button"
+                    <Button
+                        variant="primary"
+                        icon={showNewForm ? <X size={16} /> : <Plus size={16} />}
                         onClick={() => {
                             setShowNewForm(f => !f);
                             setEditingMethod(null);
                         }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', fontSize: '0.9rem' }}
                     >
-                        {showNewForm ? <X size={16} /> : <Plus size={16} />}
                         {showNewForm ? 'Cancelar' : 'Nuevo m\u00e9todo'}
-                    </button>
-                    <button
-                        className="neo-button"
+                    </Button>
+                    <Button
+                        variant="secondary"
+                        icon={<Plus size={16} />}
                         onClick={handleSeedDefaults}
                         title="Agrega los predeterminados faltantes sin borrar nada"
-                        style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.5rem 1rem', fontSize: '0.9rem' }}
                     >
-                        <Plus size={16} />
                         Agregar faltantes
-                    </button>
-                    <button
-                        className="reset-btn"
+                    </Button>
+                    <Button
+                        variant="danger"
+                        icon={<Trash2 size={18} />}
                         onClick={handleResetPayments}
                         title="Elimina todo y restaura los predeterminados"
                     >
-                        <Trash2 size={18} />
                         Reiniciar todo
-                    </button>
+                    </Button>
                 </div>
             </header>
             </DirectionalReveal>
@@ -268,24 +268,23 @@ const ConfiguracionPagos = () => {
                         </div>
 
                         <div className="payment-new-form-actions">
-                            <button
-                                type="button"
-                                className="neo-button"
+                            <Button
+                                variant="secondary"
                                 onClick={() => {
                                     setNewMethod(EMPTY_NEW);
                                     setShowNewForm(false);
                                 }}
                             >
                                 Cancelar
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                                variant="primary"
                                 type="submit"
-                                className="neo-button payment-new-submit"
+                                icon={<Plus size={16} />}
                                 disabled={isSaving || !newMethod.name.trim()}
                             >
-                                <Plus size={16} />
                                 {isSaving ? 'Guardando...' : 'Agregar método'}
-                            </button>
+                            </Button>
                         </div>
                     </form>
                 </DirectionalReveal>
@@ -339,21 +338,20 @@ const ConfiguracionPagos = () => {
                         </div>
 
                         <div className="payment-new-form-actions">
-                            <button
-                                type="button"
-                                className="neo-button"
+                            <Button
+                                variant="secondary"
                                 onClick={() => setEditingMethod(null)}
                             >
                                 Cancelar
-                            </button>
-                            <button
+                            </Button>
+                            <Button
+                                variant="primary"
                                 type="submit"
-                                className="neo-button payment-new-submit"
+                                icon={<Save size={16} />}
                                 disabled={isSaving || !editingMethod.name.trim()}
                             >
-                                <Save size={16} />
                                 {isSaving ? 'Guardando...' : 'Guardar cambios'}
-                            </button>
+                            </Button>
                         </div>
                     </form>
                 </DirectionalReveal>
@@ -410,18 +408,18 @@ const ConfiguracionPagos = () => {
                                                             autoFocus
                                                         />
                                                         <span className="percentage-symbol">%</span>
-                                                        <button
-                                                            className="save-btn"
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            icon={<Save size={16} color="#22c55e" />}
                                                             onClick={() => handleSave(method.id)}
-                                                        >
-                                                            <Save size={16} />
-                                                        </button>
-                                                        <button
-                                                            className="cancel-btn"
+                                                        />
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            icon={<X size={16} color="#ef4444" />}
                                                             onClick={() => setEditingId(null)}
-                                                        >
-                                                            ✕
-                                                        </button>
+                                                        />
                                                     </div>
                                                 ) : (
                                                     <>
@@ -454,28 +452,20 @@ const ConfiguracionPagos = () => {
                                                             />
                                                             <span className="toggle-slider"></span>
                                                         </label>
-                                                        <button
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
                                                             title="Editar método"
+                                                            icon={<Edit2 size={15} />}
                                                             onClick={() => handleEditMethod(method)}
-                                                            style={{
-                                                                background: 'transparent', border: 'none',
-                                                                color: 'var(--color-text-muted)', cursor: 'pointer',
-                                                                padding: '0.25rem', borderRadius: '4px', lineHeight: 0,
-                                                            }}
-                                                        >
-                                                            <Edit2 size={15} />
-                                                        </button>
-                                                        <button
+                                                        />
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
                                                             title="Eliminar método"
+                                                            icon={<Trash2 size={15} />}
                                                             onClick={() => handleDelete(method.id, method.name)}
-                                                            style={{
-                                                                background: 'transparent', border: 'none',
-                                                                color: 'var(--color-text-muted)', cursor: 'pointer',
-                                                                padding: '0.25rem', borderRadius: '4px', lineHeight: 0,
-                                                            }}
-                                                        >
-                                                            <Trash2 size={15} />
-                                                        </button>
+                                                        />
                                                     </>
                                                 )}
                                             </div>

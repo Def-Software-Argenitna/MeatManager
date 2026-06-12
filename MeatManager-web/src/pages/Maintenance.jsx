@@ -10,11 +10,13 @@ import {
     Trash2
 } from 'lucide-react';
 import { exportFullBackup, importFullBackup } from '../utils/backupService';
+import { useToast } from '../components/ui';
 import './Maintenance.css';
 
 const Maintenance = () => {
     const [loading, setLoading] = useState(false);
     const [message, setMessage] = useState(null);
+    const toast = useToast();
 
     const handleExport = async () => {
         setLoading(true);
@@ -60,7 +62,7 @@ const Maintenance = () => {
 
         const typed = prompt("Para confirmar la eliminación total, escribí 'BORRAR TODO' en mayúsculas:");
         if (typed !== 'BORRAR TODO') {
-            alert("Operación cancelada. El texto ingresado no coincide.");
+            toast.warning("Operación cancelada. El texto ingresado no coincide.");
             return;
         }
 
