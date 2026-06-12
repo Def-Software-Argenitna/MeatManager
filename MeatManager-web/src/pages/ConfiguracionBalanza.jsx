@@ -212,11 +212,9 @@ const ConfiguracionBalanza = () => {
             ]);
 
             showMessage('success', 'Configuración de balanza guardada y lista para sincronizar.');
-            window.alert('Configuración de balanza guardada y lista para sincronizar.');
             await load();
         } catch (error) {
             showMessage('error', `Error al guardar configuración de balanza: ${error.message}`);
-            window.alert(`Error al guardar configuración de balanza: ${error.message}`);
         } finally {
             setSaving(false);
         }

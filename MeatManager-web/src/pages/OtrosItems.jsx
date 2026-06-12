@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { Edit2, Package, Plus, Trash2 } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
-import { Button } from '../components/ui';
+import { Button, EmptyState } from '../components/ui';
 import './Stock.css'; // Reusing Stock styles for consistency
 import './OtrosItems.css';
 
@@ -173,9 +173,7 @@ const OtrosItems = () => {
             </div>
 
             {(!items || items.length === 0) && (
-                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--color-text-muted)' }}>
-                    No hay insumos registrados.
-                </div>
+                <EmptyState icon={Package} title="Sin insumos" description="No hay insumos registrados todavía." />
             )}
         </div>
     );
