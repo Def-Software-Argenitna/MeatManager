@@ -888,10 +888,10 @@ const Security = () => {
                                     />
                                 </div>
                             </div>
-                            <button type="submit" className="btn-security primary" disabled={loading || !newPin}>
+                            <Button variant="primary" type="submit" disabled={loading || !newPin}>
                                 {loading ? <RefreshCw className="animate-spin" /> : <Lock size={18} />}
                                 Actualizar PIN Maestro
-                            </button>
+                            </Button>
                         </form>
                     </section>
 
@@ -915,16 +915,15 @@ const Security = () => {
                                     </div>
                                 </div>
                                 <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                                    <button
-                                        type="button"
-                                        className="btn-security secondary"
+                                    <Button
+                                        variant="secondary"
                                         onClick={handleGenerateDeleteCode}
                                         disabled={!isAdmin}
                                         style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}
                                     >
                                         <RefreshCw size={16} />
                                         Generar código
-                                    </button>
+                                    </Button>
                                 </div>
                                 <div className="form-row">
                                     <div className="form-group">
@@ -956,10 +955,10 @@ const Security = () => {
                                         />
                                     </div>
                                 </div>
-                                <button type="submit" className="btn-security primary" disabled={!deleteCode || !confirmDeleteCode}>
+                                <Button variant="primary" type="submit" disabled={!deleteCode || !confirmDeleteCode}>
                                     <Key size={18} />
                                     Guardar Código de Borrado
-                                </button>
+                                </Button>
                             </form>
                         </section>
                     )}
@@ -983,15 +982,15 @@ const Security = () => {
                                     Estos nombres se sincronizan a la balanza (vendedores 1..4) y son independientes de los usuarios MM.
                                 </div>
                             </div>
-                            <button
-                                className="btn-security primary"
+                            <Button
+                                variant="primary"
                                 onClick={handleSaveScaleUsers}
                                 disabled={!isAdmin || savingScaleUsers}
                                 style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}
                             >
                                 {savingScaleUsers ? <RefreshCw className="animate-spin" size={16} /> : <Save size={16} />}
                                 Guardar Usuarios Balanza
-                            </button>
+                            </Button>
                         </div>
 
                         <div style={{ display: 'grid', gap: '0.55rem' }}>
@@ -1176,9 +1175,9 @@ const Security = () => {
                         <p style={{ margin: 0, color: '#9ca3af', fontSize: '0.9rem' }}>
                             {users.length} usuario{users.length !== 1 ? 's' : ''} registrado{users.length !== 1 ? 's' : ''}
                         </p>
-                        <button className="btn-security primary" onClick={openCreate} disabled={!isAdmin} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}>
+                        <Button variant="primary" onClick={openCreate} disabled={!isAdmin} style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', opacity: isAdmin ? 1 : 0.55 }}>
                             <UserPlus size={16} /> Nuevo Usuario
-                        </button>
+                        </Button>
                     </div>
 
                     {!isAdmin && (

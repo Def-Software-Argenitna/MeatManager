@@ -8,6 +8,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
 import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_PRICE_MODES, PROMO_STOCK_MODES } from '../utils/promotions';
+import { Button } from '../components/ui';
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
@@ -992,24 +993,24 @@ const ConfiguracionPromociones = () => {
                 )}
             </div>
             <div className="promo-card-footer">
-                <button type="button" className="btn-icon" title="Duplicar" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
-                    <FiCopy /> <span className="hidden-mobile">Duplicar</span>
-                </button>
-                <button type="button" className="btn-icon" title="Editar" disabled={readOnly || saving} onClick={() => startEditRows(rowsForActions)}>
-                    <FiEdit2 /> <span className="hidden-mobile">Editar</span>
-                </button>
+                <Button variant="ghost" size="sm" icon={<FiCopy />} title="Duplicar" disabled={readOnly || saving} onClick={() => duplicatePromotion(row)}>
+                    <span className="hidden-mobile">Duplicar</span>
+                </Button>
+                <Button variant="ghost" size="sm" icon={<FiEdit2 />} title="Editar" disabled={readOnly || saving} onClick={() => startEditRows(rowsForActions)}>
+                    <span className="hidden-mobile">Editar</span>
+                </Button>
                 {row?.active ? (
-                    <button type="button" className="btn-icon orange-text" title="Desactivar" disabled={readOnly || saving} onClick={() => togglePromoStatus(rowsForActions)}>
-                        <FiXCircle /> <span className="hidden-mobile">Desactivar</span>
-                    </button>
+                    <Button variant="ghost" size="sm" className="orange-text" icon={<FiXCircle />} title="Desactivar" disabled={readOnly || saving} onClick={() => togglePromoStatus(rowsForActions)}>
+                        <span className="hidden-mobile">Desactivar</span>
+                    </Button>
                 ) : (
-                    <button type="button" className="btn-icon green-text" title="Activar" disabled={readOnly || saving} onClick={() => togglePromoStatus(rowsForActions)}>
-                        <FiCheckCircle /> <span className="hidden-mobile">Activar</span>
-                    </button>
+                    <Button variant="ghost" size="sm" className="green-text" icon={<FiCheckCircle />} title="Activar" disabled={readOnly || saving} onClick={() => togglePromoStatus(rowsForActions)}>
+                        <span className="hidden-mobile">Activar</span>
+                    </Button>
                 )}
-                <button type="button" className="btn-icon danger-text" title="Eliminar" disabled={readOnly || saving} onClick={() => deletePromotion(rowsForActions)}>
-                    <FiTrash2 /> <span className="hidden-mobile">Eliminar</span>
-                </button>
+                <Button variant="ghost" size="sm" className="danger-text" icon={<FiTrash2 />} title="Eliminar" disabled={readOnly || saving} onClick={() => deletePromotion(rowsForActions)}>
+                    <span className="hidden-mobile">Eliminar</span>
+                </Button>
             </div>
             </div>
         );
@@ -1211,15 +1212,14 @@ const ConfiguracionPromociones = () => {
                                             <label style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
                                                 Escalas adicionales para el mismo artículo
                                             </label>
-                                            <button
-                                                type="button"
-                                                className="btn-secondary"
+                                            <Button
+                                                variant="secondary"
                                                 disabled={readOnly || saving}
                                                 onClick={addExtraTier}
                                                 style={{ padding: '0.35rem 0.65rem' }}
                                             >
                                                 <FiPlus /> Agregar nivel
-                                            </button>
+                                            </Button>
                                         </div>
                                         {extraPromoTiers.length > 0 && (
                                             <div style={{ display: 'grid', gap: '0.5rem' }}>
@@ -1271,16 +1271,16 @@ const ConfiguracionPromociones = () => {
                                                                 placeholder={tier.promo_price_mode === PROMO_PRICE_MODES.PER_KG ? 'Ej. 4300' : 'Ej. 12000'}
                                                             />
                                                         </div>
-                                                        <button
-                                                            type="button"
-                                                            className="btn-icon danger-text"
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="sm"
+                                                            className="danger-text"
+                                                            icon={<FiTrash2 />}
                                                             title="Eliminar nivel"
                                                             disabled={readOnly || saving}
                                                             onClick={() => removeExtraTier(index)}
                                                             style={{ height: '38px' }}
-                                                        >
-                                                            <FiTrash2 />
-                                                        </button>
+                                                        />
                                                     </div>
                                                 ))}
                                             </div>
@@ -1383,23 +1383,22 @@ const ConfiguracionPromociones = () => {
                             </div>
 
                             <div className="action-buttons">
-                                <button type="button" className="btn-primary" disabled={readOnly || saving} onClick={() => savePromotion()}>
+                                <Button variant="primary" disabled={readOnly || saving} onClick={() => savePromotion()}>
                                     <FiSave /> {saving ? 'Guardando...' : editingId ? 'Actualizar' : 'Guardar'}
-                                </button>
+                                </Button>
                                 {!editingId && (
-                                    <button
-                                        type="button"
-                                        className="btn-success"
+                                    <Button
+                                        variant="success"
                                         disabled={readOnly || saving}
                                         onClick={() => savePromotion({ keepCreating: true })}
                                     >
                                         <FiPlus /> Guardar y Crear Otra
-                                    </button>
+                                    </Button>
                                 )}
                                 {editingId && (
-                                    <button type="button" className="btn-secondary" disabled={readOnly || saving} onClick={resetForm}>
+                                    <Button variant="secondary" disabled={readOnly || saving} onClick={resetForm}>
                                         <FiX /> Cancelar
-                                    </button>
+                                    </Button>
                                 )}
                             </div>
 

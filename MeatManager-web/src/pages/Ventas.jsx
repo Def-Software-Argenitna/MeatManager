@@ -14,6 +14,7 @@ import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { scaleService } from '../utils/SerialScaleService';
 import { CERDO_CUTS, PESCADO_CUTS, POLLO_CUTS, VACA_CUTS } from './despostadaData';
+import { Button } from '../components/ui';
 import './Ventas.css';
 
 const CATEGORY_META = {
@@ -2405,19 +2406,19 @@ const Ventas = () => {
                     </div>
 
                     <div className="action-buttons">
-                        <button className="btn-secondary" onClick={() => setShowClientList(true)}>CLIENTES</button>
-                        <button
-                            className="btn-secondary"
+                        <Button variant="secondary" onClick={() => setShowClientList(true)}>CLIENTES</Button>
+                        <Button
+                            variant="secondary"
                             onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
                         >
                             ELIMINAR TICKET
-                        </button>
-                        <button className="btn-danger" onClick={() => {
+                        </Button>
+                        <Button variant="danger" onClick={() => {
                             if (window.confirm('¿Anular ticket?')) {
                                 setCart([]);
                                 setActiveScaleTicketBarcode(null);
                             }
-                        }}>ANULAR</button>
+                        }}>ANULAR</Button>
                     </div>
 
                     <button
