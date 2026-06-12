@@ -5,6 +5,7 @@ import { TenantProvider, useTenant } from './context/TenantContext';
 import { LicenseProvider } from './context/LicenseContext';
 import DashboardLayout from './layouts/DashboardLayout';
 import { useHiddenDigitalPaymentShortcuts } from './hooks/useHiddenDigitalPayments';
+import { ToastProvider } from './components/ui';
 
 const CHUNK_RELOAD_KEY = 'mm-chunk-reload-attempted';
 
@@ -166,7 +167,9 @@ function App() {
     <TenantProvider>
       <UserProvider>
         <LicenseProvider>
-          <AppRoutes />
+          <ToastProvider>
+            <AppRoutes />
+          </ToastProvider>
         </LicenseProvider>
       </UserProvider>
     </TenantProvider>

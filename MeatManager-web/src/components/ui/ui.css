@@ -1,0 +1,218 @@
+/* ============================================================
+   MeatManager UI Kit — Button / Modal / Toast
+   Sigue el design system "Crystal 3D Glass" de index.css.
+
+   Nota de especificidad: index.css tiene un selector global
+   `button:not(.nav-item):not(.pay-button):...` que pisa cualquier
+   regla de un solo selector de clase. Por eso la regla base de
+   .ui-btn repite la clase (especificidad 0,5,1) en lugar de usar
+   !important. Las variantes y tamaños solo definen variables CSS,
+   así nunca compiten en el cascade con la regla base.
+   ============================================================ */
+
+/* ---------- Button ---------- */
+
+button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    background: var(--ui-btn-bg, rgba(255, 255, 255, 0.04));
+    color: var(--ui-btn-color, var(--color-text-main));
+    border: 1px solid var(--ui-btn-border, rgba(255, 255, 255, 0.1));
+    border-radius: 10px;
+    padding: var(--ui-btn-pad, 0.7rem 1.25rem);
+    font-size: var(--ui-btn-fs, 0.8rem);
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    line-height: 1;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: var(--ui-btn-shadow, none);
+    transition: background 0.2s ease, border-color 0.2s ease,
+                box-shadow 0.2s ease, transform 0.15s ease, opacity 0.2s ease;
+}
+
+button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:hover:not(:disabled) {
+    background: var(--ui-btn-bg-hover, rgba(255, 255, 255, 0.08));
+    border-color: var(--ui-btn-border-hover, var(--color-primary));
+    box-shadow: var(--ui-btn-shadow-hover, none);
+}
+
+button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:active:not(:disabled) {
+    transform: translateY(1px);
+}
+
+button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(249, 115, 22, 0.35);
+}
+
+button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+/* Variantes (solo variables, sin batalla de especificidad) */
+.ui-btn--primary {
+    --ui-btn-bg: var(--color-primary);
+    --ui-btn-bg-hover: #fb8c33;
+    --ui-btn-color: #000;
+    --ui-btn-border: transparent;
+    --ui-btn-border-hover: transparent;
+    --ui-btn-shadow-hover: 0 0 18px var(--color-primary-glow);
+}
+
+.ui-btn--secondary {
+    /* defaults de la regla base */
+}
+
+.ui-btn--danger {
+    --ui-btn-bg: rgba(239, 68, 68, 0.12);
+    --ui-btn-bg-hover: rgba(239, 68, 68, 0.22);
+    --ui-btn-color: #fca5a5;
+    --ui-btn-border: rgba(239, 68, 68, 0.35);
+    --ui-btn-border-hover: #ef4444;
+}
+
+.ui-btn--success {
+    --ui-btn-bg: rgba(34, 197, 94, 0.12);
+    --ui-btn-bg-hover: rgba(34, 197, 94, 0.22);
+    --ui-btn-color: #86efac;
+    --ui-btn-border: rgba(34, 197, 94, 0.35);
+    --ui-btn-border-hover: #22c55e;
+}
+
+.ui-btn--ghost {
+    --ui-btn-bg: transparent;
+    --ui-btn-bg-hover: rgba(255, 255, 255, 0.06);
+    --ui-btn-border: transparent;
+    --ui-btn-border-hover: rgba(255, 255, 255, 0.15);
+}
+
+/* Tamaños */
+.ui-btn--sm { --ui-btn-pad: 0.45rem 0.85rem; --ui-btn-fs: 0.72rem; }
+.ui-btn--md { /* defaults */ }
+.ui-btn--lg { --ui-btn-pad: 0.95rem 1.75rem; --ui-btn-fs: 0.9rem; }
+
+/* Botón de ícono cuadrado (acciones de fila: editar, borrar...) */
+.ui-btn--icononly { --ui-btn-pad: 0.5rem; }
+
+.ui-btn--full { width: 100%; }
+
+.ui-btn__spinner {
+    width: 1em;
+    height: 1em;
+    border-radius: 999px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    animation: uiBtnSpin 0.7s linear infinite;
+}
+
+@keyframes uiBtnSpin {
+    to { transform: rotate(360deg); }
+}
+
+/* ---------- Modal ---------- */
+/* Reusa .modal-overlay / .modal-content de index.css para mantener
+   exactamente el mismo look de los modales existentes. */
+
+.ui-modal {
+    width: 100%;
+}
+
+.ui-modal--sm { max-width: 420px; }
+.ui-modal--md { max-width: 560px; }
+.ui-modal--lg { max-width: 780px; }
+
+.ui-modal__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.ui-modal__title {
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: #fff;
+}
+
+.ui-modal__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.75rem;
+    margin-top: 1.75rem;
+}
+
+/* ---------- Toast ---------- */
+
+.ui-toast-viewport {
+    position: fixed;
+    bottom: 1.25rem;
+    right: 1.25rem;
+    z-index: 30000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    max-width: min(380px, calc(100vw - 2.5rem));
+    pointer-events: none;
+}
+
+.ui-toast {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.65rem;
+    padding: 0.85rem 1rem;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--ui-toast-border, var(--glass-border));
+    background: rgba(15, 15, 20, 0.92);
+    backdrop-filter: blur(18px);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+    color: var(--color-text-main);
+    font-size: 0.85rem;
+    line-height: 1.35;
+    pointer-events: auto;
+    animation: uiToastIn 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.ui-toast--leaving {
+    animation: uiToastOut 0.22s ease forwards;
+}
+
+.ui-toast__icon {
+    flex-shrink: 0;
+    margin-top: 1px;
+    color: var(--ui-toast-accent, var(--color-text-muted));
+}
+
+.ui-toast__message { flex: 1; }
+
+.ui-toast__close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    color: var(--color-text-muted);
+    line-height: 0;
+}
+
+.ui-toast__close:hover { color: var(--color-text-main); }
+
+.ui-toast--success { --ui-toast-accent: #22c55e; --ui-toast-border: rgba(34, 197, 94, 0.35); }
+.ui-toast--error   { --ui-toast-accent: #ef4444; --ui-toast-border: rgba(239, 68, 68, 0.35); }
+.ui-toast--warning { --ui-toast-accent: #eab308; --ui-toast-border: rgba(234, 179, 8, 0.35); }
+.ui-toast--info    { --ui-toast-accent: var(--color-primary); --ui-toast-border: rgba(249, 115, 22, 0.35); }
+
+@keyframes uiToastIn {
+    from { transform: translateY(12px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes uiToastOut {
+    from { transform: translateY(0); opacity: 1; }
+    to { transform: translateY(8px); opacity: 0; }
+}

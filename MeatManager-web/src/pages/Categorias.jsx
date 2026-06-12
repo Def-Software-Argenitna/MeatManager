@@ -1,12 +1,15 @@
 import React, { useState } from 'react';
-import { Folder, FolderPlus, ChevronRight, X, Edit2, Trash2, Save } from 'lucide-react';
+import { Folder, FolderPlus, ChevronRight, Edit2, Trash2, Plus } from 'lucide-react';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
+import { Button, Modal, useToast } from '../components/ui';
 
 const Categorias = () => {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingNode, setEditingNode] = useState(null);
     const [newItem, setNewItem] = useState({ name: '', parent_id: null });
     const [categories, setCategories] = useState([]);
+    const [saving, setSaving] = useState(false);
+    const toast = useToast();
 
     const loadCategories = React.useCallback(async () => {
         const rows = await fetchTable('categories');
@@ -32,19 +35,28 @@ const Categorias = () => {
         e.preventDefault();
         if (!newItem.name) return;
 
-        if (editingNode) {
-            await saveTableRecord('categories', 'update', { name: newItem.name }, editingNode.id);
-            setEditingNode(null);
-        } else {
-            await saveTableRecord('categories', 'insert', {
-                name: newItem.name,
-                parent_id: newItem.parent_id || null
-            });
-        }
+        setSaving(true);
+        try {
+            if (editingNode) {
+                await saveTableRecord('categories', 'update', { name: newItem.name }, editingNode.id);
+                setEditingNode(null);
+            } else {
+                await saveTableRecord('categories', 'insert', {
+                    name: newItem.name,
+                    parent_id: newItem.parent_id || null
+                });
+            }
 
-        await loadCategories();
-        setIsModalOpen(false);
-        setNewItem({ name: '', parent_id: null });
+            await loadCategories();
+            setIsModalOpen(false);
+            setNewItem({ name: '', parent_id: null });
+            toast.success(editingNode ? 'Categoría actualizada' : 'Categoría creada');
+        } catch (error) {
+            console.error('Error guardando categoría:', error);
+            toast.error('No se pudo guardar la categoría. Probá de nuevo.');
+        } finally {
+            setSaving(false);
+        }
     };
 
     const handleDelete = async (id) => {
@@ -52,11 +64,17 @@ const Categorias = () => {
             // Check for children
             const hasChildren = categories.some(c => c.parent_id === id);
             if (hasChildren) {
-                alert("No se puede eliminar una categoría que contiene sub-categorías.");
+                toast.warning('No se puede eliminar una categoría que contiene sub-categorías.');
                 return;
             }
-            await saveTableRecord('categories', 'delete', null, id);
-            await loadCategories();
+            try {
+                await saveTableRecord('categories', 'delete', null, id);
+                await loadCategories();
+                toast.success('Categoría eliminada');
+            } catch (error) {
+                console.error('Error eliminando categoría:', error);
+                toast.error('No se pudo eliminar la categoría.');
+            }
         }
     };
 
@@ -85,16 +103,10 @@ const Categorias = () => {
 
                 <div style={{ display: 'flex', gap: '0.5rem' }}>
                     {level === 0 && (
-                        <button title="Agregar Sub-categoría" onClick={() => openForSub(node.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text-main)' }}>
-                            <FolderPlus size={16} />
-                        </button>
+                        <Button variant="ghost" size="sm" title="Agregar Sub-categoría" icon={<FolderPlus size={16} />} onClick={() => openForSub(node.id)} />
                     )}
-                    <button title="Editar" onClick={() => openForEdit(node)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#3b82f6' }}>
-                        <Edit2 size={16} />
-                    </button>
-                    <button title="Eliminar" onClick={() => handleDelete(node.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#ef4444' }}>
-                        <Trash2 size={16} />
-                    </button>
+                    <Button variant="ghost" size="sm" title="Editar" icon={<Edit2 size={16} color="#3b82f6" />} onClick={() => openForEdit(node)} />
+                    <Button variant="ghost" size="sm" title="Eliminar" icon={<Trash2 size={16} color="#ef4444" />} onClick={() => handleDelete(node.id)} />
                 </div>
             </div>
             {node.children && node.children.map(child => (
@@ -106,12 +118,15 @@ const Categorias = () => {
     return (
         <div className="animate-fade-in">
             <header className="page-header">
-                
+
                 <div className="page-header-actions">
-                    <button className="neo-button" onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}>
-                        <PlusIcon size={20} />
+                    <Button
+                        variant="primary"
+                        icon={<Plus size={20} />}
+                        onClick={() => { setEditingNode(null); setNewItem({ name: '', parent_id: null }); setIsModalOpen(true); }}
+                    >
                         Nueva Categoría Principal
-                    </button>
+                    </Button>
                 </div>
             </header>
 
@@ -127,50 +142,39 @@ const Categorias = () => {
                 ))}
             </div>
 
-            {isModalOpen && (
-                <div className="modal-overlay" onClick={() => setIsModalOpen(false)}>
-                    <div className="modal-content neo-card" onClick={e => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                            <h2 style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>
-                                {editingNode ? 'Editar Categoría' : (newItem.parent_id ? 'Nueva Sub-categoría' : 'Nueva Categoría Principal')}
-                            </h2>
-                            <button onClick={() => setIsModalOpen(false)} style={{ background: 'none', border: 'none', cursor: 'pointer' }}><X size={24} /></button>
-                        </div>
-
-                        <form onSubmit={handleSave}>
-                            <div style={{ marginBottom: '1.5rem' }}>
-                                <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nombre</label>
-                                <input
-                                    autoFocus
-                                    type="text"
-                                    className="neo-input"
-                                    placeholder={newItem.parent_id ? "Ej: Vaca, Pollo..." : "Ej: Carnes, Bebidas..."}
-                                    value={newItem.name}
-                                    onChange={e => setNewItem({ ...newItem, name: e.target.value })}
-                                />
-                            </div>
-
-                            {newItem.parent_id && (
-                                <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-                                    Pertenece a la categoría padre: <strong>{categories.find(c => c.id === newItem.parent_id)?.name || newItem.parent_id}</strong>
-                                </div>
-                            )}
-
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
-                                <button type="button" onClick={() => setIsModalOpen(false)} style={{ background: 'transparent', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.5rem 1rem', color: 'var(--color-text-main)', cursor: 'pointer' }}>Cancel</button>
-                                <button type="submit" className="neo-button">Guardar</button>
-                            </div>
-                        </form>
+            <Modal
+                open={isModalOpen}
+                onClose={() => setIsModalOpen(false)}
+                size="sm"
+                title={editingNode ? 'Editar Categoría' : (newItem.parent_id ? 'Nueva Sub-categoría' : 'Nueva Categoría Principal')}
+            >
+                <form onSubmit={handleSave}>
+                    <div style={{ marginBottom: '1.5rem' }}>
+                        <label style={{ display: 'block', marginBottom: '0.5rem' }}>Nombre</label>
+                        <input
+                            autoFocus
+                            type="text"
+                            className="neo-input"
+                            placeholder={newItem.parent_id ? "Ej: Vaca, Pollo..." : "Ej: Carnes, Bebidas..."}
+                            value={newItem.name}
+                            onChange={e => setNewItem({ ...newItem, name: e.target.value })}
+                        />
                     </div>
-                </div>
-            )}
+
+                    {newItem.parent_id && (
+                        <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+                            Pertenece a la categoría padre: <strong>{categories.find(c => c.id === newItem.parent_id)?.name || newItem.parent_id}</strong>
+                        </div>
+                    )}
+
+                    <div className="ui-modal__footer" style={{ marginTop: '0.5rem' }}>
+                        <Button variant="ghost" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
+                        <Button variant="primary" type="submit" loading={saving}>Guardar</Button>
+                    </div>
+                </form>
+            </Modal>
         </div>
     );
 };
-
-// Helper component for the Plus icon which was missing in imports
-const PlusIcon = ({ size }) => (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14" /><path d="M12 5v14" /></svg>
-);
 
 export default Categorias;
