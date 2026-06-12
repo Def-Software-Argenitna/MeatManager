@@ -699,10 +699,8 @@ const Security = () => {
             }
             await loadScaleUsers();
             toast('success', 'Se actualizaron los vendedores de la balanza.');
-            window.alert('Se actualizaron los vendedores de la balanza.');
         } catch (error) {
             toast('error', `No se pudieron guardar usuarios de balanza: ${error.message}`);
-            window.alert(`No se pudieron guardar usuarios de balanza: ${error.message}`);
         } finally {
             setSavingScaleUsers(false);
         }
