@@ -6,7 +6,7 @@ import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { Banknote, ShoppingCart, TrendingUp, AlertTriangle, Wallet, Crown, BarChart3 } from 'lucide-react';
-import { BarChart, EmptyState } from '../components/ui';
+import { BarChart, EmptyState, Skeleton, SkeletonLine, SkeletonCard } from '../components/ui';
 import './Dashboard.css';
 
 const toNumber = (value) => {
@@ -90,6 +90,7 @@ const Dashboard = () => {
     const { hasModule } = useLicense();
     const { hiddenDigitalPaymentsOnly } = useHiddenDigitalPaymentFilter();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const [isLoading, setIsLoading] = useState(true);
     const [selectedRemoteBranch, setSelectedRemoteBranch] = useState('all');
     const [ventasDia, setVentasDia] = useState([]);
     const [allVentas, setAllVentas] = useState([]);
@@ -171,6 +172,7 @@ const Dashboard = () => {
                 setProLogs(logList);
                 setBranchSnapshots(Array.isArray(snapshotRows) ? snapshotRows : []);
                 setTenantBranches(Array.isArray(branchPayload?.branches) ? branchPayload.branches : []);
+                if (!cancelled) setIsLoading(false);
             } catch (error) {
                 if (!cancelled) {
                     console.error('[DASHBOARD] No se pudieron cargar métricas desde la API', error);
@@ -183,6 +185,7 @@ const Dashboard = () => {
                     setProLogs([]);
                     setBranchSnapshots([]);
                     setTenantBranches([]);
+                    setIsLoading(false);
                 }
             }
         };
@@ -321,6 +324,25 @@ const Dashboard = () => {
     const visibleVentas = hiddenDigitalPaymentsOnly
         ? allVentas.filter((venta) => saleUsesOnlyDigitalPayments(venta))
         : allVentas;
+
+    if (isLoading) return (
+        <div className="dashboard-page animate-fade-in">
+            <div className="dashboard-stats-grid" style={{ marginBottom: '1.5rem' }}>
+                {[...Array(5)].map((_, i) => (
+                    <div key={i} className="neo-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <SkeletonLine width="55%" />
+                        <Skeleton width="70%" height="2rem" borderRadius="8px" style={{ marginTop: '0.25rem' }} />
+                        <SkeletonLine width="40%" />
+                    </div>
+                ))}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem', marginBottom: '1.5rem' }}>
+                <SkeletonCard height="220px" />
+                <SkeletonCard height="220px" />
+            </div>
+            <SkeletonCard height="180px" />
+        </div>
+    );
 
     return (
         <div className="dashboard-page animate-fade-in">

@@ -384,3 +384,22 @@ button.ui-btn.ui-btn.ui-btn.ui-btn.ui-btn:disabled {
 .ui-empty__action {
     margin-top: 0.85rem;
 }
+
+/* ---------- Skeleton ---------- */
+
+@keyframes ui-shimmer {
+    0%   { background-position: -400px 0; }
+    100% { background-position: 400px 0; }
+}
+
+.ui-skeleton {
+    background: linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.04) 25%,
+        rgba(255, 255, 255, 0.10) 50%,
+        rgba(255, 255, 255, 0.04) 75%
+    );
+    background-size: 800px 100%;
+    animation: ui-shimmer 1.4s ease-in-out infinite;
+    flex-shrink: 0;
+}
