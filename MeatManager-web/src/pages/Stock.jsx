@@ -835,8 +835,8 @@ const Stock = () => {
                 title="Ajuste de Inventario"
             >
                 <form onSubmit={handleAdjustment}>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Buscar producto</label>
+                            <div className="stock-form-group">
+                                <label className="stock-field-label">Buscar producto</label>
                                 <input
                                     type="text"
                                     className="neo-input"
@@ -846,8 +846,8 @@ const Stock = () => {
                                 />
                             </div>
 
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Producto</label>
+                            <div className="stock-form-group">
+                                <label className="stock-field-label">Producto</label>
                                 <select
                                     className="neo-input"
                                     required
@@ -861,24 +861,14 @@ const Stock = () => {
                                     ))}
                                 </select>
                                 {filteredProductsForAdjustment.length === 0 && (
-                                    <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                                        No hay coincidencias para la búsqueda.
-                                    </div>
+                                    <div className="stock-field-hint">No hay coincidencias para la búsqueda.</div>
                                 )}
                             </div>
 
                             {adjustment.productId === '__new__' && (
-                                <div style={{
-                                    display: 'grid',
-                                    gap: '0.75rem',
-                                    marginBottom: '1rem',
-                                    padding: '0.85rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--color-border)',
-                                    background: 'rgba(255,255,255,0.03)',
-                                }}>
+                                <div className="stock-new-product-box">
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Nombre del producto</label>
+                                        <label className="stock-field-label">Nombre del producto</label>
                                         <input
                                             type="text"
                                             className="neo-input"
@@ -888,9 +878,9 @@ const Stock = () => {
                                             onChange={(e) => setQuickProduct((prev) => ({ ...prev, name: e.target.value }))}
                                         />
                                     </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                    <div className="stock-form-grid-2">
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Categoría</label>
+                                            <label className="stock-field-label">Categoría</label>
                                             <select
                                                 className="neo-input"
                                                 value={quickProduct.category}
@@ -902,7 +892,7 @@ const Stock = () => {
                                             </select>
                                         </div>
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Unidad</label>
+                                            <label className="stock-field-label">Unidad</label>
                                             <select
                                                 className="neo-input"
                                                 value={quickProduct.unit}
@@ -916,9 +906,9 @@ const Stock = () => {
                                 </div>
                             )}
 
-                            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Cantidad / Kg</label>
+                            <div className="stock-form-row" style={{ marginBottom: '1.5rem' }}>
+                                <div>
+                                    <label className="stock-field-label">Cantidad / Kg</label>
                                     <input
                                         type="number"
                                         step="0.001"
@@ -929,8 +919,8 @@ const Stock = () => {
                                         onChange={e => setAdjustment({ ...adjustment, quantity: e.target.value })}
                                     />
                                 </div>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Acción</label>
+                                <div>
+                                    <label className="stock-field-label">Acción</label>
                                     <select
                                         className="neo-input"
                                         value={adjustment.type}

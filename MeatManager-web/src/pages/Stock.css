@@ -1,3 +1,46 @@
+.stock-field-label {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+}
+
+.stock-field-hint {
+    margin-top: 0.4rem;
+    font-size: 0.78rem;
+    color: var(--color-text-muted);
+}
+
+.stock-new-product-box {
+    display: grid;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    padding: 0.85rem;
+    border-radius: 10px;
+    border: 1px solid var(--color-border);
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.stock-form-row {
+    display: flex;
+    gap: 1rem;
+}
+
+.stock-form-row > div {
+    flex: 1;
+}
+
+.stock-form-grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.stock-form-group {
+    margin-bottom: 1rem;
+}
+
 .stock-container {
     display: flex;
     flex-direction: column;
