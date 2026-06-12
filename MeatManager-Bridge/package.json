@@ -45,6 +45,7 @@
       "desktop/**/*",
       "src/**/*",
       "public/**/*",
+      "data/**/*",
       "sql/**/*",
       "package.json"
     ],
