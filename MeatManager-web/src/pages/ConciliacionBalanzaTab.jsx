@@ -4,19 +4,17 @@ import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, Ch
 import { apiFetch } from '../utils/apiClient';
 import './ConciliacionBalanzaTab.css';
 
-const today = () => new Date().toISOString().slice(0, 10);
-
 const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
 const fmtDate = (s) => s ? new Date(s).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const fmtKg = (n) => n ? `${(n / 1000).toFixed(3)} kg` : '-';
 
 export default function ConciliacionBalanzaTab() {
     const navigate = useNavigate();
-    const [dateFrom, setDateFrom] = useState(today());
-    const [dateTo, setDateTo] = useState(today());
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
-    const [tickets, setTickets] = useState(null);
+    const [tickets, setTickets] = useState([]);
     const [selectedIds, setSelectedIds] = useState(new Set());
     const [subTab, setSubTab] = useState('listado');
     const [detailTicket, setDetailTicket] = useState(null);
@@ -31,7 +29,11 @@ export default function ConciliacionBalanzaTab() {
         setSelectedIds(new Set());
         setDetailTicket(null);
         try {
-            const data = await apiFetch(`/api/conciliacion/balanza?dateFrom=${dateFrom}&dateTo=${dateTo}`);
+            const params = new URLSearchParams();
+            if (dateFrom) params.set('dateFrom', dateFrom);
+            if (dateTo) params.set('dateTo', dateTo);
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const data = await apiFetch(`/api/conciliacion/balanza${qs}`);
             setTickets(data.tickets || []);
         } catch (e) {
             setError(e.message || 'Error al cargar datos');
@@ -39,6 +41,8 @@ export default function ConciliacionBalanzaTab() {
             setLoading(false);
         }
     }, [dateFrom, dateTo]);
+
+    React.useEffect(() => { buscar(); }, []);
 
     const handleSort = (field) => {
         if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -114,7 +118,7 @@ export default function ConciliacionBalanzaTab() {
                 </div>
             )}
 
-            {tickets !== null && !loading && (
+            {!loading && (
                 <>
                     {/* Summary chips */}
                     <div className="concil-summary">
@@ -299,12 +303,6 @@ export default function ConciliacionBalanzaTab() {
                 </>
             )}
 
-            {tickets === null && !loading && (
-                <div className="concil-empty">
-                    <Search size={40} style={{ opacity: 0.15 }} />
-                    <p>Seleccioná un rango de fechas y presioná Buscar.</p>
-                </div>
-            )}
         </div>
     );
 }

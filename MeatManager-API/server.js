@@ -11994,10 +11994,18 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
         }
         const branchId = accessContext?.activeBranch?.id || req.query.branchId || null;
         const { dateFrom, dateTo } = req.query;
-        if (!dateFrom || !dateTo) {
-            return res.status(400).json({ error: 'dateFrom y dateTo son requeridos' });
+        const params = [tenantId];
+        let dateFilter = '';
+        if (dateFrom && dateTo) {
+            dateFilter = ' AND DATE(t.sale_at) BETWEEN ? AND ?';
+            params.push(dateFrom, dateTo);
+        } else if (dateFrom) {
+            dateFilter = ' AND DATE(t.sale_at) >= ?';
+            params.push(dateFrom);
+        } else if (dateTo) {
+            dateFilter = ' AND DATE(t.sale_at) <= ?';
+            params.push(dateTo);
         }
-        const params = [tenantId, dateFrom, dateTo];
         let branchFilter = '';
         if (branchId) { branchFilter = ' AND t.branch_id = ?'; params.push(branchId); }
 
@@ -12017,7 +12025,7 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             FROM scale_bridge_ticket_map t
             WHERE t.tenant_id = ?
               AND t.ticket_status = 'open'
-              AND DATE(t.sale_at) BETWEEN ? AND ?
+              ${dateFilter}
               ${branchFilter}
             ORDER BY t.sale_at DESC
         `, params);
