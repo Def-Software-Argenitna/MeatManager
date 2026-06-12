@@ -940,61 +940,31 @@ const Stock = () => {
 
             {/* ── Modal Diagnóstico Balanza ─────────────────────────────────── */}
             {showDiag && (
-                <div className="app-modal-overlay" style={{
-                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
-                    zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
-                }}>
-                    <div style={{
-                        background: '#0f172a', border: '1px solid #334155', borderRadius: '12px',
-                        width: '100%', maxWidth: '750px', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-                        boxShadow: '0 20px 60px rgba(0,0,0,0.6)'
-                    }}>
-                        {/* Header */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.2rem', borderBottom: '1px solid #1e293b' }}>
-                            <span style={{ fontSize: '1rem', fontWeight: 700, color: '#e2e8f0', fontFamily: 'monospace' }}>
-                                ⚡ Diagnóstico Serial — Balanza Systel Cuora
-                            </span>
-                            <button
-                                onClick={() => setShowDiag(false)}
-                                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}
-                            >✕</button>
+                <div className="diag-overlay">
+                    <div className="diag-modal">
+                        <div className="diag-modal__header">
+                            <span className="diag-modal__title">⚡ Diagnóstico Serial — Balanza Systel Cuora</span>
+                            <button className="diag-modal__close" onClick={() => setShowDiag(false)}>✕</button>
                         </div>
 
-                        {/* Log body */}
-                        <div style={{
-                            flex: 1, overflowY: 'auto', padding: '0.8rem 1rem',
-                            fontFamily: 'monospace', fontSize: '0.75rem', lineHeight: 1.6,
-                        }}>
+                        <div className="diag-modal__body">
                             {diagLogs.length === 0 && (
-                                <div style={{ color: '#64748b', textAlign: 'center', marginTop: '2rem' }}>Sin datos aún...</div>
+                                <div className="diag-modal__empty">Sin datos aún...</div>
                             )}
                             {diagLogs.map((log, i) => (
-                                <div key={i} style={{
-                                    display: 'flex', gap: '0.6rem', padding: '0.15rem 0',
-                                    color: log.type === 'raw'   ? '#94a3b8' :
-                                           log.type === 'ok'    ? '#4ade80' :
-                                           log.type === 'warn'  ? '#fbbf24' :
-                                           log.type === 'error' ? '#f87171' : '#7dd3fc'
-                                }}>
-                                    <span style={{ color: '#475569', flexShrink: 0 }}>{log.ts}</span>
-                                    <span style={{ color: '#475569', flexShrink: 0 }}>
+                                <div key={i} className={`diag-log-row diag-log-row--${log.type}`}>
+                                    <span className="diag-log-row__ts">{log.ts}</span>
+                                    <span className="diag-log-row__icon">
                                         {log.type === 'raw' ? '📡' : log.type === 'ok' ? '✔' : log.type === 'warn' ? '⚠' : log.type === 'error' ? '✘' : 'ℹ'}
                                     </span>
-                                    <span style={{ wordBreak: 'break-all' }}>{log.msg}</span>
+                                    <span className="diag-log-row__msg">{log.msg}</span>
                                 </div>
                             ))}
                         </div>
 
-                        {/* Footer */}
-                        <div style={{ padding: '0.8rem 1.2rem', borderTop: '1px solid #1e293b', display: 'flex', gap: '0.8rem' }}>
-                            <button
-                                onClick={() => setDiagLogs([])}
-                                style={{ background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >Limpiar</button>
-                            <button
-                                onClick={() => setShowDiag(false)}
-                                style={{ marginLeft: 'auto', background: '#1e40af', border: 'none', color: '#fff', borderRadius: '6px', padding: '0.4rem 1rem', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >Cerrar</button>
+                        <div className="diag-modal__footer">
+                            <button className="diag-btn" onClick={() => setDiagLogs([])}>Limpiar</button>
+                            <button className="diag-btn diag-btn--primary" onClick={() => setShowDiag(false)}>Cerrar</button>
                         </div>
                     </div>
                 </div>
