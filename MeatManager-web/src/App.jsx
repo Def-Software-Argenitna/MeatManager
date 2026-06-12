@@ -133,7 +133,7 @@ function RequireAuth() {
 }
 
 function RequirePermission({ path, children }) {
-  const { currentUser, hasAccess, userPerms } = useUser();
+  const { currentUser, hasAccess, userPerms, logout } = useUser();
   const location = useLocation();
 
   if (!currentUser) {
@@ -144,12 +144,35 @@ function RequirePermission({ path, children }) {
     return children;
   }
 
-  const fallbackPath = Array.isArray(userPerms) && userPerms.length > 0 ? userPerms[0] : '/';
-  if (location.pathname !== fallbackPath) {
+  const fallbackPath = Array.isArray(userPerms) && userPerms.length > 0 ? userPerms[0] : null;
+  if (fallbackPath && location.pathname !== fallbackPath) {
     return <Navigate to={fallbackPath} replace />;
   }
 
-  return <RouteLoader />;
+  // Sin permisos y sin ruta de fallback válida — mostrar pantalla de error en lugar de spinner infinito
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      background: '#0f0f0f', color: '#f3f4f6', padding: '2rem', textAlign: 'center',
+    }}>
+      <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>🔒</div>
+      <h2 style={{ fontSize: '1.4rem', fontWeight: '700', marginBottom: '0.75rem' }}>Sin permisos asignados</h2>
+      <p style={{ color: '#9ca3af', maxWidth: '380px', lineHeight: '1.6' }}>
+        Tu usuario no tiene acceso a ningún módulo. Contactá al administrador para que te asigne permisos.
+      </p>
+      <button
+        onClick={logout}
+        style={{
+          marginTop: '2rem', padding: '0.6rem 1.6rem', borderRadius: '8px',
+          background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.15)',
+          color: '#f3f4f6', cursor: 'pointer', fontWeight: '600',
+        }}
+      >
+        Cerrar sesión
+      </button>
+    </div>
+  );
 }
 
 function App() {
