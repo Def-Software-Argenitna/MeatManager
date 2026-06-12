@@ -5,7 +5,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
-import { Button, EmptyState, useToast } from '../components/ui';
+import { Button, EmptyState, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -165,6 +165,7 @@ const Clientes = () => {
     const { currentUser, accessProfile, activeBranch, adminGlobalMode } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
+    const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingClientId, setEditingClientId] = useState(null);
     const [searchTerm, setSearchTerm] = useState('');
@@ -312,7 +313,7 @@ const Clientes = () => {
         setClientLedger({ rows: [], openingBalance: 0, salesTotal: 0, paymentTotal: 0, currentBalance: 0 });
         setSearchTerm('');
         setExpandedLedgerRowId(null);
-        loadCoreData();
+        loadCoreData().finally(() => setIsLoading(false));
     }, [loadCoreData]);
 
     useEffect(() => {
@@ -564,6 +565,37 @@ const Clientes = () => {
             }
         });
     }, [clientLedger, historyClientData, historyMonth]);
+
+    if (isLoading) return (
+        <div className="clients-container animate-fade-in">
+            <div className="neo-card" style={{ padding: '1rem', marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', alignItems: 'center', justifyContent: 'space-between' }}>
+                <Skeleton width="220px" height="38px" borderRadius="10px" />
+                <Skeleton width="160px" height="38px" borderRadius="10px" />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1rem' }}>
+                {[...Array(6)].map((_, i) => (
+                    <div key={i} className="neo-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', flex: 1 }}>
+                                <SkeletonLine width="65%" />
+                                <SkeletonLine width="45%" />
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                <Skeleton width="30px" height="30px" borderRadius="8px" />
+                                <Skeleton width="30px" height="30px" borderRadius="8px" />
+                            </div>
+                        </div>
+                        <SkeletonLine width="55%" />
+                        <SkeletonLine width="40%" />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                            <Skeleton width="90px" height="32px" borderRadius="8px" />
+                            <Skeleton width="90px" height="32px" borderRadius="8px" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 
     return (
         <div className="clients-container animate-fade-in">

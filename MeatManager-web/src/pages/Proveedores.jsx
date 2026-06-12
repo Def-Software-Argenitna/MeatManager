@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom';
 import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
-import { Button, EmptyState, Modal, useToast } from '../components/ui';
+import { Button, EmptyState, Modal, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const CASH_ACCOUNTS = [
@@ -28,6 +28,7 @@ const isCurrentAccountPurchase = (purchase) => (
 
 const Proveedores = () => {
     const toast = useToast();
+    const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
     const [editingId, setEditingId] = useState(null);
@@ -97,7 +98,7 @@ const Proveedores = () => {
     }, []);
 
     React.useEffect(() => {
-        loadSuppliersData().catch((error) => console.error('Error cargando proveedores:', error));
+        loadSuppliersData().catch((error) => console.error('Error cargando proveedores:', error)).finally(() => setIsLoading(false));
     }, [loadSuppliersData]);
 
     const resetForm = () => {
@@ -380,6 +381,33 @@ const Proveedores = () => {
         setPaymentSupplier(null);
         setSupplierPaymentSplits([]);
     };
+
+    if (isLoading) return (
+        <div className="animate-fade-in">
+            <div className="neo-card" style={{ padding: '1rem', marginBottom: '1.5rem' }}>
+                <SkeletonCard height="40px" />
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(400px, 1fr))', gap: '1.5rem' }}>
+                {[...Array(4)].map((_, i) => (
+                    <div key={i} className="neo-card" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', flex: 1 }}>
+                                <SkeletonLine width="55%" />
+                                <SkeletonLine width="35%" />
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.5rem' }}>
+                                <Skeleton width="32px" height="32px" borderRadius="8px" />
+                                <Skeleton width="32px" height="32px" borderRadius="8px" />
+                            </div>
+                        </div>
+                        <SkeletonLine width="45%" />
+                        <SkeletonLine width="60%" />
+                        <Skeleton width="100%" height="44px" borderRadius="10px" />
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 
     return (
         <div className="animate-fade-in">

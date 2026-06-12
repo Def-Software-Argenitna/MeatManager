@@ -9,7 +9,7 @@ import { buildOrderAddress, geocodeAddress, searchAddressSuggestions } from '../
 import { buildProductId, normalizeProductKey } from '../utils/productMatching';
 import { fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
-import { Button, EmptyState, useToast } from '../components/ui';
+import { Button, EmptyState, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
 import './Pedidos.css';
 
 const getLocalDateStr = () => {
@@ -70,6 +70,7 @@ const Pedidos = () => {
     const toast = useToast();
     const { accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const [isLoading, setIsLoading] = useState(true);
     const [filter, setFilter] = useState('pending');
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -110,6 +111,7 @@ const Pedidos = () => {
                     setProducts(Array.isArray(productRows) ? productRows : []);
                     setPedidos(sortOrders((Array.isArray(orderRows) ? orderRows : []).filter(branchMatches)));
                     setStockRows((Array.isArray(stockTableRows) ? stockTableRows : []).filter(branchMatches));
+                    setIsLoading(false);
                 }
             } catch (error) {
                 console.error('[PEDIDOS] No se pudieron cargar datos desde la API', error);
@@ -118,6 +120,7 @@ const Pedidos = () => {
                     setProducts([]);
                     setPedidos([]);
                     setStockRows([]);
+                    setIsLoading(false);
                 }
             }
         };
@@ -417,6 +420,33 @@ const Pedidos = () => {
         printWindow.document.close();
         setTimeout(() => { printWindow.print(); printWindow.close(); }, 500);
     };
+
+    if (isLoading) return (
+        <div className="pedidos-container animate-fade-in">
+            <div className="neo-card" style={{ padding: '1rem', marginBottom: '1rem', display: 'flex', gap: '0.75rem' }}>
+                <SkeletonCard height="38px" />
+                <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
+                    {[...Array(4)].map((_, i) => <Skeleton key={i} width="80px" height="38px" borderRadius="8px" />)}
+                </div>
+            </div>
+            <div className="pedidos-grid">
+                {[...Array(6)].map((_, i) => (
+                    <div key={i} className="pedido-card neo-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                            <SkeletonLine width="50%" />
+                            <SkeletonLine width="20%" />
+                        </div>
+                        <SkeletonLine width="80%" />
+                        <SkeletonLine width="60%" />
+                        <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                            <Skeleton width="70px" height="28px" borderRadius="8px" />
+                            <Skeleton width="70px" height="28px" borderRadius="8px" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 
     return (
         <div className="pedidos-container animate-fade-in">

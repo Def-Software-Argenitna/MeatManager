@@ -6,7 +6,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { useUser } from '../context/UserContext';
-import { Button, Modal, EmptyState } from '../components/ui';
+import { Button, Modal, EmptyState, Skeleton, SkeletonLine, SkeletonCard } from '../components/ui';
 import './Stock.css';
 
 const TYPE_META = {
@@ -34,6 +34,7 @@ const normalizeStockType = (value) => {
 const Stock = () => {
     const { accessProfile, activeBranch } = useUser();
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
     const [isImporting, setIsImporting] = useState(false);
@@ -82,6 +83,7 @@ const Stock = () => {
                     setAllStock(Array.isArray(stockRows) ? stockRows : []);
                     setProducts(Array.isArray(refreshedProducts) ? refreshedProducts : []);
                     setAnimalLots(Array.isArray(lotRows) ? lotRows : []);
+                    setIsLoading(false);
                 }
             } catch (error) {
                 console.error('[STOCK] No se pudieron cargar stock/precios desde la API', error);
@@ -89,6 +91,7 @@ const Stock = () => {
                     setAllStock([]);
                     setProducts([]);
                     setAnimalLots([]);
+                    setIsLoading(false);
                 }
             }
         };
@@ -537,6 +540,32 @@ const Stock = () => {
             showStatus('error', error.message || 'No se pudo guardar el precio');
         }
     };
+
+    if (isLoading) return (
+        <div className="stock-container animate-fade-in">
+            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
+                {[...Array(3)].map((_, i) => (
+                    <div key={i} className="neo-card" style={{ flex: 1, padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+                        <SkeletonLine width="50%" />
+                        <Skeleton width="65%" height="1.8rem" borderRadius="8px" />
+                        <SkeletonLine width="40%" />
+                    </div>
+                ))}
+            </div>
+            {[...Array(3)].map((_, i) => (
+                <div key={i} className="neo-card" style={{ marginBottom: '1rem', padding: '1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                    <SkeletonLine width="30%" />
+                    {[...Array(3)].map((_, j) => (
+                        <div key={j} style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+                            <SkeletonLine width="35%" />
+                            <SkeletonLine width="15%" />
+                            <SkeletonLine width="15%" />
+                        </div>
+                    ))}
+                </div>
+            ))}
+        </div>
+    );
 
     return (
         <div className="stock-container animate-fade-in">

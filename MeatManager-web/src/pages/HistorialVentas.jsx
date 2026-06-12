@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Receipt, Search, Package } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
-import { EmptyState } from '../components/ui';
+import { EmptyState, Skeleton, SkeletonLine } from '../components/ui';
 
 const formatCurrency = (amount) =>
     new Intl.NumberFormat('es-AR', {
@@ -43,6 +43,7 @@ const parsePaymentBreakdown = (value) => {
 
 const HistorialVentas = () => {
     const navigate = useNavigate();
+    const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [sales, setSales] = useState([]);
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
@@ -65,7 +66,7 @@ const HistorialVentas = () => {
             })));
         };
 
-        loadSales().catch((error) => console.error('Error cargando historial de ventas:', error));
+        loadSales().catch((error) => console.error('Error cargando historial de ventas:', error)).finally(() => setIsLoading(false));
     }, []);
 
     const filteredSales = useMemo(() => {
@@ -138,6 +139,31 @@ const HistorialVentas = () => {
             salesWithoutRealDetail,
         };
     }, [hiddenDigitalPaymentFilterMode, sales]);
+
+    if (isLoading) return (
+        <div className="animate-fade-in">
+            <div className="neo-card" style={{ padding: '1rem', marginBottom: '1.5rem', display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <Skeleton width="260px" height="38px" borderRadius="10px" />
+                <Skeleton width="140px" height="38px" borderRadius="10px" />
+                <Skeleton width="140px" height="38px" borderRadius="10px" />
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                {[...Array(7)].map((_, i) => (
+                    <div key={i} className="neo-card" style={{ padding: '1rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                        <Skeleton width="42px" height="42px" borderRadius="10px" style={{ flexShrink: 0 }} />
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', flex: 1 }}>
+                            <SkeletonLine width="45%" />
+                            <SkeletonLine width="30%" />
+                        </div>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.45rem', alignItems: 'flex-end' }}>
+                            <SkeletonLine width="80px" />
+                            <SkeletonLine width="60px" />
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
 
     return (
         <div className="animate-fade-in">
