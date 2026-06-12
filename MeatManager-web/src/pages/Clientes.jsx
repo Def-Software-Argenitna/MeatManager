@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil } from 'lucide-react';
+import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil, FileText } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
-import { Button, useToast } from '../components/ui';
+import { Button, EmptyState, useToast } from '../components/ui';
 import './Clientes.css';
 
 const currentMonth = () => {
@@ -1007,9 +1007,12 @@ const Clientes = () => {
                             )}
 
                             {!clientLedger || clientLedger.rows.length === 0 ? (
-                                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: '2rem 0', fontSize: '0.9rem' }}>
-                                    Sin movimientos registrados para este mes
-                                </div>
+                                <EmptyState
+                                    compact
+                                    icon={FileText}
+                                    title="Sin movimientos"
+                                    description="No hay movimientos registrados para este mes."
+                                />
                             ) : (
                                 <div className="clients-history-table-wrap">
                                     <table className="clients-history-table">

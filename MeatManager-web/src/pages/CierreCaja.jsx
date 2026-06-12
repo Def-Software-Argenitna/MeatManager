@@ -10,8 +10,11 @@ import {
     AlertCircle,
     Wallet,
     ArrowRightLeft,
+    ArrowDownUp,
+    Receipt,
 } from 'lucide-react';
 import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
+import { EmptyState } from '../components/ui';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
@@ -1170,7 +1173,12 @@ const CierreCaja = () => {
 
                         <div className="movements-list">
                             {manualMovements.length === 0 && (
-                                <div className="empty-state">No hay retiros ni ingresos manuales registrados para esta fecha.</div>
+                                <EmptyState
+                                    compact
+                                    icon={ArrowDownUp}
+                                    title="Sin movimientos manuales"
+                                    description="No hay retiros ni ingresos manuales registrados para esta fecha."
+                                />
                             )}
                             {manualMovements.map((movement) => {
                                 const presentation = getManualMovementPresentation(movement);
@@ -1196,7 +1204,12 @@ const CierreCaja = () => {
                         </div>
                         <div className="sales-detail-list">
                             {salesDetails.length === 0 && (
-                                <div className="empty-state">No hay ventas registradas en esta fecha.</div>
+                                <EmptyState
+                                    compact
+                                    icon={Receipt}
+                                    title="Sin ventas registradas"
+                                    description="No hay ventas registradas en esta fecha."
+                                />
                             )}
                             {salesDetails.map((sale) => (
                                 <div key={sale.id} className="sale-detail-item">

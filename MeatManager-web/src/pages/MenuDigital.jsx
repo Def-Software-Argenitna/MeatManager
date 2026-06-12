@@ -9,12 +9,13 @@ import {
     Smartphone,
     DollarSign,
     MessageCircle,
-    Headset
+    Headset,
+    UtensilsCrossed,
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
-import { Button, Modal } from '../components/ui';
+import { Button, EmptyState, Modal } from '../components/ui';
 import './MenuDigital.css';
 
 const formatFullPrice = (value) => `$${Number(value || 0).toLocaleString('es-AR')} /kg`;
@@ -262,7 +263,12 @@ const MenuDigital = () => {
                                         );
                                     })}
                                     {menuItems?.length === 0 && (
-                                        <p style={{ textAlign: 'center', color: '#999', marginTop: '2rem' }}>No hay productos en el menú.</p>
+                                        <EmptyState
+                                            compact
+                                            icon={UtensilsCrossed}
+                                            title="Menú vacío"
+                                            description="Agregá productos desde el panel de administración."
+                                        />
                                     )}
                                 </div>
                                 <div className="whatsapp-footer">
