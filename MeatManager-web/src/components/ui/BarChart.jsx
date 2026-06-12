@@ -1,18 +1,6 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import './ui.css';
 
-/**
- * Gráfico de barras liviano, sin dependencias externas, alineado al
- * design system Crystal 3D Glass. Pensado para series chicas (ej: ventas
- * de los últimos 7 días, top productos).
- *
- * Props:
- * - data: Array<{ label: string, value: number, highlight?: boolean }>
- * - formatValue: (n) => string  → etiqueta sobre la barra (default: número)
- * - formatTooltip: (item) => string → title nativo al pasar el mouse
- * - height: alto del área de barras en px (default 180)
- * - emptyMessage: texto si no hay datos
- */
 const BarChart = ({
     data = [],
     formatValue = (n) => String(n),
@@ -20,6 +8,12 @@ const BarChart = ({
     height = 180,
     emptyMessage = 'Sin datos para mostrar.',
 }) => {
+    const [ready, setReady] = useState(false);
+    useEffect(() => {
+        const id = requestAnimationFrame(() => setReady(true));
+        return () => cancelAnimationFrame(id);
+    }, []);
+
     const points = Array.isArray(data) ? data : [];
     const max = points.reduce((m, p) => Math.max(m, Number(p?.value) || 0), 0);
 
@@ -29,26 +23,44 @@ const BarChart = ({
 
     return (
         <div className="ui-barchart" style={{ '--ui-chart-height': `${height}px` }}>
-            {points.map((point, index) => {
-                const value = Number(point?.value) || 0;
-                // Altura relativa al máximo; mínimo visible para valores > 0.
-                const pct = max > 0 ? Math.max((value / max) * 100, value > 0 ? 4 : 0) : 0;
-                const tooltip = formatTooltip
-                    ? formatTooltip(point)
-                    : `${point?.label}: ${formatValue(value)}`;
-                return (
-                    <div className="ui-barchart__col" key={`${point?.label}-${index}`} title={tooltip}>
-                        <span className="ui-barchart__value">{formatValue(value)}</span>
-                        <div className="ui-barchart__track">
-                            <div
-                                className={`ui-barchart__bar${point?.highlight ? ' ui-barchart__bar--highlight' : ''}`}
-                                style={{ height: `${pct}%` }}
-                            />
+            <div className="ui-barchart__grid">
+                {[75, 50, 25].map(pct => (
+                    <div key={pct} className="ui-barchart__gridline" style={{ bottom: `${pct}%` }} />
+                ))}
+            </div>
+            <div className="ui-barchart__cols">
+                {points.map((point, index) => {
+                    const value = Number(point?.value) || 0;
+                    const pct = max > 0 ? Math.max((value / max) * 100, value > 0 ? 5 : 0) : 0;
+                    const tooltip = formatTooltip
+                        ? formatTooltip(point)
+                        : `${point?.label}: ${formatValue(value)}`;
+                    return (
+                        <div
+                            className="ui-barchart__col"
+                            key={`${point?.label}-${index}`}
+                            title={tooltip}
+                        >
+                            <span className={`ui-barchart__value${value === 0 ? ' ui-barchart__value--zero' : ''}`}>
+                                {value === 0 ? '—' : formatValue(value)}
+                            </span>
+                            <div className="ui-barchart__track">
+                                <div
+                                    className={`ui-barchart__bar${point?.highlight ? ' ui-barchart__bar--highlight' : ''}`}
+                                    style={{
+                                        height: ready ? `${pct}%` : '0',
+                                        transitionDelay: ready ? `${index * 0.06}s` : '0s',
+                                    }}
+                                />
+                            </div>
+                            <span className={`ui-barchart__label${point?.highlight ? ' ui-barchart__label--today' : ''}`}>
+                                {point?.label}
+                            </span>
+                            {point?.highlight && <span className="ui-barchart__today-dot" aria-label="Hoy" />}
                         </div>
-                        <span className="ui-barchart__label">{point?.label}</span>
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
         </div>
     );
 };
