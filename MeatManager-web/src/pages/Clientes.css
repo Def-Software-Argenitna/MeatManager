@@ -37,6 +37,202 @@
 .clients-history-modal {
     margin-top: 88px;
     align-self: flex-start;
+    background: linear-gradient(160deg, rgba(22, 22, 30, 0.98) 0%, rgba(12, 12, 18, 0.99) 100%) !important;
+    border: 1px solid rgba(255, 255, 255, 0.09) !important;
+    border-radius: 20px !important;
+    box-shadow: 0 32px 72px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(249, 115, 22, 0.06);
+    padding: 1.75rem;
+}
+
+.clients-ledger-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 1.25rem;
+    padding-bottom: 1.25rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.clients-ledger-header__info h2 {
+    font-size: 1.2rem;
+    font-weight: 800;
+    margin: 0;
+    color: var(--color-text-main);
+}
+
+.clients-ledger-header__info p {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+    margin: 0;
+}
+
+.clients-ledger-header__meta {
+    margin-top: 0.45rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.clients-ledger-header__actions {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-shrink: 0;
+}
+
+.clients-balance-card {
+    border-radius: 12px;
+    padding: 1rem;
+    margin-bottom: 1.25rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.clients-balance-card--debt {
+    background: rgba(239, 68, 68, 0.1);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.clients-balance-card--credit {
+    background: rgba(34, 197, 94, 0.1);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.clients-balance-card__label {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.clients-balance-card__amount {
+    font-size: 1.4rem;
+    font-weight: 800;
+}
+
+.clients-balance-card__amount--debt { color: #ef4444; }
+.clients-balance-card__amount--credit { color: #22c55e; }
+
+.clients-pay-box {
+    background: rgba(34, 197, 94, 0.06);
+    border: 1px solid rgba(34, 197, 94, 0.25);
+    border-radius: 12px;
+    padding: 0.85rem;
+    margin-bottom: 1.25rem;
+}
+
+.clients-pay-box__title {
+    font-size: 0.75rem;
+    color: #22c55e;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.6rem;
+}
+
+.clients-pay-box__row {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.clients-pay-box__input-wrap {
+    position: relative;
+    flex: 1;
+}
+
+.clients-pay-box__currency {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-weight: bold;
+    color: #22c55e;
+    pointer-events: none;
+}
+
+.clients-pay-box__input {
+    width: 100%;
+    padding: 0.6rem 0.6rem 0.6rem 1.8rem !important;
+    font-size: 1.1rem !important;
+    font-weight: bold !important;
+    border: 1px solid rgba(34, 197, 94, 0.4) !important;
+    box-sizing: border-box;
+}
+
+.clients-pay-box__btn {
+    padding: 0.6rem 1.1rem;
+    background: #22c55e;
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.clients-pay-box__btn:hover:not(:disabled) { background: #16a34a; }
+
+.clients-pay-box__btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.clients-month-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 1rem;
+    justify-content: center;
+}
+
+.clients-month-nav__btn {
+    background: var(--color-bg-card);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    padding: 0.4rem 0.75rem;
+    color: var(--color-text-main);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    transition: border-color 0.15s;
+}
+
+.clients-month-nav__btn:hover {
+    border-color: var(--color-primary);
+}
+
+.clients-month-nav__label {
+    font-weight: 700;
+    font-size: 1rem;
+    min-width: 150px;
+    text-align: center;
+}
+
+.clients-debt-summary {
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    border-radius: 10px;
+    padding: 0.75rem 1rem;
+    margin-bottom: 1rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.clients-debt-summary__label {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.clients-debt-summary__amount {
+    font-weight: 800;
+    color: #ef4444;
+    font-size: 1.1rem;
 }
 
 .clients-modal-content h2,

@@ -893,19 +893,19 @@ const Clientes = () => {
             {historyClient && (
                 <div className="modal-overlay" onClick={() => setHistoryClient(null)}>
                     <div className="modal-content neo-card clients-history-modal" style={{ maxWidth: '520px', width: '95%', maxHeight: '90vh', overflowY: 'auto' }} onClick={(e) => e.stopPropagation()}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                            <div>
-                                <h2 style={{ fontSize: '1.2rem', fontWeight: '800', margin: 0 }}>Historial Cta. Cte.</h2>
-                                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>{getClientFullName(historyClientData)}</p>
+                        <div className="clients-ledger-header">
+                            <div className="clients-ledger-header__info">
+                                <h2>Historial Cta. Cte.</h2>
+                                <p>{getClientFullName(historyClientData)}</p>
                                 {(formatAddress(historyClientData) || getClientPhones(historyClientData).length > 0 || getClientEmails(historyClientData).length > 0) && (
-                                    <div style={{ marginTop: '0.45rem', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                                        {formatAddress(historyClientData) && <div>{formatAddress(historyClientData)}</div>}
-                                        {getClientPhones(historyClientData).length > 0 && <div>{getClientPhones(historyClientData).join(' | ')}</div>}
-                                        {getClientEmails(historyClientData).length > 0 && <div>{getClientEmails(historyClientData).join(' | ')}</div>}
+                                    <div className="clients-ledger-header__meta">
+                                        {formatAddress(historyClientData) && <span>{formatAddress(historyClientData)}</span>}
+                                        {getClientPhones(historyClientData).length > 0 && <span>{getClientPhones(historyClientData).join(' | ')}</span>}
+                                        {getClientEmails(historyClientData).length > 0 && <span>{getClientEmails(historyClientData).join(' | ')}</span>}
                                     </div>
                                 )}
                             </div>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                            <div className="clients-ledger-header__actions">
                                 <Button
                                     variant="secondary"
                                     icon={<Printer size={15} />}
@@ -920,23 +920,15 @@ const Clientes = () => {
                             </div>
                         </div>
 
-                        <div style={{
-                            background: effectiveHistoryBalance < 0 ? 'rgba(239,68,68,0.1)' : 'rgba(34,197,94,0.1)',
-                            border: `1px solid ${effectiveHistoryBalance < 0 ? 'rgba(239,68,68,0.3)' : 'rgba(34,197,94,0.3)'}`,
-                            borderRadius: '8px', padding: '1rem', marginBottom: '1.25rem',
-                            display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                        }}>
-                            <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>Saldo actual</span>
-                            <span style={{ fontSize: '1.4rem', fontWeight: '800', color: effectiveHistoryBalance < 0 ? '#ef4444' : '#22c55e' }}>
+                        <div className={`clients-balance-card ${effectiveHistoryBalance < 0 ? 'clients-balance-card--debt' : 'clients-balance-card--credit'}`}>
+                            <span className="clients-balance-card__label">Saldo actual</span>
+                            <span className={`clients-balance-card__amount ${effectiveHistoryBalance < 0 ? 'clients-balance-card__amount--debt' : 'clients-balance-card__amount--credit'}`}>
                                 {effectiveHistoryBalance < 0 ? '-' : ''}${Math.abs(effectiveHistoryBalance).toLocaleString()}
                             </span>
                         </div>
 
-                        <div style={{
-                            background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.25)',
-                            borderRadius: '8px', padding: '0.85rem', marginBottom: '1.25rem'
-                        }}>
-                            <div style={{ fontSize: '0.8rem', color: '#22c55e', fontWeight: '700', marginBottom: '0.5rem' }}>REGISTRAR PAGO / COBRO</div>
+                        <div className="clients-pay-box">
+                            <div className="clients-pay-box__title">Registrar pago / cobro</div>
                             <div style={{ marginBottom: '0.75rem' }}>
                                 <select
                                     className="neo-input"
@@ -950,9 +942,9 @@ const Clientes = () => {
                                     ))}
                                 </select>
                             </div>
-                            <div style={{ display: 'flex', gap: '0.5rem' }}>
-                                <div style={{ position: 'relative', flex: 1 }}>
-                                    <span style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', fontWeight: 'bold', color: '#22c55e' }}>$</span>
+                            <div className="clients-pay-box__row">
+                                <div className="clients-pay-box__input-wrap">
+                                    <span className="clients-pay-box__currency">$</span>
                                     <input
                                         type="number"
                                         min="0"
@@ -961,64 +953,47 @@ const Clientes = () => {
                                         value={payInput}
                                         onChange={(e) => setPayInput(e.target.value)}
                                         onKeyDown={(e) => { if (e.key === 'Enter') handlePayment(); }}
-                                        style={{
-                                            width: '100%', padding: '0.6rem 0.6rem 0.6rem 1.8rem',
-                                            fontSize: '1.1rem', fontWeight: 'bold',
-                                            background: 'var(--color-bg-main)',
-                                            border: '1px solid rgba(34,197,94,0.4)',
-                                            borderRadius: '6px', color: 'var(--color-text-main)',
-                                            boxSizing: 'border-box'
-                                        }}
+                                        className="neo-input clients-pay-box__input"
                                     />
                                 </div>
                                 <button
                                     onClick={handlePayment}
                                     disabled={payLoading || !payInput || parseFloat(payInput) <= 0 || !paymentMethodId}
-                                    style={{
-                                        padding: '0.6rem 1.1rem', background: '#22c55e', border: 'none',
-                                        borderRadius: '6px', color: '#fff', fontWeight: '700',
-                                        cursor: payLoading || !payInput ? 'not-allowed' : 'pointer',
-                                        opacity: payLoading || !payInput ? 0.6 : 1,
-                                        display: 'flex', alignItems: 'center', gap: '0.3rem', whiteSpace: 'nowrap'
-                                    }}
+                                    className="clients-pay-box__btn"
                                 >
                                     <Check size={16} /> Cobrar
                                 </button>
                             </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem', justifyContent: 'center' }}>
+                        <div className="clients-month-nav">
                             <button
+                                className="clients-month-nav__btn"
                                 onClick={() => {
                                     const [y, m] = historyMonth.split('-').map(Number);
                                     const d = new Date(y, m - 2, 1);
                                     setHistoryMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                                 }}
-                                style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.4rem 0.75rem', color: 'var(--color-text-main)', cursor: 'pointer' }}
                             ><ChevronLeft size={16} /></button>
-                            <span style={{ fontWeight: '700', fontSize: '1rem', minWidth: '150px', textAlign: 'center' }}>
+                            <span className="clients-month-nav__label">
                                 {new Date(historyMonth + '-15').toLocaleDateString('es-AR', { month: 'long', year: 'numeric' }).replace(/^\w/, (c) => c.toUpperCase())}
                             </span>
                             <button
+                                className="clients-month-nav__btn"
                                 onClick={() => {
                                     const [y, m] = historyMonth.split('-').map(Number);
                                     const d = new Date(y, m, 1);
                                     setHistoryMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
                                 }}
-                                style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', borderRadius: '6px', padding: '0.4rem 0.75rem', color: 'var(--color-text-main)', cursor: 'pointer' }}
                             ><ChevronRight size={16} /></button>
                         </div>
 
                         {clientLedger && clientLedger.rows.length > 0 && (
-                            <div style={{
-                                background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)',
-                                borderRadius: '8px', padding: '0.75rem 1rem', marginBottom: '1rem',
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center'
-                            }}>
-                                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+                            <div className="clients-debt-summary">
+                                <span className="clients-debt-summary__label">
                                     Compras a cuenta del mes ({clientLedger.rows.length} movimiento{clientLedger.rows.length !== 1 ? 's' : ''})
                                 </span>
-                                <span style={{ fontWeight: '800', color: '#ef4444', fontSize: '1.1rem' }}>
+                                <span className="clients-debt-summary__amount">
                                     ${clientLedger.salesTotal.toLocaleString()}
                                 </span>
                             </div>
