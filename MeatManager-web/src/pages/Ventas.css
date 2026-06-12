@@ -66,6 +66,8 @@
     overflow-y: auto;
     align-content: start;
     padding-right: 0.2rem;
+    flex: 1;
+    min-height: 0;
 }
 
 .products-accordion-group {
