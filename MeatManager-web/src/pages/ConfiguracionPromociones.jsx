@@ -8,7 +8,7 @@ import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { fetchClientBranches, fetchTable, saveTableRecord } from '../utils/apiClient';
 import { normalizePluCode, normalizePromotion, PROMO_END_CONDITIONS, PROMO_PRICE_MODES, PROMO_STOCK_MODES } from '../utils/promotions';
-import { Button } from '../components/ui';
+import { Button, EmptyState } from '../components/ui';
 import './ConfiguracionPromociones.css';
 
 const toNumber = (value, decimals = 2) => {
@@ -1443,10 +1443,11 @@ const ConfiguracionPromociones = () => {
                         </div>
 
                         {promotionGroups.length === 0 ? (
-                            <div className="empty-state">
-                                <FiBox className="empty-icon" />
-                                <p>{listBranchFilter ? 'No hay promociones para esta sucursal.' : 'No se han creado promociones todavía.'}</p>
-                            </div>
+                            <EmptyState
+                                icon={FiBox}
+                                title="Sin promociones"
+                                description={listBranchFilter ? 'No hay promociones para esta sucursal.' : 'No se han creado promociones todavía.'}
+                            />
                         ) : (
                             <div className="promos-container">
                                 
