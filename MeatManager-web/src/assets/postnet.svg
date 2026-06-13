@@ -1,8 +1,5 @@
 <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-  <!-- White rounded background -->
-  <rect width="128" height="128" rx="22" fill="#f5f5f5"/>
-  <!-- "Pos" in dark gray -->
-  <text x="18" y="72" fill="#3d3d3d" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="42" font-weight="900">Pos</text>
-  <!-- "Net" in orange -->
-  <text x="18" y="112" fill="#f97316" font-family="Arial Black, Arial, Helvetica, sans-serif" font-size="42" font-weight="900">Net</text>
+  <rect width="128" height="128" rx="22" fill="#f4f4f4"/>
+  <text x="64" y="68" text-anchor="middle" fill="#3a3a3a" font-family="'Arial Black', 'Arial Bold', Arial, Helvetica, sans-serif" font-size="46" font-weight="900" letter-spacing="-1">Pos</text>
+  <text x="64" y="112" text-anchor="middle" fill="#f97316" font-family="'Arial Black', 'Arial Bold', Arial, Helvetica, sans-serif" font-size="46" font-weight="900" letter-spacing="-1">Net</text>
 </svg>

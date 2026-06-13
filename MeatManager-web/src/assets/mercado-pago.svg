@@ -1,39 +1,52 @@
 <svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
-  <!-- Light lavender background -->
+  <!-- Fondo lavanda -->
   <rect width="128" height="128" rx="22" fill="#e8eaf6"/>
-  <!-- Outer oval (dark navy border) -->
-  <ellipse cx="64" cy="50" rx="45" ry="31" fill="#1a237e"/>
-  <!-- Inner oval (cyan fill) -->
-  <ellipse cx="64" cy="50" rx="41" ry="27" fill="#29b6f6"/>
-  <!-- White horizontal stripe across oval -->
-  <rect x="23" y="44.5" width="82" height="11" fill="white"/>
-  <!-- LEFT HAND -->
+  <!-- Óvalo borde azul marino -->
+  <ellipse cx="64" cy="50" rx="43" ry="29" fill="#1a237e"/>
+  <!-- Óvalo interior cyan -->
+  <ellipse cx="64" cy="50" rx="39" ry="25" fill="#29b6f6"/>
+  <!-- Franja blanca horizontal (bandera) -->
+  <rect x="25" y="45" width="78" height="10" fill="white"/>
+
+  <!-- MANO DERECHA (detrás) -->
   <path d="
-    M 22 68
-    C 24 64 30 60 38 58
-    C 42 57 45 54 46 50
-    C 47 47 47 44 49 43
-    C 51 41 54 42 55 44
-    C 56 46 55 49 53 51
-    C 57 48 60 48 63 49
-    L 63 57
-    C 58 62 50 66 42 67
-    C 34 68 26 69 22 68 Z
+    M 104 63
+    C 98 60 90 57 84 54
+    C 80 52 78 49 77 46
+    L 64 46 L 64 55
+    C 70 59 78 63 86 64
+    C 94 65 102 64 104 63 Z
   " fill="white"/>
-  <!-- RIGHT HAND -->
+  <!-- Pulgar derecho -->
   <path d="
-    M 106 68
-    C 104 64 98 60 90 58
-    C 86 57 83 54 82 50
-    C 81 47 81 44 79 43
-    C 77 41 74 42 73 44
-    C 72 46 73 49 75 51
-    C 71 48 68 48 65 49
-    L 65 57
-    C 70 62 78 66 86 67
-    C 94 68 102 69 106 68 Z
+    M 84 54 C 86 50 88 45 86 41
+    C 84 38 80 37 78 39
+    C 76 41 77 45 78 47 Z
   " fill="white"/>
-  <!-- Text -->
-  <text x="64" y="93" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900" letter-spacing="0.2">mercado</text>
-  <text x="64" y="109" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900" letter-spacing="0.2">pago</text>
+
+  <!-- MANO IZQUIERDA (encima) -->
+  <path d="
+    M 24 63
+    C 30 60 38 57 44 54
+    C 48 52 50 49 51 46
+    L 64 46 L 64 55
+    C 58 59 50 63 42 64
+    C 34 65 26 64 24 63 Z
+  " fill="white"/>
+  <!-- Pulgar izquierdo -->
+  <path d="
+    M 44 54 C 42 50 40 45 42 41
+    C 44 38 48 37 50 39
+    C 52 41 51 45 50 47 Z
+  " fill="white"/>
+
+  <!-- Nudillos mano izquierda (4 bultos arriba) -->
+  <ellipse cx="52" cy="44" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="58" cy="42" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="64" cy="42" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="70" cy="44" rx="4.5" ry="3.5" fill="white"/>
+
+  <!-- Texto -->
+  <text x="64" y="93" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900">mercado</text>
+  <text x="64" y="109" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900">pago</text>
 </svg>
