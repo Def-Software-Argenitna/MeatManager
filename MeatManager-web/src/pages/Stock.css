@@ -316,6 +316,8 @@
 .stock-col-plu { color: var(--color-text-muted); }
 .stock-col-qty { text-align: right; }
 .stock-col-date { color: var(--color-text-muted); font-size: 0.78rem; }
+.stock-col-actions { text-align: right; width: 40px; }
+.stock-col-price { font-weight: 700; }
 
 .stock-badge-plu {
     font-family: monospace;

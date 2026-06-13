@@ -724,7 +724,7 @@ const Stock = () => {
                         {Object.entries(stockByType).map(([type, items]) => {
                             const typeInfo = getTypeInfo(type);
                             return (
-                                <DirectionalReveal key={type} className="stock-group" from={Object.keys(stockByType).indexOf(type) % 2 === 0 ? 'left' : 'right'} delay={0.28 + (Object.keys(stockByType).indexOf(type) * 0.04)}>
+                                <DirectionalReveal key={type} className="neo-card stock-group" from={Object.keys(stockByType).indexOf(type) % 2 === 0 ? 'left' : 'right'} delay={0.28 + (Object.keys(stockByType).indexOf(type) * 0.04)} style={{ padding: '1rem' }}>
                                     <div className="group-header">
                                         <span className="group-icon">{typeInfo.icon}</span>
                                         <span className="group-name">{typeInfo.name}</span>
@@ -738,6 +738,7 @@ const Stock = () => {
                                                 <th>Precio</th>
                                                 <th>Cantidad</th>
                                                 <th>Actualizado</th>
+                                                <th></th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -752,7 +753,7 @@ const Stock = () => {
                                                 </td>
                                                 <td className="stock-col-price">
                                                     {item.isDespostadaPending ? (
-                                                        <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Pendiente despostada{item.supplier ? ` · ${item.supplier}` : ''}</span>
+                                                        <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Pendiente{item.supplier ? ` · ${item.supplier}` : ''}</span>
                                                     ) : editingPriceId === item.id ? (
                                                         <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
                                                             <input type="number" min="0" step="0.01" className="neo-input" style={{ width: '110px', marginBottom: 0, padding: '0.3rem 0.5rem' }} value={editingPriceValue} onChange={(e) => setEditingPriceValue(e.target.value)} />
@@ -760,11 +761,8 @@ const Stock = () => {
                                                             <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}><X size={13} /></button>
                                                         </span>
                                                     ) : (
-                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                                                            <span style={{ fontWeight: 700, color: Number(item.price || 0) > 0 ? '#fdba74' : '#ef4444' }}>
-                                                                {Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}
-                                                            </span>
-                                                            <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}><Pencil size={13} /></button>
+                                                        <span style={{ fontWeight: 700, color: Number(item.price || 0) > 0 ? '#fdba74' : '#ef4444' }}>
+                                                            {Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}
                                                         </span>
                                                     )}
                                                 </td>
@@ -773,10 +771,14 @@ const Stock = () => {
                                                         {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}
                                                     </span>
                                                     <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginLeft: '0.25rem' }}>{item.unit === 'kg' ? 'kg' : 'un'}</span>
-                                                    {Number(item.quantity || 0) < 0 && <span className="stock-badge-neg">negativo</span>}
                                                 </td>
                                                 <td className="stock-col-date">
                                                     {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                </td>
+                                                <td className="stock-col-actions">
+                                                    {!item.isDespostadaPending && editingPriceId !== item.id && (
+                                                        <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)} title="Editar precio"><Pencil size={14} color="#3b82f6" /></button>
+                                                    )}
                                                 </td>
                                             </tr>
                                         ))}
