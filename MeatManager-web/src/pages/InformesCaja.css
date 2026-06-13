@@ -143,6 +143,40 @@
     text-align: center;
 }
 
+/* ── Inputs de fecha / período ────────────────────────────────────────────── */
+.ic-controls .neo-input,
+.ic-controls input[type="date"],
+.ic-controls input[type="month"],
+.ic-controls input[type="week"],
+.ic-controls select {
+    background: rgba(255,255,255,0.05) !important;
+    border: 1px solid rgba(255,255,255,0.12) !important;
+    border-radius: var(--radius-md) !important;
+    color: var(--color-text-main) !important;
+    padding: 0.55rem 0.75rem !important;
+    font-size: 0.88rem !important;
+    font-weight: 600 !important;
+    width: 100%;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+    color-scheme: dark;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.04);
+}
+
+.ic-controls .neo-input:focus,
+.ic-controls input[type="date"]:focus,
+.ic-controls input[type="month"]:focus,
+.ic-controls input[type="week"]:focus,
+.ic-controls select:focus {
+    border-color: rgba(249,115,22,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(249,115,22,0.12), inset 0 1px 0 rgba(255,255,255,0.06) !important;
+}
+
+.ic-controls select option {
+    background: #1a1a2e;
+    color: var(--color-text-main);
+}
+
 .ic-export-actions {
     display: flex;
     gap: 0.5rem;
