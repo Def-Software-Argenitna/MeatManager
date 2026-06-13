@@ -619,7 +619,7 @@ const StatCard = ({ title, value, icon, trend, isNegative, isWarning, details = 
                     {icon ? React.createElement(icon, { size: 20, color: isWarning ? '#f59e0b' : 'var(--color-primary)' }) : null}
                 </div>
             </div>
-            <div style={{ fontSize: 'clamp(1.1rem, 3.5vw, 1.55rem)', fontWeight: '700', lineHeight: 1.15, wordBreak: 'break-word' }}>{value}</div>
+            <div style={{ fontSize: 'clamp(1.1rem, 3.5vw, 1.55rem)', fontWeight: '700', lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{value}</div>
             {trend && (
                 <div style={{ fontSize: '0.85rem', color: isNegative ? '#ef4444' : (isWarning ? '#f59e0b' : '#22c55e') }}>
                     {trend}
