@@ -249,24 +249,17 @@
     display: flex;
     flex-direction: column;
     gap: 0;
-    background: rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.07);
-    border-radius: var(--radius-md);
-    overflow: hidden;
 }
 
 .group-header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.55rem 0.85rem;
-    border-bottom: 1px solid rgba(255,255,255,0.07);
-    background: rgba(255,255,255,0.03);
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
-.group-icon {
-    font-size: 1rem;
-}
+.group-icon { font-size: 1rem; }
 
 .group-name {
     font-size: 0.85rem;
@@ -280,100 +273,75 @@
 .group-count {
     font-size: 0.75rem;
     color: var(--color-text-muted);
-    background-color: rgba(255, 255, 255, 0.05);
-    padding: 0.15rem 0.55rem;
-    border-radius: var(--radius-sm);
-    border: 1px solid rgba(255,255,255,0.06);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
 }
 
-.stock-items {
-    display: flex;
-    flex-direction: column;
+/* Tabla */
+.stock-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
 }
 
-.stock-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0.45rem 0.85rem;
-    background: transparent;
-    border: none;
-    border-bottom: 1px solid rgba(255,255,255,0.04);
-    border-radius: 0;
-    transition: background 0.12s;
-    position: relative;
-    overflow: hidden;
-    box-shadow: none;
-    gap: 1rem;
+.stock-table thead tr {
+    background: rgba(255,255,255,0.04);
+    border-bottom: 1px solid rgba(255,255,255,0.08);
 }
 
-.stock-item:last-child {
-    border-bottom: none;
-}
-
-.stock-item:hover {
-    background: rgba(255,255,255,0.03);
-    border-color: rgba(255,255,255,0.04);
-    transform: none;
-}
-
-.item-info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-wrap: wrap;
-}
-
-.item-name {
-    font-weight: 600;
-    font-size: 0.88rem;
-    color: var(--color-text-main);
-    margin-bottom: 0;
+.stock-table th {
+    text-align: left;
+    padding: 0.4rem 0.6rem;
+    color: var(--color-text-muted);
+    font-weight: 700;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
     white-space: nowrap;
 }
 
-.item-meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 0.4rem;
-    font-size: 0.75rem;
+.stock-table td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.05);
+    color: var(--color-text-main);
+    white-space: nowrap;
+}
+
+.stock-table tbody tr:last-child td { border-bottom: none; }
+.stock-table tbody tr:hover { background: rgba(255,255,255,0.03); }
+.stock-row-negative td { background: rgba(239,68,68,0.04); }
+
+.stock-col-name { font-weight: 600; }
+.stock-col-plu { color: var(--color-text-muted); }
+.stock-col-qty { text-align: right; }
+.stock-col-date { color: var(--color-text-muted); font-size: 0.78rem; }
+
+.stock-badge-plu {
+    font-family: monospace;
+    font-size: 0.82rem;
     color: var(--color-text-muted);
 }
 
-.item-plu {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.25rem;
-    padding: 0.1rem 0.35rem;
+.stock-badge-lot {
+    background: rgba(234,179,8,0.1);
+    color: #fbbf24;
+    border: 1px solid rgba(234,179,8,0.25);
     border-radius: 999px;
-    border: 1px solid rgba(249, 115, 22, 0.25);
-    background: rgba(249, 115, 22, 0.07);
-    color: var(--color-text-main);
-    font-size: 0.75rem;
-}
-
-.item-quantity {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    margin-left: 0;
-    flex-shrink: 0;
-}
-
-.quantity-value {
-    font-size: 0.95rem;
-    font-weight: 700;
-    color: var(--color-text-main);
-    text-shadow: none;
-}
-
-.quantity-unit {
     font-size: 0.72rem;
-    color: var(--color-text-muted);
-    text-transform: uppercase;
+    font-weight: 700;
+    padding: 0.1rem 0.45rem;
+}
+
+.stock-badge-neg {
+    background: rgba(239,68,68,0.12);
+    color: #fca5a5;
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    padding: 0.1rem 0.35rem;
+    margin-left: 0.4rem;
 }
 @keyframes spin {
   from { transform: rotate(0deg); }

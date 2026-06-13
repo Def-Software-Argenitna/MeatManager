@@ -730,96 +730,58 @@ const Stock = () => {
                                         <span className="group-name">{typeInfo.name}</span>
                                         <span className="group-count">{items.length} items</span>
                                     </div>
-                                    <div className="stock-items">
+                                    <table className="stock-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Nombre</th>
+                                                <th>PLU</th>
+                                                <th>Precio</th>
+                                                <th>Cantidad</th>
+                                                <th>Actualizado</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
                                         {items.map(item => (
-                                            <div key={item.id} className="stock-item">
-                                                <div className="item-info">
-                                                    <div className="item-name">{item.name}</div>
-                                                    <div className="item-meta">
-                                                        {item.isDespostadaPending ? (
-                                                            <>
-                                                                <span className="item-plu">
-                                                                    Lote: <strong>#{item.lot_id}</strong>
-                                                                </span>
-                                                                <span className="item-price">
-                                                                    Estado: <strong>Pendiente de despostada</strong>
-                                                                </span>
-                                                                {item.supplier && (
-                                                                    <span className="item-price">
-                                                                        Proveedor: <strong>{item.supplier}</strong>
-                                                                    </span>
-                                                                )}
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <span className="item-plu">
-                                                                    PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
-                                                                </span>
-                                                                <span className="item-price">
-                                                                    Precio: {editingPriceId === item.id ? (
-                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                            <input
-                                                                                type="number"
-                                                                                min="0"
-                                                                                step="0.01"
-                                                                                className="neo-input"
-                                                                                style={{ width: '120px', marginBottom: 0, padding: '0.35rem 0.55rem' }}
-                                                                                value={editingPriceValue}
-                                                                                onChange={(e) => setEditingPriceValue(e.target.value)}
-                                                                            />
-                                                                            <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}>
-                                                                                <Save size={14} />
-                                                                            </button>
-                                                                            <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}>
-                                                                                <X size={14} />
-                                                                            </button>
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                            <strong>{Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}</strong>
-                                                                            <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
-                                                                                <Pencil size={14} />
-                                                                            </button>
-                                                                        </span>
-                                                                    )}
-                                                                </span>
-                                                            </>
-                                                        )}
-                                                        <span className="item-date">
-                                                            {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', {
-                                                                day: '2-digit',
-                                                                month: '2-digit',
-                                                                year: 'numeric',
-                                                                hour: '2-digit',
-                                                                minute: '2-digit'
-                                                            }) : 'Sin fecha'}
+                                            <tr key={item.id} className={Number(item.quantity || 0) < 0 ? 'stock-row-negative' : ''}>
+                                                <td className="stock-col-name">{item.name}</td>
+                                                <td className="stock-col-plu">
+                                                    {item.isDespostadaPending
+                                                        ? <span className="stock-badge-lot">Lote #{item.lot_id}</span>
+                                                        : <span className="stock-badge-plu">{String(item.plu || '').trim() || '—'}</span>
+                                                    }
+                                                </td>
+                                                <td className="stock-col-price">
+                                                    {item.isDespostadaPending ? (
+                                                        <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Pendiente despostada{item.supplier ? ` · ${item.supplier}` : ''}</span>
+                                                    ) : editingPriceId === item.id ? (
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <input type="number" min="0" step="0.01" className="neo-input" style={{ width: '110px', marginBottom: 0, padding: '0.3rem 0.5rem' }} value={editingPriceValue} onChange={(e) => setEditingPriceValue(e.target.value)} />
+                                                            <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}><Save size={13} /></button>
+                                                            <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}><X size={13} /></button>
                                                         </span>
-                                                    </div>
-                                                </div>
-                                                <div className="item-quantity">
-                                                    {Number(item.quantity || 0) < 0 && (
-                                                        <span style={{
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '700',
-                                                            color: '#ef4444',
-                                                            background: 'rgba(239,68,68,0.12)',
-                                                            border: '1px solid rgba(239,68,68,0.35)',
-                                                            borderRadius: '4px',
-                                                            padding: '1px 5px',
-                                                            marginBottom: '2px',
-                                                            display: 'block',
-                                                        }}>
-                                                            ⚠️ Stock negativo
+                                                    ) : (
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                            <span style={{ fontWeight: 700, color: Number(item.price || 0) > 0 ? '#fdba74' : '#ef4444' }}>
+                                                                {Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}
+                                                            </span>
+                                                            <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}><Pencil size={13} /></button>
                                                         </span>
                                                     )}
-                                                    <span className="quantity-value" style={Number(item.quantity || 0) < 0 ? { color: '#ef4444' } : {}}>
+                                                </td>
+                                                <td className="stock-col-qty">
+                                                    <span style={{ fontWeight: 700, color: Number(item.quantity || 0) < 0 ? '#ef4444' : 'var(--color-text-main)' }}>
                                                         {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}
                                                     </span>
-                                                    <span className="quantity-unit">{item.unit === 'kg' ? 'kg' : 'un'}</span>
-                                                </div>
-                                            </div>
+                                                    <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginLeft: '0.25rem' }}>{item.unit === 'kg' ? 'kg' : 'un'}</span>
+                                                    {Number(item.quantity || 0) < 0 && <span className="stock-badge-neg">negativo</span>}
+                                                </td>
+                                                <td className="stock-col-date">
+                                                    {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                </td>
+                                            </tr>
                                         ))}
-                                    </div>
+                                        </tbody>
+                                    </table>
                                 </DirectionalReveal>
                             );
                         })}
