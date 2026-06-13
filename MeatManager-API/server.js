@@ -12178,7 +12178,14 @@ app.post('/api/admin/setup-inter-branch-relationships', verifyFirebaseToken, asy
         const { tenantId, dbName, clientId } = await getTenantInfo(req.firebaseUser);
         if (!clientId) return res.status(400).json({ error: 'No se pudo determinar el clientId del tenant' });
 
-        const branches = await listClientBranches(clientId);
+        const allBranches = await listClientBranches(clientId);
+
+        // Acepta lista opcional de IDs de sucursales a vincular; si no se pasa, usa todas.
+        const { branchIds } = req.body || {};
+        const branches = Array.isArray(branchIds) && branchIds.length >= 2
+            ? allBranches.filter((b) => branchIds.map(Number).includes(Number(b.id)))
+            : allBranches;
+
         if (branches.length < 2) {
             return res.status(400).json({ error: 'Se necesitan al menos 2 sucursales activas para crear relaciones inter-sucursal' });
         }
@@ -12193,8 +12200,8 @@ app.post('/api/admin/setup-inter-branch-relationships', verifyFirebaseToken, asy
             for (let i = 0; i < branches.length; i++) {
                 for (let j = 0; j < branches.length; j++) {
                     if (i === j) continue;
-                    const owner = branches[i];  // branch that "owns" the record
-                    const other = branches[j];  // branch being added as client/supplier
+                    const owner = branches[i];
+                    const other = branches[j];
 
                     // Check + insert client
                     const [[existingClient]] = await conn.query(

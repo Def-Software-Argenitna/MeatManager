@@ -144,7 +144,22 @@ const Logistica = () => {
     const handleSetupInterBranchRelationships = useCallback(async () => {
         setIsSettingUpBranches(true);
         try {
-            const res = await apiFetch('/api/admin/setup-inter-branch-relationships', { method: 'POST' });
+            const branchesRes = await apiFetch('/api/client/branches');
+            const branchesData = await branchesRes.json();
+            if (!branchesRes.ok) throw new Error(branchesData.error || 'No se pudieron obtener las sucursales');
+
+            const TARGET_NAMES = ['pilar', 'fatima', 'fátima'];
+            const targetIds = (branchesData.branches || [])
+                .filter((b) => TARGET_NAMES.some((n) => String(b.name || '').toLowerCase().includes(n)))
+                .map((b) => b.id);
+
+            if (targetIds.length < 2) throw new Error('No se encontraron las sucursales Pilar y Fátima');
+
+            const res = await apiFetch('/api/admin/setup-inter-branch-relationships', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ branchIds: targetIds }),
+            });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
             if (data.created.length > 0) {
