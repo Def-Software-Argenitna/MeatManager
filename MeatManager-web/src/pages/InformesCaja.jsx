@@ -1227,26 +1227,20 @@ const InformesCaja = () => {
                     <CalendarDays size={22} />
                     <h2>Detalle centavo por centavo</h2>
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem' }}>
-                        {[{ key: 'all', label: 'Todos' }, { key: 'ingresos', label: 'Ingresos' }, { key: 'egresos', label: 'Egresos' }].map(({ key, label }) => (
+                        {[{ key: 'ingresos', label: 'Ingresos', activeColor: 'rgba(34,197,94,0.5)', activeBg: 'rgba(34,197,94,0.15)', activeText: '#4ade80' }, { key: 'egresos', label: 'Egresos', activeColor: 'rgba(239,68,68,0.5)', activeBg: 'rgba(239,68,68,0.15)', activeText: '#f87171' }].map(({ key, label, activeColor, activeBg, activeText }) => (
                             <button
                                 key={key}
                                 type="button"
-                                onClick={() => setRowFilter(key)}
+                                onClick={() => setRowFilter(prev => prev === key ? 'all' : key)}
                                 style={{
                                     padding: '0.3rem 0.75rem',
                                     borderRadius: '999px',
                                     fontSize: '0.75rem',
                                     fontWeight: 700,
                                     cursor: 'pointer',
-                                    border: rowFilter === key
-                                        ? `1px solid ${key === 'ingresos' ? 'rgba(34,197,94,0.5)' : key === 'egresos' ? 'rgba(239,68,68,0.5)' : 'rgba(249,115,22,0.5)'}`
-                                        : '1px solid rgba(255,255,255,0.1)',
-                                    background: rowFilter === key
-                                        ? key === 'ingresos' ? 'rgba(34,197,94,0.15)' : key === 'egresos' ? 'rgba(239,68,68,0.15)' : 'rgba(249,115,22,0.15)'
-                                        : 'rgba(255,255,255,0.04)',
-                                    color: rowFilter === key
-                                        ? key === 'ingresos' ? '#4ade80' : key === 'egresos' ? '#f87171' : 'var(--color-primary)'
-                                        : 'var(--color-text-muted)',
+                                    border: rowFilter === key ? `1px solid ${activeColor}` : '1px solid rgba(255,255,255,0.1)',
+                                    background: rowFilter === key ? activeBg : 'rgba(255,255,255,0.04)',
+                                    color: rowFilter === key ? activeText : 'var(--color-text-muted)',
                                     transition: 'all 0.15s',
                                 }}
                             >{label}</button>
@@ -1287,13 +1281,13 @@ const InformesCaja = () => {
                                     )}
                                     {filteredRows.map((row, index) => (
                                         <tr key={`${row.source}-${row.id}-${index}`}>
-                                            <td style={{ whiteSpace: 'nowrap' }}>{row.fecha}</td>
-                                            <td style={{ whiteSpace: 'nowrap' }}>{row.caja}</td>
+                                            <td>{row.fecha}</td>
+                                            <td>{row.caja}</td>
                                             <td>{row.operacion}</td>
                                             <td>{row.clasificacion}</td>
                                             <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
                                             <td>{row.categoria}</td>
-                                            <td style={{ whiteSpace: 'nowrap' }}>{row.medioPago}</td>
+                                            <td>{row.medioPago}</td>
                                             <td>
                                                 <div className="ic-detail-cell">
                                                     <span>{row.descripcion || row.proveedor || 'Sin detalle'}</span>

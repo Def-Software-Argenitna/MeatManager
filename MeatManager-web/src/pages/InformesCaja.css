@@ -342,17 +342,16 @@
 
 /* ── Tabla detalle ────────────────────────────────────────────────────────── */
 .ic-table-wrap {
-    overflow: auto;
-    max-height: 600px;
     border-radius: var(--radius-md);
     border: 1px solid rgba(255,255,255,0.07);
+    overflow-x: hidden;
 }
 
 .ic-table {
     width: 100%;
     border-collapse: collapse;
-    min-width: 1100px;
-    font-size: 0.84rem;
+    font-size: 0.82rem;
+    table-layout: auto;
 }
 
 .ic-table thead tr {
