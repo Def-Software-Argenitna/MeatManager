@@ -1195,36 +1195,7 @@ const InformesCaja = () => {
 
 
             <div className="ic-grid">
-                <DirectionalReveal className="ic-card neo-card" from="left" delay={0.16}>
-                    <div className="ic-card-header">
-                        <ShieldCheck size={22} />
-                        <h2>Informe final</h2>
-                    </div>
-                    <div className="ic-findings">
-                        {report.problemFindings.map((finding) => (
-                            <div key={finding.title} className={`ic-finding ${finding.severity}`}>
-                                <strong>{finding.title}</strong>
-                                <span>{finding.detail}</span>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="ic-reconciliation">
-                        <div>
-                            <span>Conciliación interna</span>
-                            <strong>{formatCurrency(report.current.reconciliationDelta)}</strong>
-                        </div>
-                        <div>
-                            <span>Movimientos auditados</span>
-                            <strong>{report.current.movementRows.length}</strong>
-                        </div>
-                        <div>
-                            <span>Cierres incluidos</span>
-                            <strong>{report.current.closureRows.length}</strong>
-                        </div>
-                    </div>
-                </DirectionalReveal>
-
-                <DirectionalReveal className="ic-card neo-card" from="right" delay={0.18}>
+                <DirectionalReveal className="ic-card neo-card" from="right" delay={0.16}>
                     <div className="ic-card-header">
                         <Scale size={22} />
                         <h2>Resumen por caja</h2>
