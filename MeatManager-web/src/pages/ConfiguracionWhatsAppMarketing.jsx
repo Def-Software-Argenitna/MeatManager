@@ -196,7 +196,7 @@ const ConfiguracionWhatsAppMarketing = () => {
                 </section>
 
                 <section className="wa-marketing-grid">
-                    <article className="wa-marketing-block">
+                    <article className="wa-marketing-block wa-marketing-block--free">
                         <h2>Gratis: grupo/canal + QR</h2>
                         <p>
                             Ideal para empezar sin costo. Carga el link de invitación y comparte el QR para que los clientes se sumen.
@@ -270,7 +270,7 @@ const ConfiguracionWhatsAppMarketing = () => {
                         </div>
                     </article>
 
-                    <article className="wa-marketing-block">
+                    <article className="wa-marketing-block wa-marketing-block--paid">
                         <h2>Con costo: envío automático</h2>
                         <p>
                             Beneficio: al crear una promo activa, se envía automáticamente a tus clientes con teléfono.
