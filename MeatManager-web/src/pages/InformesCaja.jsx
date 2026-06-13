@@ -1263,15 +1263,15 @@ const InformesCaja = () => {
                         <div className="ic-table-wrap">
                             <table className="ic-table">
                                 <colgroup>
-                                    <col style={{ width: '10%' }} />
-                                    <col style={{ width: '8%' }} />
-                                    <col style={{ width: '12%' }} />
                                     <col style={{ width: '9%' }} />
-                                    <col style={{ width: '10%' }} />
                                     <col style={{ width: '7%' }} />
+                                    <col style={{ width: '11%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '8%' }} />
+                                    <col style={{ width: '6%' }} />
                                     <col style={{ width: '26%' }} />
-                                    <col style={{ width: '9%' }} />
-                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '12%' }} />
                                 </colgroup>
                                 <thead>
                                     <tr>

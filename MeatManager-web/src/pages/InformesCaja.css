@@ -383,8 +383,13 @@
     border-bottom: 1px solid rgba(255,255,255,0.05);
     vertical-align: middle;
     color: var(--color-text-main);
-    overflow: hidden;
     word-break: break-word;
+}
+
+.ic-table td.num {
+    overflow: visible;
+    word-break: normal;
+    white-space: nowrap;
 }
 
 .ic-table tbody tr:last-child td { border-bottom: none; }
