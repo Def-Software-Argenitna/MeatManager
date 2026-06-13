@@ -1333,10 +1333,10 @@ const InformesCaja = () => {
                                             <td colSpan="7" style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
                                                 Total — {filteredRows.length} movimiento{filteredRows.length !== 1 ? 's' : ''}
                                             </td>
-                                            <td className="num income" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.92rem' }}>
+                                            <td className="num income" style={{ padding: '0.65rem 1rem 0.65rem 0.5rem', fontWeight: 800, fontSize: '0.92rem' }}>
                                                 {totalIngreso > 0 ? formatCurrency(totalIngreso) : '—'}
                                             </td>
-                                            <td className="num expense" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.92rem' }}>
+                                            <td className="num expense" style={{ padding: '0.65rem 1rem 0.65rem 1rem', fontWeight: 800, fontSize: '0.92rem', borderLeft: '1px solid rgba(255,255,255,0.08)' }}>
                                                 {totalEgreso > 0 ? formatCurrency(totalEgreso) : '—'}
                                             </td>
                                         </tr>
