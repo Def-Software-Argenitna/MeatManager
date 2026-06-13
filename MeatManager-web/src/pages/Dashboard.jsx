@@ -459,54 +459,70 @@ const Dashboard = () => {
                             description="Las ventas que registres van a aparecer acá."
                         />
                     ) : (
-                        <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--color-text-muted)' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem' }}>
                             <thead>
-                                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
-                                    <th style={{ padding: '0.75rem 0' }}>Hora</th>
-                                    <th style={{ padding: '0.75rem 0' }}>Items</th>
-                                    <th style={{ padding: '0.75rem 0' }}>Total</th>
-                                    <th style={{ padding: '0.75rem 0' }}>Pago</th>
+                                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                                    {['Hora', 'Comprobante', 'Total', 'Pago'].map((h) => (
+                                        <th key={h} style={{ padding: '0 0 0.6rem', textAlign: 'left', fontSize: '0.7rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>{h}</th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
-                                {visibleVentas.map((venta) => (
-                                    <tr key={venta.id} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                                        <td style={{ padding: '0.75rem 0' }}>
-                                            {(() => {
-                                                const d = new Date(venta.date);
-                                                const hoy = new Date();
-                                                const esHoy = d.getDate() === hoy.getDate() && d.getMonth() === hoy.getMonth() && d.getFullYear() === hoy.getFullYear();
-                                                const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
-                                                if (esHoy) return hora;
-                                                const fecha = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
-                                                return <span>{fecha}<br /><span style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>{hora}</span></span>;
-                                            })()}
-                                        </td>
-                                        <td style={{ padding: '0.75rem 0' }}>
-                                            <div style={{ fontWeight: '600', color: 'var(--color-text-primary)' }}>
-                                                Venta {venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id)}
-                                            </div>
-                                            <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                                                {Array.isArray(venta.items) ? venta.items.length : 0} productos
-                                            </div>
-                                        </td>
-                                        <td style={{ padding: '0.75rem 0', fontWeight: '600', color: 'var(--color-text-primary)' }}>
-                                            {formatCurrency(venta.total)}
-                                        </td>
-                                        <td style={{ padding: '0.75rem 0' }}>
-                                            <span style={{
-                                                backgroundColor: 'rgba(34, 197, 94, 0.1)',
-                                                color: '#22c55e',
-                                                padding: '0.25rem 0.5rem',
-                                                borderRadius: '4px',
-                                                fontSize: '0.8rem',
-                                                textTransform: 'capitalize'
-                                            }}>
-                                                {venta.payment_method || 'Sin método'}
-                                            </span>
-                                        </td>
-                                    </tr>
-                                ))}
+                                {visibleVentas.map((venta) => {
+                                    const method = String(venta.payment_method || '').toLowerCase();
+                                    const ps = (() => {
+                                        if (method.includes('efectivo')) return { bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.35)', color: '#4ade80' };
+                                        if (method.includes('postnet') || method.includes('posnet')) return { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.35)', color: '#93c5fd' };
+                                        if (method.includes('mercado pago')) return { bg: 'rgba(0,158,211,0.15)', border: 'rgba(0,158,211,0.35)', color: '#38bdf8' };
+                                        if (method.includes('cuenta dni')) return { bg: 'rgba(34,197,94,0.15)', border: 'rgba(34,197,94,0.35)', color: '#4ade80' };
+                                        if (method.includes('transferencia')) return { bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.35)', color: '#c4b5fd' };
+                                        if (method.includes('cuenta corriente')) return { bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.35)', color: '#fb923c' };
+                                        return { bg: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.15)', color: 'var(--color-text-muted)' };
+                                    })();
+                                    return (
+                                        <tr key={venta.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)', transition: 'background 0.15s' }}
+                                            onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.03)'}
+                                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                        >
+                                            <td style={{ padding: '0.7rem 0', whiteSpace: 'nowrap', color: 'var(--color-text-muted)', fontSize: '0.82rem', minWidth: '64px' }}>
+                                                {(() => {
+                                                    const d = new Date(venta.date);
+                                                    const hoy = new Date();
+                                                    const esHoy = d.getDate() === hoy.getDate() && d.getMonth() === hoy.getMonth() && d.getFullYear() === hoy.getFullYear();
+                                                    const hora = d.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+                                                    if (esHoy) return <span style={{ color: 'var(--color-text-main)', fontWeight: 600 }}>{hora}</span>;
+                                                    const fecha = d.toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' });
+                                                    return <><span style={{ color: 'var(--color-text-muted)' }}>{fecha}</span><br /><span style={{ fontSize: '0.78rem' }}>{hora}</span></>;
+                                                })()}
+                                            </td>
+                                            <td style={{ padding: '0.7rem 0.5rem 0.7rem 0' }}>
+                                                <div style={{ fontWeight: 700, color: 'var(--color-text-main)', fontSize: '0.85rem' }}>
+                                                    {venta.receipt_code || formatReceiptCode(1, venta.receipt_number || venta.id)}
+                                                </div>
+                                                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.1rem' }}>
+                                                    {Array.isArray(venta.items) ? venta.items.length : 0} producto{(Array.isArray(venta.items) ? venta.items.length : 0) !== 1 ? 's' : ''}
+                                                </div>
+                                            </td>
+                                            <td style={{ padding: '0.7rem 0.5rem 0.7rem 0', fontWeight: 800, color: '#ffffff', whiteSpace: 'nowrap' }}>
+                                                {formatCurrency(venta.total)}
+                                            </td>
+                                            <td style={{ padding: '0.7rem 0' }}>
+                                                <span style={{
+                                                    background: ps.bg,
+                                                    border: `1px solid ${ps.border}`,
+                                                    color: ps.color,
+                                                    padding: '0.2rem 0.55rem',
+                                                    borderRadius: '999px',
+                                                    fontSize: '0.75rem',
+                                                    fontWeight: 700,
+                                                    whiteSpace: 'nowrap',
+                                                }}>
+                                                    {venta.payment_method || 'Sin método'}
+                                                </span>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
                             </tbody>
                         </table>
                     )}
