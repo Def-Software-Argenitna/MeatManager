@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Receipt, Search, Package } from 'lucide-react';
+import { ArrowLeft, Receipt, Search } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { EmptyState, Skeleton, SkeletonLine } from '../components/ui';
@@ -258,14 +258,7 @@ const HistorialVentas = () => {
                             </span>
                         )}
                     </div>
-                    {todayProductSummary.products.length === 0 ? (
-                        <EmptyState
-                            compact
-                            icon={Package}
-                            title="Sin desglose de productos"
-                            description="Si se cobraron tickets offline de balanza, aparecen como venta genérica."
-                        />
-                    ) : (
+                    {todayProductSummary.products.length > 0 && (
                         <div style={{ display: 'grid', gap: '0.45rem' }}>
                             {todayProductSummary.products.map((item) => (
                                 <div key={item.name} style={{
@@ -386,7 +379,7 @@ const HistorialVentas = () => {
                                         }}>
                                             {sale.items?.length || 0} producto{(sale.items?.length || 0) !== 1 ? 's' : ''}
                                         </span>
-                                        {sale.source && (
+                                        {sale.source && sale.source !== 'scale_ticket' && (
                                             <span style={{
                                                 fontSize: '0.78rem',
                                                 padding: '0.2rem 0.55rem',
@@ -395,18 +388,6 @@ const HistorialVentas = () => {
                                                 color: sale.source === 'qendra' ? '#fff' : 'var(--color-text-muted)',
                                             }}>
                                                 {sale.source}
-                                            </span>
-                                        )}
-                                        {saleHasGenericScaleFallback && (
-                                            <span style={{
-                                                fontSize: '0.78rem',
-                                                padding: '0.2rem 0.55rem',
-                                                borderRadius: '999px',
-                                                background: 'rgba(245,158,11,0.12)',
-                                                border: '1px solid rgba(245,158,11,0.35)',
-                                                color: '#f59e0b',
-                                            }}>
-                                                Sin desglose de balanza
                                             </span>
                                         )}
                                     </div>
