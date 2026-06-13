@@ -243,42 +243,8 @@ const HistorialVentas = () => {
                     </label>
                 </div>
 
-                <div style={{
-                    marginBottom: '1rem',
-                    padding: '0.9rem 1rem',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(249,115,22,0.2)',
-                    background: 'rgba(249,115,22,0.04)',
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
-                        <strong style={{ color: 'var(--color-text-main)', fontSize: '0.9rem', textTransform: 'uppercase', letterSpacing: '0.04em', fontWeight: 800 }}>Productos vendidos hoy</strong>
-                        {todayProductSummary.salesWithoutRealDetail > 0 && (
-                            <span style={{ color: '#f59e0b', fontSize: '0.82rem' }}>
-                                {todayProductSummary.salesWithoutRealDetail} venta{todayProductSummary.salesWithoutRealDetail !== 1 ? 's' : ''} sin desglose real
-                            </span>
-                        )}
-                    </div>
-                    {todayProductSummary.products.length > 0 && (
-                        <div style={{ display: 'grid', gap: '0.45rem' }}>
-                            {todayProductSummary.products.map((item) => (
-                                <div key={item.name} style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: '1fr auto auto',
-                                    gap: '0.75rem',
-                                    alignItems: 'center',
-                                    color: 'var(--color-text-muted)',
-                                    fontSize: '0.9rem',
-                                }}>
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 700 }}>{item.name}</span>
-                                    <span>{item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit === 'kg' ? 'kg' : 'un'}</span>
-                                    <strong style={{ color: 'var(--color-text-main)' }}>{formatCurrency(item.amount)}</strong>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
 
-                {filteredSales.length === 0 ? (
+{filteredSales.length === 0 ? (
                     <EmptyState
                         icon={Search}
                         title="No hay ventas"
@@ -337,8 +303,28 @@ const HistorialVentas = () => {
                                         </div>
                                     </div>
 
+                                    {(sale.items || []).length > 0 && (
+                                        <div style={{ marginBottom: '0.75rem', display: 'grid', gap: '0.3rem' }}>
+                                            {(sale.items || []).map((item) => (
+                                                <div
+                                                    key={item.id}
+                                                    style={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: '1rem',
+                                                        fontSize: '0.85rem',
+                                                    }}
+                                                >
+                                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 500 }}>{item.product_name}</span>
+                                                    <span style={{ color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                                                        {Number(item.quantity || 0).toFixed(3)} × {formatCurrency(item.price)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
                                     <div style={{
-                                        marginBottom: '0.75rem',
                                         padding: '0.55rem 0.75rem',
                                         borderRadius: '10px',
                                         border: '1px solid rgba(255,255,255,0.07)',
@@ -368,50 +354,6 @@ const HistorialVentas = () => {
                                             );
                                         })}
                                     </div>
-
-                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                                        <span style={{
-                                            fontSize: '0.78rem',
-                                            padding: '0.2rem 0.55rem',
-                                            borderRadius: '999px',
-                                            border: '1px solid var(--color-border)',
-                                            color: 'var(--color-text-muted)',
-                                        }}>
-                                            {sale.items?.length || 0} producto{(sale.items?.length || 0) !== 1 ? 's' : ''}
-                                        </span>
-                                        {sale.source && sale.source !== 'scale_ticket' && (
-                                            <span style={{
-                                                fontSize: '0.78rem',
-                                                padding: '0.2rem 0.55rem',
-                                                borderRadius: '999px',
-                                                background: sale.source === 'qendra' ? '#1d4ed8' : 'rgba(255,255,255,0.05)',
-                                                color: sale.source === 'qendra' ? '#fff' : 'var(--color-text-muted)',
-                                            }}>
-                                                {sale.source}
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    {(sale.items || []).length > 0 && (
-                                        <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)', paddingTop: '0.6rem', display: 'grid', gap: '0.3rem' }}>
-                                            {(sale.items || []).map((item) => (
-                                                <div
-                                                    key={item.id}
-                                                    style={{
-                                                        display: 'flex',
-                                                        justifyContent: 'space-between',
-                                                        gap: '1rem',
-                                                        fontSize: '0.85rem',
-                                                    }}
-                                                >
-                                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 500 }}>{item.product_name}</span>
-                                                    <span style={{ color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
-                                                        {Number(item.quantity || 0).toFixed(3)} × {formatCurrency(item.price)}
-                                                    </span>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    )}
                                 </article>
                             );
                         })}
