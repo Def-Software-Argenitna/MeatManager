@@ -410,7 +410,8 @@ const CierreCaja = () => {
     const selectedAccountSummary = useMemo(() => (
         cashSummary?.byCashAccount?.[selectedCashAccount] || {}
     ), [cashSummary, selectedCashAccount]);
-    const totalSales = toNumber(selectedAccountSummary.sales);
+
+    // Totales diarios derivados de los movimientos del frontend (fuente de verdad consistente con la lista)
     const transferOutMovements = manualMovements
         .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
     const transferInMovements = manualMovements
@@ -419,8 +420,15 @@ const CierreCaja = () => {
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalTransfersIn = transferInMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalExpenses = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
-    const totalIncomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
+    const totalExpenses = manualMovements
+        .filter((movement) => !isTransferMovement(movement) && (movement.type === 'egreso' || movement.type === 'retiro'))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalIncomes = manualMovements
+        .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalSales = salesMovements
+        .filter((movement) => movement.type === 'venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
     const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
@@ -541,18 +549,21 @@ const CierreCaja = () => {
     }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
-    const totalReversals = toNumber(selectedAccountSummary.reversals);
+    const totalReversals = salesMovements
+        .filter((movement) => movement.type === 'anulacion_venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalSalesIntoCashbox = totalSales - totalReversals;
 
     const cashInDrawer = toNumber(selectedCashSummary.accumulated);
 
     const cashBalanceExplanation = useMemo(() => {
-        const previous = toNumber(selectedCashSummary.accumulated) - toNumber(selectedCashSummary.dailyNet);
-        const openings = toNumber(selectedCashSummary.opening);
-        const sales = toNumber(selectedCashSummary.sales);
-        const incomes = Math.max(0, toNumber(selectedCashSummary.manualIncomes) - totalTransfersIn);
-        const outflows = Math.max(0, toNumber(selectedCashSummary.manualExpenses) - totalTransfersOut);
-        const reversals = toNumber(selectedCashSummary.reversals);
+        const openings = openingMovements.reduce((sum, m) => sum + toNumber(m.amount), 0);
+        const actualDailyNet = openings + totalSales + totalIncomes + totalTransfersIn - totalExpenses - totalTransfersOut - totalReversals;
+        const previous = cashInDrawer - actualDailyNet;
+        const sales = totalSales;
+        const incomes = totalIncomes;
+        const outflows = totalExpenses;
+        const reversals = totalReversals;
         const parts = {
             previous,
             openings,
@@ -579,7 +590,7 @@ const CierreCaja = () => {
             deductions,
             reason,
         };
-    }, [cashInDrawer, selectedCashSummary, totalTransfersIn, totalTransfersOut]);
+    }, [cashInDrawer, openingMovements, totalSales, totalIncomes, totalExpenses, totalTransfersIn, totalTransfersOut, totalReversals]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
