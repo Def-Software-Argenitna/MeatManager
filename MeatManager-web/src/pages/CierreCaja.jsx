@@ -426,8 +426,16 @@ const CierreCaja = () => {
     const totalIncomes = manualMovements
         .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    // Todas las ventas (para stats generales y footer)
     const totalSales = salesMovements
         .filter((movement) => movement.type === 'venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    // Solo ventas cobradas en métodos de efectivo (para el breakdown del acumulado físico)
+    const cashSales = salesMovements
+        .filter((movement) => movement.type === 'venta' && selectedCashMethodNames.has(movement.payment_method || 'Efectivo'))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const cashReversals = salesMovements
+        .filter((movement) => movement.type === 'anulacion_venta' && selectedCashMethodNames.has(movement.payment_method || 'Efectivo'))
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
     const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
@@ -554,25 +562,25 @@ const CierreCaja = () => {
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalSalesIntoCashbox = totalSales - totalReversals;
 
-    const cashInDrawer = toNumber(selectedCashSummary.accumulated);
+    // Acumulado de efectivo físico: solo métodos cash activos (excluye datos históricos huérfanos)
+    const cashInDrawer = cashPaymentMethods.reduce(
+        (sum, method) => sum + toNumber(summaryByMethod[method.name]?.accumulated), 0
+    );
 
     const cashBalanceExplanation = useMemo(() => {
         const openings = openingMovements.reduce((sum, m) => sum + toNumber(m.amount), 0);
-        const actualDailyNet = openings + totalSales + totalIncomes + totalTransfersIn - totalExpenses - totalTransfersOut - totalReversals;
+        // dailyNet solo con ventas/anulaciones de métodos cash (coherente con cashInDrawer)
+        const actualDailyNet = openings + cashSales + totalIncomes + totalTransfersIn - totalExpenses - totalTransfersOut - cashReversals;
         const previous = cashInDrawer - actualDailyNet;
-        const sales = totalSales;
-        const incomes = totalIncomes;
-        const outflows = totalExpenses;
-        const reversals = totalReversals;
         const parts = {
             previous,
             openings,
-            sales,
-            incomes,
+            sales: cashSales,
+            incomes: totalIncomes,
             transfersIn: totalTransfersIn,
             transfersOut: totalTransfersOut,
-            outflows,
-            reversals,
+            outflows: totalExpenses,
+            reversals: cashReversals,
             adjustments: 0,
         };
 
@@ -584,13 +592,8 @@ const CierreCaja = () => {
                 ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
                 : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
 
-        return {
-            ...parts,
-            available,
-            deductions,
-            reason,
-        };
-    }, [cashInDrawer, openingMovements, totalSales, totalIncomes, totalExpenses, totalTransfersIn, totalTransfersOut, totalReversals]);
+        return { ...parts, available, deductions, reason };
+    }, [cashInDrawer, cashPaymentMethods, summaryByMethod, openingMovements, cashSales, cashReversals, totalIncomes, totalExpenses, totalTransfersIn, totalTransfersOut]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
