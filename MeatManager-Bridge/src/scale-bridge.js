@@ -69,6 +69,19 @@ class ScaleBridge {
             logger,
         });
         this.scaleLatencyLogFile = path.join(config.logsDir, 'scale-ticket-latency.log');
+        // Timestamps de eventos de saturacion (E3) recientes, para reportar en
+        // el heartbeat. En memoria, ventana de 5 min.
+        this._saturationEvents = [];
+    }
+
+    recordSaturationEvent() {
+        this._saturationEvents.push(Date.now());
+    }
+
+    getRecentSaturationCount(windowMs = 5 * 60 * 1000) {
+        const cutoff = Date.now() - windowMs;
+        this._saturationEvents = this._saturationEvents.filter((ts) => ts >= cutoff);
+        return this._saturationEvents.length;
     }
 
     logTicketLatency(event, meta = {}) {
@@ -1074,6 +1087,10 @@ class ScaleBridge {
             return { ok: true, fetched: 0, stored: 0, tickets: 0, noData: true };
         }
         if (responseData.startsWith('E')) {
+            // E3 = "se desatendieron datos" = la balanza estaba ocupada (pesando/
+            // imprimiendo) y no atendio el serial. Lo registramos como senal de
+            // saturacion para reportarla en el heartbeat (monitor de estado).
+            if (responseData.startsWith('E3')) this.recordSaturationEvent();
             this.logger.warn('Funcion 72 devolvio error', {
                 from: new Date(fromDate).toISOString(),
                 to: new Date(toDate).toISOString(),

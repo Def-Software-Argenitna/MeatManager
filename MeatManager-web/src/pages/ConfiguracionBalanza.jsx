@@ -3,6 +3,7 @@ import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import ConciliacionBalanzaTab from './ConciliacionBalanzaTab';
+import BridgeStatusCard from '../components/BridgeStatusCard';
 import './ConfiguracionBalanza.css';
 
 const DEFAULT_SCALE_USERS = [1, 2, 3, 4].map((slotNo) => ({
@@ -275,9 +276,7 @@ const ConfiguracionBalanza = () => {
             {activeTab === 'conciliacion' && <ConciliacionBalanzaTab />}
 
             {activeTab === 'configuracion' && <>
-            <div className="scale-config-warning">
-                Se requiere MeatManager Bridge instalado y en ejecucion para sincronizar esta configuracion con la balanza.
-            </div>
+            <BridgeStatusCard isAdmin={isAdmin} />
 
             <div className="scale-config-grid">
                 <section className="scale-card">

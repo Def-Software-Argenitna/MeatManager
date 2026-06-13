@@ -267,6 +267,16 @@ async function sendHeartbeat() {
                 address: config.scale.address,
                 lastPingOk: state.lastRunStatus === 'ok',
             }],
+            // Estado del agente para el monitor de la web. Bridges viejos no
+            // mandaban esto; la API lo trata como opcional.
+            agent: {
+                version: String(process.env.BRIDGE_APP_VERSION || '').trim() || null,
+                lastRunStatus: state.lastRunStatus || null,
+                lastTicketSyncAt: state.lastTicketSyncAt || null,
+                scaleReachable: state.scaleReachable !== false,
+                lastError: state.lastError ? String(state.lastError).slice(0, 255) : null,
+                recentE3Count: bridge.getRecentSaturationCount(),
+            },
         });
         await processHeartbeatCommands(payload);
     } catch (error) {
