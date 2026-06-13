@@ -11977,6 +11977,101 @@ app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
     }
 });
 
+// ── RUTA: POST /api/conciliacion/balanza/cobro-manual ────────────────────
+app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        conn = await pool.getConnection();
+        await ensureScaleTicketLifecycleColumns(conn);
+
+        const { ticket_barcode, payment_method_id, payment_method_name, notes } = req.body;
+        if (!ticket_barcode) return res.status(400).json({ error: 'ticket_barcode es requerido' });
+        const barcode = String(ticket_barcode).trim().toUpperCase();
+
+        // Verificar que el ticket existe y está open
+        const [[ticket]] = await conn.query(
+            `SELECT * FROM scale_bridge_ticket_map WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
+            [tenantId, barcode]
+        );
+        if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+        if (String(ticket.ticket_status || '').toLowerCase() !== 'open') {
+            return res.status(409).json({ error: `El ticket ya fue procesado (estado: ${ticket.ticket_status})` });
+        }
+
+        // Obtener items
+        const [items] = await conn.query(
+            `SELECT i.*, p.name AS product_name, p.id AS product_db_id
+             FROM scale_bridge_sales_item i
+             LEFT JOIN products p ON p.tenant_id = ? AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR) AND p.inactive != 1
+             WHERE i.tenant_id = ? AND UPPER(i.ticket_barcode) = ?
+             ORDER BY i.line_no`,
+            [tenantId, tenantId, barcode]
+        );
+
+        // Resolver método de pago
+        let pmId = payment_method_id ? Number(payment_method_id) : null;
+        let pmName = payment_method_name || 'Efectivo';
+        if (pmId) {
+            const [[pm]] = await conn.query(
+                `SELECT id, name FROM payment_methods WHERE tenant_id = ? AND id = ? LIMIT 1`,
+                [tenantId, pmId]
+            );
+            if (pm) pmName = pm.name;
+        }
+
+        const total = Number(ticket.total_amount || 0);
+
+        await conn.beginTransaction();
+        try {
+            // Insertar venta
+            const [ventaResult] = await conn.query(
+                `INSERT INTO ventas (tenant_id, date, total, payment_method, payment_method_id, source, created_at)
+                 VALUES (?, NOW(), ?, ?, ?, 'conciliacion_manual', NOW())`,
+                [tenantId, total, pmName, pmId || null]
+            );
+            const saleId = ventaResult.insertId;
+
+            // Insertar items
+            if (items.length > 0) {
+                const itemRows = items.map(it => [
+                    tenantId,
+                    saleId,
+                    it.product_db_id || null,
+                    it.product_name || `PLU ${it.plu_code}`,
+                    Number(it.item_quantity || 0),
+                    Number(it.item_quantity) > 0 ? Number((Number(it.amount) / Number(it.item_quantity)).toFixed(2)) : 0,
+                    Number(it.amount || 0),
+                ]);
+                await conn.query(
+                    `INSERT INTO ventas_items (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal) VALUES ?`,
+                    [itemRows]
+                );
+            }
+
+            // Marcar ticket como cobrado
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'charged', charged_sale_id = ?, charged_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?`,
+                [saleId, tenantId, barcode]
+            );
+
+            await conn.commit();
+            return res.json({ sale_id: saleId, total });
+        } catch (txErr) {
+            await conn.rollback();
+            throw txErr;
+        }
+    } catch (err) {
+        console.error('[POST /api/conciliacion/balanza/cobro-manual ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ── RUTA: GET /api/conciliacion/balanza ───────────────────────────────────
 app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
     try {

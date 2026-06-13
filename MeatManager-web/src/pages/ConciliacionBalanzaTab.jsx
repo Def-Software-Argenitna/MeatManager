@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, CheckSquare, Square, ChevronRight } from 'lucide-react';
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, CheckSquare, Square, ChevronRight, PlusCircle, Hash, CreditCard, CheckCircle2 } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
 import './ConciliacionBalanzaTab.css';
 
@@ -8,8 +8,19 @@ const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency:
 const fmtDate = (s) => s ? new Date(s).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const fmtKg = (n) => n ? `${(n / 1000).toFixed(3)} kg` : '-';
 
+const apiFetchJson = async (path, options) => {
+    const res = await apiFetch(path, options);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Error ${res.status}`);
+    }
+    return res.json();
+};
+
 export default function ConciliacionBalanzaTab() {
     const navigate = useNavigate();
+
+    // ── Listado ──────────────────────────────────────────────────────────────
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [loading, setLoading] = useState(false);
@@ -22,10 +33,34 @@ export default function ConciliacionBalanzaTab() {
     const [sortDir, setSortDir] = useState('desc');
     const [filterText, setFilterText] = useState('');
 
+    // ── Carga manual ─────────────────────────────────────────────────────────
+    const [paymentMethods, setPaymentMethods] = useState([]);
+    const [manualBarcode, setManualBarcode] = useState('');
+    const [manualSearching, setManualSearching] = useState(false);
+    const [manualTicket, setManualTicket] = useState(null);
+    const [manualError, setManualError] = useState(null);
+    const [manualPaymentId, setManualPaymentId] = useState('');
+    const [manualNotes, setManualNotes] = useState('');
+    const [manualSaving, setManualSaving] = useState(false);
+    const [manualSuccess, setManualSuccess] = useState(null);
+
+    // ── Cargar métodos de pago ────────────────────────────────────────────────
+    useEffect(() => {
+        apiFetchJson('/api/table/payment_methods')
+            .then(data => {
+                const rows = Array.isArray(data?.rows) ? data.rows : (Array.isArray(data) ? data : []);
+                const active = rows.filter(m => !m.inactive && String(m.type || '').toLowerCase() !== 'mixed');
+                setPaymentMethods(active);
+                if (active.length > 0) setManualPaymentId(String(active[0].id));
+            })
+            .catch(() => {});
+    }, []);
+
+    // ── Buscar tickets open ───────────────────────────────────────────────────
     const buscar = useCallback(async () => {
         setLoading(true);
         setError(null);
-        setTickets(null);
+        setTickets([]);
         setSelectedIds(new Set());
         setDetailTicket(null);
         try {
@@ -33,7 +68,7 @@ export default function ConciliacionBalanzaTab() {
             if (dateFrom) params.set('dateFrom', dateFrom);
             if (dateTo) params.set('dateTo', dateTo);
             const qs = params.toString() ? `?${params.toString()}` : '';
-            const data = await apiFetch(`/api/conciliacion/balanza${qs}`);
+            const data = await apiFetchJson(`/api/conciliacion/balanza${qs}`);
             setTickets(data.tickets || []);
         } catch (e) {
             setError(e.message || 'Error al cargar datos');
@@ -42,8 +77,55 @@ export default function ConciliacionBalanzaTab() {
         }
     }, [dateFrom, dateTo]);
 
-    React.useEffect(() => { buscar(); }, []);
+    useEffect(() => { buscar(); }, []);
 
+    // ── Carga manual: buscar ticket por barcode ───────────────────────────────
+    const buscarManual = async () => {
+        const code = manualBarcode.trim();
+        if (!code) return;
+        setManualSearching(true);
+        setManualTicket(null);
+        setManualError(null);
+        setManualSuccess(null);
+        try {
+            const data = await apiFetchJson(`/api/scale/tickets/by-barcode/${encodeURIComponent(code)}`);
+            setManualTicket(data);
+        } catch (e) {
+            setManualError(e.message || 'Ticket no encontrado');
+        } finally {
+            setManualSearching(false);
+        }
+    };
+
+    // ── Carga manual: registrar cobro ─────────────────────────────────────────
+    const registrarCobro = async () => {
+        if (!manualTicket?.ticket) return;
+        const pm = paymentMethods.find(m => String(m.id) === String(manualPaymentId));
+        setManualSaving(true);
+        setManualError(null);
+        try {
+            const data = await apiFetchJson('/api/conciliacion/balanza/cobro-manual', {
+                method: 'POST',
+                body: JSON.stringify({
+                    ticket_barcode: manualTicket.ticket.ticket_barcode,
+                    payment_method_id: pm?.id ?? null,
+                    payment_method_name: pm?.name ?? '',
+                    notes: manualNotes.trim() || null,
+                }),
+            });
+            setManualSuccess({ saleId: data.sale_id, total: data.total });
+            setManualTicket(null);
+            setManualBarcode('');
+            setManualNotes('');
+            buscar();
+        } catch (e) {
+            setManualError(e.message || 'Error al registrar cobro');
+        } finally {
+            setManualSaving(false);
+        }
+    };
+
+    // ── Listado: lógica ───────────────────────────────────────────────────────
     const handleSort = (field) => {
         if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
         else { setSortField(field); setSortDir('asc'); }
@@ -94,6 +176,9 @@ export default function ConciliacionBalanzaTab() {
         if (sortField !== field) return <ArrowUpDown size={13} style={{ opacity: 0.4 }} />;
         return sortDir === 'asc' ? <ArrowUp size={13} /> : <ArrowDown size={13} />;
     };
+
+    const ticketStatus = manualTicket?.ticket?.ticket_status;
+    const ticketAlreadyCharged = ticketStatus && String(ticketStatus).toLowerCase() !== 'open';
 
     return (
         <div className="concil-wrap">
@@ -150,8 +235,15 @@ export default function ConciliacionBalanzaTab() {
                         >
                             Detalle{detailTicket ? ` — ${detailTicket.printed_ticket_barcode || detailTicket.ticket_barcode?.slice(-8)}` : ''}
                         </button>
+                        <button
+                            className={`concil-subtab ${subTab === 'manual' ? 'active' : ''}`}
+                            onClick={() => setSubTab('manual')}
+                        >
+                            <PlusCircle size={14} style={{ marginRight: '0.3rem' }} />
+                            Carga Manual
+                        </button>
 
-                        {selectedIds.size > 0 && (
+                        {selectedIds.size > 0 && subTab !== 'manual' && (
                             <div className="concil-actions">
                                 {selectedIds.size === 1 ? (
                                     <button
@@ -172,12 +264,13 @@ export default function ConciliacionBalanzaTab() {
                         )}
                     </div>
 
+                    {/* ── LISTADO ────────────────────────────────────────────── */}
                     {subTab === 'listado' && (
                         <>
                             {filtered.length === 0 ? (
                                 <div className="concil-empty">
                                     <ShoppingBag size={40} style={{ opacity: 0.2 }} />
-                                    <p>No hay tickets pendientes de conciliación en ese rango de fechas.</p>
+                                    <p>No hay tickets pendientes de conciliación.</p>
                                 </div>
                             ) : (
                                 <>
@@ -244,6 +337,7 @@ export default function ConciliacionBalanzaTab() {
                         </>
                     )}
 
+                    {/* ── DETALLE ────────────────────────────────────────────── */}
                     {subTab === 'detalle' && detailTicket && (
                         <div className="concil-detail">
                             <div className="concil-detail-header">
@@ -300,9 +394,163 @@ export default function ConciliacionBalanzaTab() {
                             )}
                         </div>
                     )}
+
+                    {/* ── CARGA MANUAL ──────────────────────────────────────── */}
+                    {subTab === 'manual' && (
+                        <div className="concil-manual">
+                            <div className="concil-manual-title">
+                                <Hash size={16} /> Cargar ticket manualmente
+                            </div>
+
+                            {/* Buscar barcode */}
+                            <div className="concil-manual-search">
+                                <div className="concil-filter-group" style={{ flex: 1 }}>
+                                    <label>Número / código de barras del ticket</label>
+                                    <div className="concil-barcode-row">
+                                        <input
+                                            type="text"
+                                            placeholder="Ej: 0000012345678"
+                                            value={manualBarcode}
+                                            onChange={e => { setManualBarcode(e.target.value); setManualTicket(null); setManualError(null); setManualSuccess(null); }}
+                                            onKeyDown={e => e.key === 'Enter' && buscarManual()}
+                                        />
+                                        <button
+                                            className="concil-buscar-btn"
+                                            onClick={buscarManual}
+                                            disabled={manualSearching || !manualBarcode.trim()}
+                                        >
+                                            {manualSearching ? 'Buscando…' : <><Search size={15} /> Buscar</>}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {manualError && (
+                                <div className="concil-error">
+                                    <AlertTriangle size={16} /> {manualError}
+                                </div>
+                            )}
+
+                            {manualSuccess && (
+                                <div className="concil-success">
+                                    <CheckCircle2 size={16} />
+                                    Cobro registrado correctamente — Venta #{manualSuccess.saleId} · {fmt(manualSuccess.total)}
+                                </div>
+                            )}
+
+                            {/* Ticket encontrado */}
+                            {manualTicket?.ticket && (
+                                <div className="concil-manual-card">
+                                    <div className="concil-manual-card-header">
+                                        <div>
+                                            <div className="concil-detail-title">
+                                                Ticket {manualTicket.ticket.printed_ticket_barcode || manualTicket.ticket.ticket_barcode?.slice(-10)}
+                                            </div>
+                                            <div className="concil-detail-meta">
+                                                {fmtDate(manualTicket.ticket.sale_at)} · {manualTicket.ticket.vendor_name || 'Sin vendedor'}
+                                            </div>
+                                        </div>
+                                        <span className={`concil-badge ${ticketAlreadyCharged ? 'charged' : 'open'}`}>
+                                            {ticketAlreadyCharged ? 'YA COBRADO' : 'SIN COBRAR'}
+                                        </span>
+                                    </div>
+
+                                    {ticketAlreadyCharged && (
+                                        <div className="concil-error" style={{ marginTop: '0.5rem' }}>
+                                            <AlertTriangle size={16} /> Este ticket ya fue cobrado (venta #{manualTicket.ticket.charged_sale_id}).
+                                        </div>
+                                    )}
+
+                                    {/* Items */}
+                                    {manualTicket.items?.length > 0 && (
+                                        <div className="concil-items-table-wrap" style={{ marginTop: '0.75rem' }}>
+                                            <table className="concil-table concil-items-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>PLU</th>
+                                                        <th>Producto</th>
+                                                        <th>Cantidad</th>
+                                                        <th>Importe</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {manualTicket.items.map((item, i) => (
+                                                        <tr key={i}>
+                                                            <td><code>{item.plu_code || item.plu}</code></td>
+                                                            <td>{item.product?.name || item.name || '—'}</td>
+                                                            <td>{Number(item.item_quantity || item.quantity || 0).toFixed(3)} {item.item_quantity_unit || item.unit || 'kg'}</td>
+                                                            <td className="concil-cell-amount">{fmt(item.amount)}</td>
+                                                        </tr>
+                                                    ))}
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                    )}
+
+                                    <div className="concil-info-row total" style={{ marginTop: '0.5rem', borderRadius: '8px' }}>
+                                        <span>Total del ticket</span>
+                                        <span>{fmt(manualTicket.ticket.total_amount)}</span>
+                                    </div>
+
+                                    {/* Form de cobro */}
+                                    {!ticketAlreadyCharged && (
+                                        <div className="concil-manual-form">
+                                            <div className="concil-filter-group">
+                                                <label><CreditCard size={13} style={{ marginRight: '0.3rem' }} />Método de pago</label>
+                                                <select
+                                                    value={manualPaymentId}
+                                                    onChange={e => setManualPaymentId(e.target.value)}
+                                                    className="concil-manual-select"
+                                                >
+                                                    {paymentMethods.map(m => (
+                                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                                    ))}
+                                                    {paymentMethods.length === 0 && (
+                                                        <option value="">Sin métodos configurados</option>
+                                                    )}
+                                                </select>
+                                            </div>
+                                            <div className="concil-filter-group">
+                                                <label>Observaciones (opcional)</label>
+                                                <input
+                                                    type="text"
+                                                    placeholder="Ej: cliente pagó en efectivo en mostrador"
+                                                    value={manualNotes}
+                                                    onChange={e => setManualNotes(e.target.value)}
+                                                    className="concil-manual-notes"
+                                                />
+                                            </div>
+                                            <div className="concil-manual-actions">
+                                                <button
+                                                    className="concil-action-btn secondary"
+                                                    onClick={() => cargarAlPOS([manualTicket.ticket.ticket_barcode])}
+                                                >
+                                                    <ShoppingBag size={15} /> Abrir en POS
+                                                </button>
+                                                <button
+                                                    className="concil-action-btn primary"
+                                                    onClick={registrarCobro}
+                                                    disabled={manualSaving || !manualPaymentId}
+                                                >
+                                                    <CheckCircle2 size={15} />
+                                                    {manualSaving ? 'Registrando…' : 'Registrar cobro'}
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {!manualTicket && !manualError && !manualSuccess && (
+                                <div className="concil-empty" style={{ paddingTop: '2rem' }}>
+                                    <Hash size={36} style={{ opacity: 0.15 }} />
+                                    <p>Ingresá el número de ticket de la balanza para buscarlo.</p>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </>
             )}
-
         </div>
     );
 }
