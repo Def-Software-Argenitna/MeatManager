@@ -479,47 +479,58 @@ const ProductosCompra = () => {
                             </button>
 
                             {!collapsedGroups[group.key] && (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '1rem' }}>
+                            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+                                <thead>
+                                    <tr style={{ borderBottom: '1px solid var(--color-border)' }}>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Nombre</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Unidad</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>IVA</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Precio</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>PLU</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Flags</th>
+                                        <th style={{ padding: '0.4rem 0.6rem' }}></th>
+                                    </tr>
+                                </thead>
+                                <tbody>
                                 {group.items.map(item => (
-                                    <div key={item.id} className="neo-card" style={{ padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                        <div>
-                                            <div style={{ fontWeight: 'bold', fontSize: '1.1rem' }}>{item.name}</div>
-                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem', fontSize: '0.85rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                                <span style={{ background: 'var(--color-bg-main)', padding: '0.15rem 0.35rem', borderRadius: '4px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                                    {item.unit}
-                                                </span>
-                                                <span style={{ background: 'rgba(59, 130, 246, 0.12)', color: '#93c5fd', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(59, 130, 246, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                                    IVA {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
-                                                </span>
+                                    <tr key={item.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+                                        <td style={{ padding: '0.45rem 0.6rem', fontWeight: 600, color: 'var(--color-text-main)' }}>{item.name}</td>
+                                        <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)' }}>{item.unit}</td>
+                                        <td style={{ padding: '0.45rem 0.6rem' }}>
+                                            <span style={{ background: 'rgba(59,130,246,0.12)', color: '#93c5fd', padding: '0.15rem 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, border: '1px solid rgba(59,130,246,0.25)', whiteSpace: 'nowrap' }}>
+                                                {Number(item.default_iva_rate ?? 10.5).toFixed(1)}%
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: '0.45rem 0.6rem' }}>
+                                            <span style={{ color: Number(item.current_price) > 0 ? '#fdba74' : '#ef4444', fontWeight: 700 }}>
+                                                {Number(item.current_price) > 0
+                                                    ? `$${Number(item.current_price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
+                                                    : 'Sin precio'}
+                                            </span>
+                                        </td>
+                                        <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '0.82rem' }}>
+                                            {String(item.plu || '').trim() || '—'}
+                                        </td>
+                                        <td style={{ padding: '0.45rem 0.6rem' }}>
+                                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
                                                 {Number(item.use_for_despostada || 0) === 1 && (
-                                                    <span style={{ background: 'rgba(234, 179, 8, 0.1)', color: 'var(--color-primary)', padding: '0.2rem 0.55rem', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold', border: '1px solid var(--color-primary)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
-                                                        USA DESPOSTADA
-                                                    </span>
+                                                    <span style={{ background: 'rgba(234,179,8,0.1)', color: 'var(--color-primary)', padding: '0.1rem 0.4rem', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, border: '1px solid var(--color-primary)', whiteSpace: 'nowrap' }}>DESPOSTADA</span>
                                                 )}
                                                 {Number(item.is_preelaborable || 0) === 1 && (
-                                                    <span style={{ background: 'rgba(34, 197, 94, 0.12)', color: '#86efac', padding: '0.2rem 0.5rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: '700', border: '1px solid rgba(34, 197, 94, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1, textAlign: 'center' }}>
-                                                        INSUMO PRE-ELABORADO
-                                                    </span>
+                                                    <span style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', padding: '0.1rem 0.4rem', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, border: '1px solid rgba(34,197,94,0.25)', whiteSpace: 'nowrap' }}>PRE-ELAB</span>
                                                 )}
                                             </div>
-                                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.6rem', fontSize: '0.82rem', alignItems: 'center', flexWrap: 'wrap' }}>
-                                                <span style={{ background: 'rgba(249, 115, 22, 0.12)', color: '#fdba74', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '800', border: '1px solid rgba(249, 115, 22, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                                    {Number(item.current_price) > 0
-                                                        ? `$${Number(item.current_price).toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`
-                                                        : 'Sin precio'}
-                                                </span>
-                                                <span style={{ background: 'rgba(148, 163, 184, 0.12)', color: '#cbd5e1', padding: '0.25rem 0.6rem', borderRadius: '999px', fontWeight: '700', border: '1px solid rgba(148, 163, 184, 0.25)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1.1 }}>
-                                                    PLU {String(item.plu || '').trim() || 'sin definir'}
-                                                </span>
+                                        </td>
+                                        <td style={{ padding: '0.45rem 0.6rem' }}>
+                                            <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end' }}>
+                                                <Button variant="ghost" size="sm" icon={<Edit2 size={15} color="#3b82f6" />} onClick={() => openEdit(item)} />
+                                                <Button variant="ghost" size="sm" icon={<Trash2 size={15} color="#ef4444" />} onClick={() => handleDelete(item.id)} />
                                             </div>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                                            <Button variant="ghost" size="sm" icon={<Edit2 size={18} color="#3b82f6" />} onClick={() => openEdit(item)} />
-                                            <Button variant="ghost" size="sm" icon={<Trash2 size={18} color="#ef4444" />} onClick={() => handleDelete(item.id)} />
-                                        </div>
-                                    </div>
+                                        </td>
+                                    </tr>
                                 ))}
-                            </div>
+                                </tbody>
+                            </table>
                             )}
                         </section>
                     ))}
