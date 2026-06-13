@@ -146,9 +146,9 @@ const OtrosItems = () => {
 
             <div className="otros-items-grid">
                 {items?.map((item, index) => (
-                    <DirectionalReveal key={item.id} className="otros-item-card neo-card" from={index % 2 === 0 ? 'left' : 'right'} delay={0.16 + (index * 0.03)}>
-                        <div className="otros-item-icon" style={{ backgroundColor: 'var(--color-bg-main)' }}>
-                            <Package size={24} color="var(--color-primary)" />
+                    <DirectionalReveal key={item.id} className={`otros-item-card neo-card usage-${item.usage || 'venta'}`} from={index % 2 === 0 ? 'left' : 'right'} delay={0.16 + (index * 0.03)}>
+                        <div className="otros-item-icon">
+                            <Package size={22} color={item.usage === 'interno' ? '#fbbf24' : '#4ade80'} />
                         </div>
                         <div className="otros-item-info">
                             <h3>{item.name}</h3>

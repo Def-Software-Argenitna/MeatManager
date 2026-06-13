@@ -11,17 +11,43 @@
     gap: 0.9rem;
     padding: 1rem;
     min-height: 0;
+    background: linear-gradient(145deg, rgba(28,28,38,0.95) 0%, rgba(18,18,26,0.98) 100%);
+    border-radius: 16px;
+    border-left: 3px solid var(--color-border);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.otros-item-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+}
+
+.otros-item-card.usage-venta {
+    border-left-color: #4ade80;
+}
+
+.otros-item-card.usage-interno {
+    border-left-color: #fbbf24;
 }
 
 .otros-item-icon {
-    width: 40px;
-    height: 40px;
+    width: 42px;
+    height: 42px;
     border-radius: 10px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--color-border);
     flex-shrink: 0;
+}
+
+.otros-item-card.usage-venta .otros-item-icon {
+    background: rgba(74, 222, 128, 0.1);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+}
+
+.otros-item-card.usage-interno .otros-item-icon {
+    background: rgba(251, 191, 36, 0.1);
+    border: 1px solid rgba(251, 191, 36, 0.25);
 }
 
 .otros-item-info {
@@ -48,9 +74,26 @@
 }
 
 .otros-item-usage {
-    margin-top: 0.15rem;
-    font-size: 0.78rem;
-    color: var(--color-text-muted);
+    margin-top: 0.35rem;
+    display: inline-block;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.5rem;
+    border-radius: 999px;
+}
+
+.otros-item-card.usage-venta .otros-item-usage {
+    color: #4ade80;
+    background: rgba(74, 222, 128, 0.08);
+    border: 1px solid rgba(74, 222, 128, 0.25);
+}
+
+.otros-item-card.usage-interno .otros-item-usage {
+    color: #fbbf24;
+    background: rgba(251, 191, 36, 0.08);
+    border: 1px solid rgba(251, 191, 36, 0.25);
 }
 
 .otros-item-barcode {
@@ -78,6 +121,13 @@
     align-items: center;
     justify-content: center;
     cursor: pointer;
+    transition: all 0.2s;
+}
+
+.otros-item-action-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.18);
+    transform: translateY(-1px);
 }
 
 .otros-item-action-btn.danger {
