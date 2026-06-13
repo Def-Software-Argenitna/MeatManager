@@ -310,7 +310,6 @@
 
 .stock-table tbody tr:last-child td { border-bottom: none; }
 .stock-table tbody tr:hover { background: rgba(255,255,255,0.03); }
-.stock-row-negative td { background: rgba(239,68,68,0.04); }
 
 .stock-col-name { font-weight: 600; }
 .stock-col-plu { color: var(--color-text-muted); }
