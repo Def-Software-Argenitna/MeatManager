@@ -12138,8 +12138,13 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
                 i.amount,
                 i.item_quantity,
                 i.item_quantity_unit,
-                i.sale_at
+                i.sale_at,
+                p.name AS product_name
             FROM scale_bridge_sales_item i
+            LEFT JOIN products p
+                ON p.tenant_id = i.tenant_id
+                AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                AND (p.inactive IS NULL OR p.inactive != 1)
             WHERE i.tenant_id = ?
               AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
             ORDER BY i.ticket_barcode, i.line_no

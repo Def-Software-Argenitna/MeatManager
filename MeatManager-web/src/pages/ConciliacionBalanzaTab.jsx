@@ -8,6 +8,8 @@ const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency:
 const fmtDate = (s) => s ? new Date(s).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '-';
 const fmtKg = (n) => n ? `${(n / 1000).toFixed(3)} kg` : '-';
 
+const todayStr = () => new Date().toISOString().slice(0, 10);
+
 const apiFetchJson = async (path, options) => {
     const res = await apiFetch(path, options);
     if (!res.ok) {
@@ -21,8 +23,8 @@ export default function ConciliacionBalanzaTab() {
     const navigate = useNavigate();
 
     // ── Listado ──────────────────────────────────────────────────────────────
-    const [dateFrom, setDateFrom] = useState('');
-    const [dateTo, setDateTo] = useState('');
+    const [dateFrom, setDateFrom] = useState(todayStr);
+    const [dateTo, setDateTo] = useState(todayStr);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
     const [tickets, setTickets] = useState([]);
@@ -282,23 +284,24 @@ export default function ConciliacionBalanzaTab() {
                                             onChange={e => setFilterText(e.target.value)}
                                         />
                                     </div>
+                                    <div className="concil-result-count">{filtered.length} ticket{filtered.length !== 1 ? 's' : ''}</div>
                                     <div className="concil-table-wrap">
                                         <table className="concil-table">
                                             <thead>
                                                 <tr>
-                                                    <th>
+                                                    <th style={{ width: '40px' }}>
                                                         <button className="concil-check-btn" onClick={toggleAll}>
                                                             {selectedIds.size === filtered.length && filtered.length > 0
                                                                 ? <CheckSquare size={16} />
                                                                 : <Square size={16} />}
                                                         </button>
                                                     </th>
-                                                    <th onClick={() => handleSort('sale_at')} className="sortable">Fecha <SortIcon field="sale_at" /></th>
-                                                    <th>Ticket</th>
-                                                    <th onClick={() => handleSort('vendor_name')} className="sortable">Vendedor <SortIcon field="vendor_name" /></th>
-                                                    <th onClick={() => handleSort('item_count')} className="sortable">Ítems <SortIcon field="item_count" /></th>
-                                                    <th onClick={() => handleSort('total_amount')} className="sortable">Importe <SortIcon field="total_amount" /></th>
-                                                    <th></th>
+                                                    <th style={{ width: '130px' }} onClick={() => handleSort('sale_at')}><span className="concil-th-sort">Fecha <SortIcon field="sale_at" /></span></th>
+                                                    <th style={{ width: '140px' }}>Ticket</th>
+                                                    <th onClick={() => handleSort('vendor_name')}><span className="concil-th-sort">Vendedor <SortIcon field="vendor_name" /></span></th>
+                                                    <th style={{ width: '70px', textAlign: 'center' }} onClick={() => handleSort('item_count')}><span className="concil-th-sort" style={{ justifyContent: 'center' }}>Ítems <SortIcon field="item_count" /></span></th>
+                                                    <th style={{ width: '120px', textAlign: 'right' }} onClick={() => handleSort('total_amount')}><span className="concil-th-sort" style={{ justifyContent: 'flex-end' }}>Importe <SortIcon field="total_amount" /></span></th>
+                                                    <th style={{ width: '36px' }}></th>
                                                 </tr>
                                             </thead>
                                             <tbody>
@@ -369,12 +372,12 @@ export default function ConciliacionBalanzaTab() {
                                     <table className="concil-table concil-items-table">
                                         <thead>
                                             <tr>
-                                                <th>Línea</th>
-                                                <th>PLU</th>
+                                                <th style={{ width: '50px' }}>Línea</th>
+                                                <th style={{ width: '90px' }}>PLU</th>
+                                                <th>Descripción</th>
                                                 <th>Vendedor</th>
-                                                <th>Peso bruto</th>
-                                                <th>Cantidad</th>
-                                                <th>Importe</th>
+                                                <th style={{ width: '90px' }}>Cantidad</th>
+                                                <th style={{ width: '110px', textAlign: 'right' }}>Importe</th>
                                             </tr>
                                         </thead>
                                         <tbody>
@@ -382,8 +385,8 @@ export default function ConciliacionBalanzaTab() {
                                                 <tr key={i}>
                                                     <td className="concil-cell-center">{item.line_no}</td>
                                                     <td><code>{item.plu_code}</code></td>
+                                                    <td>{item.product_name || '—'}</td>
                                                     <td>{item.vendor_name || '—'}</td>
-                                                    <td>{fmtKg(item.grams)}</td>
                                                     <td>{Number(item.item_quantity || 0).toFixed(3)} {item.item_quantity_unit || 'kg'}</td>
                                                     <td className="concil-cell-amount">{fmt(item.amount)}</td>
                                                 </tr>

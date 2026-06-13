@@ -158,6 +158,16 @@
 
 .concil-action-btn.primary:hover { opacity: 0.85; }
 
+/* Result count */
+.concil-result-count {
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 0 0.2rem;
+}
+
 /* Search row */
 .concil-search-row {
     display: flex;
@@ -208,15 +218,15 @@
     white-space: nowrap;
 }
 
-.concil-table th.sortable {
-    cursor: pointer;
-    display: flex;
+.concil-th-sort {
+    display: inline-flex;
     align-items: center;
     gap: 0.3rem;
+    cursor: pointer;
     user-select: none;
 }
 
-.concil-table th.sortable:hover { color: var(--color-text-main); }
+.concil-th-sort:hover { color: var(--color-text-main); }
 
 .concil-table td {
     border-bottom: 1px solid rgba(255,255,255,0.05);
