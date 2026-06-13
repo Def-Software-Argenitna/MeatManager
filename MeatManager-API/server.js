@@ -12139,10 +12139,21 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
                 i.item_quantity,
                 i.item_quantity_unit,
                 i.sale_at,
-                (SELECT p.name FROM products p
-                 WHERE p.tenant_id = i.tenant_id
-                   AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
-                 LIMIT 1) AS product_name
+                COALESCE(
+                    (SELECT p.name FROM scale_bridge_product_map m
+                     JOIN products p ON p.id = m.product_id AND p.tenant_id = m.tenant_id
+                     WHERE m.tenant_id = i.tenant_id AND m.device_id = i.device_id
+                       AND CAST(m.plu_code AS CHAR) = CAST(i.plu_code AS CHAR)
+                     LIMIT 1),
+                    (SELECT p.name FROM products p
+                     WHERE p.tenant_id = i.tenant_id
+                       AND (
+                           CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                           OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
+                       )
+                     ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                     LIMIT 1)
+                ) AS product_name
             FROM scale_bridge_sales_item i
             WHERE i.tenant_id = ?
               AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
