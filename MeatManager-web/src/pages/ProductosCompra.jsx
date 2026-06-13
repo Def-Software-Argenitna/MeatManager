@@ -487,7 +487,7 @@ const ProductosCompra = () => {
                                         <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>IVA</th>
                                         <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Precio</th>
                                         <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>PLU</th>
-                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Flags</th>
+                                        <th style={{ textAlign: 'left', padding: '0.4rem 0.6rem', color: 'var(--color-text-muted)', fontWeight: 700, fontSize: '0.72rem', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Categoría</th>
                                         <th style={{ padding: '0.4rem 0.6rem' }}></th>
                                     </tr>
                                 </thead>
@@ -511,15 +511,8 @@ const ProductosCompra = () => {
                                         <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '0.82rem' }}>
                                             {String(item.plu || '').trim() || '—'}
                                         </td>
-                                        <td style={{ padding: '0.45rem 0.6rem' }}>
-                                            <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                                                {Number(item.use_for_despostada || 0) === 1 && (
-                                                    <span style={{ background: 'rgba(234,179,8,0.1)', color: 'var(--color-primary)', padding: '0.1rem 0.4rem', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, border: '1px solid var(--color-primary)', whiteSpace: 'nowrap' }}>DESPOSTADA</span>
-                                                )}
-                                                {Number(item.is_preelaborable || 0) === 1 && (
-                                                    <span style={{ background: 'rgba(34,197,94,0.12)', color: '#86efac', padding: '0.1rem 0.4rem', borderRadius: '6px', fontSize: '0.7rem', fontWeight: 700, border: '1px solid rgba(34,197,94,0.25)', whiteSpace: 'nowrap' }}>PRE-ELAB</span>
-                                                )}
-                                            </div>
+                                        <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)', fontSize: '0.83rem' }}>
+                                            {group.label || '—'}
                                         </td>
                                         <td style={{ padding: '0.45rem 0.6rem' }}>
                                             <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end' }}>
