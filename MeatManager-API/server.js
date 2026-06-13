@@ -12144,7 +12144,8 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             LEFT JOIN products p
                 ON p.tenant_id = i.tenant_id
                 AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
-                AND (p.inactive IS NULL OR p.inactive != 1)
+                AND p.active != 0
+                AND p.deleted_at IS NULL
             WHERE i.tenant_id = ?
               AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
             ORDER BY i.ticket_barcode, i.line_no
