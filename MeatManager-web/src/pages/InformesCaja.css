@@ -344,14 +344,15 @@
 .ic-table-wrap {
     border-radius: var(--radius-md);
     border: 1px solid rgba(255,255,255,0.07);
-    overflow-x: hidden;
+    overflow: hidden;
+    width: 100%;
 }
 
 .ic-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.82rem;
-    table-layout: auto;
+    font-size: 0.78rem;
+    table-layout: fixed;
 }
 
 .ic-table thead tr {
@@ -365,21 +366,25 @@
     background: rgba(15,15,22,0.95);
     backdrop-filter: blur(8px);
     color: var(--color-text-muted);
-    font-size: 0.7rem;
+    font-size: 0.66rem;
     font-weight: 800;
     text-align: left;
     text-transform: uppercase;
     letter-spacing: 0.05em;
-    padding: 0.6rem 0.75rem;
+    padding: 0.5rem 0.5rem;
     border-bottom: 1px solid rgba(255,255,255,0.08);
     white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .ic-table td {
-    padding: 0.55rem 0.75rem;
+    padding: 0.45rem 0.5rem;
     border-bottom: 1px solid rgba(255,255,255,0.05);
     vertical-align: middle;
     color: var(--color-text-main);
+    overflow: hidden;
+    word-break: break-word;
 }
 
 .ic-table tbody tr:last-child td { border-bottom: none; }

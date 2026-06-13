@@ -1227,11 +1227,15 @@ const InformesCaja = () => {
                     <CalendarDays size={22} />
                     <h2>Detalle centavo por centavo</h2>
                     <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem' }}>
-                        {[{ key: 'ingresos', label: 'Ingresos', activeColor: 'rgba(34,197,94,0.5)', activeBg: 'rgba(34,197,94,0.15)', activeText: '#4ade80' }, { key: 'egresos', label: 'Egresos', activeColor: 'rgba(239,68,68,0.5)', activeBg: 'rgba(239,68,68,0.15)', activeText: '#f87171' }].map(({ key, label, activeColor, activeBg, activeText }) => (
+                        {[
+                            { key: 'all', label: 'Todos', activeColor: 'rgba(249,115,22,0.5)', activeBg: 'rgba(249,115,22,0.15)', activeText: 'var(--color-primary)' },
+                            { key: 'ingresos', label: 'Ingresos', activeColor: 'rgba(34,197,94,0.5)', activeBg: 'rgba(34,197,94,0.15)', activeText: '#4ade80' },
+                            { key: 'egresos', label: 'Egresos', activeColor: 'rgba(239,68,68,0.5)', activeBg: 'rgba(239,68,68,0.15)', activeText: '#f87171' },
+                        ].map(({ key, label, activeColor, activeBg, activeText }) => (
                             <button
                                 key={key}
                                 type="button"
-                                onClick={() => setRowFilter(prev => prev === key ? 'all' : key)}
+                                onClick={() => setRowFilter(key)}
                                 style={{
                                     padding: '0.3rem 0.75rem',
                                     borderRadius: '999px',
@@ -1258,35 +1262,50 @@ const InformesCaja = () => {
                     return (
                         <div className="ic-table-wrap">
                             <table className="ic-table">
+                                <colgroup>
+                                    <col style={{ width: '10%' }} />
+                                    <col style={{ width: '8%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '10%' }} />
+                                    <col style={{ width: '7%' }} />
+                                    <col style={{ width: '26%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '9%' }} />
+                                </colgroup>
                                 <thead>
                                     <tr>
                                         <th>Fecha</th>
                                         <th>Caja</th>
                                         <th>Operación</th>
-                                        <th>Clasificación</th>
-                                        <th>Mov. entre cajas</th>
                                         <th>Categoría</th>
+                                        <th>Mov. cajas</th>
                                         <th>Medio</th>
                                         <th>Detalle</th>
                                         <th className="num">Ingreso</th>
                                         <th className="num">Egreso</th>
-                                        <th className="num">Saldo caja</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     {filteredRows.length === 0 && (
                                         <tr>
-                                            <td colSpan="11" className="ic-empty">No hay movimientos en el período seleccionado.</td>
+                                            <td colSpan="9" className="ic-empty">No hay movimientos en el período seleccionado.</td>
                                         </tr>
                                     )}
                                     {filteredRows.map((row, index) => (
                                         <tr key={`${row.source}-${row.id}-${index}`}>
                                             <td>{row.fecha}</td>
                                             <td>{row.caja}</td>
-                                            <td>{row.operacion}</td>
-                                            <td>{row.clasificacion}</td>
-                                            <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
+                                            <td>
+                                                <div className="ic-detail-cell">
+                                                    <span>{row.operacion}</span>
+                                                    {row.clasificacion && row.clasificacion !== row.operacion && (
+                                                        <small>{row.clasificacion}</small>
+                                                    )}
+                                                </div>
+                                            </td>
                                             <td>{row.categoria}</td>
+                                            <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
                                             <td>{row.medioPago}</td>
                                             <td>
                                                 <div className="ic-detail-cell">
@@ -1297,31 +1316,29 @@ const InformesCaja = () => {
                                                             row.ticket ? `Ticket ${row.ticket}` : '',
                                                             row.ventaId ? `Venta ${row.ventaId}` : '',
                                                             row.compraId ? `Compra ${row.compraId}` : '',
-                                                            row.transferenciaId ? `Transferencia ${row.transferenciaId}` : '',
-                                                            row.cierreTeorico != null ? `Cierre: teórico ${formatCurrency(row.cierreTeorico)}, contado ${formatCurrency(row.cierreContado)}, dif. ${formatCurrency(row.diferenciaCierre)}` : '',
+                                                            row.transferenciaId ? `Transf. ${row.transferenciaId}` : '',
+                                                            row.cierreTeorico != null ? `Cierre: T ${formatCurrency(row.cierreTeorico)} / C ${formatCurrency(row.cierreContado)} / Δ ${formatCurrency(row.diferenciaCierre)}` : '',
                                                         ].filter(Boolean).join(' · ')}
                                                     </small>
                                                 </div>
                                             </td>
                                             <td className="num income">{row.ingreso ? formatCurrency(row.ingreso) : ''}</td>
                                             <td className="num expense">{row.egreso ? formatCurrency(row.egreso) : ''}</td>
-                                            <td className="num">{row.saldoCaja !== '' ? formatCurrency(row.saldoCaja) : ''}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                                 {filteredRows.length > 0 && (
                                     <tfoot>
                                         <tr style={{ borderTop: '2px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
-                                            <td colSpan="8" style={{ padding: '0.65rem 0.75rem', fontSize: '0.78rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
+                                            <td colSpan="7" style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
                                                 Total — {filteredRows.length} movimiento{filteredRows.length !== 1 ? 's' : ''}
                                             </td>
-                                            <td className="num income" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.95rem' }}>
+                                            <td className="num income" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.92rem' }}>
                                                 {totalIngreso > 0 ? formatCurrency(totalIngreso) : '—'}
                                             </td>
-                                            <td className="num expense" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.95rem' }}>
+                                            <td className="num expense" style={{ padding: '0.65rem 0.75rem', fontWeight: 800, fontSize: '0.92rem' }}>
                                                 {totalEgreso > 0 ? formatCurrency(totalEgreso) : '—'}
                                             </td>
-                                            <td className="num" style={{ padding: '0.65rem 0.75rem' }} />
                                         </tr>
                                     </tfoot>
                                 )}
