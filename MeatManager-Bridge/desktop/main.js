@@ -2,8 +2,10 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { fork } = require('child_process');
+const { execFile } = require('child_process');
 const { app, BrowserWindow, Tray, Menu, ipcMain, nativeImage, shell, dialog } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const updateGuard = require('./update-guard');
 
 const APP_NAME = 'MeatManager Bridge';
 const BRIDGE_PORT = Number.parseInt(process.env.BRIDGE_HTTP_PORT || '4046', 10);
@@ -46,6 +48,14 @@ let startupGracePollsRemaining = 0;
 // lo matamos; el handler de 'exit' lo relanza solo.
 const HEALTH_WATCHDOG_FAILS = 6; // ~24s a STATUS_POLL_MS=4000 (>> bind de ~2s)
 let consecutiveHealthFailures = 0;
+
+// Probacion de updates (rollback automatico): cuando arrancamos una version
+// recien actualizada, la observamos PROBATION_MS; si alcanza salud sostenida la
+// promovemos, si no, volvemos sola a la ultima version buena conocida.
+let probationActive = false;
+let probationHealthySamples = 0;
+let probationTimer = null;
+let rollbackInProgress = false;
 
 function runtimeDir() {
     return path.join(app.getPath('userData'), 'runtime');
@@ -196,6 +206,11 @@ async function fetchBridgeStatus() {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         const payload = await response.json();
         consecutiveHealthFailures = 0;
+        // Durante la probacion de un update, cada /health OK suma una muestra
+        // sana. El criterio de salud es "la app se sostiene corriendo y el
+        // bridge responde" — NO exigimos que la balanza este conectada (puede
+        // estar legitimamente apagada; eso no es culpa de la version nueva).
+        if (probationActive) probationHealthySamples += 1;
         lastStatus = {
             ...lastStatus,
             bridgeHttp: {
@@ -458,6 +473,14 @@ function configureAutoUpdate() {
         // 0.4.11 con 4 releases descargados sin aplicar). El bridge tarda ~10s
         // en volver y el pulso de ventas re-lee lo que se haya perdido.
         if (onboardingActive) return;
+        // Marcamos la version entrante como "en probacion" ANTES de aplicarla.
+        // Al rearrancar en esa version, onBoot la detecta y la verificamos; si
+        // no se sostiene sana, rollback a la buena conocida.
+        try {
+            updateGuard.markPending(path.join(runtimeDir(), 'data'), info?.version || '');
+        } catch (e) {
+            logDesktop(`no se pudo marcar pending del update: ${e?.message || e}`);
+        }
         logDesktop(`update ${info?.version || '?'} descargada — aplicando automaticamente (quitAndInstall)`);
         setTimeout(() => {
             isQuitting = true;
@@ -520,6 +543,133 @@ function startUpdatePolling() {
     checkForUpdatesNow(false);
     if (updateTimer) clearInterval(updateTimer);
     updateTimer = setInterval(() => checkForUpdatesNow(false), UPDATE_POLL_MS);
+}
+
+// ── Probacion de updates + rollback automatico ─────────────────────────────
+function guardDataDir() {
+    return path.join(runtimeDir(), 'data');
+}
+
+// Descarga el instalador oneClick de `version` desde GitHub y lo ejecuta en
+// silencio. Es per-user (sin UAC): reemplaza la app y la relanza. Mismo
+// mecanismo que un install/upgrade normal, por eso es seguro.
+async function reinstallVersion(version, reasonLabel) {
+    const { owner, repo } = resolveGithubPublishTarget();
+    if (!owner || !repo || !version) {
+        logDesktop(`rollback abortado: faltan owner/repo/version (${owner}/${repo} v=${version})`);
+        return false;
+    }
+    const url = updateGuard.installerUrl(owner, repo, version);
+    const dest = path.join(os.tmpdir(), `MeatManager-Bridge-${version}-rollback.exe`);
+    logDesktop(`rollback (${reasonLabel}): descargando ${url}`);
+    try {
+        const resp = await fetch(url);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const buf = Buffer.from(await resp.arrayBuffer());
+        fs.writeFileSync(dest, buf);
+        logDesktop(`rollback: instalador descargado (${buf.length} bytes), ejecutando ${dest} /S`);
+        // No esperamos: el instalador cierra esta instancia y relanza la vieja.
+        execFile(dest, ['/S'], { windowsHide: true }, (err) => {
+            if (err) logDesktop(`rollback: el instalador devolvio error: ${err.message}`);
+        });
+        return true;
+    } catch (error) {
+        logDesktop(`rollback FALLO al descargar/instalar v${version}: ${error?.message || error}`);
+        return false;
+    }
+}
+
+async function performRollback(reason) {
+    if (rollbackInProgress) return;
+    rollbackInProgress = true;
+    stopProbation();
+    const state = updateGuard.readGuardState(guardDataDir());
+    const from = app.getVersion();
+    const to = state.knownGoodVersion;
+    if (!to || to === from) {
+        logDesktop(`rollback no aplicable (knownGood=${to}, actual=${from}); se mantiene la version actual`);
+        rollbackInProgress = false;
+        return;
+    }
+    logDesktop(`ROLLBACK disparado (${reason}): ${from} -> ${to}`);
+    updateGuard.recordRollback(guardDataDir(), { from, to, reason });
+    await reinstallVersion(to, reason);
+}
+
+function stopProbation() {
+    probationActive = false;
+    if (probationTimer) { clearTimeout(probationTimer); probationTimer = null; }
+}
+
+function startProbation(version) {
+    probationActive = true;
+    probationHealthySamples = 0;
+    logDesktop(`probacion iniciada para v${version} (${updateGuard.PROBATION_MS / 1000}s, min ${updateGuard.MIN_HEALTHY_SAMPLES} muestras sanas)`);
+    if (probationTimer) clearTimeout(probationTimer);
+    probationTimer = setTimeout(() => {
+        const healthy = probationHealthySamples >= updateGuard.MIN_HEALTHY_SAMPLES;
+        probationActive = false;
+        if (healthy) {
+            updateGuard.promote(guardDataDir(), version);
+            logDesktop(`probacion OK: v${version} promovida a version buena conocida (${probationHealthySamples} muestras sanas)`);
+        } else {
+            logDesktop(`probacion FALLIDA: v${version} solo logro ${probationHealthySamples}/${updateGuard.MIN_HEALTHY_SAMPLES} muestras sanas`);
+            performRollback('probacion-sin-salud');
+        }
+    }, updateGuard.PROBATION_MS);
+}
+
+// Evalua el estado del guard al arrancar y decide normal / probacion / rollback.
+function evaluateUpdateGuardOnBoot() {
+    let decision;
+    try {
+        decision = updateGuard.onBoot(guardDataDir(), app.getVersion());
+    } catch (e) {
+        logDesktop(`update-guard onBoot fallo: ${e?.message || e}`);
+        return;
+    }
+    logDesktop(`update-guard onBoot: action=${decision.action} reason=${decision.reason} v=${app.getVersion()} knownGood=${decision.state?.knownGoodVersion}`);
+    if (decision.action === 'rollback') {
+        performRollback(decision.reason);
+    } else if (decision.action === 'probation') {
+        startProbation(app.getVersion());
+    }
+}
+
+// Watchdog externo: tarea programada que relanza la app si no esta corriendo.
+// Es la red de seguridad para "siempre corriendo" cuando la app entera murio
+// (no solo el hijo, que ya cubre el watchdog de salud interno). Solo RELANZA
+// (operacion segura); el rollback de version lo decide la app, no el script.
+function installExternalWatchdog() {
+    if (process.platform !== 'win32') return;
+    try {
+        const scriptPath = path.join(guardDataDir(), 'bridge-watchdog.ps1');
+        const exePath = process.execPath;
+        const script = [
+            '$ErrorActionPreference = "SilentlyContinue"',
+            '$p = Get-Process "MeatManager Bridge" -ErrorAction SilentlyContinue',
+            'if (-not $p) {',
+            `    Start-Process -FilePath "${exePath.replace(/"/g, '""')}" -ArgumentList "--hidden"`,
+            '}',
+            '',
+        ].join('\r\n');
+        fs.mkdirSync(path.dirname(scriptPath), { recursive: true });
+        fs.writeFileSync(scriptPath, script, 'utf8');
+
+        const taskName = 'MMBridgeWatchdog';
+        // /sc minute /mo 15 + /RL LIMITED (per-user, sin privilegios). Idempotente con /F.
+        const args = [
+            '/create', '/tn', taskName, '/f', '/sc', 'minute', '/mo', '15',
+            '/tr', `powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "${scriptPath}"`,
+            '/rl', 'LIMITED',
+        ];
+        execFile('schtasks', args, { windowsHide: true }, (err) => {
+            if (err) logDesktop(`no se pudo instalar watchdog externo: ${err.message}`);
+            else logDesktop('watchdog externo (tarea MMBridgeWatchdog, cada 15 min) instalado');
+        });
+    } catch (e) {
+        logDesktop(`installExternalWatchdog fallo: ${e?.message || e}`);
+    }
 }
 
 // ── Onboarding HTTP helpers ────────────────────────────────────────────────
@@ -783,6 +933,12 @@ async function bootstrap() {
         // El renderer detecta onboardingActive via IPC y muestra el flow.
         showMainWindow();
     } else {
+        // Decide normal / probacion / rollback ANTES de arrancar el resto.
+        // Si dispara rollback, igual arrancamos el bridge mientras se descarga
+        // el instalador de la version estable (no dejamos al cliente sin leer
+        // ventas durante la descarga).
+        evaluateUpdateGuardOnBoot();
+        installExternalWatchdog();
         startBridgeProcess();
         startStatusPolling();
     }
