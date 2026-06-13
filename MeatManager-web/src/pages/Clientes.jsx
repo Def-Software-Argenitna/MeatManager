@@ -624,89 +624,83 @@ const Clientes = () => {
                 </div>
             </DirectionalReveal>
 
-            <div className="clients-grid">
-                {filteredClients?.map((client) => {
-                    const accountEnabled = hasCurrentAccount(client);
-                    const clientAddress = formatAddress(client);
-                    const clientBalance = getBalanceValue(client);
-                    const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
-                    const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
-                    return (
-                        <DirectionalReveal
-                            key={client.id}
-                            className={`client-card ${clientBalance < 0 ? 'debt' : (clientBalance > 0 ? 'credit' : '')}`}
-                            from={filteredClients.indexOf(client) % 2 === 0 ? 'left' : 'right'}
-                            delay={0.16 + (filteredClients.indexOf(client) * 0.025)}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start' }}>
-                                <div>
-                                    <h3 className="client-name">{getClientFullName(client)}</h3>
-                                    <div className="client-phone">
-                                        <Phone size={14} />
-                                        {getPrimaryPhone(client) || 'Sin telefono'}
-                                    </div>
-                                    {clientAddress && (
-                                        <div className="client-extra-data">{clientAddress}</div>
-                                    )}
-                                    <div className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
-                                        {accountEnabled ? 'Cuenta corriente habilitada' : 'Sin cuenta corriente'}
-                                    </div>
-                                    {employeeDiscountEnabled && employeeDiscountPct > 0 ? (
-                                        <div
-                                            style={{
-                                                marginTop: '0.35rem',
-                                                fontSize: '0.72rem',
-                                                fontWeight: '800',
-                                                color: '#86efac',
-                                                background: 'rgba(34,197,94,0.12)',
-                                                border: '1px solid rgba(34,197,94,0.3)',
-                                                borderRadius: '999px',
-                                                padding: '0.18rem 0.5rem',
-                                                display: 'inline-flex',
-                                                alignItems: 'center',
-                                                gap: '0.3rem'
-                                            }}
-                                        >
-                                            Descuento empleado {employeeDiscountPct.toLocaleString('es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%
+            <div className="clients-table-wrap neo-card">
+                <table className="clients-table">
+                    <thead>
+                        <tr>
+                            <th>Cliente</th>
+                            <th>Teléfono</th>
+                            <th>Cuenta</th>
+                            <th style={{ textAlign: 'right' }}>Saldo</th>
+                            <th style={{ textAlign: 'right' }}>Acciones</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {filteredClients?.map((client) => {
+                            const accountEnabled = hasCurrentAccount(client);
+                            const clientBalance = getBalanceValue(client);
+                            const employeeDiscountEnabled = Number(client?.employee_discount_enabled) === 1 || client?.employee_discount_enabled === true;
+                            const employeeDiscountPct = Math.max(0, Math.min(100, Number(client?.employee_discount_pct) || 0));
+                            const balanceClass = clientBalance < 0 ? 'negative' : (clientBalance > 0 ? 'positive' : '');
+                            return (
+                                <tr key={client.id} className={`clients-row ${clientBalance < 0 ? 'debt' : (clientBalance > 0 ? 'credit' : '')}`}>
+                                    <td className="clients-col-name">
+                                        <span className="clients-name">{getClientFullName(client)}</span>
+                                        <div className="clients-tags">
+                                            {accountEnabled && employeeDiscountEnabled && employeeDiscountPct > 0 && (
+                                                <span className="client-tag discount">Dto. {employeeDiscountPct.toLocaleString('es-AR', { maximumFractionDigits: 0 })}%</span>
+                                            )}
                                         </div>
-                                    ) : null}
-                                </div>
-                                <div className="client-avatar" style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--color-bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <Users size={20} />
-                                </div>
-                            </div>
-
-                            <div style={{ marginTop: '1rem' }}>
-                                <div className="balance-label">Estado de Cuenta</div>
-                                <div className={`client-balance ${clientBalance < 0 ? 'negative' : (clientBalance > 0 ? 'positive' : '')}`}>
-                                    {clientBalance < 0 ? '-' : ''}${Math.abs(clientBalance).toLocaleString()}
-                                </div>
-                                <div style={{ fontSize: '0.8rem', color: clientBalance < 0 ? '#ef4444' : 'var(--color-text-muted)' }}>
-                                    {!accountEnabled ? 'Cuenta corriente desactivada' : (clientBalance < 0 ? 'Debe al local' : (clientBalance > 0 ? 'Saldo a favor' : 'Al dia'))}
-                                </div>
-                            </div>
-
-                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginTop: '1rem' }}>
-                                <button type="button" onClick={() => openEditClientModal(client)} className="action-btn edit">
-                                    <Pencil size={16} /> Editar
-                                </button>
-                                {accountEnabled ? (
-                                    <>
-                                        <button type="button" onClick={() => openHistory(client)} className="action-btn adjust">
-                                            <History size={16} /> Ver movimientos
+                                    </td>
+                                    <td className="clients-col-phone">
+                                        <div className="client-phone">
+                                            <Phone size={13} />
+                                            {getPrimaryPhone(client) || <span style={{ opacity: 0.4 }}>—</span>}
+                                        </div>
+                                    </td>
+                                    <td className="clients-col-account">
+                                        <span className={`client-account-badge ${accountEnabled ? 'enabled' : 'disabled'}`}>
+                                            {accountEnabled ? 'Habilitada' : 'Sin CC'}
+                                        </span>
+                                    </td>
+                                    <td className={`clients-col-balance ${balanceClass}`}>
+                                        {!accountEnabled ? <span style={{ opacity: 0.3 }}>—</span> : (
+                                            <>
+                                                <span className="clients-balance-amount">
+                                                    {clientBalance < 0 ? '-' : clientBalance > 0 ? '+' : ''}${Math.abs(clientBalance).toLocaleString()}
+                                                </span>
+                                                <span className="clients-balance-label">
+                                                    {clientBalance < 0 ? 'Debe' : clientBalance > 0 ? 'A favor' : 'Al día'}
+                                                </span>
+                                            </>
+                                        )}
+                                    </td>
+                                    <td className="clients-col-actions">
+                                        <button type="button" onClick={() => openEditClientModal(client)} className="clients-action-btn">
+                                            <Pencil size={14} />
                                         </button>
-                                        <button type="button" onClick={() => openHistory(client, { openPayment: true })} className="action-btn pay">
-                                            <Check size={16} /> Registrar pago
-                                        </button>
-                                    </>
-                                ) : null}
-                            </div>
-                            {!accountEnabled && (
-                                <div className="client-disabled-note">Este cliente queda guardado sin cuenta corriente.</div>
-                            )}
-                        </DirectionalReveal>
-                    );
-                })}
+                                        {accountEnabled && (
+                                            <>
+                                                <button type="button" onClick={() => openHistory(client)} className="clients-action-btn">
+                                                    <History size={14} />
+                                                </button>
+                                                <button type="button" onClick={() => openHistory(client, { openPayment: true })} className="clients-action-btn pay">
+                                                    <Check size={14} /> Pago
+                                                </button>
+                                            </>
+                                        )}
+                                    </td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+                {filteredClients?.length === 0 && (
+                    <div className="clients-empty">
+                        <Users size={36} style={{ opacity: 0.15 }} />
+                        <p>No se encontraron clientes.</p>
+                    </div>
+                )}
             </div>
 
             {isModalOpen && createPortal((
