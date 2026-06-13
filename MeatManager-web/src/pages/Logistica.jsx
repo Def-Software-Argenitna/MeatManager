@@ -21,7 +21,7 @@ import GoogleLogisticsMap from '../components/GoogleLogisticsMap';
 import ModuleLicenseGate from '../components/ModuleLicenseGate';
 import { useUser } from '../context/UserContext';
 import { buildOrderAddress, geocodeAddress, getStoredCoordinates } from '../utils/geocoding';
-import { assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
+import { apiFetch, assignLogisticsOrder, fetchLiveDrivers, fetchLogisticsDrivers, fetchTable, saveTableRecord, updateLogisticsOrderStatus } from '../utils/apiClient';
 import { Button, EmptyState, useToast } from '../components/ui';
 import './Logistica.css';
 
@@ -139,6 +139,25 @@ const Logistica = () => {
     const [paymentDraft, setPaymentDraft] = useState({ status: 'pending_driver_collection', amountDue: '', method: '' });
     const hasLogisticsModule = hasModule('logistica');
     const [isMapExpanded, setIsMapExpanded] = useState(false);
+    const [isSettingUpBranches, setIsSettingUpBranches] = useState(false);
+
+    const handleSetupInterBranchRelationships = useCallback(async () => {
+        setIsSettingUpBranches(true);
+        try {
+            const res = await apiFetch('/api/admin/setup-inter-branch-relationships', { method: 'POST' });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
+            if (data.created.length > 0) {
+                toast.success(`Relaciones creadas: ${data.created.length}. Ya existían: ${data.skipped.length}.`);
+            } else {
+                toast.info(`Todo ya estaba configurado (${data.skipped.length} relaciones existentes).`);
+            }
+        } catch (err) {
+            toast.error(`Error: ${err.message}`);
+        } finally {
+            setIsSettingUpBranches(false);
+        }
+    }, [toast]);
     const branchMatches = useCallback((row) => {
         if (!currentBranchId) return false;
         return Number(row?.branch_id) === Number(currentBranchId);
@@ -468,6 +487,9 @@ const getOrderCoordinates = (pedido) => {
             <DirectionalReveal className="logistica-toolbar neo-card" from="up" delay={0.04}>
                 <Button variant="secondary" style={{ background: '#1e293b', color: 'white' }} icon={<Users size={18} />} onClick={() => setIsDriverModalOpen(true)}>
                     Staff Repartidores
+                </Button>
+                <Button variant="secondary" style={{ background: '#1e293b', color: 'white' }} onClick={handleSetupInterBranchRelationships} disabled={isSettingUpBranches}>
+                    {isSettingUpBranches ? 'Configurando…' : 'Configurar relaciones inter-sucursal'}
                 </Button>
                 <div className="stats-mini-grid">
                     <div className="stat-mini-card">

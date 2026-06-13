@@ -12172,6 +12172,75 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: POST /api/admin/setup-inter-branch-relationships ────────────────
+app.post('/api/admin/setup-inter-branch-relationships', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { tenantId, dbName, clientId } = await getTenantInfo(req.firebaseUser);
+        if (!clientId) return res.status(400).json({ error: 'No se pudo determinar el clientId del tenant' });
+
+        const branches = await listClientBranches(clientId);
+        if (branches.length < 2) {
+            return res.status(400).json({ error: 'Se necesitan al menos 2 sucursales activas para crear relaciones inter-sucursal' });
+        }
+
+        const pool = getTenantPool(dbName);
+        const conn = await pool.getConnection();
+
+        const created = [];
+        const skipped = [];
+
+        try {
+            for (let i = 0; i < branches.length; i++) {
+                for (let j = 0; j < branches.length; j++) {
+                    if (i === j) continue;
+                    const owner = branches[i];  // branch that "owns" the record
+                    const other = branches[j];  // branch being added as client/supplier
+
+                    // Check + insert client
+                    const [[existingClient]] = await conn.query(
+                        `SELECT id FROM clients WHERE tenant_id = ? AND branch_id = ? AND name = ? LIMIT 1`,
+                        [tenantId, owner.id, other.name]
+                    );
+                    if (existingClient) {
+                        skipped.push({ type: 'client', owner: owner.name, other: other.name, id: existingClient.id });
+                    } else {
+                        const [clientResult] = await conn.query(
+                            `INSERT INTO clients (tenant_id, branch_id, name, has_current_account, balance)
+                             VALUES (?, ?, ?, 1, 0)`,
+                            [tenantId, owner.id, other.name]
+                        );
+                        created.push({ type: 'client', owner: owner.name, other: other.name, id: clientResult.insertId });
+                    }
+
+                    // Check + insert supplier
+                    const [[existingSupplier]] = await conn.query(
+                        `SELECT id FROM suppliers WHERE tenant_id = ? AND branch_id = ? AND name = ? LIMIT 1`,
+                        [tenantId, owner.id, other.name]
+                    );
+                    if (existingSupplier) {
+                        skipped.push({ type: 'supplier', owner: owner.name, other: other.name, id: existingSupplier.id });
+                    } else {
+                        const [supplierResult] = await conn.query(
+                            `INSERT INTO suppliers (tenant_id, branch_id, name)
+                             VALUES (?, ?, ?)`,
+                            [tenantId, owner.id, other.name]
+                        );
+                        created.push({ type: 'supplier', owner: owner.name, other: other.name, id: supplierResult.insertId });
+                    }
+                }
+            }
+        } finally {
+            conn.release();
+        }
+
+        console.log(`[INTER-BRANCH] tenant=${tenantId} creados=${created.length} ya-existentes=${skipped.length}`);
+        res.json({ ok: true, branches: branches.map((b) => ({ id: b.id, name: b.name })), created, skipped });
+    } catch (err) {
+        console.error('[POST /api/admin/setup-inter-branch-relationships ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: GET /health ──────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
     ok: true,
