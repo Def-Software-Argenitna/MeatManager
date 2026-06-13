@@ -201,10 +201,8 @@ const Dashboard = () => {
     const totalStockKg = stockItems.reduce((acc, item) => (
         String(item.unit || '').toLowerCase() === 'kg' ? acc + toNumber(item.quantity) : acc
     ), 0);
-    const lowStockCount = stockItems.filter((item) => toNumber(item.quantity) < 10).length;
-
-    // Productos con stock negativo (agrupado por nombre, como en Stock.jsx)
-    const negativeStockCount = React.useMemo(() => {
+    // Productos con stock agrupado por producto (balance neto)
+    const stockBalanceByProduct = React.useMemo(() => {
         const grouped = {};
         stockItems.forEach((item) => {
             const key = item.product_id != null
@@ -213,8 +211,13 @@ const Dashboard = () => {
             if (!key) return;
             grouped[key] = (grouped[key] || 0) + toNumber(item.quantity);
         });
-        return Object.values(grouped).filter((qty) => qty < -0.0001).length;
+        return Object.values(grouped);
     }, [stockItems]);
+
+    const lowStockCount = stockBalanceByProduct.filter((qty) => qty > -0.0001 && qty < 10).length;
+
+    // Productos con stock negativo (agrupado por nombre, como en Stock.jsx)
+    const negativeStockCount = stockBalanceByProduct.filter((qty) => qty < -0.0001).length;
     const currentAccountSummary = React.useMemo(() => {
         const balanceByClient = new Map();
 
