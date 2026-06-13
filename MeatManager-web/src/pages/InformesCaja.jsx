@@ -1193,20 +1193,6 @@ const InformesCaja = () => {
                 <MetricCard label="Transferencias enviadas" value={formatCurrency(report.current.totals.transferenciasEnviadas)} tone="expense" />
             </DirectionalReveal>
 
-            {report.comparison && (
-                <DirectionalReveal className="ic-comparison-grid" from="left" delay={0.14}>
-                    {comparisonCards.map((card) => {
-                        const isGood = card.positiveGood ? card.value >= 0 : card.value <= 0;
-                        return (
-                            <div key={card.label} className={`ic-compare-card ${isGood ? 'good' : 'bad'}`}>
-                                <span>{card.label}</span>
-                                <strong>{card.value >= 0 ? '+' : ''}{formatCurrency(card.value)}</strong>
-                                {card.value >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                            </div>
-                        );
-                    })}
-                </DirectionalReveal>
-            )}
 
             <div className="ic-grid">
                 <DirectionalReveal className="ic-card neo-card" from="left" delay={0.16}>
