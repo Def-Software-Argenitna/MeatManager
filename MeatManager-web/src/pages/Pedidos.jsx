@@ -499,11 +499,16 @@ const Pedidos = () => {
                                 <h3>{pedido.customer_name}</h3>
                                 {pedido.source === 'whatsapp' && <MessageCircle size={16} color="#25D366" />}
                             </div>
-                            <span className="order-id">#{pedido.id}</span>
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.35rem' }}>
+                                <span className="order-id">#{pedido.id}</span>
+                                <span className={`pedido-status-badge ${pedido.status}`}>
+                                    {{ pending: 'Pendiente', ready: 'Listo', delivered: 'Entregado', cancelled: 'Cancelado' }[pedido.status] || pedido.status}
+                                </span>
+                            </div>
                         </div>
                         <div className="pedido-body">
                             <p className="items-list">{formatOrderItems(pedido)}</p>
-                            <div style={{ marginTop: '1rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.75rem' }}>
+                            <div className="pedido-body-divider">
                                 <div className="delivery-info"><Clock size={14} /><span>Entrega: {pedido.delivery_date}</span></div>
                                 {pedido.address && <div className="delivery-info" style={{ color: 'var(--color-primary)', marginTop: '0.4rem' }}><MapPin size={14} /><span style={{ fontSize: '0.85rem' }}>{pedido.address}</span></div>}
                                 <div className="delivery-info" style={{ marginTop: '0.4rem', opacity: 0.8 }}>{pedido.delivery_type === 'delivery' ? <Truck size={14} /> : <ShoppingBag size={14} />}<span style={{ fontSize: '0.8rem', fontWeight: '500' }}>{pedido.delivery_type === 'delivery' ? 'ENVÍO A DOMICILIO' : 'RETIRO LOCAL'}</span></div>
@@ -525,8 +530,8 @@ const Pedidos = () => {
                                 {pedido.status === 'pending' && <button className="icon-btn ready" title="Marcar como Listo" onClick={() => updateStatus(pedido.id, 'ready')}><Clock size={18} /></button>}
                                 {pedido.status === 'ready' && <button className="icon-btn deliver" title="Entregar" onClick={() => updateStatus(pedido.id, 'delivered')}><CheckCircle2 size={18} /></button>}
                                 {pedido.status !== 'cancelled' && pedido.status !== 'delivered' && <button className="icon-btn cancel" title="Cancelar" onClick={() => updateStatus(pedido.id, 'cancelled')}><XCircle size={18} /></button>}
-                                <button className="icon-btn" style={{ background: '#f1f5f9', color: '#64748b' }} title="Imprimir Comanda" onClick={() => printTicket(pedido)}><Printer size={18} /></button>
-                                <button className="icon-btn" style={{ background: '#fdf2f8', color: '#db2777' }} title="Imprimir Etiqueta" onClick={() => printLabel(pedido)}><Tag size={18} /></button>
+                                <button className="icon-btn print" title="Imprimir Comanda" onClick={() => printTicket(pedido)}><Printer size={18} /></button>
+                                <button className="icon-btn label-btn" title="Imprimir Etiqueta" onClick={() => printLabel(pedido)}><Tag size={18} /></button>
                             </div>
                         </div>
                     </DirectionalReveal>
