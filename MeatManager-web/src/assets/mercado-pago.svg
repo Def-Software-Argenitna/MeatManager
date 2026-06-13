@@ -1,9 +1,52 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="128" height="128" rx="28" fill="#009EE3"/>
-  <rect x="14" y="26" width="100" height="44" rx="22" fill="#ffffff"/>
-  <ellipse cx="49" cy="48" rx="16" ry="11" fill="none" stroke="#009EE3" stroke-width="4"/>
-  <ellipse cx="79" cy="48" rx="16" ry="11" fill="none" stroke="#009EE3" stroke-width="4"/>
-  <path d="M44 53C49 57 54 58 60 58C63 58 65 57 68 55C70 53 73 52 76 52C79 52 82 53 84 55" stroke="#009EE3" stroke-width="4" stroke-linecap="round"/>
-  <path d="M36 88H92" stroke="rgba(255,255,255,0.22)" stroke-width="2" stroke-linecap="round"/>
-  <text x="64" y="102" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="12" font-weight="700" letter-spacing="1.3">MERCADO PAGO</text>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Fondo lavanda -->
+  <rect width="128" height="128" rx="22" fill="#e8eaf6"/>
+  <!-- Óvalo borde azul marino -->
+  <ellipse cx="64" cy="50" rx="43" ry="29" fill="#1a237e"/>
+  <!-- Óvalo interior cyan -->
+  <ellipse cx="64" cy="50" rx="39" ry="25" fill="#29b6f6"/>
+  <!-- Franja blanca horizontal (bandera) -->
+  <rect x="25" y="45" width="78" height="10" fill="white"/>
+
+  <!-- MANO DERECHA (detrás) -->
+  <path d="
+    M 104 63
+    C 98 60 90 57 84 54
+    C 80 52 78 49 77 46
+    L 64 46 L 64 55
+    C 70 59 78 63 86 64
+    C 94 65 102 64 104 63 Z
+  " fill="white"/>
+  <!-- Pulgar derecho -->
+  <path d="
+    M 84 54 C 86 50 88 45 86 41
+    C 84 38 80 37 78 39
+    C 76 41 77 45 78 47 Z
+  " fill="white"/>
+
+  <!-- MANO IZQUIERDA (encima) -->
+  <path d="
+    M 24 63
+    C 30 60 38 57 44 54
+    C 48 52 50 49 51 46
+    L 64 46 L 64 55
+    C 58 59 50 63 42 64
+    C 34 65 26 64 24 63 Z
+  " fill="white"/>
+  <!-- Pulgar izquierdo -->
+  <path d="
+    M 44 54 C 42 50 40 45 42 41
+    C 44 38 48 37 50 39
+    C 52 41 51 45 50 47 Z
+  " fill="white"/>
+
+  <!-- Nudillos mano izquierda (4 bultos arriba) -->
+  <ellipse cx="52" cy="44" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="58" cy="42" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="64" cy="42" rx="4.5" ry="3.5" fill="white"/>
+  <ellipse cx="70" cy="44" rx="4.5" ry="3.5" fill="white"/>
+
+  <!-- Texto -->
+  <text x="64" y="93" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900">mercado</text>
+  <text x="64" y="109" text-anchor="middle" fill="#1a237e" font-family="Arial, Helvetica, sans-serif" font-size="12.5" font-weight="900">pago</text>
 </svg>

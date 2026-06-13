@@ -724,102 +724,66 @@ const Stock = () => {
                         {Object.entries(stockByType).map(([type, items]) => {
                             const typeInfo = getTypeInfo(type);
                             return (
-                                <DirectionalReveal key={type} className="stock-group" from={Object.keys(stockByType).indexOf(type) % 2 === 0 ? 'left' : 'right'} delay={0.28 + (Object.keys(stockByType).indexOf(type) * 0.04)}>
+                                <DirectionalReveal key={type} className="neo-card stock-group" from={Object.keys(stockByType).indexOf(type) % 2 === 0 ? 'left' : 'right'} delay={0.28 + (Object.keys(stockByType).indexOf(type) * 0.04)} style={{ padding: '1rem' }}>
                                     <div className="group-header">
                                         <span className="group-icon">{typeInfo.icon}</span>
                                         <span className="group-name">{typeInfo.name}</span>
                                         <span className="group-count">{items.length} items</span>
                                     </div>
-                                    <div className="stock-items">
+                                    <table className="stock-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Nombre</th>
+                                                <th>PLU</th>
+                                                <th>Precio</th>
+                                                <th>Cantidad</th>
+                                                <th>Actualizado</th>
+                                                <th></th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
                                         {items.map(item => (
-                                            <div key={item.id} className="stock-item">
-                                                <div className="item-info">
-                                                    <div className="item-name">{item.name}</div>
-                                                    <div className="item-meta">
-                                                        {item.isDespostadaPending ? (
-                                                            <>
-                                                                <span className="item-plu">
-                                                                    Lote: <strong>#{item.lot_id}</strong>
-                                                                </span>
-                                                                <span className="item-price">
-                                                                    Estado: <strong>Pendiente de despostada</strong>
-                                                                </span>
-                                                                {item.supplier && (
-                                                                    <span className="item-price">
-                                                                        Proveedor: <strong>{item.supplier}</strong>
-                                                                    </span>
-                                                                )}
-                                                            </>
-                                                        ) : (
-                                                            <>
-                                                                <span className="item-plu">
-                                                                    PLU: <strong>{String(item.plu || '').trim() || 'Sin PLU'}</strong>
-                                                                </span>
-                                                                <span className="item-price">
-                                                                    Precio: {editingPriceId === item.id ? (
-                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                            <input
-                                                                                type="number"
-                                                                                min="0"
-                                                                                step="0.01"
-                                                                                className="neo-input"
-                                                                                style={{ width: '120px', marginBottom: 0, padding: '0.35rem 0.55rem' }}
-                                                                                value={editingPriceValue}
-                                                                                onChange={(e) => setEditingPriceValue(e.target.value)}
-                                                                            />
-                                                                            <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}>
-                                                                                <Save size={14} />
-                                                                            </button>
-                                                                            <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}>
-                                                                                <X size={14} />
-                                                                            </button>
-                                                                        </span>
-                                                                    ) : (
-                                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
-                                                                            <strong>{Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}</strong>
-                                                                            <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)}>
-                                                                                <Pencil size={14} />
-                                                                            </button>
-                                                                        </span>
-                                                                    )}
-                                                                </span>
-                                                            </>
-                                                        )}
-                                                        <span className="item-date">
-                                                            {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', {
-                                                                day: '2-digit',
-                                                                month: '2-digit',
-                                                                year: 'numeric',
-                                                                hour: '2-digit',
-                                                                minute: '2-digit'
-                                                            }) : 'Sin fecha'}
+                                            <tr key={item.id} className={Number(item.quantity || 0) < 0 ? 'stock-row-negative' : ''}>
+                                                <td className="stock-col-name">{item.name}</td>
+                                                <td className="stock-col-plu">
+                                                    {item.isDespostadaPending
+                                                        ? <span className="stock-badge-lot">Lote #{item.lot_id}</span>
+                                                        : <span className="stock-badge-plu">{String(item.plu || '').trim() || '—'}</span>
+                                                    }
+                                                </td>
+                                                <td className="stock-col-price">
+                                                    {item.isDespostadaPending ? (
+                                                        <span style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Pendiente{item.supplier ? ` · ${item.supplier}` : ''}</span>
+                                                    ) : editingPriceId === item.id ? (
+                                                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}>
+                                                            <input type="number" min="0" step="0.01" className="neo-input" style={{ width: '110px', marginBottom: 0, padding: '0.3rem 0.5rem' }} value={editingPriceValue} onChange={(e) => setEditingPriceValue(e.target.value)} />
+                                                            <button type="button" className="icon-btn save" onClick={() => savePriceEdit(item)}><Save size={13} /></button>
+                                                            <button type="button" className="icon-btn cancel" onClick={cancelPriceEdit}><X size={13} /></button>
                                                         </span>
-                                                    </div>
-                                                </div>
-                                                <div className="item-quantity">
-                                                    {Number(item.quantity || 0) < 0 && (
-                                                        <span style={{
-                                                            fontSize: '0.7rem',
-                                                            fontWeight: '700',
-                                                            color: '#ef4444',
-                                                            background: 'rgba(239,68,68,0.12)',
-                                                            border: '1px solid rgba(239,68,68,0.35)',
-                                                            borderRadius: '4px',
-                                                            padding: '1px 5px',
-                                                            marginBottom: '2px',
-                                                            display: 'block',
-                                                        }}>
-                                                            ⚠️ Stock negativo
+                                                    ) : (
+                                                        <span style={{ fontWeight: 700, color: Number(item.price || 0) > 0 ? '#fdba74' : '#ef4444' }}>
+                                                            {Number(item.price || 0) > 0 ? `$${Number(item.price || 0).toLocaleString('es-AR')}` : 'Sin precio'}
                                                         </span>
                                                     )}
-                                                    <span className="quantity-value" style={Number(item.quantity || 0) < 0 ? { color: '#ef4444' } : {}}>
+                                                </td>
+                                                <td className="stock-col-qty">
+                                                    <span style={{ fontWeight: 700, color: Number(item.quantity || 0) < 0 ? '#ef4444' : 'var(--color-text-main)' }}>
                                                         {Number(item.quantity || 0).toFixed(item.unit === 'kg' ? 3 : 0)}
                                                     </span>
-                                                    <span className="quantity-unit">{item.unit === 'kg' ? 'kg' : 'un'}</span>
-                                                </div>
-                                            </div>
+                                                    <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginLeft: '0.25rem' }}>{item.unit === 'kg' ? 'kg' : 'un'}</span>
+                                                </td>
+                                                <td className="stock-col-date">
+                                                    {item.updated_at ? new Date(item.updated_at).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                                                </td>
+                                                <td className="stock-col-actions">
+                                                    {!item.isDespostadaPending && editingPriceId !== item.id && (
+                                                        <button type="button" className="icon-btn" onClick={() => startPriceEdit(item)} title="Editar precio"><Pencil size={14} color="#3b82f6" /></button>
+                                                    )}
+                                                </td>
+                                            </tr>
                                         ))}
-                                    </div>
+                                        </tbody>
+                                    </table>
                                 </DirectionalReveal>
                             );
                         })}
@@ -835,8 +799,8 @@ const Stock = () => {
                 title="Ajuste de Inventario"
             >
                 <form onSubmit={handleAdjustment}>
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Buscar producto</label>
+                            <div className="stock-form-group">
+                                <label className="stock-field-label">Buscar producto</label>
                                 <input
                                     type="text"
                                     className="neo-input"
@@ -846,8 +810,8 @@ const Stock = () => {
                                 />
                             </div>
 
-                            <div style={{ marginBottom: '1rem' }}>
-                                <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Producto</label>
+                            <div className="stock-form-group">
+                                <label className="stock-field-label">Producto</label>
                                 <select
                                     className="neo-input"
                                     required
@@ -861,24 +825,14 @@ const Stock = () => {
                                     ))}
                                 </select>
                                 {filteredProductsForAdjustment.length === 0 && (
-                                    <div style={{ marginTop: '0.4rem', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                                        No hay coincidencias para la búsqueda.
-                                    </div>
+                                    <div className="stock-field-hint">No hay coincidencias para la búsqueda.</div>
                                 )}
                             </div>
 
                             {adjustment.productId === '__new__' && (
-                                <div style={{
-                                    display: 'grid',
-                                    gap: '0.75rem',
-                                    marginBottom: '1rem',
-                                    padding: '0.85rem',
-                                    borderRadius: '8px',
-                                    border: '1px solid var(--color-border)',
-                                    background: 'rgba(255,255,255,0.03)',
-                                }}>
+                                <div className="stock-new-product-box">
                                     <div>
-                                        <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Nombre del producto</label>
+                                        <label className="stock-field-label">Nombre del producto</label>
                                         <input
                                             type="text"
                                             className="neo-input"
@@ -888,9 +842,9 @@ const Stock = () => {
                                             onChange={(e) => setQuickProduct((prev) => ({ ...prev, name: e.target.value }))}
                                         />
                                     </div>
-                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                                    <div className="stock-form-grid-2">
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Categoría</label>
+                                            <label className="stock-field-label">Categoría</label>
                                             <select
                                                 className="neo-input"
                                                 value={quickProduct.category}
@@ -902,7 +856,7 @@ const Stock = () => {
                                             </select>
                                         </div>
                                         <div>
-                                            <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Unidad</label>
+                                            <label className="stock-field-label">Unidad</label>
                                             <select
                                                 className="neo-input"
                                                 value={quickProduct.unit}
@@ -916,9 +870,9 @@ const Stock = () => {
                                 </div>
                             )}
 
-                            <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.5rem' }}>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Cantidad / Kg</label>
+                            <div className="stock-form-row" style={{ marginBottom: '1.5rem' }}>
+                                <div>
+                                    <label className="stock-field-label">Cantidad / Kg</label>
                                     <input
                                         type="number"
                                         step="0.001"
@@ -929,8 +883,8 @@ const Stock = () => {
                                         onChange={e => setAdjustment({ ...adjustment, quantity: e.target.value })}
                                     />
                                 </div>
-                                <div style={{ flex: 1 }}>
-                                    <label style={{ display: 'block', fontSize: '0.8rem', marginBottom: '0.4rem' }}>Acción</label>
+                                <div>
+                                    <label className="stock-field-label">Acción</label>
                                     <select
                                         className="neo-input"
                                         value={adjustment.type}
@@ -950,61 +904,31 @@ const Stock = () => {
 
             {/* ── Modal Diagnóstico Balanza ─────────────────────────────────── */}
             {showDiag && (
-                <div className="app-modal-overlay" style={{
-                    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)',
-                    zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem'
-                }}>
-                    <div style={{
-                        background: '#0f172a', border: '1px solid #334155', borderRadius: '12px',
-                        width: '100%', maxWidth: '750px', maxHeight: '80vh', display: 'flex', flexDirection: 'column',
-                        boxShadow: '0 20px 60px rgba(0,0,0,0.6)'
-                    }}>
-                        {/* Header */}
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '1rem 1.2rem', borderBottom: '1px solid #1e293b' }}>
-                            <span style={{ fontSize: '1rem', fontWeight: 700, color: '#e2e8f0', fontFamily: 'monospace' }}>
-                                ⚡ Diagnóstico Serial — Balanza Systel Cuora
-                            </span>
-                            <button
-                                onClick={() => setShowDiag(false)}
-                                style={{ background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '1.2rem' }}
-                            >✕</button>
+                <div className="diag-overlay">
+                    <div className="diag-modal">
+                        <div className="diag-modal__header">
+                            <span className="diag-modal__title">⚡ Diagnóstico Serial — Balanza Systel Cuora</span>
+                            <button className="diag-modal__close" onClick={() => setShowDiag(false)}>✕</button>
                         </div>
 
-                        {/* Log body */}
-                        <div style={{
-                            flex: 1, overflowY: 'auto', padding: '0.8rem 1rem',
-                            fontFamily: 'monospace', fontSize: '0.75rem', lineHeight: 1.6,
-                        }}>
+                        <div className="diag-modal__body">
                             {diagLogs.length === 0 && (
-                                <div style={{ color: '#64748b', textAlign: 'center', marginTop: '2rem' }}>Sin datos aún...</div>
+                                <div className="diag-modal__empty">Sin datos aún...</div>
                             )}
                             {diagLogs.map((log, i) => (
-                                <div key={i} style={{
-                                    display: 'flex', gap: '0.6rem', padding: '0.15rem 0',
-                                    color: log.type === 'raw'   ? '#94a3b8' :
-                                           log.type === 'ok'    ? '#4ade80' :
-                                           log.type === 'warn'  ? '#fbbf24' :
-                                           log.type === 'error' ? '#f87171' : '#7dd3fc'
-                                }}>
-                                    <span style={{ color: '#475569', flexShrink: 0 }}>{log.ts}</span>
-                                    <span style={{ color: '#475569', flexShrink: 0 }}>
+                                <div key={i} className={`diag-log-row diag-log-row--${log.type}`}>
+                                    <span className="diag-log-row__ts">{log.ts}</span>
+                                    <span className="diag-log-row__icon">
                                         {log.type === 'raw' ? '📡' : log.type === 'ok' ? '✔' : log.type === 'warn' ? '⚠' : log.type === 'error' ? '✘' : 'ℹ'}
                                     </span>
-                                    <span style={{ wordBreak: 'break-all' }}>{log.msg}</span>
+                                    <span className="diag-log-row__msg">{log.msg}</span>
                                 </div>
                             ))}
                         </div>
 
-                        {/* Footer */}
-                        <div style={{ padding: '0.8rem 1.2rem', borderTop: '1px solid #1e293b', display: 'flex', gap: '0.8rem' }}>
-                            <button
-                                onClick={() => setDiagLogs([])}
-                                style={{ background: 'none', border: '1px solid #334155', color: '#94a3b8', borderRadius: '6px', padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >Limpiar</button>
-                            <button
-                                onClick={() => setShowDiag(false)}
-                                style={{ marginLeft: 'auto', background: '#1e40af', border: 'none', color: '#fff', borderRadius: '6px', padding: '0.4rem 1rem', cursor: 'pointer', fontSize: '0.8rem' }}
-                            >Cerrar</button>
+                        <div className="diag-modal__footer">
+                            <button className="diag-btn" onClick={() => setDiagLogs([])}>Limpiar</button>
+                            <button className="diag-btn diag-btn--primary" onClick={() => setShowDiag(false)}>Cerrar</button>
                         </div>
                     </div>
                 </div>

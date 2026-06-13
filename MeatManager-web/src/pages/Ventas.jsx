@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react';
-import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, CreditCard, Calculator } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, PackageCheck, AlertTriangle, ChevronRight, ChevronDown, ChevronLeft, CreditCard, Calculator } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { useUser } from '../context/UserContext';
@@ -198,12 +198,14 @@ const Ventas = () => {
         };
     }, []);
     const navigate = useNavigate();
+    const location = useLocation();
     const { currentUser, accessProfile, activeBranch } = useUser();
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
-    const [expandedCategoryIds, setExpandedCategoryIds] = useState([]);
+    const [pendingTicketBarcodes, setPendingTicketBarcodes] = useState([]);
+    const [selectedCategoryId, setSelectedCategoryId] = useState(null);
 
     const refreshVentasData = React.useCallback(async () => {
         const [
@@ -421,6 +423,20 @@ const Ventas = () => {
     React.useEffect(() => {
         refreshVentasData().catch((error) => console.error('Error cargando ventas:', error));
     }, [refreshVentasData]);
+
+    // Llegada desde conciliación de balanza
+    React.useEffect(() => {
+        const state = location.state;
+        if (!state) return;
+        if (state.conciliacionTicket) {
+            window.history.replaceState({}, '');
+            handleScanTicket(state.conciliacionTicket);
+        } else if (Array.isArray(state.conciliacionMultiTickets) && state.conciliacionMultiTickets.length > 0) {
+            window.history.replaceState({}, '');
+            handleLoadMultiTickets(state.conciliacionMultiTickets);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
     // SOUND HELPERS
     const playBeep = () => {
@@ -973,26 +989,8 @@ const Ventas = () => {
 
 
     React.useEffect(() => {
-        const nextIds = groupedFilteredProducts.map((group) => group.id);
-        const hasSearch = barcodeInputValue.trim().length > 0;
-        setExpandedCategoryIds((prev) => {
-            const nextState = hasSearch
-                ? nextIds
-                : prev.filter((id) => nextIds.includes(id));
-            const isSame =
-                nextState.length === prev.length
-                && nextState.every((id, idx) => id === prev[idx]);
-            return isSame ? prev : nextState;
-        });
-    }, [groupedFilteredProducts, barcodeInputValue]);
-
-    const toggleCategoryAccordion = React.useCallback((categoryId) => {
-        setExpandedCategoryIds((prev) => (
-            prev.includes(categoryId)
-                ? prev.filter((id) => id !== categoryId)
-                : [...prev, categoryId]
-        ));
-    }, []);
+        if (barcodeInputValue.trim().length > 0) setSelectedCategoryId(null);
+    }, [barcodeInputValue]);
 
     const updatePrice = async (productId, priceVal, pluVal) => {
         const price = parseFloat(priceVal);
@@ -1838,6 +1836,56 @@ const Ventas = () => {
         }
     }, [getMethodById, isSplitPayment, selectedPaymentMethod, showPaymentModal, visiblePaymentMethods, visibleSplitMethods]);
 
+    const handleLoadMultiTickets = async (barcodes) => {
+        setIsScaleSyncing(true);
+        try {
+            const allPreviewItems = [];
+            for (const barcode of barcodes) {
+                const payload = await fetchScaleTicketByBarcode(barcode);
+                const rows = Array.isArray(payload?.items) ? payload.items : [];
+                for (const row of rows) {
+                    const pluRaw = String(row?.plu || '').trim();
+                    const pluNorm = String(parseInt(pluRaw || '0', 10));
+                    let product = products.find(p => {
+                        const pp = String(p?.plu || '').trim();
+                        return pp === pluRaw || pp === pluNorm;
+                    }) || null;
+                    if (!product && row?.product?.id != null) {
+                        const cat = productsCatalog.find(p => Number(p?.id) === Number(row.product.id));
+                        product = cat ? buildCatalogProductForVenta(cat) : null;
+                    }
+                    const quantity = Number(row?.quantity || 0);
+                    const lineAmount = Number(row?.amount || 0);
+                    const unitPrice = quantity > 0 ? Number((lineAmount / quantity).toFixed(2)) : Number(row?.product?.price || 0);
+                    const priceRecord = {
+                        id: row?.product?.id || product?.productId || null,
+                        product_id: normalizeProductKey(product?.name || row?.product?.name || `PLU ${pluNorm}`),
+                        product_ref_id: row?.product?.id || product?.productId || null,
+                        price: unitPrice,
+                        plu: pluRaw || pluNorm,
+                        updated_at: row?.saleAt || new Date().toISOString(),
+                        priceLocked: true,
+                        lockedSource: 'conciliacion',
+                        ticketAmount: lineAmount,
+                    };
+                    allPreviewItems.push({ plu: pluRaw || pluNorm, weight: quantity || 1, amount: lineAmount, priceRecord, product });
+                }
+            }
+            if (allPreviewItems.length === 0) {
+                showToast('No se pudieron resolver ítems para los tickets seleccionados.', 'warning');
+                return;
+            }
+            setPendingTicketBarcodes(barcodes);
+            setActiveScaleTicketBarcode(barcodes[0]);
+            setTicketPreviewItems(allPreviewItems);
+            setShowTicketPreview(true);
+        } catch (err) {
+            showToast(`Error cargando tickets: ${err.message}`, 'error');
+        } finally {
+            setIsScaleSyncing(false);
+        }
+    };
+
     const handleCheckout = async (methodObj, splitSummary = null) => {
         if (processingRef.current) return; // bloqueo sincrónico
         if (!methodObj) {
@@ -1900,9 +1948,11 @@ const Ventas = () => {
                 discount_client_id: numericClientId || null,
                 client_discount_pct: selectedClientEmployeeDiscountPct,
                 client_discount_amount: employeeDiscountAmount,
-                ...(activeScaleTicketBarcode
-                    ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
-                    : {}),
+                ...(pendingTicketBarcodes.length > 1
+                    ? { ticket_barcodes: pendingTicketBarcodes, source: 'conciliacion_balanza' }
+                    : activeScaleTicketBarcode
+                        ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
+                        : {}),
                 items: cart.map(i => {
                     const line = cartPricing.lineMap.get(i.id);
                     return ({
@@ -1936,6 +1986,7 @@ const Ventas = () => {
             console.log("Proceso de guardado completado.");
             playCashRegister();
             setActiveScaleTicketBarcode(null);
+            setPendingTicketBarcodes([]);
 
             // Resetear todo y devolver el foco al scanner sin abrir la confirmacion de impresion
             setCart([]);
@@ -2193,66 +2244,109 @@ const Ventas = () => {
                             <ShoppingBag style={{ opacity: 0.3, width: 48, height: 48, marginBottom: '1rem' }} />
                             <p>No hay productos disponibles.</p>
                         </div>
-                    ) : (
-                        groupedFilteredProducts.map((group) => {
-                            const isExpanded = expandedCategoryIds.includes(group.id);
-                            return (
-                                <div key={group.id} className={`products-accordion-group ${isExpanded ? 'expanded' : ''}`}>
+                    ) : barcodeInputValue.trim().length > 0 ? (
+                        <div className="products-grid">
+                            {filteredProducts.map((product) => (
+                                <div
+                                    key={product.id}
+                                    className="product-card"
+                                    onClick={() => addToCart(product)}
+                                    style={{ position: 'relative', overflow: 'visible' }}
+                                >
+                                    <div className="product-name">{product.name}</div>
+                                    {toNumber(product.price) > 0 ? (
+                                        <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
+                                    ) : (
+                                        <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
+                                    )}
+                                    <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
+                                        Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                    </div>
                                     <button
-                                        type="button"
-                                        className={`products-accordion-trigger ${isExpanded ? 'expanded' : ''}`}
-                                        onClick={() => toggleCategoryAccordion(group.id)}
+                                        className="price-tag-btn"
+                                        onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
+                                        style={{
+                                            position: 'absolute', top: '8px', right: '8px',
+                                            background: 'transparent', border: 'none',
+                                            width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                            cursor: 'pointer', color: 'rgba(255,255,255,0.2)'
+                                        }}
                                     >
-                                        <div className="products-accordion-trigger-main">
-                                            <span className="products-accordion-icon">{group.icon}</span>
-                                            <div className="products-accordion-copy">
-                                                <strong>{group.label}</strong>
-                                                <span>{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
-                                            </div>
-                                        </div>
-                                        <span className="products-accordion-chevron">
-                                            {isExpanded ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-                                        </span>
+                                        <Tag size={14} />
                                     </button>
-
-                                    <div className={`products-accordion-panel ${isExpanded ? 'expanded' : ''}`}>
-                                        <div className="products-grid">
-                                            {group.items.map((product) => (
-                                                <div
-                                                    key={product.id}
-                                                    className="product-card"
-                                                    onClick={() => addToCart(product)}
-                                                    style={{ position: 'relative', overflow: 'visible' }}
-                                                >
-                                                    <div className="product-name">{product.name}</div>
-                                                    {toNumber(product.price) > 0 ? (
-                                                        <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
-                                                    ) : (
-                                                        <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
-                                                    )}
-
-                                                    <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
-                                                        Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
-                                                    </div>
-                                                    <button
-                                                        className="price-tag-btn"
-                                                        onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
-                                                        style={{
-                                                            position: 'absolute', top: '8px', right: '8px',
-                                                            background: 'transparent', border: 'none',
-                                                            width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                            cursor: 'pointer', color: 'rgba(255,255,255,0.2)'
-                                                        }}
-                                                    >
-                                                        <Tag size={14} />
-                                                    </button>
-                                                </div>
-                                            ))}
-                                        </div>
+                                </div>
+                            ))}
+                        </div>
+                    ) : selectedCategoryId ? (() => {
+                        const group = groupedFilteredProducts.find((g) => g.id === selectedCategoryId);
+                        if (!group) { setSelectedCategoryId(null); return null; }
+                        return (
+                            <div className="products-drilldown">
+                                <button type="button" className="products-drilldown-back" onClick={() => setSelectedCategoryId(null)}>
+                                    <ChevronLeft size={16} />
+                                    Categorías
+                                </button>
+                                <div className="products-drilldown-header">
+                                    <span className="products-accordion-icon">{group.icon}</span>
+                                    <div className="products-accordion-copy">
+                                        <strong>{group.label}</strong>
+                                        <span>{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
                                     </div>
                                 </div>
-                            );
-                        })
+                                <div className="products-grid">
+                                    {group.items.map((product) => (
+                                        <div
+                                            key={product.id}
+                                            className="product-card"
+                                            onClick={() => addToCart(product)}
+                                            style={{ position: 'relative', overflow: 'visible' }}
+                                        >
+                                            <div className="product-name">{product.name}</div>
+                                            {toNumber(product.price) > 0 ? (
+                                                <div className="product-price">${formatPrice(toNumber(product.price), priceFormat)}</div>
+                                            ) : (
+                                                <div className="product-price" style={{ color: '#ef4444' }}>Sin Precio</div>
+                                            )}
+                                            <div className="product-stock" style={{ color: product.totalQuantity <= 5 ? '#ef4444' : 'inherit' }}>
+                                                Stock: {toNumber(product.totalQuantity).toFixed(product.unit === 'kg' ? 3 : 0)} {product.unit}
+                                            </div>
+                                            <button
+                                                className="price-tag-btn"
+                                                onClick={(e) => { e.stopPropagation(); setEditingPriceId(product.id); setNewPrice(toNumber(product.price) || ''); setNewPlu(product.plu || ''); }}
+                                                style={{
+                                                    position: 'absolute', top: '8px', right: '8px',
+                                                    background: 'transparent', border: 'none',
+                                                    width: '20px', height: '20px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    cursor: 'pointer', color: 'rgba(255,255,255,0.2)'
+                                                }}
+                                            >
+                                                <Tag size={14} />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        );
+                    })() : (
+                        groupedFilteredProducts.map((group) => (
+                            <button
+                                key={group.id}
+                                type="button"
+                                className="products-accordion-trigger products-category-btn"
+                                onClick={() => setSelectedCategoryId(group.id)}
+                            >
+                                <div className="products-accordion-trigger-main">
+                                    <span className="products-accordion-icon">{group.icon}</span>
+                                    <div className="products-accordion-copy">
+                                        <strong>{group.label}</strong>
+                                        <span>{group.items.length} item{group.items.length !== 1 ? 's' : ''}</span>
+                                    </div>
+                                </div>
+                                <span className="products-accordion-chevron">
+                                    <ChevronRight size={18} />
+                                </span>
+                            </button>
+                        ))
                     )}
                 </div>
             </DirectionalReveal>

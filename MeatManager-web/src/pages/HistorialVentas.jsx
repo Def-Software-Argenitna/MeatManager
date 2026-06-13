@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Receipt, Search, Package } from 'lucide-react';
+import { ArrowLeft, Receipt, Search } from 'lucide-react';
 import { fetchTable } from '../utils/apiClient';
 import { saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { EmptyState, Skeleton, SkeletonLine } from '../components/ui';
@@ -39,6 +39,23 @@ const parsePaymentBreakdown = (value) => {
         }
     }
     return [];
+};
+
+const PAYMENT_COLORS = {
+    'efectivo':        { bg: 'rgba(34,197,94,0.15)',  border: 'rgba(34,197,94,0.35)',  color: '#4ade80' },
+    'postnet':         { bg: 'rgba(59,130,246,0.15)', border: 'rgba(59,130,246,0.35)', color: '#93c5fd' },
+    'mercado pago':    { bg: 'rgba(0,158,211,0.15)',  border: 'rgba(0,158,211,0.35)',  color: '#38bdf8' },
+    'cuenta dni':      { bg: 'rgba(0,48,135,0.25)',   border: 'rgba(100,149,237,0.4)', color: '#93c5fd' },
+    'transferencia':   { bg: 'rgba(168,85,247,0.15)', border: 'rgba(168,85,247,0.35)', color: '#c4b5fd' },
+    'cuenta corriente':{ bg: 'rgba(249,115,22,0.15)', border: 'rgba(249,115,22,0.35)', color: '#fb923c' },
+    'pago mixto':      { bg: 'rgba(234,179,8,0.15)',  border: 'rgba(234,179,8,0.35)',  color: '#fbbf24' },
+};
+const getPaymentStyle = (method) => {
+    const key = String(method || '').toLowerCase();
+    for (const [k, v] of Object.entries(PAYMENT_COLORS)) {
+        if (key.includes(k)) return v;
+    }
+    return { bg: 'rgba(255,255,255,0.07)', border: 'rgba(255,255,255,0.15)', color: 'var(--color-text-muted)' };
 };
 
 const HistorialVentas = () => {
@@ -191,12 +208,7 @@ const HistorialVentas = () => {
                 </div>
             </header>
 
-            <section style={{
-                backgroundColor: 'var(--color-bg-card)',
-                padding: '1.5rem',
-                borderRadius: 'var(--radius-lg)',
-                border: '1px solid var(--color-border)',
-            }}>
+            <section className="neo-card" style={{ padding: '1.5rem' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', color: 'var(--color-text-muted)' }}>
                         <Receipt size={18} />
@@ -231,49 +243,8 @@ const HistorialVentas = () => {
                     </label>
                 </div>
 
-                <div style={{
-                    marginBottom: '1rem',
-                    padding: '0.9rem',
-                    borderRadius: '12px',
-                    border: '1px solid var(--color-border)',
-                    background: 'rgba(255,255,255,0.025)',
-                }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.65rem' }}>
-                        <strong style={{ color: 'var(--color-text-main)' }}>Productos vendidos hoy</strong>
-                        {todayProductSummary.salesWithoutRealDetail > 0 && (
-                            <span style={{ color: '#f59e0b', fontSize: '0.82rem' }}>
-                                {todayProductSummary.salesWithoutRealDetail} venta{todayProductSummary.salesWithoutRealDetail !== 1 ? 's' : ''} sin desglose real
-                            </span>
-                        )}
-                    </div>
-                    {todayProductSummary.products.length === 0 ? (
-                        <EmptyState
-                            compact
-                            icon={Package}
-                            title="Sin desglose de productos"
-                            description="Si se cobraron tickets offline de balanza, aparecen como venta genérica."
-                        />
-                    ) : (
-                        <div style={{ display: 'grid', gap: '0.45rem' }}>
-                            {todayProductSummary.products.map((item) => (
-                                <div key={item.name} style={{
-                                    display: 'grid',
-                                    gridTemplateColumns: '1fr auto auto',
-                                    gap: '0.75rem',
-                                    alignItems: 'center',
-                                    color: 'var(--color-text-muted)',
-                                    fontSize: '0.9rem',
-                                }}>
-                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 700 }}>{item.name}</span>
-                                    <span>{item.quantity.toFixed(item.unit === 'kg' ? 3 : 0)} {item.unit === 'kg' ? 'kg' : 'un'}</span>
-                                    <strong style={{ color: 'var(--color-text-main)' }}>{formatCurrency(item.amount)}</strong>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </div>
 
-                {filteredSales.length === 0 ? (
+{filteredSales.length === 0 ? (
                     <EmptyState
                         icon={Search}
                         title="No hay ventas"
@@ -303,114 +274,85 @@ const HistorialVentas = () => {
                                 <article
                                     key={sale.id}
                                     style={{
-                                        border: '1px solid var(--color-border)',
+                                        border: '1px solid rgba(255,255,255,0.08)',
                                         borderRadius: '14px',
                                         padding: '1rem',
-                                        background: 'var(--color-bg-main)',
+                                        background: 'linear-gradient(180deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%)',
+                                        boxShadow: '0 4px 20px rgba(0,0,0,0.2), inset 0 1px 0 rgba(255,255,255,0.06)',
                                     }}
                                 >
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap', marginBottom: '0.75rem', alignItems: 'flex-start' }}>
                                         <div>
-                                            <div style={{ fontWeight: 700, color: 'var(--color-text-main)' }}>
+                                            <div style={{ fontWeight: 700, fontSize: '0.95rem', color: 'var(--color-text-main)', letterSpacing: '0.01em' }}>
                                                 Venta {receiptCode}
                                             </div>
-                                            <div style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                                                {saleDate.toLocaleDateString('es-AR')} {saleDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginTop: '0.15rem' }}>
+                                                {saleDate.toLocaleDateString('es-AR')} · {saleDate.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' })}
                                             </div>
                                         </div>
 
-                                        <div style={{ textAlign: 'right' }}>
-                                            <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--color-text-main)' }}>
+                                        <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '0.3rem' }}>
+                                            <div style={{ fontWeight: 800, fontSize: '1.1rem', color: '#ffffff' }}>
                                                 {formatCurrency(sale.total)}
                                             </div>
-                                            <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', textTransform: 'capitalize' }}>
-                                                {normalizePaymentMethodLabel(sale.payment_method)}
-                                            </div>
+                                            {(() => { const ps = getPaymentStyle(normalizePaymentMethodLabel(sale.payment_method)); return (
+                                                <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '0.15rem 0.55rem', borderRadius: '999px', background: ps.bg, border: `1px solid ${ps.border}`, color: ps.color }}>
+                                                    {normalizePaymentMethodLabel(sale.payment_method)}
+                                                </span>
+                                            ); })()}
                                         </div>
                                     </div>
 
+                                    {(sale.items || []).length > 0 && (
+                                        <div style={{ marginBottom: '0.75rem', display: 'grid', gap: '0.3rem' }}>
+                                            {(sale.items || []).map((item) => (
+                                                <div
+                                                    key={item.id}
+                                                    style={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: '1rem',
+                                                        fontSize: '0.85rem',
+                                                    }}
+                                                >
+                                                    <span style={{ color: 'var(--color-text-main)', fontWeight: 500 }}>{item.product_name}</span>
+                                                    <span style={{ color: 'var(--color-text-muted)', whiteSpace: 'nowrap' }}>
+                                                        {Number(item.quantity || 0).toFixed(3)} × {formatCurrency(item.price)}
+                                                    </span>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+
                                     <div style={{
-                                        marginBottom: '0.75rem',
-                                        padding: '0.55rem 0.65rem',
+                                        padding: '0.55rem 0.75rem',
                                         borderRadius: '10px',
-                                        border: '1px solid var(--color-border)',
-                                        background: 'rgba(255,255,255,0.02)',
+                                        border: '1px solid rgba(255,255,255,0.07)',
+                                        background: 'rgba(0,0,0,0.15)',
                                         display: 'grid',
                                         gap: '0.3rem',
                                     }}>
-                                        <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.02em' }}>
+                                        <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', fontWeight: 700, marginBottom: '0.15rem' }}>
                                             Desglose de cobro
                                         </div>
-                                        {paymentRows.map((row, index) => (
-                                            <div
-                                                key={`${sale.id}-payment-${row.method}-${index}`}
-                                                style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    gap: '0.7rem',
-                                                    fontSize: '0.84rem',
-                                                    color: 'var(--color-text-main)',
-                                                }}
-                                            >
-                                                <span>{row.method}</span>
-                                                <strong>{formatCurrency(row.amount)}</strong>
-                                            </div>
-                                        ))}
-                                    </div>
-
-                                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
-                                        <span style={{
-                                            fontSize: '0.78rem',
-                                            padding: '0.2rem 0.55rem',
-                                            borderRadius: '999px',
-                                            border: '1px solid var(--color-border)',
-                                            color: 'var(--color-text-muted)',
-                                        }}>
-                                            {sale.items?.length || 0} producto{(sale.items?.length || 0) !== 1 ? 's' : ''}
-                                        </span>
-                                        {sale.source && (
-                                            <span style={{
-                                                fontSize: '0.78rem',
-                                                padding: '0.2rem 0.55rem',
-                                                borderRadius: '999px',
-                                                background: sale.source === 'qendra' ? '#1d4ed8' : 'rgba(255,255,255,0.05)',
-                                                color: sale.source === 'qendra' ? '#fff' : 'var(--color-text-muted)',
-                                            }}>
-                                                {sale.source}
-                                            </span>
-                                        )}
-                                        {saleHasGenericScaleFallback && (
-                                            <span style={{
-                                                fontSize: '0.78rem',
-                                                padding: '0.2rem 0.55rem',
-                                                borderRadius: '999px',
-                                                background: 'rgba(245,158,11,0.12)',
-                                                border: '1px solid rgba(245,158,11,0.35)',
-                                                color: '#f59e0b',
-                                            }}>
-                                                Sin desglose de balanza
-                                            </span>
-                                        )}
-                                    </div>
-
-                                    <div style={{ display: 'grid', gap: '0.35rem' }}>
-                                        {(sale.items || []).map((item) => (
-                                            <div
-                                                key={item.id}
-                                                style={{
-                                                    display: 'flex',
-                                                    justifyContent: 'space-between',
-                                                    gap: '1rem',
-                                                    fontSize: '0.9rem',
-                                                    color: 'var(--color-text-muted)',
-                                                }}
-                                            >
-                                                <span>{item.product_name}</span>
-                                                <span>
-                                                    {Number(item.quantity || 0).toFixed(3)} x {formatCurrency(item.price)}
-                                                </span>
-                                            </div>
-                                        ))}
+                                        {paymentRows.map((row, index) => {
+                                            const ps = getPaymentStyle(row.method);
+                                            return (
+                                                <div
+                                                    key={`${sale.id}-payment-${row.method}-${index}`}
+                                                    style={{
+                                                        display: 'flex',
+                                                        justifyContent: 'space-between',
+                                                        gap: '0.7rem',
+                                                        fontSize: '0.85rem',
+                                                        alignItems: 'center',
+                                                    }}
+                                                >
+                                                    <span style={{ color: ps.color, fontWeight: 600 }}>{row.method}</span>
+                                                    <strong style={{ color: 'var(--color-text-main)' }}>{formatCurrency(row.amount)}</strong>
+                                                </div>
+                                            );
+                                        })}
                                     </div>
                                 </article>
                             );

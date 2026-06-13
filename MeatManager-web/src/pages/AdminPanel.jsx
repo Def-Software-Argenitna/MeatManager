@@ -1,6 +1,7 @@
 import React from 'react';
-import { ShieldCheck, RefreshCw, ArrowRightLeft } from 'lucide-react';
+import { ShieldCheck, RefreshCw, ArrowRightLeft, Cpu } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
+import AdminBridgesPanel from '../components/AdminBridgesPanel';
 import './AdminPanel.css';
 
 const AdminPanel = () => {
@@ -39,6 +40,13 @@ const AdminPanel = () => {
                             </div>
                         </div>
                     </div>
+                </DirectionalReveal>
+
+                <DirectionalReveal className="admin-card table-card" from="down" delay={0.16}>
+                    <div className="table-header" style={{ alignItems: 'center' }}>
+                        <h3><Cpu size={20} /> Estado de los Bridges</h3>
+                    </div>
+                    <AdminBridgesPanel />
                 </DirectionalReveal>
             </main>
         </div>

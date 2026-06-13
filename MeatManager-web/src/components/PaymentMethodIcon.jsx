@@ -1,6 +1,7 @@
 import React from 'react';
 import mercadoPagoLogo from '../assets/mercado-pago.svg';
 import cuentaDniLogo from '../assets/cuenta-dni.svg';
+import postnetLogo from '../assets/postnet.svg';
 
 const BRAND_MAP = {
     cash: { label: '$', bg: '#166534', color: '#ffffff' },
@@ -28,6 +29,7 @@ const BRAND_MAP = {
 const LOGO_MAP = {
     mercado_pago: mercadoPagoLogo,
     cuenta_dni: cuentaDniLogo,
+    posnet: postnetLogo,
 };
 
 function getBrandKey(method = {}) {

@@ -1,8 +1,24 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
-  <rect width="128" height="128" rx="28" fill="#173EA5"/>
-  <circle cx="32" cy="36" r="12" fill="#F6C400"/>
-  <path d="M22 36H42" stroke="#173EA5" stroke-width="3" stroke-linecap="round"/>
-  <path d="M32 26V46" stroke="#173EA5" stroke-width="3" stroke-linecap="round"/>
-  <text x="64" y="60" text-anchor="middle" fill="#ffffff" font-family="Arial, Helvetica, sans-serif" font-size="22" font-weight="700">Cuenta</text>
-  <text x="64" y="90" text-anchor="middle" fill="#F6C400" font-family="Arial, Helvetica, sans-serif" font-size="28" font-weight="800">DNI</text>
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <rect width="128" height="128" rx="22" fill="#ffffff"/>
+
+  <!-- Esquinas de reconocimiento facial (brackets tipo ⌐) -->
+  <!-- Superior izquierda -->
+  <path d="M14 36 L14 18 L32 18" fill="none" stroke="#4a4a4a" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Superior derecha -->
+  <path d="M96 18 L114 18 L114 36" fill="none" stroke="#4a4a4a" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Inferior izquierda -->
+  <path d="M14 66 L14 84 L32 84" fill="none" stroke="#16a34a" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Inferior derecha -->
+  <path d="M96 84 L114 84 L114 66" fill="none" stroke="#16a34a" stroke-width="5.5" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Ojos -->
+  <circle cx="47" cy="46" r="5" fill="#4a4a4a"/>
+  <circle cx="81" cy="46" r="5" fill="#4a4a4a"/>
+
+  <!-- Arco de reconocimiento (como WiFi invertido / scan chin) -->
+  <path d="M 40 68 Q 64 82 88 68" fill="none" stroke="#16a34a" stroke-width="4.5" stroke-linecap="round"/>
+
+  <!-- Texto -->
+  <text x="64" y="104" text-anchor="middle" fill="#4a4a4a" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">Cuenta</text>
+  <text x="64" y="124" text-anchor="middle" fill="#16a34a" font-family="'Arial Black', Arial, Helvetica, sans-serif" font-size="20" font-weight="900">DNI</text>
 </svg>

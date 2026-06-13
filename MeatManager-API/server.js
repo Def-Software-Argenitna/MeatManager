@@ -152,6 +152,11 @@ const CLIENT_USER_PERMISSIONS_TABLE = process.env.CLIENT_USER_PERMISSIONS_TABLE 
 const LICENSES_TABLE = process.env.LICENSES_TABLE || 'licenses';
 const INTERNAL_ADMINS_TABLE = process.env.INTERNAL_ADMINS_TABLE || 'internal_admins';
 const BRIDGE_DEVICES_TABLE = process.env.BRIDGE_DEVICES_TABLE || 'bridge_devices';
+// Monitor de estado del bridge
+const BRIDGE_ONLINE_THRESHOLD_MS = Math.max(10000, Number.parseInt(process.env.BRIDGE_ONLINE_THRESHOLD_MS || '30000', 10) || 30000);
+const BRIDGE_UPDATE_OWNER = process.env.BRIDGE_UPDATE_OWNER || 'Def-Software-Argenitna';
+const BRIDGE_UPDATE_REPO = process.env.BRIDGE_UPDATE_REPO || 'MeatManager';
+const BRIDGE_LATEST_VERSION_TTL_MS = 10 * 60 * 1000;
 const FIREBASE_WEB_API_KEY = process.env.FIREBASE_WEB_API_KEY || '';
 const BRIDGE_SESSION_TOKEN_EXPIRES_IN = process.env.BRIDGE_SESSION_TOKEN_EXPIRES_IN || '10m';
 const BRIDGE_DEVICE_TOKEN_BYTES = Math.max(16, Number.parseInt(process.env.BRIDGE_DEVICE_TOKEN_BYTES || '32', 10) || 32);
@@ -256,6 +261,137 @@ async function queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation,
         console.warn('[BRIDGE COMMAND] No se pudo encolar sync de productos:', error?.message || error);
         return null;
     }
+}
+
+// ── Monitor de estado del bridge ───────────────────────────────────────────
+// Columnas en bridge_devices (DB de control) para guardar lo que reporta el
+// agente en cada heartbeat. Idempotente; corre al arrancar.
+async function ensureBridgeDeviceMonitorColumns() {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const cols = [
+            ['app_version', 'VARCHAR(20) NULL'],
+            ['last_run_status', 'VARCHAR(16) NULL'],
+            ['last_ticket_sync_at', 'DATETIME NULL'],
+            ['scale_reachable', 'TINYINT(1) NULL'],
+            ['last_error', 'VARCHAR(255) NULL'],
+            ['recent_e3_count', 'INT NULL'],
+            ['agent_reported_at', 'DATETIME NULL'],
+        ];
+        for (const [name, def] of cols) {
+            if (!(await hasColumn(conn, CLIENTS_DB_NAME, BRIDGE_DEVICES_TABLE, name))) {
+                await conn.query(
+                    `ALTER TABLE \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\` ADD COLUMN \`${name}\` ${def}`
+                );
+            }
+        }
+    } finally {
+        conn.release();
+    }
+}
+
+// Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
+function compareSemver(a, b) {
+    const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
+    const pb = String(b || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
+    for (let i = 0; i < 3; i += 1) {
+        if ((pa[i] || 0) > (pb[i] || 0)) return 1;
+        if ((pa[i] || 0) < (pb[i] || 0)) return -1;
+    }
+    return 0;
+}
+
+let _latestBridgeVersionCache = { version: null, at: 0 };
+// Consulta la ultima release del bridge en GitHub (tag `bridge-vX.Y.Z`).
+// Cachea 10 min. Devuelve null si no se pudo verificar (no rompe el endpoint).
+async function getLatestBridgeVersion() {
+    const now = Date.now();
+    if (_latestBridgeVersionCache.version && (now - _latestBridgeVersionCache.at) < BRIDGE_LATEST_VERSION_TTL_MS) {
+        return _latestBridgeVersionCache.version;
+    }
+    try {
+        const url = `https://api.github.com/repos/${BRIDGE_UPDATE_OWNER}/${BRIDGE_UPDATE_REPO}/releases`;
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 5000);
+        let resp;
+        try {
+            resp = await fetch(url, {
+                headers: { 'Accept': 'application/vnd.github+json', 'User-Agent': 'MeatManager-API' },
+                signal: controller.signal,
+            });
+        } finally {
+            clearTimeout(timeout);
+        }
+        if (!resp.ok) return _latestBridgeVersionCache.version;
+        const releases = await resp.json();
+        // Tomamos el mayor tag `bridge-vX.Y.Z` (no pre-release, no draft).
+        const versions = (Array.isArray(releases) ? releases : [])
+            .filter((r) => r && !r.draft && !r.prerelease && /^bridge-v\d+\.\d+\.\d+$/.test(String(r.tag_name || '')))
+            .map((r) => String(r.tag_name).replace(/^bridge-v/, ''));
+        if (!versions.length) return _latestBridgeVersionCache.version;
+        const latest = versions.sort((a, b) => compareSemver(b, a))[0];
+        _latestBridgeVersionCache = { version: latest, at: now };
+        return latest;
+    } catch {
+        return _latestBridgeVersionCache.version;
+    }
+}
+
+// Calcula el estado de salud de un bridge a partir de su fila en bridge_devices.
+// `lastSeenAt` (siempre actualizado) decide vivacidad; los campos `agent_*`
+// (pueden faltar en bridges viejos) dan el detalle.
+function computeBridgeHealth(device, latestVersion, now = Date.now()) {
+    const lastSeenMs = device.lastSeenAt ? new Date(device.lastSeenAt).getTime() : null;
+    const isActive = String(device.status || '').toUpperCase() === 'ACTIVE';
+    const version = device.app_version || null;
+    const reasons = [];
+
+    if (!lastSeenMs) {
+        return {
+            online: false,
+            status: isActive ? 'unknown' : 'down',
+            version, isUpToDate: null, scaleReachable: null,
+            lastTicketSyncAt: device.last_ticket_sync_at ? new Date(device.last_ticket_sync_at).toISOString() : null,
+            lastSeenAt: null,
+            reasons: isActive ? ['nunca reporto'] : ['dispositivo inactivo'],
+        };
+    }
+
+    const online = (now - lastSeenMs) < BRIDGE_ONLINE_THRESHOLD_MS;
+    let isUpToDate = null;
+    if (latestVersion && version) {
+        isUpToDate = compareSemver(version, latestVersion) >= 0;
+    } else if (latestVersion && !version) {
+        isUpToDate = false; // version desconocida => tratamos como desactualizado
+    }
+
+    if (!online) {
+        return {
+            online: false, status: 'down', version, isUpToDate,
+            scaleReachable: device.scale_reachable == null ? null : Boolean(device.scale_reachable),
+            lastTicketSyncAt: device.last_ticket_sync_at ? new Date(device.last_ticket_sync_at).toISOString() : null,
+            lastSeenAt: new Date(lastSeenMs).toISOString(),
+            reasons: ['sin conexion'],
+        };
+    }
+
+    const scaleReachable = device.scale_reachable == null ? null : Boolean(device.scale_reachable);
+    if (scaleReachable === false) reasons.push('balanza no responde');
+    if (isUpToDate === false) reasons.push(version ? 'desactualizado' : 'version desconocida');
+    if (Number(device.recent_e3_count || 0) > 0) reasons.push('saturacion de la balanza');
+    if (String(device.last_run_status || '') === 'error') reasons.push('error en ultima sincronizacion');
+
+    return {
+        online: true,
+        status: reasons.length ? 'warn' : 'ok',
+        version, isUpToDate, scaleReachable,
+        lastTicketSyncAt: device.last_ticket_sync_at ? new Date(device.last_ticket_sync_at).toISOString() : null,
+        lastSeenAt: new Date(lastSeenMs).toISOString(),
+        recentE3Count: Number(device.recent_e3_count || 0),
+        lastError: device.last_error || null,
+        lastRunStatus: device.last_run_status || null,
+        reasons,
+    };
 }
 
 const redisTlsEnabled = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
@@ -8700,25 +8836,30 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         }
         const now = date ? new Date(date) : new Date();
         const ticketBarcode = String(ticket_barcode || '').trim() || null;
+        const rawMultiBarcodes = req.body.ticket_barcodes;
+        const ticketBarcodes = Array.isArray(rawMultiBarcodes) && rawMultiBarcodes.length > 0
+            ? rawMultiBarcodes.map(b => String(b).trim()).filter(Boolean)
+            : (ticketBarcode ? [ticketBarcode] : []);
+        const primaryBarcode = ticketBarcodes[0] || null;
 
         await ensureScaleTicketLifecycleColumns(conn);
-        if (ticketBarcode) {
+        if (ticketBarcodes.length > 0) {
             const [ticketRows] = await conn.query(
-                `SELECT ticket_status
+                `SELECT ticket_barcode, ticket_status
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)
-                 LIMIT 1`,
-                [tenantId, ticketBarcode]
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
+                [tenantId, ...ticketBarcodes]
             );
-            if (!ticketRows.length) {
+            if (ticketRows.length < ticketBarcodes.length) {
                 await conn.rollback();
                 conn.release();
-                return res.status(404).json({ error: 'El ticket escaneado no existe o aun no se sincronizo' });
+                return res.status(404).json({ error: 'Uno o más tickets no existen o aún no se sincronizaron' });
             }
-            if (String(ticketRows[0].ticket_status || '').toLowerCase() !== 'open') {
+            const notOpen = ticketRows.filter(r => String(r.ticket_status || '').toLowerCase() !== 'open');
+            if (notOpen.length > 0) {
                 await conn.rollback();
                 conn.release();
-                return res.status(409).json({ error: 'Ese ticket ya fue cobrado o anulado y no puede reutilizarse' });
+                return res.status(409).json({ error: 'Uno o más tickets ya fueron cobrados o anulados' });
             }
         }
 
@@ -8740,19 +8881,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 safeDiscountClientId,
                 safeClientDiscountPct,
                 safeClientDiscountAmount,
-                qendra_ticket_id || null, ticketBarcode, source || 'manual',
+                qendra_ticket_id || null, primaryBarcode, source || 'manual',
             ]
         );
         const saleId = ventaResult.insertId;
 
-        if (ticketBarcode) {
+        if (ticketBarcodes.length > 0) {
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged',
                      charged_sale_id = ?,
                      charged_at = NOW()
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
-                [saleId, tenantId, ticketBarcode]
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
+                [saleId, tenantId, ...ticketBarcodes]
             );
         }
 
@@ -11886,6 +12027,34 @@ app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
         // El middleware ya actualizó lastSeenAt. Aceptamos info de balanzas para
         // forward-compat (próxima fase: persistir un registro por balanza).
         const scales = Array.isArray(req.body?.scales) ? req.body.scales.length : 0;
+
+        // Estado del agente (monitor): bridges viejos no lo mandan -> opcional.
+        const agent = req.body?.agent;
+        if (agent && typeof agent === 'object') {
+            const toMysqlDatetime = (iso) => {
+                if (!iso) return null;
+                const d = new Date(iso);
+                return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 19).replace('T', ' ');
+            };
+            clientsControlPool
+                .query(
+                    `UPDATE \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+                     SET app_version = ?, last_run_status = ?, last_ticket_sync_at = ?,
+                         scale_reachable = ?, last_error = ?, recent_e3_count = ?, agent_reported_at = NOW()
+                     WHERE id = ?`,
+                    [
+                        agent.version ? String(agent.version).slice(0, 20) : null,
+                        agent.lastRunStatus ? String(agent.lastRunStatus).slice(0, 16) : null,
+                        toMysqlDatetime(agent.lastTicketSyncAt),
+                        agent.scaleReachable == null ? null : (agent.scaleReachable ? 1 : 0),
+                        agent.lastError ? String(agent.lastError).slice(0, 255) : null,
+                        Number.isFinite(Number(agent.recentE3Count)) ? Number(agent.recentE3Count) : null,
+                        req.bridge.id,
+                    ]
+                )
+                .catch((e) => console.warn('[HEARTBEAT] No se pudo persistir estado del agente:', e?.message || e));
+        }
+
         const pool = getOperationalPool();
         // Comandos de control remoto sistema -> bridge. Cada uno es un seq en
         // settings; el bridge ejecuta cuando ve un seq mayor al que persistio.
@@ -11917,6 +12086,64 @@ app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
 // por heartbeat en <=5s). Tipos: restart (reinicia el proceso que habla con la
 // balanza), restart_app (reinicia la app desktop completa), apply_update
 // (busca la ultima release y la instala+relanza automaticamente).
+// Estado del bridge del tenant del usuario (tarjeta en Config Balanza).
+app.get('/api/scale/bridge/status', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { tenantId } = await getTenantInfo(req.firebaseUser);
+        const [devices] = await clientsControlPool.query(
+            `SELECT id, tenantId, clientId, branchId, deviceId, hostname, status, lastSeenAt,
+                    app_version, last_run_status, last_ticket_sync_at, scale_reachable,
+                    last_error, recent_e3_count, agent_reported_at
+             FROM \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+             WHERE tenantId = ? AND UPPER(status) = 'ACTIVE'
+             ORDER BY lastSeenAt DESC`,
+            [tenantId]
+        );
+        const latestVersion = await getLatestBridgeVersion();
+        const now = Date.now();
+        const bridges = devices.map((d) => ({
+            deviceId: d.deviceId,
+            hostname: d.hostname || null,
+            branchId: d.branchId,
+            ...computeBridgeHealth(d, latestVersion, now),
+        }));
+        return res.json({ ok: true, latestVersion, bridges });
+    } catch (error) {
+        console.error('[BRIDGE STATUS ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo obtener el estado del bridge' });
+    }
+});
+
+// Panel global de soporte (DEF Software): todos los bridges de todos los tenants.
+app.get('/api/admin/bridges', verifyFirebaseToken, async (req, res) => {
+    try {
+        const [devices] = await clientsControlPool.query(
+            `SELECT id, tenantId, clientId, branchId, deviceId, hostname, status, lastSeenAt,
+                    app_version, last_run_status, last_ticket_sync_at, scale_reachable,
+                    last_error, recent_e3_count, agent_reported_at
+             FROM \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\`
+             ORDER BY lastSeenAt DESC`
+        );
+        const latestVersion = await getLatestBridgeVersion();
+        const now = Date.now();
+        const order = { warn: 0, down: 1, unknown: 2, ok: 3 };
+        const bridges = devices
+            .map((d) => ({
+                deviceId: d.deviceId,
+                hostname: d.hostname || null,
+                clientId: d.clientId,
+                branchId: d.branchId,
+                status_active: String(d.status || '').toUpperCase() === 'ACTIVE',
+                ...computeBridgeHealth(d, latestVersion, now),
+            }))
+            .sort((a, b) => (order[a.status] ?? 9) - (order[b.status] ?? 9));
+        return res.json({ ok: true, latestVersion, count: bridges.length, bridges });
+    } catch (error) {
+        console.error('[ADMIN BRIDGES ERROR]', error?.message || error);
+        return res.status(500).json({ error: 'No se pudo obtener el listado de bridges' });
+    }
+});
+
 app.post('/api/scale/bridge/command', verifyFirebaseToken, async (req, res) => {
     try {
         const type = String(req.body?.type || '').trim().toLowerCase();
@@ -11972,6 +12199,277 @@ app.get('/api/bridge/vendors', verifyBridgeDeviceToken, async (req, res) => {
     }
 });
 
+// ── RUTA: POST /api/conciliacion/balanza/cobro-manual ────────────────────
+app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        conn = await pool.getConnection();
+        await ensureScaleTicketLifecycleColumns(conn);
+
+        const { ticket_barcode, payment_method_id, payment_method_name, notes } = req.body;
+        if (!ticket_barcode) return res.status(400).json({ error: 'ticket_barcode es requerido' });
+        const barcode = String(ticket_barcode).trim().toUpperCase();
+
+        // Verificar que el ticket existe y está open
+        const [[ticket]] = await conn.query(
+            `SELECT * FROM scale_bridge_ticket_map WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
+            [tenantId, barcode]
+        );
+        if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
+        if (String(ticket.ticket_status || '').toLowerCase() !== 'open') {
+            return res.status(409).json({ error: `El ticket ya fue procesado (estado: ${ticket.ticket_status})` });
+        }
+
+        // Obtener items
+        const [items] = await conn.query(
+            `SELECT i.*, p.name AS product_name, p.id AS product_db_id
+             FROM scale_bridge_sales_item i
+             LEFT JOIN products p ON p.tenant_id = ? AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR) AND p.inactive != 1
+             WHERE i.tenant_id = ? AND UPPER(i.ticket_barcode) = ?
+             ORDER BY i.line_no`,
+            [tenantId, tenantId, barcode]
+        );
+
+        // Resolver método de pago
+        let pmId = payment_method_id ? Number(payment_method_id) : null;
+        let pmName = payment_method_name || 'Efectivo';
+        if (pmId) {
+            const [[pm]] = await conn.query(
+                `SELECT id, name FROM payment_methods WHERE tenant_id = ? AND id = ? LIMIT 1`,
+                [tenantId, pmId]
+            );
+            if (pm) pmName = pm.name;
+        }
+
+        const total = Number(ticket.total_amount || 0);
+
+        await conn.beginTransaction();
+        try {
+            // Insertar venta
+            const [ventaResult] = await conn.query(
+                `INSERT INTO ventas (tenant_id, date, total, payment_method, payment_method_id, source, created_at)
+                 VALUES (?, NOW(), ?, ?, ?, 'conciliacion_manual', NOW())`,
+                [tenantId, total, pmName, pmId || null]
+            );
+            const saleId = ventaResult.insertId;
+
+            // Insertar items
+            if (items.length > 0) {
+                const itemRows = items.map(it => [
+                    tenantId,
+                    saleId,
+                    it.product_db_id || null,
+                    it.product_name || `PLU ${it.plu_code}`,
+                    Number(it.item_quantity || 0),
+                    Number(it.item_quantity) > 0 ? Number((Number(it.amount) / Number(it.item_quantity)).toFixed(2)) : 0,
+                    Number(it.amount || 0),
+                ]);
+                await conn.query(
+                    `INSERT INTO ventas_items (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal) VALUES ?`,
+                    [itemRows]
+                );
+            }
+
+            // Marcar ticket como cobrado
+            await conn.query(
+                `UPDATE scale_bridge_ticket_map
+                 SET ticket_status = 'charged', charged_sale_id = ?, charged_at = NOW()
+                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?`,
+                [saleId, tenantId, barcode]
+            );
+
+            await conn.commit();
+            return res.json({ sale_id: saleId, total });
+        } catch (txErr) {
+            await conn.rollback();
+            throw txErr;
+        }
+    } catch (err) {
+        console.error('[POST /api/conciliacion/balanza/cobro-manual ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// ── RUTA: GET /api/conciliacion/balanza ───────────────────────────────────
+app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const conn = await pool.getConnection();
+        try { await ensureScaleTicketLifecycleColumns(conn); } finally { conn.release(); }
+
+        const { dateFrom, dateTo } = req.query;
+        const params = [tenantId];
+        let dateFilter = '';
+        if (dateFrom && dateTo) {
+            dateFilter = ' AND DATE(t.sale_at) BETWEEN ? AND ?';
+            params.push(dateFrom, dateTo);
+        } else if (dateFrom) {
+            dateFilter = ' AND DATE(t.sale_at) >= ?';
+            params.push(dateFrom);
+        } else if (dateTo) {
+            dateFilter = ' AND DATE(t.sale_at) <= ?';
+            params.push(dateTo);
+        }
+
+        const [tickets] = await pool.query(`
+            SELECT
+                t.id,
+                t.ticket_barcode,
+                t.printed_ticket_barcode,
+                t.vendor_code,
+                t.vendor_name,
+                t.sale_at,
+                t.total_amount,
+                t.item_count,
+                t.ticket_status,
+                t.scale_address,
+                t.synced_at
+            FROM scale_bridge_ticket_map t
+            WHERE t.tenant_id = ?
+              AND t.ticket_status = 'open'
+              ${dateFilter}
+            ORDER BY t.sale_at DESC
+        `, params);
+
+        if (tickets.length === 0) return res.json({ tickets: [] });
+
+        const barcodes = tickets.map(t => t.ticket_barcode);
+        const [items] = await pool.query(`
+            SELECT
+                i.ticket_barcode,
+                i.line_no,
+                i.plu_code,
+                i.vendor_name,
+                i.grams,
+                i.drained_grams,
+                i.amount,
+                i.item_quantity,
+                i.item_quantity_unit,
+                i.sale_at,
+                COALESCE(
+                    (SELECT p.name FROM scale_bridge_product_map m
+                     JOIN products p ON p.id = m.product_id AND p.tenant_id = m.tenant_id
+                     WHERE m.tenant_id = i.tenant_id AND m.device_id = i.device_id
+                       AND CAST(m.plu_code AS CHAR) = CAST(i.plu_code AS CHAR)
+                     LIMIT 1),
+                    (SELECT p.name FROM products p
+                     WHERE p.tenant_id = i.tenant_id
+                       AND (
+                           CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                           OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
+                       )
+                     ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                     LIMIT 1)
+                ) AS product_name
+            FROM scale_bridge_sales_item i
+            WHERE i.tenant_id = ?
+              AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
+            ORDER BY i.ticket_barcode, i.line_no
+        `, [tenantId, ...barcodes]);
+
+        const itemsByBarcode = {};
+        for (const item of items) {
+            if (!itemsByBarcode[item.ticket_barcode]) itemsByBarcode[item.ticket_barcode] = [];
+            itemsByBarcode[item.ticket_barcode].push(item);
+        }
+        return res.json({ tickets: tickets.map(t => ({ ...t, items: itemsByBarcode[t.ticket_barcode] || [] })) });
+    } catch (err) {
+        console.error('[GET /api/conciliacion/balanza ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: POST /api/admin/setup-inter-branch-relationships ────────────────
+app.post('/api/admin/setup-inter-branch-relationships', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { tenantId, dbName, clientId } = await getTenantInfo(req.firebaseUser);
+        if (!clientId) return res.status(400).json({ error: 'No se pudo determinar el clientId del tenant' });
+
+        const allBranches = await listClientBranches(clientId);
+
+        // Acepta lista opcional de IDs de sucursales a vincular; si no se pasa, usa todas.
+        const { branchIds } = req.body || {};
+        const branches = Array.isArray(branchIds) && branchIds.length >= 2
+            ? allBranches.filter((b) => branchIds.map(Number).includes(Number(b.id)))
+            : allBranches;
+
+        if (branches.length < 2) {
+            return res.status(400).json({ error: 'Se necesitan al menos 2 sucursales activas para crear relaciones inter-sucursal' });
+        }
+
+        const pool = getTenantPool(dbName);
+        const conn = await pool.getConnection();
+
+        const created = [];
+        const skipped = [];
+
+        try {
+            for (let i = 0; i < branches.length; i++) {
+                for (let j = 0; j < branches.length; j++) {
+                    if (i === j) continue;
+                    const owner = branches[i];
+                    const other = branches[j];
+
+                    // Check + insert client
+                    const [[existingClient]] = await conn.query(
+                        `SELECT id FROM clients WHERE tenant_id = ? AND branch_id = ? AND name = ? LIMIT 1`,
+                        [tenantId, owner.id, other.name]
+                    );
+                    if (existingClient) {
+                        skipped.push({ type: 'client', owner: owner.name, other: other.name, id: existingClient.id });
+                    } else {
+                        const [clientResult] = await conn.query(
+                            `INSERT INTO clients (tenant_id, branch_id, name, has_current_account, balance)
+                             VALUES (?, ?, ?, 1, 0)`,
+                            [tenantId, owner.id, other.name]
+                        );
+                        created.push({ type: 'client', owner: owner.name, other: other.name, id: clientResult.insertId });
+                    }
+
+                    // Check + insert supplier
+                    const [[existingSupplier]] = await conn.query(
+                        `SELECT id FROM suppliers WHERE tenant_id = ? AND branch_id = ? AND name = ? LIMIT 1`,
+                        [tenantId, owner.id, other.name]
+                    );
+                    if (existingSupplier) {
+                        skipped.push({ type: 'supplier', owner: owner.name, other: other.name, id: existingSupplier.id });
+                    } else {
+                        const [supplierResult] = await conn.query(
+                            `INSERT INTO suppliers (tenant_id, branch_id, name)
+                             VALUES (?, ?, ?)`,
+                            [tenantId, owner.id, other.name]
+                        );
+                        created.push({ type: 'supplier', owner: owner.name, other: other.name, id: supplierResult.insertId });
+                    }
+                }
+            }
+        } finally {
+            conn.release();
+        }
+
+        console.log(`[INTER-BRANCH] tenant=${tenantId} creados=${created.length} ya-existentes=${skipped.length}`);
+        res.json({ ok: true, branches: branches.map((b) => ({ id: b.id, name: b.name })), created, skipped });
+    } catch (err) {
+        console.error('[POST /api/admin/setup-inter-branch-relationships ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: GET /health ──────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({
     ok: true,
@@ -11994,6 +12492,9 @@ ensureClientsControlStore()
         if (!SKIP_SCHEMA_BOOT) {
             console.log('[BOOT] Operational tenant isolation OK');
         }
+        await ensureBridgeDeviceMonitorColumns().catch((e) => {
+            console.warn('[BOOT] No se pudieron asegurar columnas de monitor de bridge:', e?.message || e);
+        });
         await connectRedisSafely();
     })
     .then(() => {

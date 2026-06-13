@@ -660,6 +660,7 @@ const InformesCaja = () => {
     const [initialSnapshots, setInitialSnapshots] = useState({ current: { principal: 0, secondary: 0 }, previous: { principal: 0, secondary: 0 } });
     const [loading, setLoading] = useState(false);
     const [feedback, setFeedback] = useState(null);
+    const [rowFilter, setRowFilter] = useState('all');
 
     const selectedValue = useMemo(() => (mode === 'range'
         ? { from: rangeFromValue, to: rangeToValue }
@@ -1193,52 +1194,9 @@ const InformesCaja = () => {
                 <MetricCard label="Transferencias enviadas" value={formatCurrency(report.current.totals.transferenciasEnviadas)} tone="expense" />
             </DirectionalReveal>
 
-            {report.comparison && (
-                <DirectionalReveal className="ic-comparison-grid" from="left" delay={0.14}>
-                    {comparisonCards.map((card) => {
-                        const isGood = card.positiveGood ? card.value >= 0 : card.value <= 0;
-                        return (
-                            <div key={card.label} className={`ic-compare-card ${isGood ? 'good' : 'bad'}`}>
-                                <span>{card.label}</span>
-                                <strong>{card.value >= 0 ? '+' : ''}{formatCurrency(card.value)}</strong>
-                                {card.value >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                            </div>
-                        );
-                    })}
-                </DirectionalReveal>
-            )}
 
             <div className="ic-grid">
-                <DirectionalReveal className="ic-card neo-card" from="left" delay={0.16}>
-                    <div className="ic-card-header">
-                        <ShieldCheck size={22} />
-                        <h2>Informe final</h2>
-                    </div>
-                    <div className="ic-findings">
-                        {report.problemFindings.map((finding) => (
-                            <div key={finding.title} className={`ic-finding ${finding.severity}`}>
-                                <strong>{finding.title}</strong>
-                                <span>{finding.detail}</span>
-                            </div>
-                        ))}
-                    </div>
-                    <div className="ic-reconciliation">
-                        <div>
-                            <span>Conciliación interna</span>
-                            <strong>{formatCurrency(report.current.reconciliationDelta)}</strong>
-                        </div>
-                        <div>
-                            <span>Movimientos auditados</span>
-                            <strong>{report.current.movementRows.length}</strong>
-                        </div>
-                        <div>
-                            <span>Cierres incluidos</span>
-                            <strong>{report.current.closureRows.length}</strong>
-                        </div>
-                    </div>
-                </DirectionalReveal>
-
-                <DirectionalReveal className="ic-card neo-card" from="right" delay={0.18}>
+                <DirectionalReveal className="ic-card neo-card" from="right" delay={0.16}>
                     <div className="ic-card-header">
                         <Scale size={22} />
                         <h2>Resumen por caja</h2>
@@ -1268,62 +1226,126 @@ const InformesCaja = () => {
                 <div className="ic-card-header">
                     <CalendarDays size={22} />
                     <h2>Detalle centavo por centavo</h2>
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: '0.4rem' }}>
+                        {[
+                            { key: 'all', label: 'Todos', activeColor: 'rgba(249,115,22,0.5)', activeBg: 'rgba(249,115,22,0.15)', activeText: 'var(--color-primary)' },
+                            { key: 'ingresos', label: 'Ingresos', activeColor: 'rgba(34,197,94,0.5)', activeBg: 'rgba(34,197,94,0.15)', activeText: '#4ade80' },
+                            { key: 'egresos', label: 'Egresos', activeColor: 'rgba(239,68,68,0.5)', activeBg: 'rgba(239,68,68,0.15)', activeText: '#f87171' },
+                        ].map(({ key, label, activeColor, activeBg, activeText }) => (
+                            <button
+                                key={key}
+                                type="button"
+                                onClick={() => setRowFilter(key)}
+                                style={{
+                                    padding: '0.3rem 0.75rem',
+                                    borderRadius: '999px',
+                                    fontSize: '0.75rem',
+                                    fontWeight: 700,
+                                    cursor: 'pointer',
+                                    border: rowFilter === key ? `1px solid ${activeColor}` : '1px solid rgba(255,255,255,0.1)',
+                                    background: rowFilter === key ? activeBg : 'rgba(255,255,255,0.04)',
+                                    color: rowFilter === key ? activeText : 'var(--color-text-muted)',
+                                    transition: 'all 0.15s',
+                                }}
+                            >{label}</button>
+                        ))}
+                    </div>
                 </div>
-                <div className="ic-table-wrap">
-                    <table className="ic-table">
-                        <thead>
-                            <tr>
-                                <th>Fecha</th>
-                                <th>Caja</th>
-                                <th>Operación</th>
-                                <th>Clasificación</th>
-                                <th>Mov. entre cajas</th>
-                                <th>Categoría</th>
-                                <th>Medio</th>
-                                <th>Detalle</th>
-                                <th>Ingreso</th>
-                                <th>Egreso</th>
-                                <th>Saldo caja</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {report.current.rows.length === 0 && (
-                                <tr>
-                                    <td colSpan="11" className="ic-empty">No hay movimientos en el período seleccionado.</td>
-                                </tr>
-                            )}
-                            {report.current.rows.map((row, index) => (
-                                <tr key={`${row.source}-${row.id}-${index}`}>
-                                    <td>{row.fecha}</td>
-                                    <td>{row.caja}</td>
-                                    <td>{row.operacion}</td>
-                                    <td>{row.clasificacion}</td>
-                                    <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
-                                    <td>{row.categoria}</td>
-                                    <td>{row.medioPago}</td>
-                                    <td>
-                                        <div className="ic-detail-cell">
-                                            <span>{row.descripcion || row.proveedor || 'Sin detalle'}</span>
-                                            <small>
-                                                {[
-                                                    row.detalleClasificacion || '',
-                                                    row.ticket ? `Ticket ${row.ticket}` : '',
-                                                    row.ventaId ? `Venta ${row.ventaId}` : '',
-                                                    row.compraId ? `Compra ${row.compraId}` : '',
-                                                    row.transferenciaId ? `Transferencia ${row.transferenciaId}` : '',
-                                                    row.cierreTeorico != null ? `Cierre: teórico ${formatCurrency(row.cierreTeorico)}, contado ${formatCurrency(row.cierreContado)}, dif. ${formatCurrency(row.diferenciaCierre)}` : '',
-                                                ].filter(Boolean).join(' · ')}
-                                            </small>
-                                        </div>
-                                    </td>
-                                    <td className="num income">{row.ingreso ? formatCurrency(row.ingreso) : ''}</td>
-                                    <td className="num expense">{row.egreso ? formatCurrency(row.egreso) : ''}</td>
-                                    <td className="num">{row.saldoCaja !== '' ? formatCurrency(row.saldoCaja) : ''}</td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
+                {(() => {
+                    const filteredRows = report.current.rows.filter((row) => {
+                        if (rowFilter === 'ingresos') return toNumber(row.ingreso) > 0;
+                        if (rowFilter === 'egresos') return toNumber(row.egreso) > 0;
+                        return true;
+                    });
+                    const totalIngreso = filteredRows.reduce((acc, row) => acc + toNumber(row.ingreso), 0);
+                    const totalEgreso = filteredRows.reduce((acc, row) => acc + toNumber(row.egreso), 0);
+                    return (
+                        <div className="ic-table-wrap">
+                            <table className="ic-table">
+                                <colgroup>
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '7%' }} />
+                                    <col style={{ width: '11%' }} />
+                                    <col style={{ width: '9%' }} />
+                                    <col style={{ width: '8%' }} />
+                                    <col style={{ width: '6%' }} />
+                                    <col style={{ width: '26%' }} />
+                                    <col style={{ width: '12%' }} />
+                                    <col style={{ width: '12%' }} />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th>Fecha</th>
+                                        <th>Caja</th>
+                                        <th>Operación</th>
+                                        <th>Categoría</th>
+                                        <th>Mov. cajas</th>
+                                        <th>Medio</th>
+                                        <th>Detalle</th>
+                                        <th className="num">Ingreso</th>
+                                        <th className="num">Egreso</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {filteredRows.length === 0 && (
+                                        <tr>
+                                            <td colSpan="9" className="ic-empty">No hay movimientos en el período seleccionado.</td>
+                                        </tr>
+                                    )}
+                                    {filteredRows.map((row, index) => (
+                                        <tr key={`${row.source}-${row.id}-${index}`}>
+                                            <td>{row.fecha}</td>
+                                            <td>{row.caja}</td>
+                                            <td>
+                                                <div className="ic-detail-cell">
+                                                    <span>{row.operacion}</span>
+                                                    {row.clasificacion && row.clasificacion !== row.operacion && (
+                                                        <small>{row.clasificacion}</small>
+                                                    )}
+                                                </div>
+                                            </td>
+                                            <td>{row.categoria}</td>
+                                            <td>{row.rutaTransferencia || row.movimientoEntreCajas}</td>
+                                            <td>{row.medioPago}</td>
+                                            <td>
+                                                <div className="ic-detail-cell">
+                                                    <span>{row.descripcion || row.proveedor || 'Sin detalle'}</span>
+                                                    <small>
+                                                        {[
+                                                            row.detalleClasificacion || '',
+                                                            row.ticket ? `Ticket ${row.ticket}` : '',
+                                                            row.ventaId ? `Venta ${row.ventaId}` : '',
+                                                            row.compraId ? `Compra ${row.compraId}` : '',
+                                                            row.transferenciaId ? `Transf. ${row.transferenciaId}` : '',
+                                                            row.cierreTeorico != null ? `Cierre: T ${formatCurrency(row.cierreTeorico)} / C ${formatCurrency(row.cierreContado)} / Δ ${formatCurrency(row.diferenciaCierre)}` : '',
+                                                        ].filter(Boolean).join(' · ')}
+                                                    </small>
+                                                </div>
+                                            </td>
+                                            <td className="num income">{row.ingreso ? formatCurrency(row.ingreso) : ''}</td>
+                                            <td className="num expense">{row.egreso ? formatCurrency(row.egreso) : ''}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                                {filteredRows.length > 0 && (
+                                    <tfoot>
+                                        <tr style={{ borderTop: '2px solid rgba(255,255,255,0.12)', background: 'rgba(255,255,255,0.03)' }}>
+                                            <td colSpan="7" style={{ padding: '0.65rem 0.75rem', fontSize: '0.75rem', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--color-text-muted)' }}>
+                                                Total — {filteredRows.length} movimiento{filteredRows.length !== 1 ? 's' : ''}
+                                            </td>
+                                            <td className="num income" style={{ padding: '0.65rem 1rem 0.65rem 0.5rem', fontWeight: 800, fontSize: '0.92rem' }}>
+                                                {totalIngreso > 0 ? formatCurrency(totalIngreso) : '—'}
+                                            </td>
+                                            <td className="num expense" style={{ padding: '0.65rem 1rem 0.65rem 1rem', fontWeight: 800, fontSize: '0.92rem', borderLeft: '1px solid rgba(255,255,255,0.08)' }}>
+                                                {totalEgreso > 0 ? formatCurrency(totalEgreso) : '—'}
+                                            </td>
+                                        </tr>
+                                    </tfoot>
+                                )}
+                            </table>
+                        </div>
+                    );
+                })()}
             </DirectionalReveal>
         </div>
     );

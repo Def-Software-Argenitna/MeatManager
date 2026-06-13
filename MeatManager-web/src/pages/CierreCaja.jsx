@@ -410,7 +410,8 @@ const CierreCaja = () => {
     const selectedAccountSummary = useMemo(() => (
         cashSummary?.byCashAccount?.[selectedCashAccount] || {}
     ), [cashSummary, selectedCashAccount]);
-    const totalSales = toNumber(selectedAccountSummary.sales);
+
+    // Totales diarios derivados de los movimientos del frontend (fuente de verdad consistente con la lista)
     const transferOutMovements = manualMovements
         .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
     const transferInMovements = manualMovements
@@ -419,8 +420,23 @@ const CierreCaja = () => {
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalTransfersIn = transferInMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
-    const totalExpenses = Math.max(0, toNumber(selectedAccountSummary.manualExpenses) - totalTransfersOut);
-    const totalIncomes = Math.max(0, toNumber(selectedAccountSummary.manualIncomes) - totalTransfersIn);
+    const totalExpenses = manualMovements
+        .filter((movement) => !isTransferMovement(movement) && (movement.type === 'egreso' || movement.type === 'retiro'))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const totalIncomes = manualMovements
+        .filter((movement) => !isTransferMovement(movement) && movement.type === 'ingreso')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    // Todas las ventas (para stats generales y footer)
+    const totalSales = salesMovements
+        .filter((movement) => movement.type === 'venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    // Solo ventas cobradas en métodos de efectivo (para el breakdown del acumulado físico)
+    const cashSales = salesMovements
+        .filter((movement) => movement.type === 'venta' && selectedCashMethodNames.has(movement.payment_method || 'Efectivo'))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
+    const cashReversals = salesMovements
+        .filter((movement) => movement.type === 'anulacion_venta' && selectedCashMethodNames.has(movement.payment_method || 'Efectivo'))
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const selectedCashAccountLabel = getCashAccountLabel(selectedCashAccount);
     const counterpartCashAccount = selectedCashAccount === 'principal' ? 'secondary' : 'principal';
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
@@ -447,7 +463,7 @@ const CierreCaja = () => {
         const totals = {};
 
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = toNumber(summaryByMethod[method.name]?.accumulated);
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.dailyNet);
         });
 
         return totals;
@@ -541,27 +557,30 @@ const CierreCaja = () => {
     }, [hiddenDigitalPaymentsOnly, salesMovements]);
 
     const mixedSalesCount = salesDetails.filter((sale) => sale.isMixed).length;
-    const totalReversals = toNumber(selectedAccountSummary.reversals);
+    const totalReversals = salesMovements
+        .filter((movement) => movement.type === 'anulacion_venta')
+        .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalSalesIntoCashbox = totalSales - totalReversals;
 
-    const cashInDrawer = toNumber(selectedCashSummary.accumulated);
+    // Neto de efectivo del período seleccionado: solo métodos cash activos
+    const cashInDrawer = cashPaymentMethods.reduce(
+        (sum, method) => sum + toNumber(summaryByMethod[method.name]?.dailyNet), 0
+    );
 
     const cashBalanceExplanation = useMemo(() => {
-        const previous = toNumber(selectedCashSummary.accumulated) - toNumber(selectedCashSummary.dailyNet);
-        const openings = toNumber(selectedCashSummary.opening);
-        const sales = toNumber(selectedCashSummary.sales);
-        const incomes = Math.max(0, toNumber(selectedCashSummary.manualIncomes) - totalTransfersIn);
-        const outflows = Math.max(0, toNumber(selectedCashSummary.manualExpenses) - totalTransfersOut);
-        const reversals = toNumber(selectedCashSummary.reversals);
+        const openings = openingMovements.reduce((sum, m) => sum + toNumber(m.amount), 0);
+        // dailyNet solo con ventas/anulaciones de métodos cash (coherente con cashInDrawer)
+        const actualDailyNet = openings + cashSales + totalIncomes + totalTransfersIn - totalExpenses - totalTransfersOut - cashReversals;
+        const previous = cashInDrawer - actualDailyNet;
         const parts = {
             previous,
             openings,
-            sales,
-            incomes,
+            sales: cashSales,
+            incomes: totalIncomes,
             transfersIn: totalTransfersIn,
             transfersOut: totalTransfersOut,
-            outflows,
-            reversals,
+            outflows: totalExpenses,
+            reversals: cashReversals,
             adjustments: 0,
         };
 
@@ -573,13 +592,8 @@ const CierreCaja = () => {
                 ? `Está en positivo porque los fondos disponibles superan las salidas por ${formatCurrency(cashInDrawer)}.`
                 : 'Está en cero porque los fondos disponibles y las salidas se compensan.';
 
-        return {
-            ...parts,
-            available,
-            deductions,
-            reason,
-        };
-    }, [cashInDrawer, selectedCashSummary, totalTransfersIn, totalTransfersOut]);
+        return { ...parts, available, deductions, reason };
+    }, [cashInDrawer, cashPaymentMethods, summaryByMethod, openingMovements, cashSales, cashReversals, totalIncomes, totalExpenses, totalTransfersIn, totalTransfersOut]);
 
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
@@ -811,13 +825,12 @@ const CierreCaja = () => {
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
-                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
+                    <span className="label">Efectivo neto del período ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
                     <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
                     <div className="cash-result-breakdown">
                         <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
                         <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
-                        <span>Saldo previo: {formatCurrency(cashBalanceExplanation.previous)}</span>
                         <span>Aperturas: {formatCurrency(cashBalanceExplanation.openings)}</span>
                         <span>Ventas efectivo: {formatCurrency(cashBalanceExplanation.sales)}</span>
                         <span>Ingresos: {formatCurrency(cashBalanceExplanation.incomes)}</span>

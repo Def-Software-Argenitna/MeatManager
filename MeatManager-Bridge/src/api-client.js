@@ -193,11 +193,11 @@ class ApiClient {
         });
     }
 
-    postHeartbeat({ scales = [] } = {}) {
+    postHeartbeat({ scales = [], agent = null } = {}) {
         return this.request({
             method: 'POST',
             path: '/bridge/heartbeat',
-            body: { scales },
+            body: agent ? { scales, agent } : { scales },
         });
     }
 }
