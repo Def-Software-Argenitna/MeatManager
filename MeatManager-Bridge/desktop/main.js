@@ -301,6 +301,9 @@ function startBridgeProcess() {
             ELECTRON_RUN_AS_NODE: '1',
             BRIDGE_APP_DATA_DIR: runtimeDir(),
             HTTP_PORT: String(BRIDGE_PORT),
+            // El hijo corre con ELECTRON_RUN_AS_NODE y no tiene app.getVersion();
+            // le inyectamos la version para que la reporte en el heartbeat.
+            BRIDGE_APP_VERSION: app.getVersion(),
         },
         stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     });

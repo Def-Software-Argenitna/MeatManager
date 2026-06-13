@@ -285,6 +285,30 @@ export const upsertRemoteSetting = async (key, value) => {
     return res.json();
 };
 
+export const fetchBridgeStatus = async () => {
+    const res = await apiFetch('/api/scale/bridge/status');
+    if (!res.ok) throw new Error('No se pudo obtener el estado del bridge');
+    return res.json();
+};
+
+export const fetchAdminBridges = async () => {
+    const res = await apiFetch('/api/admin/bridges');
+    if (!res.ok) throw new Error('No se pudo obtener el listado de bridges');
+    return res.json();
+};
+
+export const sendBridgeCommand = async (type) => {
+    const res = await apiFetch('/api/scale/bridge/command', {
+        method: 'POST',
+        body: JSON.stringify({ type }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo enviar el comando al bridge');
+    }
+    return res.json();
+};
+
 export const fetchTable = async (table, options = {}) => {
     const query = new URLSearchParams();
     if (options.limit) query.set('limit', String(options.limit));
