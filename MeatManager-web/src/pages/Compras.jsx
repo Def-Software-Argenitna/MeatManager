@@ -691,7 +691,7 @@ const Compras = () => {
                     return (
                     <DirectionalReveal
                         key={compra.id}
-                        className="neo-card purchase-card"
+                        className={`neo-card purchase-card ${purchaseKind}`}
                         from={filteredCompras.indexOf(compra) % 2 === 0 ? 'left' : 'right'}
                         delay={0.28 + (filteredCompras.indexOf(compra) * 0.025)}
                     >
@@ -747,17 +747,11 @@ const Compras = () => {
                                 <strong>${Number(breakdown.internal || 0).toLocaleString()}</strong>
                             </div>
                         </div>
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', marginTop: '0.75rem', borderTop: '1px solid var(--color-border)', paddingTop: '0.75rem' }}>
-                            <button
-                                onClick={() => handleEditPurchase(compra)}
-                                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.3rem 0.75rem', color: '#3b82f6', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem' }}
-                            >
+                        <div className="purchase-card-actions">
+                            <button className="purchase-action-btn purchase-action-btn--edit" onClick={() => handleEditPurchase(compra)}>
                                 <Edit2 size={14} /> Editar
                             </button>
-                            <button
-                                onClick={() => handleDeletePurchase(compra.id)}
-                                style={{ background: 'none', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', padding: '0.3rem 0.75rem', color: '#ef4444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.8rem' }}
-                            >
+                            <button className="purchase-action-btn purchase-action-btn--delete" onClick={() => handleDeletePurchase(compra.id)}>
                                 <Trash2 size={14} /> Eliminar
                             </button>
                         </div>

@@ -54,16 +54,25 @@
 
 .config-sucursales-section {
     margin-top: 1.15rem;
-    border: 1px solid var(--color-border);
-    border-radius: 12px;
-    padding: 0.85rem;
-    background: rgba(255, 255, 255, 0.02);
+    border: 1px solid rgba(255,255,255,0.07);
+    border-top: 3px solid var(--color-primary);
+    border-radius: 14px;
+    padding: 1rem;
+    background: linear-gradient(145deg, rgba(28,28,38,0.95) 0%, rgba(18,18,26,0.98) 100%);
+    box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+}
+
+.config-sucursales-section + .config-sucursales-section {
+    border-top-color: #fbbf24;
 }
 
 .config-sucursales-section h2 {
-    margin: 0 0 0.65rem;
+    margin: 0 0 0.85rem;
     color: var(--color-text-main);
     font-size: 1rem;
+    font-weight: 700;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
 .config-sucursales-grid {
@@ -83,12 +92,21 @@
 .config-sucursales-grid input,
 .config-sucursales-add-row input,
 .config-sucursales-category-inputs input {
-    background: var(--color-bg-main);
-    border: 1px solid var(--color-border);
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.12);
     border-radius: 8px;
     color: #fff;
     padding: 0.45rem 0.55rem;
     font-size: 0.85rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.config-sucursales-grid input:focus,
+.config-sucursales-add-row input:focus,
+.config-sucursales-category-inputs input:focus {
+    outline: none;
+    border-color: rgba(249,115,22,0.45);
+    box-shadow: 0 0 0 3px rgba(249,115,22,0.1);
 }
 
 .config-sucursales-add-row {
@@ -121,19 +139,29 @@
 }
 
 .config-sucursales-category-row {
-    border: 1px solid var(--color-border);
-    border-radius: 8px;
-    padding: 0.55rem;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-left: 3px solid #fbbf24;
+    border-radius: 10px;
+    padding: 0.6rem 0.75rem;
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: 0.65rem;
+    background: linear-gradient(90deg, rgba(251,191,36,0.04) 0%, rgba(255,255,255,0.01) 100%);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.config-sucursales-category-row:hover {
+    transform: translateX(2px);
+    box-shadow: 0 4px 14px rgba(0,0,0,0.2);
+    border-left-color: #f59e0b;
 }
 
 .config-sucursales-category-row strong {
     color: var(--color-text-main);
     text-transform: capitalize;
-    font-size: 0.86rem;
+    font-size: 0.9rem;
+    font-weight: 600;
 }
 
 .config-sucursales-category-inputs {

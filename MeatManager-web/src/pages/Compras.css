@@ -115,32 +115,49 @@
     display: flex;
     flex-direction: column;
     gap: 0.35rem;
+    background: linear-gradient(145deg, rgba(28, 28, 38, 0.95) 0%, rgba(18, 18, 26, 0.98) 100%);
+    border-radius: 16px;
+    border-top: 3px solid rgba(249, 115, 22, 0.55);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.purchase-summary-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
 }
 
 .purchase-summary-card.sale {
-    border-color: rgba(34, 197, 94, 0.35);
+    border-color: rgba(34, 197, 94, 0.2);
+    border-top-color: rgba(34, 197, 94, 0.65);
 }
 
 .purchase-summary-card.internal {
-    border-color: rgba(245, 158, 11, 0.35);
+    border-color: rgba(245, 158, 11, 0.2);
+    border-top-color: rgba(245, 158, 11, 0.65);
 }
 
 .purchase-summary-card.mixed {
-    border-color: rgba(59, 130, 246, 0.35);
+    border-color: rgba(59, 130, 246, 0.2);
+    border-top-color: rgba(59, 130, 246, 0.65);
 }
 
 .purchase-summary-label {
-    font-size: 0.85rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
     color: var(--color-text-muted);
 }
 
 .purchase-summary-value {
-    font-size: 1.5rem;
+    font-size: 1.7rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
     color: var(--color-text-primary);
 }
 
 .purchase-summary-meta {
-    font-size: 0.8rem;
+    font-size: 0.78rem;
     color: var(--color-text-muted);
 }
 
@@ -148,6 +165,39 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    background: linear-gradient(145deg, rgba(28, 28, 38, 0.95) 0%, rgba(18, 18, 26, 0.98) 100%);
+    border-radius: 16px;
+    border-left: 3px solid var(--color-border);
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.purchase-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.purchase-card.venta {
+    border-left-color: rgba(34, 197, 94, 0.6);
+}
+
+.purchase-card.venta:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), -3px 0 14px rgba(34, 197, 94, 0.12);
+}
+
+.purchase-card.interno {
+    border-left-color: rgba(245, 158, 11, 0.6);
+}
+
+.purchase-card.interno:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), -3px 0 14px rgba(245, 158, 11, 0.12);
+}
+
+.purchase-card.mixta {
+    border-left-color: rgba(59, 130, 246, 0.6);
+}
+
+.purchase-card.mixta:hover {
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3), -3px 0 14px rgba(59, 130, 246, 0.12);
 }
 
 .purchase-header {
@@ -179,9 +229,21 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    font-weight: 700;
-    color: var(--color-primary);
     font-size: 1.1rem;
+}
+
+.purchase-total span:first-child {
+    font-size: 0.75rem;
+    font-weight: 700;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+}
+
+.purchase-total span:last-child {
+    font-weight: 800;
+    color: var(--color-primary);
+    letter-spacing: -0.01em;
 }
 
 .purchase-kind-badge {
@@ -227,6 +289,47 @@
 
 .purchase-breakdown-row.internal strong {
     color: #fbbf24;
+}
+
+.purchase-card-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    border-top: 1px solid var(--color-border);
+    padding-top: 0.75rem;
+}
+
+.purchase-action-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    padding: 0.3rem 0.75rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.purchase-action-btn--edit {
+    color: #60a5fa;
+}
+
+.purchase-action-btn--edit:hover {
+    background: rgba(59, 130, 246, 0.12);
+    border-color: rgba(59, 130, 246, 0.35);
+}
+
+.purchase-action-btn--delete {
+    color: #f87171;
+}
+
+.purchase-action-btn--delete:hover {
+    background: rgba(239, 68, 68, 0.12);
+    border-color: rgba(239, 68, 68, 0.35);
 }
 
 .purchase-item-chip {
