@@ -132,14 +132,14 @@ const config = {
     syncStepTimeoutMs: intEnv('SYNC_STEP_TIMEOUT_MS', 180000),
     salesLookbackDays: intEnv('SALES_LOOKBACK_DAYS', 3),
     salesResyncSkewMinutes: intEnv('SALES_RESYNC_SKEW_MINUTES', 2),
-    // Cierre de ventas (fn32) despues de cada lectura exitosa: mantiene la
-    // memoria de la balanza casi vacia (lecturas de ~60ms), PERO el protocolo
-    // avisa que fn32 "puede demorar unos instantes" y en el CUORA MAX S0060 ese
-    // cierre tras cada venta + pulso agresivo hacia LENTO EL PESAJE en el
-    // mostrador (errores E3 en el log). Default OFF: el pesaje manda. Activable
-    // por cliente con SCALE_CLOSE_SALES_AFTER_PULL=true si su firmware lo
-    // tolera (verificar con el operario pesando, no solo con la sync).
-    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
+    // Cierre de ventas (fn32) despues de confirmar tickets nuevos: mantiene la
+    // memoria de la balanza casi vacia (lecturas de ~0.3s). Solo dispara cuando
+    // ticketsToSend.length > 0 && stored > 0 (venta nueva confirmada por el
+    // API), nunca en pulsos sin novedad. Esto elimina el E3 que se generaba
+    // cuando la condicion era "rows.length > 0" y fn32 corria cada 2.5s.
+    // Desactivable con SCALE_CLOSE_SALES_AFTER_PULL=false si el firmware da
+    // problemas (verificar con el operario pesando en hora pico).
+    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', true),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
     // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
     // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".
