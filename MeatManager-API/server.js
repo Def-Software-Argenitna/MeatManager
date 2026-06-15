@@ -1382,7 +1382,10 @@ async function ensureCompositePrimaryKey(conn, tableName) {
 
 async function ensureSettingsPrimaryKey(conn) {
     const primaryColumns = await getPrimaryKeyColumns(conn, OPERATIONAL_DB_NAME, 'settings');
-    if (!(primaryColumns.length === 2 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'key')) {
+    // Acepta tanto el formato viejo (tenant_id, key) como el nuevo (tenant_id, branch_id, key)
+    const isOldFormat = primaryColumns.length === 2 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'key';
+    const isNewFormat = primaryColumns.length === 3 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'branch_id' && primaryColumns[2] === 'key';
+    if (!isOldFormat && !isNewFormat) {
         if (primaryColumns.length > 0) {
             await conn.query(`ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings DROP PRIMARY KEY`);
         }
@@ -1404,6 +1407,20 @@ async function ensureSettingsPrimaryKey(conn) {
             }
         }
     }
+}
+
+async function ensureSettingsBranchId(conn) {
+    if (await hasColumn(conn, OPERATIONAL_DB_NAME, 'settings', 'branch_id')) return;
+    // 0 = tenant-level (compartido), > 0 = exclusivo de esa sucursal
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+         ADD COLUMN branch_id INT NOT NULL DEFAULT 0 AFTER \`${TENANT_COLUMN}\``
+    );
+    await conn.query(`ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings DROP PRIMARY KEY`);
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+         ADD PRIMARY KEY (\`${TENANT_COLUMN}\`, \`branch_id\`, \`key\`)`
+    );
 }
 
 async function ensureProductCatalogIntegrity(conn) {
@@ -2748,6 +2765,7 @@ async function ensureOperationalTenantIsolation() {
             }
 
             await ensureSettingsPrimaryKey(conn);
+            await ensureSettingsBranchId(conn);
             for (const tableName of TABLES_WITH_NUMERIC_ID) {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
@@ -6935,26 +6953,27 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
-        const [rows] = await pool.query(
-            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
-            [tenantId, settingKey]
-        );
+        const activeBranchId = getRequestedActiveBranchId(req);
 
-        if (!rows.length) {
-            return res.json({
-                ok: true,
-                key: settingKey,
-                value: null,
-                found: false,
-            });
+        let rows;
+        if (activeBranchId) {
+            // Busca primero el valor específico de la sucursal; si no existe, cae al tenant-level (branch_id=0)
+            [rows] = await pool.query(
+                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? AND (branch_id = ? OR branch_id = 0) ORDER BY branch_id DESC LIMIT 1',
+                [tenantId, settingKey, activeBranchId]
+            );
+        } else {
+            [rows] = await pool.query(
+                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? AND branch_id = 0 LIMIT 1',
+                [tenantId, settingKey]
+            );
         }
 
-        return res.json({
-            ok: true,
-            key: rows[0].key,
-            value: rows[0].value ?? null,
-            found: true,
-        });
+        if (!rows.length) {
+            return res.json({ ok: true, key: settingKey, value: null, found: false });
+        }
+
+        return res.json({ ok: true, key: settingKey, value: rows[0].value ?? null, found: true });
     } catch (err) {
         console.error('[SETTINGS ERROR]', err.message);
         res.status(500).json({ error: 'Error leyendo settings: ' + err.message });
@@ -11259,6 +11278,8 @@ function normalizePriceFormatServer(value) {
 app.get('/api/bridge/settings', verifyBridgeDeviceToken, async (req, res) => {
     try {
         const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const branchId = Number(req.bridge.branchId || 0);
         const keys = [
             'scale_ticket_header_line1',
             'scale_ticket_header_line2',
@@ -11269,15 +11290,33 @@ app.get('/api/bridge/settings', verifyBridgeDeviceToken, async (req, res) => {
             'precio_formato',
         ];
         const placeholders = keys.map(() => '?').join(', ');
-        const [rows] = await pool.query(
-            `SELECT \`key\`, value FROM settings
-             WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders})`,
-            [req.bridge.tenantId, ...keys]
-        );
-        const byKey = rows.reduce((acc, row) => {
-            acc[String(row.key)] = row.value;
-            return acc;
-        }, {});
+
+        let byKey;
+        if (branchId > 0) {
+            // Trae tanto los de la sucursal como los tenant-level; branch-specific gana
+            const [rows] = await pool.query(
+                `SELECT \`key\`, value, branch_id FROM settings
+                 WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders})
+                   AND (branch_id = ? OR branch_id = 0)`,
+                [tenantId, ...keys, branchId]
+            );
+            const map = {};
+            for (const row of rows) {
+                const k = String(row.key);
+                if (!map[k] || Number(row.branch_id) > Number(map[k].branch_id)) {
+                    map[k] = row;
+                }
+            }
+            byKey = Object.fromEntries(Object.entries(map).map(([k, r]) => [k, r.value]));
+        } else {
+            const [rows] = await pool.query(
+                `SELECT \`key\`, value FROM settings
+                 WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders}) AND branch_id = 0`,
+                [tenantId, ...keys]
+            );
+            byKey = rows.reduce((acc, row) => { acc[String(row.key)] = row.value; return acc; }, {});
+        }
+
         return res.json({
             ticketHeader: {
                 line1: normalizeAsciiServer(byKey.scale_ticket_header_line1 || '').slice(0, 18),
