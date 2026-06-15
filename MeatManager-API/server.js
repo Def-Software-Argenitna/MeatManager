@@ -3784,22 +3784,24 @@ async function resolveRequestedActiveBranch(accessContext, req) {
     const requestedBranchId = getRequestedActiveBranchId(req);
     if (!requestedBranchId || !accessContext?.client?.id) return null;
 
+    const isAdmin = accessContext?.user?.role === 'admin' || Boolean(accessContext?.user?.isGlobalSuperAdmin);
     const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
     if (Number.isFinite(userBranchId) && userBranchId > 0) {
-        return Number(userBranchId) === Number(requestedBranchId)
-            ? {
+        if (Number(userBranchId) === Number(requestedBranchId)) {
+            return {
                 id: userBranchId,
                 name: accessContext?.user?.branchName || '',
                 internalCode: accessContext?.user?.branchInternalCode || null,
                 address: accessContext?.user?.branchAddress || null,
                 status: accessContext?.user?.branchStatus || 'ACTIVE',
-            }
-            : null;
+            };
+        }
+        // Usuarios no-admin solo pueden ver su sucursal asignada
+        if (!isAdmin) return null;
+        // Admins pueden cambiar de sucursal aunque tengan una asignada → buscar en lista
     }
 
-    if (accessContext?.user?.role !== 'admin' && !accessContext?.user?.isGlobalSuperAdmin) {
-        return null;
-    }
+    if (!isAdmin) return null;
 
     const branches = await listClientBranches(accessContext.client.id);
     return branches.find((branch) => Number(branch.id) === Number(requestedBranchId)) || null;
