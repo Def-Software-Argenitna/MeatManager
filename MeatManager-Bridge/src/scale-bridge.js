@@ -1353,10 +1353,15 @@ class ScaleBridge {
 
         // Cierre tras lectura: vacia la memoria de ventas de la balanza para que
         // la proxima fn72 transmita solo lo nuevo (lecturas de ~0.3s en vez de
-        // retransmitir todo el dia). Solo despues de un POST exitoso (si postSales
-        // fallo, ya lanzamos antes de llegar aca) y NUNCA con lectura parcial:
-        // cerrar perderia el registro que no pudimos parsear.
-        if (closeAfter && rows.length > 0 && !partialRead) {
+        // retransmitir todo el dia). Solo cuando llegaron tickets nuevos Y el API
+        // confirmo haberlos guardado (ticketsToSend.length > 0 && stored > 0).
+        // Con "rows.length > 0" el fn32 se disparaba en cada pulso de 2.5s
+        // mientras la balanza tuviera ventas acumuladas, generando E3 y frenando
+        // el pesaje. Con esta condicion solo limpia una vez por cliente: el
+        // siguiente pulso encuentra la balanza vacia y fn32 no vuelve a correr
+        // hasta la proxima venta nueva. NUNCA con lectura parcial: cerrar
+        // perderia el registro que no pudimos parsear.
+        if (closeAfter && ticketsToSend.length > 0 && stored > 0 && !partialRead) {
             const close = await this.scale.send(32, '', {
                 timeoutMs: 60000,
                 // fn32 responde "I" (inicio) y un ACK final: hay que esperar el ACK
