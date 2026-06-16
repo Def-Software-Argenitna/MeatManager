@@ -290,9 +290,80 @@ async function ensureBridgeDeviceMonitorColumns() {
     }
 }
 
+async function cleanupStrayInterBranchEntries() {
+    // One-time: una versión previa creó entradas inter-sucursal para TODOS los
+    // tenants multi-sucursal. Esto elimina las creadas en tenants que NO son el
+    // de Pilar/Fatima (no fueron solicitadas). Guard por flag global.
+    const ccConn = await clientsControlPool.getConnection();
+    let allBranchRows;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             ORDER BY clientId ASC, id ASC`
+        );
+        allBranchRows = rows;
+    } finally {
+        ccConn.release();
+    }
+
+    const branchesByClient = {};
+    for (const row of allBranchRows) {
+        if (!branchesByClient[row.clientId]) branchesByClient[row.clientId] = [];
+        branchesByClient[row.clientId].push(String(row.name || '').trim() || `Sucursal ${row.id}`);
+    }
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+
+    for (const [clientIdStr, branchNames] of Object.entries(branchesByClient)) {
+        if (branchNames.length < 2) continue;
+        const hasPilar = branchNames.some((n) => n.toLowerCase().includes('pilar'));
+        const hasFatima = branchNames.some((n) => n.toLowerCase().includes('fatima'));
+        if (hasPilar && hasFatima) continue; // ese tenant SÍ debe tenerlas
+
+        const tenantId = Number(clientIdStr);
+        const conn = await pool.getConnection();
+        try {
+            const flagKey = `stray_interbranch_cleaned_tenant_${tenantId}`;
+            const done = await getTenantFlag(conn, tenantId, flagKey);
+            if (done === '1') { continue; }
+
+            // Proveedores: marcador cuit='INTERNO' que sólo usa la función inter-sucursal
+            const [delSup] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.suppliers
+                 WHERE tenant_id = ? AND cuit = 'INTERNO' AND name IN (?)`,
+                [tenantId, branchNames]
+            );
+            if (delSup.affectedRows > 0) {
+                console.log(`[BOOT] Stray inter-sucursal: ${delSup.affectedRows} proveedores eliminados (tenant ${tenantId})`);
+            }
+
+            // Clientes: sólo los que coinciden con nombre de sucursal, sin ventas y saldo 0
+            const [delCli] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                 WHERE tenant_id = ? AND name IN (?)
+                   AND COALESCE(balance, 0) = 0
+                   AND id NOT IN (
+                       SELECT client_id FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+                       WHERE tenant_id = ? AND client_id IS NOT NULL
+                   )`,
+                [tenantId, branchNames, tenantId]
+            );
+            if (delCli.affectedRows > 0) {
+                console.log(`[BOOT] Stray inter-sucursal: ${delCli.affectedRows} clientes eliminados (tenant ${tenantId})`);
+            }
+
+            await setTenantFlag(conn, tenantId, flagKey, '1');
+        } catch (e) {
+            console.error(`[BOOT] Stray inter-sucursal cleanup tenant ${tenantId} FALLÓ:`, e?.message || e);
+        } finally {
+            conn.release();
+        }
+    }
+}
+
 async function ensureInterBranchEntries() {
-    // Para cada tenant con varias sucursales, inserta proveedor + cliente inter-sucursal
-    // en cada sucursal apuntando a las demás. Idempotente (verifica por nombre antes de insertar).
+    // Para el tenant de Pilar/Fatima, inserta proveedor + cliente inter-sucursal
+    // en cada sucursal apuntando a la otra. Idempotente (verifica por nombre antes de insertar).
     const ccConn = await clientsControlPool.getConnection();
     let allBranchRows;
     try {
@@ -318,6 +389,11 @@ async function ensureInterBranchEntries() {
 
     for (const [clientIdStr, branches] of Object.entries(branchesByClient)) {
         if (branches.length < 2) continue;
+        // Solo aplica al cliente que tiene Pilar Y Fatima (lo solicitado).
+        // No tocar otros clientes multi-sucursal en producción.
+        const hasPilar = branches.some((b) => b.name.toLowerCase().includes('pilar'));
+        const hasFatima = branches.some((b) => b.name.toLowerCase().includes('fatima'));
+        if (!hasPilar || !hasFatima) continue;
         const tenantId = Number(clientIdStr);
         const conn = await pool.getConnection();
         try {
@@ -12883,6 +12959,9 @@ ensureClientsControlStore()
         });
         await cleanupFatimaTestData().catch((e) => {
             console.error('[BOOT] Cleanup datos de prueba Fatima FALLÓ:', e?.stack || e?.message || e);
+        });
+        await cleanupStrayInterBranchEntries().catch((e) => {
+            console.warn('[BOOT] Cleanup inter-sucursal stray:', e?.message || e);
         });
         await ensureInterBranchEntries().catch((e) => {
             console.warn('[BOOT] No se pudieron asegurar entradas inter-sucursal:', e?.message || e);
