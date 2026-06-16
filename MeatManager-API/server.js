@@ -410,30 +410,37 @@ async function cleanupFatimaTestData() {
         const conn = await pool.getConnection();
         try {
             const flagKey = `fatima_initial_cleanup_done_branch_${branchId}`;
-            const done = await getTenantFlag(conn, tenantId, flagKey);
-            if (done === '1') {
-                console.log(`[BOOT] Fatima cleanup: branch ${branchId} ya limpiado antes, se omite (protege datos reales)`);
-                continue;
-            }
-            console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
 
-            // DIAGNÓSTICO: qué hay realmente antes de borrar (branch_id real de cada producto/cliente)
+            // DIAGNÓSTICO: corre SIEMPRE (antes del guard) para ver el estado real
             try {
                 const [prodDiag] = await conn.query(
                     `SELECT branch_id, COUNT(*) AS n FROM \`${OPERATIONAL_DB_NAME}\`.products
                      WHERE tenant_id = ? GROUP BY branch_id`,
                     [tenantId]
                 );
-                console.log(`[BOOT] DIAG products por branch_id (tenant ${tenantId}):`, JSON.stringify(prodDiag));
+                console.log(`[BOOT] DIAG products por branch_id (tenant ${tenantId}, fatimaBranchId=${branchId}):`, JSON.stringify(prodDiag));
                 const [cliDiag] = await conn.query(
                     `SELECT branch_id, COUNT(*) AS n FROM \`${OPERATIONAL_DB_NAME}\`.clients
                      WHERE tenant_id = ? GROUP BY branch_id`,
                     [tenantId]
                 );
                 console.log(`[BOOT] DIAG clients por branch_id (tenant ${tenantId}):`, JSON.stringify(cliDiag));
+                const [milanesa] = await conn.query(
+                    `SELECT id, branch_id, name, current_price FROM \`${OPERATIONAL_DB_NAME}\`.products
+                     WHERE tenant_id = ? AND name LIKE '%MILANESA%' LIMIT 5`,
+                    [tenantId]
+                );
+                console.log(`[BOOT] DIAG MILANESA rows (tenant ${tenantId}):`, JSON.stringify(milanesa));
             } catch (e) {
                 console.warn('[BOOT] DIAG falló:', e?.message || e);
             }
+
+            const done = await getTenantFlag(conn, tenantId, flagKey);
+            if (done === '1') {
+                console.log(`[BOOT] Fatima cleanup: branch ${branchId} ya limpiado antes, se omite (protege datos reales)`);
+                continue;
+            }
+            console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
 
             // Helper resiliente: un error en un paso no aborta los demás
             const safeStep = async (label, sql, params) => {
@@ -523,6 +530,8 @@ async function seedFatimaProductsFromPilar() {
     } finally {
         ccConn.release();
     }
+
+    console.log('[BOOT] seedFatimaProducts DIAG branches:', JSON.stringify({ pilarBranch, fatimaBranch }));
 
     if (!pilarBranch || !fatimaBranch) {
         console.warn('[BOOT] seedFatimaProducts: no se encontraron sucursales Pilar/Fatima');
