@@ -363,6 +363,91 @@ async function ensureInterBranchEntries() {
     }
 }
 
+async function cleanupFatimaTestData() {
+    // Limpieza one-shot de datos de prueba en sucursales "Fatima".
+    // Idempotente: si ya fueron borrados no hace nada.
+    const TEST_CLIENT_NAMES = ['NUEVO', 'NUEVO2', 'NUEVO 3'];
+    const TEST_PRODUCT_NAME = 'MILANESA PREPARADA';
+
+    const ccConn = await clientsControlPool.getConnection();
+    let fatimaBranches;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE LOWER(name) LIKE '%fatima%'`
+        );
+        fatimaBranches = rows;
+    } finally {
+        ccConn.release();
+    }
+
+    if (!fatimaBranches || fatimaBranches.length === 0) return;
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+
+    for (const branch of fatimaBranches) {
+        const tenantId = Number(branch.clientId);
+        const branchId = Number(branch.id);
+        const conn = await pool.getConnection();
+        try {
+            // Obtener IDs de los clientes de prueba
+            const [testClients] = await conn.query(
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                 WHERE tenant_id = ? AND branch_id = ? AND name IN (?)`,
+                [tenantId, branchId, TEST_CLIENT_NAMES]
+            );
+            const testClientIds = testClients.map((r) => r.id);
+
+            if (testClientIds.length > 0) {
+                // Borrar movimientos de caja asociados a esos clientes
+                const [delCaja] = await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
+                     WHERE tenant_id = ? AND branch_id = ? AND client_id IN (?)`,
+                    [tenantId, branchId, testClientIds]
+                );
+                if (delCaja.affectedRows > 0) {
+                    console.log(`[BOOT] Fatima cleanup: ${delCaja.affectedRows} movimientos de caja de prueba eliminados`);
+                }
+
+                // Borrar clientes (FK ON DELETE SET NULL en ventas — las ventas quedan anónimas)
+                const [delClients] = await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                     WHERE tenant_id = ? AND branch_id = ? AND id IN (?)`,
+                    [tenantId, branchId, testClientIds]
+                );
+                if (delClients.affectedRows > 0) {
+                    console.log(`[BOOT] Fatima cleanup: ${delClients.affectedRows} clientes de prueba eliminados`);
+                }
+            }
+
+            // Borrar producto de prueba
+            const [delProduct] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.products
+                 WHERE tenant_id = ? AND branch_id = ? AND name = ?`,
+                [tenantId, branchId, TEST_PRODUCT_NAME]
+            );
+            if (delProduct.affectedRows > 0) {
+                console.log(`[BOOT] Fatima cleanup: producto de prueba "${TEST_PRODUCT_NAME}" eliminado`);
+            }
+
+            // Reportar ventas/caja restantes (no se auto-eliminan)
+            const [[{ ventasCnt }]] = await conn.query(
+                `SELECT COUNT(*) AS ventasCnt FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            const [[{ cajaCnt }]] = await conn.query(
+                `SELECT COUNT(*) AS cajaCnt FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            console.log(`[BOOT] Fatima (branch ${branchId}): ${ventasCnt} ventas, ${cajaCnt} movimientos de caja restantes`);
+        } finally {
+            conn.release();
+        }
+    }
+}
+
 // Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
 function compareSemver(a, b) {
     const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -12636,6 +12721,9 @@ ensureClientsControlStore()
         });
         await ensureInterBranchEntries().catch((e) => {
             console.warn('[BOOT] No se pudieron asegurar entradas inter-sucursal:', e?.message || e);
+        });
+        await cleanupFatimaTestData().catch((e) => {
+            console.warn('[BOOT] Cleanup datos de prueba Fatima:', e?.message || e);
         });
         await connectRedisSafely();
     })
