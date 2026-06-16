@@ -398,18 +398,39 @@ async function cleanupFatimaTestData() {
             );
             const testClientIds = testClients.map((r) => r.id);
 
-            if (testClientIds.length > 0) {
-                // Borrar movimientos de caja asociados a esos clientes
-                const [delCaja] = await conn.query(
-                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
-                     WHERE tenant_id = ? AND branch_id = ? AND client_id IN (?)`,
-                    [tenantId, branchId, testClientIds]
+            // Borrar ventas_items + ventas de Fatima
+            const [fatVentas] = await conn.query(
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (fatVentas.length > 0) {
+                const ventaIds = fatVentas.map((r) => r.id);
+                await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items
+                     WHERE tenant_id = ? AND venta_id IN (?)`,
+                    [tenantId, ventaIds]
                 );
-                if (delCaja.affectedRows > 0) {
-                    console.log(`[BOOT] Fatima cleanup: ${delCaja.affectedRows} movimientos de caja de prueba eliminados`);
-                }
+                const [delVentas] = await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas
+                     WHERE tenant_id = ? AND branch_id = ?`,
+                    [tenantId, branchId]
+                );
+                console.log(`[BOOT] Fatima cleanup: ${delVentas.affectedRows} ventas eliminadas`);
+            }
 
-                // Borrar clientes (FK ON DELETE SET NULL en ventas — las ventas quedan anónimas)
+            // Borrar todos los movimientos de caja de Fatima
+            const [delCaja] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (delCaja.affectedRows > 0) {
+                console.log(`[BOOT] Fatima cleanup: ${delCaja.affectedRows} movimientos de caja eliminados`);
+            }
+
+            // Borrar clientes de prueba
+            if (testClientIds.length > 0) {
                 const [delClients] = await conn.query(
                     `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
                      WHERE tenant_id = ? AND branch_id = ? AND id IN (?)`,
@@ -430,18 +451,7 @@ async function cleanupFatimaTestData() {
                 console.log(`[BOOT] Fatima cleanup: producto de prueba "${TEST_PRODUCT_NAME}" eliminado`);
             }
 
-            // Reportar ventas/caja restantes (no se auto-eliminan)
-            const [[{ ventasCnt }]] = await conn.query(
-                `SELECT COUNT(*) AS ventasCnt FROM \`${OPERATIONAL_DB_NAME}\`.ventas
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            const [[{ cajaCnt }]] = await conn.query(
-                `SELECT COUNT(*) AS cajaCnt FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            console.log(`[BOOT] Fatima (branch ${branchId}): ${ventasCnt} ventas, ${cajaCnt} movimientos de caja restantes`);
+            console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK`);
         } finally {
             conn.release();
         }
