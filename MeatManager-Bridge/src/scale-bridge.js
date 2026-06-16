@@ -865,7 +865,7 @@ class ScaleBridge {
                     ? buildPlu4Payload(product, {
                         sectionId: section.id,
                         saleType: inferSaleType(product.unit),
-                        maintainTotals: Boolean(storedFingerprint),
+                        maintainTotals: false,
                         priceMultiplier: effectiveLegacyPriceMultiplier,
                         price6dMultiplier: effectiveLegacyPriceMultiplier,
                         priceFormat,

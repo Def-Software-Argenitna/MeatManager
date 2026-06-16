@@ -225,7 +225,7 @@ export const ensureUnifiedProduct = async ({
         name: trimmedName,
         category_id: resolvedCategoryId,
         category: existingProduct?.category || trimmedCategory,
-        unit: existingProduct?.unit || trimmedUnit,
+        unit: trimmedUnit || existingProduct?.unit || 'kg',
         plu: trimmedPlu || existingProduct?.plu || null,
         source: source || existingProduct?.source || 'manual',
         updated_at: new Date().toISOString(),
