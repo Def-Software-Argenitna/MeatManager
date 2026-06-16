@@ -290,6 +290,79 @@ async function ensureBridgeDeviceMonitorColumns() {
     }
 }
 
+async function ensureInterBranchEntries() {
+    // Para cada tenant con varias sucursales, inserta proveedor + cliente inter-sucursal
+    // en cada sucursal apuntando a las demás. Idempotente (verifica por nombre antes de insertar).
+    const ccConn = await clientsControlPool.getConnection();
+    let allBranchRows;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             ORDER BY clientId ASC, id ASC`
+        );
+        allBranchRows = rows;
+    } finally {
+        ccConn.release();
+    }
+
+    const branchesByClient = {};
+    for (const row of allBranchRows) {
+        if (!branchesByClient[row.clientId]) branchesByClient[row.clientId] = [];
+        branchesByClient[row.clientId].push({
+            id: Number(row.id),
+            name: String(row.name || '').trim() || `Sucursal ${row.id}`,
+        });
+    }
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+
+    for (const [clientIdStr, branches] of Object.entries(branchesByClient)) {
+        if (branches.length < 2) continue;
+        const tenantId = Number(clientIdStr);
+        const conn = await pool.getConnection();
+        try {
+            for (const branch of branches) {
+                for (const otherBranch of branches) {
+                    if (branch.id === otherBranch.id) continue;
+                    const entryName = `Sucursal ${otherBranch.name}`;
+
+                    const [existingSupplier] = await conn.query(
+                        `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.suppliers
+                         WHERE tenant_id = ? AND branch_id = ? AND name = ?`,
+                        [tenantId, branch.id, entryName]
+                    );
+                    if (existingSupplier.length === 0) {
+                        await conn.query(
+                            `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.suppliers
+                             (tenant_id, branch_id, name, cuit, iva_condition, synced, created_at)
+                             VALUES (?, ?, ?, 'INTERNO', 'RESPONSABLE_INSCRIPTO', 0, NOW())`,
+                            [tenantId, branch.id, entryName]
+                        );
+                        console.log(`[BOOT] Proveedor inter-sucursal: "${entryName}" → sucursal ${branch.id} (tenant ${tenantId})`);
+                    }
+
+                    const [existingClient] = await conn.query(
+                        `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                         WHERE tenant_id = ? AND branch_id = ? AND name = ?`,
+                        [tenantId, branch.id, entryName]
+                    );
+                    if (existingClient.length === 0) {
+                        await conn.query(
+                            `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.clients
+                             (tenant_id, branch_id, name, has_current_account, synced, created_at)
+                             VALUES (?, ?, ?, 1, 0, NOW())`,
+                            [tenantId, branch.id, entryName]
+                        );
+                        console.log(`[BOOT] Cliente inter-sucursal: "${entryName}" → sucursal ${branch.id} (tenant ${tenantId})`);
+                    }
+                }
+            }
+        } finally {
+            conn.release();
+        }
+    }
+}
+
 // Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
 function compareSemver(a, b) {
     const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -12560,6 +12633,9 @@ ensureClientsControlStore()
         }
         await ensureBridgeDeviceMonitorColumns().catch((e) => {
             console.warn('[BOOT] No se pudieron asegurar columnas de monitor de bridge:', e?.message || e);
+        });
+        await ensureInterBranchEntries().catch((e) => {
+            console.warn('[BOOT] No se pudieron asegurar entradas inter-sucursal:', e?.message || e);
         });
         await connectRedisSafely();
     })
