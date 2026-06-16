@@ -365,8 +365,7 @@ async function ensureInterBranchEntries() {
 
 async function cleanupFatimaTestData() {
     // Limpieza one-shot de todos los datos de prueba en sucursales "Fatima".
-    // Borra TODOS los clientes, ventas y movimientos de caja — sin filtrar por nombre.
-    // Idempotente: si ya no hay nada, no hace nada.
+    // Respeta el orden de FKs: ventas_items → ventas → caja → compras_items → compras → stock → products → clients.
     const ccConn = await clientsControlPool.getConnection();
     let fatimaBranches;
     try {
@@ -386,9 +385,10 @@ async function cleanupFatimaTestData() {
     for (const branch of fatimaBranches) {
         const tenantId = Number(branch.clientId);
         const branchId = Number(branch.id);
+        console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
         const conn = await pool.getConnection();
         try {
-            // Ventas_items + ventas
+            // 1. ventas_items (referencian ventas)
             const [fatVentas] = await conn.query(
                 `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas
                  WHERE tenant_id = ? AND branch_id = ?`,
@@ -409,7 +409,7 @@ async function cleanupFatimaTestData() {
                 console.log(`[BOOT] Fatima cleanup: ${delVentas.affectedRows} ventas eliminadas`);
             }
 
-            // Todos los movimientos de caja
+            // 2. Movimientos de caja
             const [delCaja] = await conn.query(
                 `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
                  WHERE tenant_id = ? AND branch_id = ?`,
@@ -419,17 +419,38 @@ async function cleanupFatimaTestData() {
                 console.log(`[BOOT] Fatima cleanup: ${delCaja.affectedRows} movimientos de caja eliminados`);
             }
 
-            // Todos los clientes (sin filtrar por nombre)
-            const [delClients] = await conn.query(
-                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
+            // 3. compras_items + compras (pueden referenciar productos)
+            const [fatCompras] = await conn.query(
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.compras
                  WHERE tenant_id = ? AND branch_id = ?`,
                 [tenantId, branchId]
             );
-            if (delClients.affectedRows > 0) {
-                console.log(`[BOOT] Fatima cleanup: ${delClients.affectedRows} clientes eliminados`);
+            if (fatCompras.length > 0) {
+                const compraIds = fatCompras.map((r) => r.id);
+                await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras_items
+                     WHERE tenant_id = ? AND compra_id IN (?)`,
+                    [tenantId, compraIds]
+                );
+                const [delCompras] = await conn.query(
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras
+                     WHERE tenant_id = ? AND branch_id = ?`,
+                    [tenantId, branchId]
+                );
+                console.log(`[BOOT] Fatima cleanup: ${delCompras.affectedRows} compras eliminadas`);
             }
 
-            // Todos los productos
+            // 4. Stock (referencia products)
+            const [delStock] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.stock
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (delStock.affectedRows > 0) {
+                console.log(`[BOOT] Fatima cleanup: ${delStock.affectedRows} entradas de stock eliminadas`);
+            }
+
+            // 5. Productos
             const [delProducts] = await conn.query(
                 `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.products
                  WHERE tenant_id = ? AND branch_id = ?`,
@@ -439,7 +460,20 @@ async function cleanupFatimaTestData() {
                 console.log(`[BOOT] Fatima cleanup: ${delProducts.affectedRows} productos eliminados`);
             }
 
+            // 6. Clientes
+            const [delClients] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                 WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (delClients.affectedRows > 0) {
+                console.log(`[BOOT] Fatima cleanup: ${delClients.affectedRows} clientes eliminados`);
+            }
+
             console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK`);
+        } catch (err) {
+            console.error(`[BOOT] Fatima cleanup ERROR en branch ${branchId}:`, err?.message || err);
+            throw err;
         } finally {
             conn.release();
         }
@@ -478,13 +512,15 @@ async function seedFatimaProductsFromPilar() {
     const pool = getTenantPool(OPERATIONAL_DB_NAME);
     const conn = await pool.getConnection();
     try {
-        const [[{ cnt }]] = await conn.query(
-            `SELECT COUNT(*) AS cnt FROM \`${OPERATIONAL_DB_NAME}\`.products
-             WHERE tenant_id = ? AND branch_id = ? AND deleted_at IS NULL`,
-            [tenantId, fatimaId]
+        // Idempotente: verifica por canonical_key propio, no por COUNT (evita que un
+        // producto residual bloquee el seed indefinidamente)
+        const [[{ seeded }]] = await conn.query(
+            `SELECT COUNT(*) AS seeded FROM \`${OPERATIONAL_DB_NAME}\`.products
+             WHERE tenant_id = ? AND branch_id = ? AND canonical_key LIKE ?`,
+            [tenantId, fatimaId, `br${fatimaId}-clone-%`]
         );
-        if (cnt > 0) {
-            console.log(`[BOOT] seedFatimaProducts: Fatima ya tiene ${cnt} productos, se omite`);
+        if (seeded > 0) {
+            console.log(`[BOOT] seedFatimaProducts: Fatima ya tiene ${seeded} productos clonados, se omite`);
             return;
         }
 
@@ -12792,7 +12828,7 @@ ensureClientsControlStore()
             console.warn('[BOOT] No se pudieron asegurar columnas de monitor de bridge:', e?.message || e);
         });
         await cleanupFatimaTestData().catch((e) => {
-            console.warn('[BOOT] Cleanup datos de prueba Fatima:', e?.message || e);
+            console.error('[BOOT] Cleanup datos de prueba Fatima FALLÓ:', e?.stack || e?.message || e);
         });
         await ensureInterBranchEntries().catch((e) => {
             console.warn('[BOOT] No se pudieron asegurar entradas inter-sucursal:', e?.message || e);
