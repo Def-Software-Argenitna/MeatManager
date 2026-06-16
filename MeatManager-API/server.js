@@ -549,32 +549,44 @@ async function seedFatimaProductsFromPilar() {
     const pool = getTenantPool(OPERATIONAL_DB_NAME);
     const conn = await pool.getConnection();
     try {
-        // Paso 1: reclamar productos legacy (branch_id NULL) para Pilar.
-        // Estos productos aparecían en TODAS las sucursales por el fallback
-        // `branch_id IS NULL` del endpoint. Al asignarlos a Pilar dejan de
-        // filtrarse a Fatima y se vuelven clonables.
-        const [claimed] = await conn.query(
-            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
-             SET branch_id = ?
-             WHERE tenant_id = ? AND branch_id IS NULL`,
-            [pilarId, tenantId]
-        );
-        if (claimed.affectedRows > 0) {
-            console.log(`[BOOT] seedFatimaProducts: ${claimed.affectedRows} productos legacy (branch NULL) asignados a Pilar ${pilarId}`);
-        }
-
-        // Idempotente: verifica por canonical_key propio, no por COUNT (evita que un
-        // producto residual bloquee el seed indefinidamente)
-        const [[{ seeded }]] = await conn.query(
-            `SELECT COUNT(*) AS seeded FROM \`${OPERATIONAL_DB_NAME}\`.products
-             WHERE tenant_id = ? AND branch_id = ? AND canonical_key LIKE ?`,
-            [tenantId, fatimaId, `br${fatimaId}-clone-%`]
-        );
-        if (seeded > 0) {
-            console.log(`[BOOT] seedFatimaProducts: Fatima ya tiene ${seeded} productos clonados, se omite`);
+        // GUARD v2: corre una sola vez. Hace wipe COMPLETO del catálogo de Fatima
+        // (productos de prueba + clones viejos + datos transaccionales que cuelgan
+        // de productos) y re-clona limpio desde Pilar a precio 0.
+        const flagKey = 'fatima_catalog_reinit_v2';
+        const done = await getTenantFlag(conn, tenantId, flagKey);
+        if (done === '1') {
+            console.log('[BOOT] seedFatimaProducts: reinit v2 ya ejecutado, se omite (protege datos reales)');
             return;
         }
 
+        // Tablas operativas de Fatima (branch_id) a limpiar antes de re-clonar.
+        // NO se tocan clients/suppliers/scale_users (preservan inter-sucursal y config).
+        const wipeTables = [
+            'ventas_items', 'ventas', 'caja_movimientos', 'compras_items', 'compras',
+            'stock', 'prices', 'product_prices', 'branch_product_prices',
+            'promotions', 'menu_digital', 'supplier_item_tax_profiles', 'products',
+        ];
+
+        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+            for (const t of wipeTables) {
+                try {
+                    const [r] = await conn.query(
+                        `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.\`${t}\` WHERE tenant_id = ? AND branch_id = ?`,
+                        [tenantId, fatimaId]
+                    );
+                    if (r.affectedRows > 0) {
+                        console.log(`[BOOT] seedFatimaProducts wipe: ${r.affectedRows} filas de ${t} (branch ${fatimaId})`);
+                    }
+                } catch (e) {
+                    console.warn(`[BOOT] seedFatimaProducts wipe ${t} falló:`, e?.message || e);
+                }
+            }
+        } finally {
+            await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        }
+
+        // Clonar productos ACTIVOS de Pilar → Fatima a precio 0.
         const [pilarProducts] = await conn.query(
             `SELECT name, category_id, category, unit, plu, active, source
              FROM \`${OPERATIONAL_DB_NAME}\`.products
@@ -585,23 +597,31 @@ async function seedFatimaProductsFromPilar() {
 
         if (pilarProducts.length === 0) {
             console.log('[BOOT] seedFatimaProducts: Pilar no tiene productos para clonar');
+            await setTenantFlag(conn, tenantId, flagKey, '1');
             return;
         }
 
+        let cloned = 0;
         for (let i = 0; i < pilarProducts.length; i++) {
             const p = pilarProducts[i];
             const canonicalKey = `br${fatimaId}-clone-${i}`;
-            await conn.query(
-                `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.products
-                 (tenant_id, branch_id, canonical_key, name, category_id, category, unit,
-                  current_price, plu, active, source, synced, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, NOW())`,
-                [tenantId, fatimaId, canonicalKey, p.name, p.category_id, p.category,
-                 p.unit, p.plu, p.active, p.source]
-            );
+            try {
+                const [r] = await conn.query(
+                    `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.products
+                     (tenant_id, branch_id, canonical_key, name, category_id, category, unit,
+                      current_price, plu, active, source, synced, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, NOW())`,
+                    [tenantId, fatimaId, canonicalKey, p.name, p.category_id, p.category,
+                     p.unit, p.plu, p.active, p.source]
+                );
+                if (r.affectedRows > 0) cloned += 1;
+            } catch (e) {
+                console.warn(`[BOOT] seedFatimaProducts clone "${p.name}" falló:`, e?.message || e);
+            }
         }
 
-        console.log(`[BOOT] seedFatimaProducts: ${pilarProducts.length} productos clonados Pilar → Fatima (precio en 0)`);
+        await setTenantFlag(conn, tenantId, flagKey, '1');
+        console.log(`[BOOT] seedFatimaProducts: ${cloned}/${pilarProducts.length} productos clonados Pilar → Fatima (precio 0). Reinit v2 OK.`);
     } finally {
         conn.release();
     }
