@@ -3758,6 +3758,30 @@ async function listClientBranches(clientId) {
     }
 }
 
+async function listAllClientBranches(clientId) {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const [rows] = await conn.query(
+            `SELECT id, clientId, name, internalCode, address, isBillable, status
+             FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE clientId = ?
+             ORDER BY id ASC`,
+            [clientId]
+        );
+        return rows.map((row) => ({
+            id: row.id,
+            clientId: row.clientId,
+            name: String(row.name || '').trim() || `Sucursal ${row.id}`,
+            internalCode: row.internalCode || null,
+            address: row.address || null,
+            isBillable: row.isBillable === 1 || row.isBillable === true,
+            status: row.status || 'ACTIVE',
+        }));
+    } finally {
+        conn.release();
+    }
+}
+
 function hasMultipleActiveBranches(branches = []) {
     if (!Array.isArray(branches)) return false;
     return branches.filter((branch) => {
@@ -3821,7 +3845,8 @@ async function resolveRequestedActiveBranch(accessContext, req) {
 
     if (!isAdmin) return null;
 
-    const branches = await listClientBranches(accessContext.client.id);
+    // Usa listAllClientBranches para incluir sucursales inactivas (ej: Fatima en setup)
+    const branches = await listAllClientBranches(accessContext.client.id);
     return branches.find((branch) => Number(branch.id) === Number(requestedBranchId)) || null;
 }
 
