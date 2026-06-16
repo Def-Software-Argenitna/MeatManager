@@ -458,6 +458,80 @@ async function cleanupFatimaTestData() {
     }
 }
 
+async function seedFatimaProductsFromPilar() {
+    // Clona productos de Pilar → Fatima sin precio, por única vez.
+    // Idempotente: si Fatima ya tiene productos, no hace nada.
+    const ccConn = await clientsControlPool.getConnection();
+    let pilarBranch, fatimaBranch;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE LOWER(name) LIKE '%pilar%' OR LOWER(name) LIKE '%fatima%'`
+        );
+        pilarBranch = rows.find((r) => String(r.name).toLowerCase().includes('pilar'));
+        fatimaBranch = rows.find((r) => String(r.name).toLowerCase().includes('fatima'));
+    } finally {
+        ccConn.release();
+    }
+
+    if (!pilarBranch || !fatimaBranch) {
+        console.warn('[BOOT] seedFatimaProducts: no se encontraron sucursales Pilar/Fatima');
+        return;
+    }
+    if (Number(pilarBranch.clientId) !== Number(fatimaBranch.clientId)) {
+        console.warn('[BOOT] seedFatimaProducts: Pilar y Fatima no son del mismo tenant');
+        return;
+    }
+
+    const tenantId = Number(pilarBranch.clientId);
+    const pilarId = Number(pilarBranch.id);
+    const fatimaId = Number(fatimaBranch.id);
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+    const conn = await pool.getConnection();
+    try {
+        const [[{ cnt }]] = await conn.query(
+            `SELECT COUNT(*) AS cnt FROM \`${OPERATIONAL_DB_NAME}\`.products
+             WHERE tenant_id = ? AND branch_id = ? AND deleted_at IS NULL`,
+            [tenantId, fatimaId]
+        );
+        if (cnt > 0) {
+            console.log(`[BOOT] seedFatimaProducts: Fatima ya tiene ${cnt} productos, se omite`);
+            return;
+        }
+
+        const [pilarProducts] = await conn.query(
+            `SELECT name, category_id, category, unit, plu, active, source
+             FROM \`${OPERATIONAL_DB_NAME}\`.products
+             WHERE tenant_id = ? AND branch_id = ? AND deleted_at IS NULL
+             ORDER BY id ASC`,
+            [tenantId, pilarId]
+        );
+
+        if (pilarProducts.length === 0) {
+            console.log('[BOOT] seedFatimaProducts: Pilar no tiene productos para clonar');
+            return;
+        }
+
+        for (let i = 0; i < pilarProducts.length; i++) {
+            const p = pilarProducts[i];
+            const canonicalKey = `br${fatimaId}-clone-${i}`;
+            await conn.query(
+                `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.products
+                 (tenant_id, branch_id, canonical_key, name, category_id, category, unit,
+                  current_price, plu, active, source, synced, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, NOW())`,
+                [tenantId, fatimaId, canonicalKey, p.name, p.category_id, p.category,
+                 p.unit, p.plu, p.active, p.source]
+            );
+        }
+
+        console.log(`[BOOT] seedFatimaProducts: ${pilarProducts.length} productos clonados Pilar → Fatima (precio en 0)`);
+    } finally {
+        conn.release();
+    }
+}
+
 // Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
 function compareSemver(a, b) {
     const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -12734,6 +12808,9 @@ ensureClientsControlStore()
         });
         await cleanupFatimaTestData().catch((e) => {
             console.warn('[BOOT] Cleanup datos de prueba Fatima:', e?.message || e);
+        });
+        await seedFatimaProductsFromPilar().catch((e) => {
+            console.warn('[BOOT] Seed productos Fatima desde Pilar:', e?.message || e);
         });
         await connectRedisSafely();
     })
