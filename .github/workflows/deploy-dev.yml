@@ -127,6 +127,14 @@ jobs:
           # BarManager/KioskManager/admin/portainer que tambien estan detras.
           docker exec nginx-proxy-manager nginx -s reload
 
+      - name: Dump boot diagnostics ([BOOT] lines)
+        if: always()
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+        run: |
+          echo "=== Boot diagnostics: [BOOT] lines from api-dev ==="
+          docker logs --tail 400 meatmanager-api-dev 2>&1 | grep -E "\[BOOT\]|Fatima|DIAG|seedFatima|inter-sucursal" || echo "(no boot lines found yet)"
+
       - name: Debug deploy failure (containers + logs)
         if: failure()
         env:
