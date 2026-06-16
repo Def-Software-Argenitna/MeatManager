@@ -1918,59 +1918,69 @@ async function ensureProductCatalogIntegrity(conn) {
             END`
     );
 
-    await conn.query(
-        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
-         JOIN (
-            SELECT
-                pi.\`${TENANT_COLUMN}\` AS tenant_id,
-                pi.branch_id,
-                ${canonicalNameSql('pi.name')} AS canonical_key,
-                MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
-                MAX(${cleanTextSql('pi.unit')}) AS unit,
-                MAX(${cleanTextSql('pi.plu')}) AS plu,
-                MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
-            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
-            WHERE ${cleanTextSql('pi.name')} IS NOT NULL
-            GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}
-         ) src
-           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
-          AND p.branch_id <=> src.branch_id
-          AND src.canonical_key = p.canonical_key
-         SET
-            p.category = COALESCE(NULLIF(p.category, ''), src.category),
-            p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
-            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
-            p.current_price = CASE
-                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
-                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
-                ELSE p.current_price
-            END`
-    );
+    // Best-effort: si dos productos resolvieran al mismo plu dentro de una sucursal,
+    // este UPDATE viola uniq_products_tenant_branch_plu. No debe tumbar el boot.
+    try {
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+             JOIN (
+                SELECT
+                    pi.\`${TENANT_COLUMN}\` AS tenant_id,
+                    pi.branch_id,
+                    ${canonicalNameSql('pi.name')} AS canonical_key,
+                    MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
+                    MAX(${cleanTextSql('pi.unit')}) AS unit,
+                    MAX(${cleanTextSql('pi.plu')}) AS plu,
+                    MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${cleanTextSql('pi.name')} IS NOT NULL
+                GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}
+             ) src
+               ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+              AND p.branch_id <=> src.branch_id
+              AND src.canonical_key = p.canonical_key
+             SET
+                p.category = COALESCE(NULLIF(p.category, ''), src.category),
+                p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
+                p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+                p.current_price = CASE
+                    WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                    WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                    ELSE p.current_price
+                END`
+        );
+    } catch (e) {
+        console.warn('[DB] catalog repair (purchase_items→products) omitido:', e?.message || e);
+    }
 
-    await conn.query(
-        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
-         JOIN (
-            SELECT
-                pr.\`${TENANT_COLUMN}\` AS tenant_id,
-                ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
-                MAX(${legacyPriceCategorySql}) AS category,
-                MAX(${cleanTextSql('pr.plu')}) AS plu,
-                MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price
-            FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
-            WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
-            GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}
-         ) src
-           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
-          AND src.canonical_key = p.canonical_key
-         SET
-            p.category = COALESCE(NULLIF(p.category, ''), src.category),
-            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
-            p.current_price = CASE
-                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
-                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
-                ELSE p.current_price
-            END`
-    );
+    try {
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+             JOIN (
+                SELECT
+                    pr.\`${TENANT_COLUMN}\` AS tenant_id,
+                    ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
+                    MAX(${legacyPriceCategorySql}) AS category,
+                    MAX(${cleanTextSql('pr.plu')}) AS plu,
+                    MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price
+                FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
+                WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
+                GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}
+             ) src
+               ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+              AND src.canonical_key = p.canonical_key
+             SET
+                p.category = COALESCE(NULLIF(p.category, ''), src.category),
+                p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+                p.current_price = CASE
+                    WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                    WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                    ELSE p.current_price
+                END`
+        );
+    } catch (e) {
+        console.warn('[DB] catalog repair (prices→products) omitido:', e?.message || e);
+    }
 
     await conn.query(
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.stock s
