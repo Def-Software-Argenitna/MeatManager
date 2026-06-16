@@ -4042,7 +4042,26 @@ function assertClientAccess(accessContext, options = {}) {
     }
 }
 
-function buildAccessResponse(accessContext) {
+// Recorta las licencias efectivas a la SUCURSAL ACTIVA del request. Las
+// licencias per_branch solo aplican a su sucursal (o a todo el cliente si su
+// branchId es null); las demas (per_client/per_user/fixed/base) no se tocan.
+// Necesario porque getClientAccessContext deja pasar TODAS las licencias para
+// admins/owner (no conoce la sucursal activa, que llega por header en cada
+// request). Sin esto, un admin parado en una sucursal ve modulos de otra.
+function scopeLicensesToActiveBranch(licenses, activeBranch, user) {
+    const branchId = Number(activeBranch?.id);
+    // Sin sucursal activa (no vino header) o soporte global: no re-filtramos
+    // (se mantiene el comportamiento previo, sin romper acceso).
+    if (!Number.isFinite(branchId) || branchId <= 0) return licenses || [];
+    if (user?.isGlobalSuperAdmin) return licenses || [];
+    return (licenses || []).filter((license) => {
+        if (String(license.billingScope || '').trim() !== 'per_branch') return true;
+        if (license.assignedBranchId == null) return true; // per_branch para todo el cliente
+        return Number(license.assignedBranchId) === branchId;
+    });
+}
+
+function buildAccessResponse(accessContext, { activeBranch = null } = {}) {
     const fullName = [accessContext.user?.name, accessContext.user?.lastname]
         .map((value) => String(value || '').trim())
         .filter(Boolean)
@@ -4070,7 +4089,7 @@ function buildAccessResponse(accessContext) {
         } : null,
         tenantHasBaseLicense: Boolean(accessContext.client.tenantHasBaseLicense),
         tenantHasDeliveryLicense: Boolean(accessContext.client.tenantHasDeliveryLicense),
-        licenses: accessContext.effectiveLicenses,
+        licenses: scopeLicensesToActiveBranch(accessContext.effectiveLicenses, activeBranch, accessContext.user),
     };
 }
 
@@ -10104,7 +10123,10 @@ app.get('/api/firebase-users/me', verifyFirebaseToken, async (req, res) => {
         });
         assertClientAccess(accessContext);
 
-        const baseUser = buildAccessResponse(accessContext);
+        // Sucursal activa (header X-MM-Active-Branch-Id) para recortar los
+        // modulos visibles a lo licenciado en esa sucursal, tambien para admins.
+        accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        const baseUser = buildAccessResponse(accessContext, { activeBranch: accessContext.activeBranch });
         return res.json({
             ok: true,
             user: baseUser,
