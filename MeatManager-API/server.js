@@ -2035,8 +2035,16 @@ async function ensureProductCatalogIntegrity(conn) {
          GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}, ${legacyPriceNameSql}`,
     ];
 
+    // Best-effort: si un backfill intenta asignar un plu ya usado dentro de una
+    // sucursal, el INSERT viola uniq_products_tenant_branch_plu. No debe tumbar
+    // el boot (mismo criterio que los UPDATE de abajo): se omite ese backfill
+    // puntual y se continua. El producto preexistente queda intacto.
     for (const sql of insertStatements) {
-        await conn.query(sql);
+        try {
+            await conn.query(sql);
+        } catch (e) {
+            console.warn('[DB] catalog backfill (insert) omitido:', e?.message || e);
+        }
     }
 
     await conn.query(
