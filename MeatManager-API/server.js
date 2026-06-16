@@ -416,87 +416,86 @@ async function cleanupFatimaTestData() {
                 continue;
             }
             console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
-            // 1. ventas_items (referencian ventas)
+
+            // DIAGNÓSTICO: qué hay realmente antes de borrar (branch_id real de cada producto/cliente)
+            try {
+                const [prodDiag] = await conn.query(
+                    `SELECT branch_id, COUNT(*) AS n FROM \`${OPERATIONAL_DB_NAME}\`.products
+                     WHERE tenant_id = ? GROUP BY branch_id`,
+                    [tenantId]
+                );
+                console.log(`[BOOT] DIAG products por branch_id (tenant ${tenantId}):`, JSON.stringify(prodDiag));
+                const [cliDiag] = await conn.query(
+                    `SELECT branch_id, COUNT(*) AS n FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                     WHERE tenant_id = ? GROUP BY branch_id`,
+                    [tenantId]
+                );
+                console.log(`[BOOT] DIAG clients por branch_id (tenant ${tenantId}):`, JSON.stringify(cliDiag));
+            } catch (e) {
+                console.warn('[BOOT] DIAG falló:', e?.message || e);
+            }
+
+            // Helper resiliente: un error en un paso no aborta los demás
+            const safeStep = async (label, sql, params) => {
+                try {
+                    const [r] = await conn.query(sql, params);
+                    if (r.affectedRows > 0) {
+                        console.log(`[BOOT] Fatima cleanup: ${r.affectedRows} ${label}`);
+                    }
+                } catch (e) {
+                    console.error(`[BOOT] Fatima cleanup paso "${label}" FALLÓ:`, e?.message || e);
+                }
+            };
+
+            // 1. ventas_items + ventas
             const [fatVentas] = await conn.query(
-                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas
-                 WHERE tenant_id = ? AND branch_id = ?`,
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas WHERE tenant_id = ? AND branch_id = ?`,
                 [tenantId, branchId]
             );
             if (fatVentas.length > 0) {
                 const ventaIds = fatVentas.map((r) => r.id);
-                await conn.query(
-                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items
-                     WHERE tenant_id = ? AND venta_id IN (?)`,
-                    [tenantId, ventaIds]
-                );
-                const [delVentas] = await conn.query(
-                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas
-                     WHERE tenant_id = ? AND branch_id = ?`,
-                    [tenantId, branchId]
-                );
-                console.log(`[BOOT] Fatima cleanup: ${delVentas.affectedRows} ventas eliminadas`);
+                await safeStep('ventas_items eliminados',
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items WHERE tenant_id = ? AND venta_id IN (?)`,
+                    [tenantId, ventaIds]);
             }
+            await safeStep('ventas eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
             // 2. Movimientos de caja
-            const [delCaja] = await conn.query(
-                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            if (delCaja.affectedRows > 0) {
-                console.log(`[BOOT] Fatima cleanup: ${delCaja.affectedRows} movimientos de caja eliminados`);
-            }
+            await safeStep('movimientos de caja eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
-            // 3. compras_items + compras (pueden referenciar productos)
+            // 3. compras_items (FK por purchase_id) + compras
             const [fatCompras] = await conn.query(
-                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.compras
-                 WHERE tenant_id = ? AND branch_id = ?`,
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.compras WHERE tenant_id = ? AND branch_id = ?`,
                 [tenantId, branchId]
             );
             if (fatCompras.length > 0) {
                 const compraIds = fatCompras.map((r) => r.id);
-                await conn.query(
-                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras_items
-                     WHERE tenant_id = ? AND compra_id IN (?)`,
-                    [tenantId, compraIds]
-                );
-                const [delCompras] = await conn.query(
-                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras
-                     WHERE tenant_id = ? AND branch_id = ?`,
-                    [tenantId, branchId]
-                );
-                console.log(`[BOOT] Fatima cleanup: ${delCompras.affectedRows} compras eliminadas`);
+                await safeStep('compras_items eliminados',
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras_items WHERE tenant_id = ? AND purchase_id IN (?)`,
+                    [tenantId, compraIds]);
             }
+            await safeStep('compras eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
-            // 4. Stock (referencia products)
-            const [delStock] = await conn.query(
-                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.stock
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            if (delStock.affectedRows > 0) {
-                console.log(`[BOOT] Fatima cleanup: ${delStock.affectedRows} entradas de stock eliminadas`);
-            }
+            // 4. Stock
+            await safeStep('entradas de stock eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.stock WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
             // 5. Productos
-            const [delProducts] = await conn.query(
-                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.products
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            if (delProducts.affectedRows > 0) {
-                console.log(`[BOOT] Fatima cleanup: ${delProducts.affectedRows} productos eliminados`);
-            }
+            await safeStep('productos eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.products WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
             // 6. Clientes
-            const [delClients] = await conn.query(
-                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients
-                 WHERE tenant_id = ? AND branch_id = ?`,
-                [tenantId, branchId]
-            );
-            if (delClients.affectedRows > 0) {
-                console.log(`[BOOT] Fatima cleanup: ${delClients.affectedRows} clientes eliminados`);
-            }
+            await safeStep('clientes eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
 
             await setTenantFlag(conn, tenantId, flagKey, '1');
             console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK (flag seteado, no se repite)`);
