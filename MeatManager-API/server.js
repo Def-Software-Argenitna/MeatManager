@@ -676,6 +676,91 @@ async function seedFatimaProductsFromPilar() {
     }
 }
 
+async function seedFatimaPurchaseItemsFromPilar() {
+    // La página "Artículos" muestra purchase_items (no products). Clona los
+    // purchase_items de Pilar → Fatima a precio 0, por única vez (flag v3).
+    const ccConn = await clientsControlPool.getConnection();
+    let pilarBranch, fatimaBranch;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE LOWER(name) LIKE '%pilar%' OR LOWER(name) LIKE '%fatima%'`
+        );
+        pilarBranch = rows.find((r) => String(r.name).toLowerCase().includes('pilar'));
+        fatimaBranch = rows.find((r) => String(r.name).toLowerCase().includes('fatima'));
+    } finally {
+        ccConn.release();
+    }
+
+    if (!pilarBranch || !fatimaBranch) return;
+    if (Number(pilarBranch.clientId) !== Number(fatimaBranch.clientId)) return;
+
+    const tenantId = Number(pilarBranch.clientId);
+    const pilarId = Number(pilarBranch.id);
+    const fatimaId = Number(fatimaBranch.id);
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+    const conn = await pool.getConnection();
+    try {
+        const flagKey = 'fatima_purchase_items_reinit_v3';
+        const done = await getTenantFlag(conn, tenantId, flagKey);
+        if (done === '1') {
+            console.log('[BOOT] seedFatimaPurchaseItems: v3 ya ejecutado, se omite');
+            return;
+        }
+
+        // Wipe de purchase_items de prueba de Fatima
+        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+            const [del] = await conn.query(
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, fatimaId]
+            );
+            if (del.affectedRows > 0) {
+                console.log(`[BOOT] seedFatimaPurchaseItems wipe: ${del.affectedRows} purchase_items (branch ${fatimaId})`);
+            }
+        } finally {
+            await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        }
+
+        const [pilarItems] = await conn.query(
+            `SELECT name, category_id, unit, type, is_preelaborable, species, \`usage\`, plu
+             FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items
+             WHERE tenant_id = ? AND branch_id = ?
+             ORDER BY id ASC`,
+            [tenantId, pilarId]
+        );
+
+        if (pilarItems.length === 0) {
+            console.log('[BOOT] seedFatimaPurchaseItems: Pilar no tiene purchase_items para clonar');
+            await setTenantFlag(conn, tenantId, flagKey, '1');
+            return;
+        }
+
+        let cloned = 0;
+        for (const it of pilarItems) {
+            try {
+                const [r] = await conn.query(
+                    `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.purchase_items
+                     (tenant_id, branch_id, name, product_id, category_id, last_price, unit, type,
+                      is_preelaborable, species, \`usage\`, plu, synced)
+                     VALUES (?, ?, ?, NULL, ?, 0, ?, ?, ?, ?, ?, ?, 0)`,
+                    [tenantId, fatimaId, it.name, it.category_id, it.unit, it.type,
+                     it.is_preelaborable, it.species, it.usage, it.plu]
+                );
+                if (r.affectedRows > 0) cloned += 1;
+            } catch (e) {
+                console.warn(`[BOOT] seedFatimaPurchaseItems clone "${it.name}" falló:`, e?.message || e);
+            }
+        }
+
+        await setTenantFlag(conn, tenantId, flagKey, '1');
+        console.log(`[BOOT] seedFatimaPurchaseItems: ${cloned}/${pilarItems.length} artículos clonados Pilar → Fatima (precio 0). Reinit v3 OK.`);
+    } finally {
+        conn.release();
+    }
+}
+
 // Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
 function compareSemver(a, b) {
     const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -12968,6 +13053,9 @@ ensureClientsControlStore()
         });
         await seedFatimaProductsFromPilar().catch((e) => {
             console.warn('[BOOT] Seed productos Fatima desde Pilar:', e?.message || e);
+        });
+        await seedFatimaPurchaseItemsFromPilar().catch((e) => {
+            console.warn('[BOOT] Seed artículos (purchase_items) Fatima desde Pilar:', e?.message || e);
         });
         await connectRedisSafely();
     })
