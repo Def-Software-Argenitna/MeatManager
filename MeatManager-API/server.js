@@ -363,8 +363,29 @@ async function ensureInterBranchEntries() {
     }
 }
 
+async function getTenantFlag(conn, tenantId, key) {
+    const [rows] = await conn.query(
+        `SELECT value FROM \`${OPERATIONAL_DB_NAME}\`.settings
+         WHERE tenant_id = ? AND branch_id = 0 AND \`key\` = ? LIMIT 1`,
+        [tenantId, key]
+    );
+    return rows.length ? String(rows[0].value) : null;
+}
+
+async function setTenantFlag(conn, tenantId, key, value) {
+    await conn.query(
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.settings (tenant_id, branch_id, \`key\`, value)
+         VALUES (?, 0, ?, ?)
+         ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+        [tenantId, key, String(value)]
+    );
+}
+
 async function cleanupFatimaTestData() {
     // Limpieza one-shot de todos los datos de prueba en sucursales "Fatima".
+    // GUARD: corre UNA sola vez por tenant (flag en settings). Después de la
+    // limpieza inicial NO vuelve a borrar — protege los datos reales que el
+    // usuario cargue en Fatima de futuros deploys/reinicios.
     // Respeta el orden de FKs: ventas_items → ventas → caja → compras_items → compras → stock → products → clients.
     const ccConn = await clientsControlPool.getConnection();
     let fatimaBranches;
@@ -385,9 +406,16 @@ async function cleanupFatimaTestData() {
     for (const branch of fatimaBranches) {
         const tenantId = Number(branch.clientId);
         const branchId = Number(branch.id);
-        console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
+
         const conn = await pool.getConnection();
         try {
+            const flagKey = `fatima_initial_cleanup_done_branch_${branchId}`;
+            const done = await getTenantFlag(conn, tenantId, flagKey);
+            if (done === '1') {
+                console.log(`[BOOT] Fatima cleanup: branch ${branchId} ya limpiado antes, se omite (protege datos reales)`);
+                continue;
+            }
+            console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
             // 1. ventas_items (referencian ventas)
             const [fatVentas] = await conn.query(
                 `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas
@@ -470,7 +498,8 @@ async function cleanupFatimaTestData() {
                 console.log(`[BOOT] Fatima cleanup: ${delClients.affectedRows} clientes eliminados`);
             }
 
-            console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK`);
+            await setTenantFlag(conn, tenantId, flagKey, '1');
+            console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK (flag seteado, no se repite)`);
         } catch (err) {
             console.error(`[BOOT] Fatima cleanup ERROR en branch ${branchId}:`, err?.message || err);
             throw err;
@@ -512,6 +541,20 @@ async function seedFatimaProductsFromPilar() {
     const pool = getTenantPool(OPERATIONAL_DB_NAME);
     const conn = await pool.getConnection();
     try {
+        // Paso 1: reclamar productos legacy (branch_id NULL) para Pilar.
+        // Estos productos aparecían en TODAS las sucursales por el fallback
+        // `branch_id IS NULL` del endpoint. Al asignarlos a Pilar dejan de
+        // filtrarse a Fatima y se vuelven clonables.
+        const [claimed] = await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products
+             SET branch_id = ?
+             WHERE tenant_id = ? AND branch_id IS NULL`,
+            [pilarId, tenantId]
+        );
+        if (claimed.affectedRows > 0) {
+            console.log(`[BOOT] seedFatimaProducts: ${claimed.affectedRows} productos legacy (branch NULL) asignados a Pilar ${pilarId}`);
+        }
+
         // Idempotente: verifica por canonical_key propio, no por COUNT (evita que un
         // producto residual bloquee el seed indefinidamente)
         const [[{ seeded }]] = await conn.query(
