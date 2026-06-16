@@ -206,12 +206,12 @@ const ConfiguracionBalanza = () => {
             }));
 
             await Promise.all([
-                upsertRemoteSetting('scale_ticket_header_line1', String(ticketHeader.line1 || '').trim().slice(0, 18)),
-                upsertRemoteSetting('scale_ticket_header_line2', String(ticketHeader.line2 || '').trim().slice(0, 34)),
-                upsertRemoteSetting('scale_ticket_header_line3', String(ticketHeader.line3 || '').trim().slice(0, 34)),
-                upsertRemoteSetting('scale_section_mappings', JSON.stringify(cleanMappings)),
-                upsertRemoteSetting('scale_marquee_messages', JSON.stringify(cleanMarquee)),
-                upsertRemoteSetting('scale_marquee_text', activeMarqueeText || ''),
+                upsertRemoteSetting('scale_ticket_header_line1', String(ticketHeader.line1 || '').trim().slice(0, 18), currentBranchId),
+                upsertRemoteSetting('scale_ticket_header_line2', String(ticketHeader.line2 || '').trim().slice(0, 34), currentBranchId),
+                upsertRemoteSetting('scale_ticket_header_line3', String(ticketHeader.line3 || '').trim().slice(0, 34), currentBranchId),
+                upsertRemoteSetting('scale_section_mappings', JSON.stringify(cleanMappings), currentBranchId),
+                upsertRemoteSetting('scale_marquee_messages', JSON.stringify(cleanMarquee), currentBranchId),
+                upsertRemoteSetting('scale_marquee_text', activeMarqueeText || '', currentBranchId),
             ]);
 
             showMessage('success', 'Configuración de balanza guardada y lista para sincronizar.');

@@ -267,14 +267,15 @@ export const getRemoteSetting = async (key) => {
     return data?.value ?? null;
 };
 
-export const upsertRemoteSetting = async (key, value) => {
+export const upsertRemoteSetting = async (key, value, branchId = null) => {
+    const record = { key, value };
+    const numericBranchId = Number(branchId);
+    if (Number.isFinite(numericBranchId) && numericBranchId > 0) {
+        record.branch_id = numericBranchId;
+    }
     const res = await apiFetch('/api/data', {
         method: 'POST',
-        body: JSON.stringify({
-            table: 'settings',
-            operation: 'upsert',
-            record: { key, value },
-        }),
+        body: JSON.stringify({ table: 'settings', operation: 'upsert', record }),
     });
 
     if (!res.ok) {

@@ -290,6 +290,316 @@ async function ensureBridgeDeviceMonitorColumns() {
     }
 }
 
+async function ensureInterBranchEntries() {
+    // Para cada tenant con varias sucursales, inserta proveedor + cliente inter-sucursal
+    // en cada sucursal apuntando a las demás. Idempotente (verifica por nombre antes de insertar).
+    const ccConn = await clientsControlPool.getConnection();
+    let allBranchRows;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             ORDER BY clientId ASC, id ASC`
+        );
+        allBranchRows = rows;
+    } finally {
+        ccConn.release();
+    }
+
+    const branchesByClient = {};
+    for (const row of allBranchRows) {
+        if (!branchesByClient[row.clientId]) branchesByClient[row.clientId] = [];
+        branchesByClient[row.clientId].push({
+            id: Number(row.id),
+            name: String(row.name || '').trim() || `Sucursal ${row.id}`,
+        });
+    }
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+
+    for (const [clientIdStr, branches] of Object.entries(branchesByClient)) {
+        if (branches.length < 2) continue;
+        const tenantId = Number(clientIdStr);
+        const conn = await pool.getConnection();
+        try {
+            for (const branch of branches) {
+                for (const otherBranch of branches) {
+                    if (branch.id === otherBranch.id) continue;
+                    const entryName = otherBranch.name;
+
+                    const [existingSupplier] = await conn.query(
+                        `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.suppliers
+                         WHERE tenant_id = ? AND branch_id = ? AND name = ?`,
+                        [tenantId, branch.id, entryName]
+                    );
+                    if (existingSupplier.length === 0) {
+                        await conn.query(
+                            `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.suppliers
+                             (tenant_id, branch_id, name, cuit, iva_condition, synced, created_at)
+                             VALUES (?, ?, ?, 'INTERNO', 'RESPONSABLE_INSCRIPTO', 0, NOW())`,
+                            [tenantId, branch.id, entryName]
+                        );
+                        console.log(`[BOOT] Proveedor inter-sucursal: "${entryName}" → sucursal ${branch.id} (tenant ${tenantId})`);
+                    }
+
+                    const [existingClient] = await conn.query(
+                        `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.clients
+                         WHERE tenant_id = ? AND branch_id = ? AND name = ?`,
+                        [tenantId, branch.id, entryName]
+                    );
+                    if (existingClient.length === 0) {
+                        await conn.query(
+                            `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.clients
+                             (tenant_id, branch_id, name, has_current_account, synced, created_at)
+                             VALUES (?, ?, ?, 1, 0, NOW())`,
+                            [tenantId, branch.id, entryName]
+                        );
+                        console.log(`[BOOT] Cliente inter-sucursal: "${entryName}" → sucursal ${branch.id} (tenant ${tenantId})`);
+                    }
+                }
+            }
+        } finally {
+            conn.release();
+        }
+    }
+}
+
+async function getTenantFlag(conn, tenantId, key) {
+    const [rows] = await conn.query(
+        `SELECT value FROM \`${OPERATIONAL_DB_NAME}\`.settings
+         WHERE tenant_id = ? AND branch_id = 0 AND \`key\` = ? LIMIT 1`,
+        [tenantId, key]
+    );
+    return rows.length ? String(rows[0].value) : null;
+}
+
+async function setTenantFlag(conn, tenantId, key, value) {
+    await conn.query(
+        `INSERT INTO \`${OPERATIONAL_DB_NAME}\`.settings (tenant_id, branch_id, \`key\`, value)
+         VALUES (?, 0, ?, ?)
+         ON DUPLICATE KEY UPDATE value = VALUES(value)`,
+        [tenantId, key, String(value)]
+    );
+}
+
+async function cleanupFatimaTestData() {
+    // Limpieza one-shot de todos los datos de prueba en sucursales "Fatima".
+    // GUARD: corre UNA sola vez por tenant (flag en settings). Después de la
+    // limpieza inicial NO vuelve a borrar — protege los datos reales que el
+    // usuario cargue en Fatima de futuros deploys/reinicios.
+    // Respeta el orden de FKs: ventas_items → ventas → caja → compras_items → compras → stock → products → clients.
+    const ccConn = await clientsControlPool.getConnection();
+    let fatimaBranches;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE LOWER(name) LIKE '%fatima%'`
+        );
+        fatimaBranches = rows;
+    } finally {
+        ccConn.release();
+    }
+
+    if (!fatimaBranches || fatimaBranches.length === 0) return;
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+
+    for (const branch of fatimaBranches) {
+        const tenantId = Number(branch.clientId);
+        const branchId = Number(branch.id);
+
+        const conn = await pool.getConnection();
+        try {
+            const flagKey = `fatima_initial_cleanup_done_branch_${branchId}`;
+            const done = await getTenantFlag(conn, tenantId, flagKey);
+            if (done === '1') {
+                console.log(`[BOOT] Fatima cleanup: branch ${branchId} ya limpiado antes, se omite (protege datos reales)`);
+                continue;
+            }
+            console.log(`[BOOT] Fatima cleanup: iniciando para branch ${branchId} tenant ${tenantId}`);
+
+            // Helper resiliente: un error en un paso no aborta los demás
+            const safeStep = async (label, sql, params) => {
+                try {
+                    const [r] = await conn.query(sql, params);
+                    if (r.affectedRows > 0) {
+                        console.log(`[BOOT] Fatima cleanup: ${r.affectedRows} ${label}`);
+                    }
+                } catch (e) {
+                    console.error(`[BOOT] Fatima cleanup paso "${label}" FALLÓ:`, e?.message || e);
+                }
+            };
+
+            // 1. ventas_items + ventas
+            const [fatVentas] = await conn.query(
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.ventas WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (fatVentas.length > 0) {
+                const ventaIds = fatVentas.map((r) => r.id);
+                await safeStep('ventas_items eliminados',
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas_items WHERE tenant_id = ? AND venta_id IN (?)`,
+                    [tenantId, ventaIds]);
+            }
+            await safeStep('ventas eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.ventas WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            // 2. Movimientos de caja
+            await safeStep('movimientos de caja eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.caja_movimientos WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            // 3. compras_items (FK por purchase_id) + compras
+            const [fatCompras] = await conn.query(
+                `SELECT id FROM \`${OPERATIONAL_DB_NAME}\`.compras WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]
+            );
+            if (fatCompras.length > 0) {
+                const compraIds = fatCompras.map((r) => r.id);
+                await safeStep('compras_items eliminados',
+                    `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras_items WHERE tenant_id = ? AND purchase_id IN (?)`,
+                    [tenantId, compraIds]);
+            }
+            await safeStep('compras eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.compras WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            // 4. Stock
+            await safeStep('entradas de stock eliminadas',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.stock WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            // 5. Productos
+            await safeStep('productos eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.products WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            // 6. Clientes
+            await safeStep('clientes eliminados',
+                `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.clients WHERE tenant_id = ? AND branch_id = ?`,
+                [tenantId, branchId]);
+
+            await setTenantFlag(conn, tenantId, flagKey, '1');
+            console.log(`[BOOT] Fatima (branch ${branchId}): limpieza completa OK (flag seteado, no se repite)`);
+        } catch (err) {
+            console.error(`[BOOT] Fatima cleanup ERROR en branch ${branchId}:`, err?.message || err);
+            throw err;
+        } finally {
+            conn.release();
+        }
+    }
+}
+
+async function seedFatimaProductsFromPilar() {
+    // Clona productos de Pilar → Fatima sin precio, por única vez.
+    // Idempotente: si Fatima ya tiene productos, no hace nada.
+    const ccConn = await clientsControlPool.getConnection();
+    let pilarBranch, fatimaBranch;
+    try {
+        const [rows] = await ccConn.query(
+            `SELECT id, clientId, name FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE LOWER(name) LIKE '%pilar%' OR LOWER(name) LIKE '%fatima%'`
+        );
+        pilarBranch = rows.find((r) => String(r.name).toLowerCase().includes('pilar'));
+        fatimaBranch = rows.find((r) => String(r.name).toLowerCase().includes('fatima'));
+    } finally {
+        ccConn.release();
+    }
+
+    if (!pilarBranch || !fatimaBranch) {
+        console.warn('[BOOT] seedFatimaProducts: no se encontraron sucursales Pilar/Fatima');
+        return;
+    }
+    if (Number(pilarBranch.clientId) !== Number(fatimaBranch.clientId)) {
+        console.warn('[BOOT] seedFatimaProducts: Pilar y Fatima no son del mismo tenant');
+        return;
+    }
+
+    const tenantId = Number(pilarBranch.clientId);
+    const pilarId = Number(pilarBranch.id);
+    const fatimaId = Number(fatimaBranch.id);
+
+    const pool = getTenantPool(OPERATIONAL_DB_NAME);
+    const conn = await pool.getConnection();
+    try {
+        // GUARD v2: corre una sola vez. Hace wipe COMPLETO del catálogo de Fatima
+        // (productos de prueba + clones viejos + datos transaccionales que cuelgan
+        // de productos) y re-clona limpio desde Pilar a precio 0.
+        const flagKey = 'fatima_catalog_reinit_v2';
+        const done = await getTenantFlag(conn, tenantId, flagKey);
+        if (done === '1') {
+            console.log('[BOOT] seedFatimaProducts: reinit v2 ya ejecutado, se omite (protege datos reales)');
+            return;
+        }
+
+        // Tablas operativas de Fatima (branch_id) a limpiar antes de re-clonar.
+        // NO se tocan clients/suppliers/scale_users (preservan inter-sucursal y config).
+        const wipeTables = [
+            'ventas_items', 'ventas', 'caja_movimientos', 'compras_items', 'compras',
+            'stock', 'prices', 'product_prices', 'branch_product_prices',
+            'promotions', 'menu_digital', 'supplier_item_tax_profiles', 'products',
+        ];
+
+        await conn.query('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+            for (const t of wipeTables) {
+                try {
+                    const [r] = await conn.query(
+                        `DELETE FROM \`${OPERATIONAL_DB_NAME}\`.\`${t}\` WHERE tenant_id = ? AND branch_id = ?`,
+                        [tenantId, fatimaId]
+                    );
+                    if (r.affectedRows > 0) {
+                        console.log(`[BOOT] seedFatimaProducts wipe: ${r.affectedRows} filas de ${t} (branch ${fatimaId})`);
+                    }
+                } catch (e) {
+                    console.warn(`[BOOT] seedFatimaProducts wipe ${t} falló:`, e?.message || e);
+                }
+            }
+        } finally {
+            await conn.query('SET FOREIGN_KEY_CHECKS = 1');
+        }
+
+        // Clonar productos ACTIVOS de Pilar → Fatima a precio 0.
+        const [pilarProducts] = await conn.query(
+            `SELECT name, category_id, category, unit, plu, active, source
+             FROM \`${OPERATIONAL_DB_NAME}\`.products
+             WHERE tenant_id = ? AND branch_id = ? AND deleted_at IS NULL
+             ORDER BY id ASC`,
+            [tenantId, pilarId]
+        );
+
+        if (pilarProducts.length === 0) {
+            console.log('[BOOT] seedFatimaProducts: Pilar no tiene productos para clonar');
+            await setTenantFlag(conn, tenantId, flagKey, '1');
+            return;
+        }
+
+        let cloned = 0;
+        for (let i = 0; i < pilarProducts.length; i++) {
+            const p = pilarProducts[i];
+            const canonicalKey = `br${fatimaId}-clone-${i}`;
+            try {
+                const [r] = await conn.query(
+                    `INSERT IGNORE INTO \`${OPERATIONAL_DB_NAME}\`.products
+                     (tenant_id, branch_id, canonical_key, name, category_id, category, unit,
+                      current_price, plu, active, source, synced, created_at)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 0, NOW())`,
+                    [tenantId, fatimaId, canonicalKey, p.name, p.category_id, p.category,
+                     p.unit, p.plu, p.active, p.source]
+                );
+                if (r.affectedRows > 0) cloned += 1;
+            } catch (e) {
+                console.warn(`[BOOT] seedFatimaProducts clone "${p.name}" falló:`, e?.message || e);
+            }
+        }
+
+        await setTenantFlag(conn, tenantId, flagKey, '1');
+        console.log(`[BOOT] seedFatimaProducts: ${cloned}/${pilarProducts.length} productos clonados Pilar → Fatima (precio 0). Reinit v2 OK.`);
+    } finally {
+        conn.release();
+    }
+}
+
 // Compara versiones tipo "0.4.19". Devuelve 1 si a>b, -1 si a<b, 0 igual.
 function compareSemver(a, b) {
     const pa = String(a || '').replace(/^[^\d]*/, '').split('.').map((n) => Number.parseInt(n, 10) || 0);
@@ -1382,7 +1692,10 @@ async function ensureCompositePrimaryKey(conn, tableName) {
 
 async function ensureSettingsPrimaryKey(conn) {
     const primaryColumns = await getPrimaryKeyColumns(conn, OPERATIONAL_DB_NAME, 'settings');
-    if (!(primaryColumns.length === 2 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'key')) {
+    // Acepta tanto el formato viejo (tenant_id, key) como el nuevo (tenant_id, branch_id, key)
+    const isOldFormat = primaryColumns.length === 2 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'key';
+    const isNewFormat = primaryColumns.length === 3 && primaryColumns[0] === TENANT_COLUMN && primaryColumns[1] === 'branch_id' && primaryColumns[2] === 'key';
+    if (!isOldFormat && !isNewFormat) {
         if (primaryColumns.length > 0) {
             await conn.query(`ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings DROP PRIMARY KEY`);
         }
@@ -1404,6 +1717,20 @@ async function ensureSettingsPrimaryKey(conn) {
             }
         }
     }
+}
+
+async function ensureSettingsBranchId(conn) {
+    if (await hasColumn(conn, OPERATIONAL_DB_NAME, 'settings', 'branch_id')) return;
+    // 0 = tenant-level (compartido), > 0 = exclusivo de esa sucursal
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+         ADD COLUMN branch_id INT NOT NULL DEFAULT 0 AFTER \`${TENANT_COLUMN}\``
+    );
+    await conn.query(`ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings DROP PRIMARY KEY`);
+    await conn.query(
+        `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.settings
+         ADD PRIMARY KEY (\`${TENANT_COLUMN}\`, \`branch_id\`, \`key\`)`
+    );
 }
 
 async function ensureProductCatalogIntegrity(conn) {
@@ -1591,59 +1918,69 @@ async function ensureProductCatalogIntegrity(conn) {
             END`
     );
 
-    await conn.query(
-        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
-         JOIN (
-            SELECT
-                pi.\`${TENANT_COLUMN}\` AS tenant_id,
-                pi.branch_id,
-                ${canonicalNameSql('pi.name')} AS canonical_key,
-                MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
-                MAX(${cleanTextSql('pi.unit')}) AS unit,
-                MAX(${cleanTextSql('pi.plu')}) AS plu,
-                MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
-            FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
-            WHERE ${cleanTextSql('pi.name')} IS NOT NULL
-            GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}
-         ) src
-           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
-          AND p.branch_id <=> src.branch_id
-          AND src.canonical_key = p.canonical_key
-         SET
-            p.category = COALESCE(NULLIF(p.category, ''), src.category),
-            p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
-            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
-            p.current_price = CASE
-                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
-                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
-                ELSE p.current_price
-            END`
-    );
+    // Best-effort: si dos productos resolvieran al mismo plu dentro de una sucursal,
+    // este UPDATE viola uniq_products_tenant_branch_plu. No debe tumbar el boot.
+    try {
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+             JOIN (
+                SELECT
+                    pi.\`${TENANT_COLUMN}\` AS tenant_id,
+                    pi.branch_id,
+                    ${canonicalNameSql('pi.name')} AS canonical_key,
+                    MAX(COALESCE(${cleanTextSql('pi.type')}, ${cleanTextSql('pi.species')})) AS category,
+                    MAX(${cleanTextSql('pi.unit')}) AS unit,
+                    MAX(${cleanTextSql('pi.plu')}) AS plu,
+                    MAX(CASE WHEN COALESCE(pi.last_price, 0) > 0 THEN pi.last_price ELSE 0 END) AS current_price
+                FROM \`${OPERATIONAL_DB_NAME}\`.purchase_items pi
+                WHERE ${cleanTextSql('pi.name')} IS NOT NULL
+                GROUP BY pi.\`${TENANT_COLUMN}\`, pi.branch_id, ${canonicalNameSql('pi.name')}
+             ) src
+               ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+              AND p.branch_id <=> src.branch_id
+              AND src.canonical_key = p.canonical_key
+             SET
+                p.category = COALESCE(NULLIF(p.category, ''), src.category),
+                p.unit = COALESCE(NULLIF(p.unit, ''), src.unit),
+                p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+                p.current_price = CASE
+                    WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                    WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                    ELSE p.current_price
+                END`
+        );
+    } catch (e) {
+        console.warn('[DB] catalog repair (purchase_items→products) omitido:', e?.message || e);
+    }
 
-    await conn.query(
-        `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
-         JOIN (
-            SELECT
-                pr.\`${TENANT_COLUMN}\` AS tenant_id,
-                ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
-                MAX(${legacyPriceCategorySql}) AS category,
-                MAX(${cleanTextSql('pr.plu')}) AS plu,
-                MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price
-            FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
-            WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
-            GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}
-         ) src
-           ON src.tenant_id = p.\`${TENANT_COLUMN}\`
-          AND src.canonical_key = p.canonical_key
-         SET
-            p.category = COALESCE(NULLIF(p.category, ''), src.category),
-            p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
-            p.current_price = CASE
-                WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
-                WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
-                ELSE p.current_price
-            END`
-    );
+    try {
+        await conn.query(
+            `UPDATE \`${OPERATIONAL_DB_NAME}\`.products p
+             JOIN (
+                SELECT
+                    pr.\`${TENANT_COLUMN}\` AS tenant_id,
+                    ${canonicalNameSql(legacyPriceNameSql)} AS canonical_key,
+                    MAX(${legacyPriceCategorySql}) AS category,
+                    MAX(${cleanTextSql('pr.plu')}) AS plu,
+                    MAX(CASE WHEN COALESCE(pr.price, 0) > 0 THEN pr.price ELSE 0 END) AS current_price
+                FROM \`${OPERATIONAL_DB_NAME}\`.prices pr
+                WHERE ${cleanTextSql(legacyPriceNameSql)} IS NOT NULL
+                GROUP BY pr.\`${TENANT_COLUMN}\`, ${canonicalNameSql(legacyPriceNameSql)}
+             ) src
+               ON src.tenant_id = p.\`${TENANT_COLUMN}\`
+              AND src.canonical_key = p.canonical_key
+             SET
+                p.category = COALESCE(NULLIF(p.category, ''), src.category),
+                p.plu = COALESCE(NULLIF(p.plu, ''), src.plu),
+                p.current_price = CASE
+                    WHEN COALESCE(p.current_price, 0) > 0 THEN p.current_price
+                    WHEN COALESCE(src.current_price, 0) > 0 THEN src.current_price
+                    ELSE p.current_price
+                END`
+        );
+    } catch (e) {
+        console.warn('[DB] catalog repair (prices→products) omitido:', e?.message || e);
+    }
 
     await conn.query(
         `UPDATE \`${OPERATIONAL_DB_NAME}\`.stock s
@@ -2748,6 +3085,7 @@ async function ensureOperationalTenantIsolation() {
             }
 
             await ensureSettingsPrimaryKey(conn);
+            await ensureSettingsBranchId(conn);
             for (const tableName of TABLES_WITH_NUMERIC_ID) {
                 await ensureCompositePrimaryKey(conn, tableName);
             }
@@ -3740,6 +4078,30 @@ async function listClientBranches(clientId) {
     }
 }
 
+async function listAllClientBranches(clientId) {
+    const conn = await clientsControlPool.getConnection();
+    try {
+        const [rows] = await conn.query(
+            `SELECT id, clientId, name, internalCode, address, isBillable, status
+             FROM \`${CLIENTS_DB_NAME}\`.\`${CLIENT_BRANCHES_TABLE}\`
+             WHERE clientId = ?
+             ORDER BY id ASC`,
+            [clientId]
+        );
+        return rows.map((row) => ({
+            id: row.id,
+            clientId: row.clientId,
+            name: String(row.name || '').trim() || `Sucursal ${row.id}`,
+            internalCode: row.internalCode || null,
+            address: row.address || null,
+            isBillable: row.isBillable === 1 || row.isBillable === true,
+            status: row.status || 'ACTIVE',
+        }));
+    } finally {
+        conn.release();
+    }
+}
+
 function hasMultipleActiveBranches(branches = []) {
     if (!Array.isArray(branches)) return false;
     return branches.filter((branch) => {
@@ -3784,24 +4146,27 @@ async function resolveRequestedActiveBranch(accessContext, req) {
     const requestedBranchId = getRequestedActiveBranchId(req);
     if (!requestedBranchId || !accessContext?.client?.id) return null;
 
+    const isAdmin = accessContext?.user?.role === 'admin' || Boolean(accessContext?.user?.isGlobalSuperAdmin);
     const userBranchId = Number(accessContext?.user?.branchRecordId ?? accessContext?.user?.branchId);
     if (Number.isFinite(userBranchId) && userBranchId > 0) {
-        return Number(userBranchId) === Number(requestedBranchId)
-            ? {
+        if (Number(userBranchId) === Number(requestedBranchId)) {
+            return {
                 id: userBranchId,
                 name: accessContext?.user?.branchName || '',
                 internalCode: accessContext?.user?.branchInternalCode || null,
                 address: accessContext?.user?.branchAddress || null,
                 status: accessContext?.user?.branchStatus || 'ACTIVE',
-            }
-            : null;
+            };
+        }
+        // Usuarios no-admin solo pueden ver su sucursal asignada
+        if (!isAdmin) return null;
+        // Admins pueden cambiar de sucursal aunque tengan una asignada → buscar en lista
     }
 
-    if (accessContext?.user?.role !== 'admin' && !accessContext?.user?.isGlobalSuperAdmin) {
-        return null;
-    }
+    if (!isAdmin) return null;
 
-    const branches = await listClientBranches(accessContext.client.id);
+    // Usa listAllClientBranches para incluir sucursales inactivas (ej: Fatima en setup)
+    const branches = await listAllClientBranches(accessContext.client.id);
     return branches.find((branch) => Number(branch.id) === Number(requestedBranchId)) || null;
 }
 
@@ -6933,26 +7298,27 @@ app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
 
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
-        const [rows] = await pool.query(
-            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` = ? LIMIT 1',
-            [tenantId, settingKey]
-        );
+        const activeBranchId = getRequestedActiveBranchId(req);
 
-        if (!rows.length) {
-            return res.json({
-                ok: true,
-                key: settingKey,
-                value: null,
-                found: false,
-            });
+        let rows;
+        if (activeBranchId) {
+            // Busca primero el valor específico de la sucursal; si no existe, cae al tenant-level (branch_id=0)
+            [rows] = await pool.query(
+                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? AND (branch_id = ? OR branch_id = 0) ORDER BY branch_id DESC LIMIT 1',
+                [tenantId, settingKey, activeBranchId]
+            );
+        } else {
+            [rows] = await pool.query(
+                'SELECT value FROM settings WHERE `tenant_id` = ? AND `key` = ? AND branch_id = 0 LIMIT 1',
+                [tenantId, settingKey]
+            );
         }
 
-        return res.json({
-            ok: true,
-            key: rows[0].key,
-            value: rows[0].value ?? null,
-            found: true,
-        });
+        if (!rows.length) {
+            return res.json({ ok: true, key: settingKey, value: null, found: false });
+        }
+
+        return res.json({ ok: true, key: settingKey, value: rows[0].value ?? null, found: true });
     } catch (err) {
         console.error('[SETTINGS ERROR]', err.message);
         res.status(500).json({ error: 'Error leyendo settings: ' + err.message });
@@ -11257,6 +11623,8 @@ function normalizePriceFormatServer(value) {
 app.get('/api/bridge/settings', verifyBridgeDeviceToken, async (req, res) => {
     try {
         const pool = getOperationalPool();
+        const tenantId = req.bridge.tenantId;
+        const branchId = Number(req.bridge.branchId || 0);
         const keys = [
             'scale_ticket_header_line1',
             'scale_ticket_header_line2',
@@ -11267,15 +11635,33 @@ app.get('/api/bridge/settings', verifyBridgeDeviceToken, async (req, res) => {
             'precio_formato',
         ];
         const placeholders = keys.map(() => '?').join(', ');
-        const [rows] = await pool.query(
-            `SELECT \`key\`, value FROM settings
-             WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders})`,
-            [req.bridge.tenantId, ...keys]
-        );
-        const byKey = rows.reduce((acc, row) => {
-            acc[String(row.key)] = row.value;
-            return acc;
-        }, {});
+
+        let byKey;
+        if (branchId > 0) {
+            // Trae tanto los de la sucursal como los tenant-level; branch-specific gana
+            const [rows] = await pool.query(
+                `SELECT \`key\`, value, branch_id FROM settings
+                 WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders})
+                   AND (branch_id = ? OR branch_id = 0)`,
+                [tenantId, ...keys, branchId]
+            );
+            const map = {};
+            for (const row of rows) {
+                const k = String(row.key);
+                if (!map[k] || Number(row.branch_id) > Number(map[k].branch_id)) {
+                    map[k] = row;
+                }
+            }
+            byKey = Object.fromEntries(Object.entries(map).map(([k, r]) => [k, r.value]));
+        } else {
+            const [rows] = await pool.query(
+                `SELECT \`key\`, value FROM settings
+                 WHERE \`${TENANT_COLUMN}\` = ? AND \`key\` IN (${placeholders}) AND branch_id = 0`,
+                [tenantId, ...keys]
+            );
+            byKey = rows.reduce((acc, row) => { acc[String(row.key)] = row.value; return acc; }, {});
+        }
+
         return res.json({
             ticketHeader: {
                 line1: normalizeAsciiServer(byKey.scale_ticket_header_line1 || '').slice(0, 18),
@@ -12494,6 +12880,15 @@ ensureClientsControlStore()
         }
         await ensureBridgeDeviceMonitorColumns().catch((e) => {
             console.warn('[BOOT] No se pudieron asegurar columnas de monitor de bridge:', e?.message || e);
+        });
+        await cleanupFatimaTestData().catch((e) => {
+            console.error('[BOOT] Cleanup datos de prueba Fatima FALLÓ:', e?.stack || e?.message || e);
+        });
+        await ensureInterBranchEntries().catch((e) => {
+            console.warn('[BOOT] No se pudieron asegurar entradas inter-sucursal:', e?.message || e);
+        });
+        await seedFatimaProductsFromPilar().catch((e) => {
+            console.warn('[BOOT] Seed productos Fatima desde Pilar:', e?.message || e);
         });
         await connectRedisSafely();
     })
