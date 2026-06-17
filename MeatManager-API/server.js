@@ -8173,6 +8173,7 @@ function buildScaleTicketLookupSelect(schema) {
         schema.ticketScaleAddress ? 'scale_address' : 'NULL AS scale_address',
         schema.ticketStatus ? 'ticket_status' : "'open' AS ticket_status",
         'charged_sale_id',
+        'branch_id',
     ].join(', ');
 }
 

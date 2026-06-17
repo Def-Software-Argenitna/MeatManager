@@ -170,6 +170,7 @@ const Ventas = () => {
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
     const [ticketQuickAddForms, setTicketQuickAddForms] = useState({});
+    const [ticketPreviewBranchId, setTicketPreviewBranchId] = useState(null);
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
     const [promotions, setPromotions] = useState([]);
@@ -1208,6 +1209,7 @@ const Ventas = () => {
 
                 setTicketPreviewItems(previewItems);
                 setShowTicketPreview(true);
+                setTicketPreviewBranchId(payload?.ticket?.branch_id ?? null);
                 setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
                 setScannerError('');
                 playBeep();
@@ -3686,7 +3688,7 @@ const Ventas = () => {
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}>
+            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); setTicketPreviewBranchId(null); }}>
                 <div style={{
                     background: 'rgba(13, 18, 24, 0.98)',
                     border: '1px solid rgba(255,255,255,0.08)',
@@ -3705,9 +3707,23 @@ const Ventas = () => {
                                 {ticketPreviewItems.length} item(s) detectados · Revisá el estado antes de agregar al carrito
                             </p>
                         </div>
-                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}
+                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); setTicketPreviewBranchId(null); }}
                             style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1 }}>✕</button>
                     </div>
+
+                    {/* Aviso de sucursal cruzada */}
+                    {ticketPreviewBranchId != null && currentBranchId != null && Number(ticketPreviewBranchId) !== Number(currentBranchId) && (
+                        <div style={{
+                            padding: '0.75rem 1rem',
+                            background: 'rgba(245,158,11,0.1)',
+                            border: '1px solid rgba(245,158,11,0.4)',
+                            borderRadius: 'var(--radius-md)',
+                            fontSize: '0.82rem',
+                            color: '#f59e0b',
+                        }}>
+                            ⚠️ <strong>Este ticket fue generado en otra sucursal.</strong> Estás procesándolo en <strong>{activeBranch?.name || `sucursal ${currentBranchId}`}</strong> — los productos y precios que se van a aplicar son los de esta sucursal, no los del ticket original. Verificá que los artículos sean correctos antes de cobrar.
+                        </div>
+                    )}
 
                     {/* Lista de items */}
                     <div style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -3832,7 +3848,7 @@ const Ventas = () => {
                     {/* Botones de acción */}
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
                         <button
-                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}
+                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); setTicketPreviewBranchId(null); }}
                             style={{
                                 flex: 1, padding: '0.75rem',
                                 border: '1px solid var(--color-border)',
@@ -3847,6 +3863,7 @@ const Ventas = () => {
                                 toAdd.forEach(i => addToCart(buildCartProductFromPriceRecord(i.product, i.priceRecord), i.weight));
                                 setShowTicketPreview(false);
                                 setTicketQuickAddForms({});
+                                setTicketPreviewBranchId(null);
                                 if (toAdd.length < ticketPreviewItems.length) {
                                     setScannerError(`✅ ${toAdd.length} agregado(s). ${ticketPreviewItems.length - toAdd.length} no configurado(s) — revisá Stock.`);
                                     setTimeout(() => setScannerError(''), 4000);
