@@ -3,7 +3,7 @@ import { Search, Trash2, Banknote, ShoppingBag, Tag, Users, User, X, PackageX, P
 import { useNavigate, useLocation } from 'react-router-dom';
 import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
@@ -169,6 +169,7 @@ const Ventas = () => {
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
+    const [ticketQuickAddForms, setTicketQuickAddForms] = useState({});
     const [stockItems, setStockItems] = useState([]);
     const [productsCatalog, setProductsCatalog] = useState([]);
     const [promotions, setPromotions] = useState([]);
@@ -203,6 +204,7 @@ const Ventas = () => {
     const { hiddenDigitalPaymentFilterMode } = useHiddenDigitalPaymentFilter();
     useRenderLoopGuard('Ventas', { maxRenders: 70, windowMs: 1200 });
     const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const [activeScaleTicketBarcode, setActiveScaleTicketBarcode] = useState(null);
     const [pendingTicketBarcodes, setPendingTicketBarcodes] = useState([]);
     const [selectedCategoryId, setSelectedCategoryId] = useState(null);
@@ -991,6 +993,55 @@ const Ventas = () => {
     React.useEffect(() => {
         if (barcodeInputValue.trim().length > 0) setSelectedCategoryId(null);
     }, [barcodeInputValue]);
+
+    const handleTicketQuickAdd = async (idx, item) => {
+        const form = ticketQuickAddForms[idx] || {};
+        const name = String(form.name || '').trim();
+        const price = parseFloat(form.price);
+
+        if (!name) { showToast('⚠️ Ingresá el nombre del artículo.', 'warning'); return; }
+        if (!price || price <= 0) { showToast('⚠️ Ingresá un precio por kg válido.', 'warning'); return; }
+
+        setTicketQuickAddForms(prev => ({ ...prev, [idx]: { ...prev[idx], saving: true } }));
+
+        try {
+            const plu = String(item.plu || '').trim();
+            await ensureUnifiedProduct({
+                products: productsCatalog,
+                prices: [],
+                name,
+                category: 'OTROS',
+                unit: 'kg',
+                price,
+                plu,
+                source: 'ticket_quick_add',
+                branchId: currentBranchId,
+            });
+
+            const cartProduct = {
+                id: `plu:${plu}`,
+                name,
+                category: 'OTROS',
+                totalQuantity: 0,
+                unit: 'kg',
+                price,
+                plu,
+            };
+            addToCart(cartProduct, item.weight);
+
+            setTicketPreviewItems(prev => prev.map((it, i) => i !== idx ? it : {
+                ...it,
+                product: { ...cartProduct },
+                priceRecord: { price, plu },
+            }));
+            setTicketQuickAddForms(prev => { const n = { ...prev }; delete n[idx]; return n; });
+
+            refreshVentasData().catch(() => {});
+        } catch (error) {
+            showToast(`⚠️ ${error.message}`, 'warning');
+            setTicketQuickAddForms(prev => ({ ...prev, [idx]: { ...prev[idx], saving: false } }));
+        }
+    };
 
     const updatePrice = async (productId, priceVal, pluVal) => {
         const price = parseFloat(priceVal);
@@ -3635,7 +3686,7 @@ const Ventas = () => {
                 position: 'fixed', inset: 0, zIndex: 9999,
                 backgroundColor: 'rgba(0,0,0,0.75)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}>
+            }} onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}>
                 <div style={{
                     background: 'rgba(13, 18, 24, 0.98)',
                     border: '1px solid rgba(255,255,255,0.08)',
@@ -3654,7 +3705,7 @@ const Ventas = () => {
                                 {ticketPreviewItems.length} item(s) detectados · Revisá el estado antes de agregar al carrito
                             </p>
                         </div>
-                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
+                        <button onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}
                             style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer', fontSize: '1.4rem', lineHeight: 1 }}>✕</button>
                     </div>
 
@@ -3665,16 +3716,17 @@ const Ventas = () => {
                             const noStock = !notConfigured && item.product.totalQuantity <= 0;
                             const ok = !notConfigured && !noStock;
 
+                            const quickForm = ticketQuickAddForms[idx];
                             return (
                                 <div key={idx} style={{
-                                    display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                    display: 'flex', alignItems: notConfigured && quickForm?.open ? 'flex-start' : 'center', gap: '0.75rem',
                                     padding: '0.7rem 0.9rem',
                                     borderRadius: 'var(--radius-md)',
                                     border: `1px solid ${notConfigured ? '#ef4444' : noStock ? '#f59e0b' : 'var(--color-border)'}`,
                                     background: notConfigured ? 'rgba(239,68,68,0.05)' : noStock ? 'rgba(245,158,11,0.05)' : 'var(--color-bg-main)',
                                 }}>
                                     {/* Ícono de estado */}
-                                    <div style={{ flexShrink: 0 }}>
+                                    <div style={{ flexShrink: 0, paddingTop: notConfigured && quickForm?.open ? '0.15rem' : 0 }}>
                                         {notConfigured && <PackageX size={20} color="#ef4444" />}
                                         {noStock     && <AlertTriangle size={20} color="#f59e0b" />}
                                         {ok          && <PackageCheck size={20} color="#22c55e" />}
@@ -3693,6 +3745,46 @@ const Ventas = () => {
                                                     : `✅ Stock disponible: ${toNumber(item.product.totalQuantity).toFixed(3)} ${item.product.unit}`
                                             }
                                         </div>
+                                        {notConfigured && isAdmin && (
+                                            quickForm?.open ? (
+                                                <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                                                    <input
+                                                        placeholder="Nombre del artículo"
+                                                        value={quickForm.name || ''}
+                                                        onChange={e => setTicketQuickAddForms(prev => ({ ...prev, [idx]: { ...prev[idx], name: e.target.value } }))}
+                                                        style={{ padding: '0.35rem 0.5rem', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: 'var(--color-text-main)', fontSize: '0.82rem', width: '100%', boxSizing: 'border-box' }}
+                                                        autoFocus
+                                                    />
+                                                    <input
+                                                        placeholder="Precio por kg"
+                                                        type="number"
+                                                        min="0"
+                                                        value={quickForm.price || ''}
+                                                        onChange={e => setTicketQuickAddForms(prev => ({ ...prev, [idx]: { ...prev[idx], price: e.target.value } }))}
+                                                        onKeyDown={e => e.key === 'Enter' && handleTicketQuickAdd(idx, item)}
+                                                        style={{ padding: '0.35rem 0.5rem', borderRadius: 6, border: '1px solid rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.05)', color: 'var(--color-text-main)', fontSize: '0.82rem', width: '100%', boxSizing: 'border-box' }}
+                                                    />
+                                                    <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                                        <button
+                                                            onClick={() => handleTicketQuickAdd(idx, item)}
+                                                            disabled={quickForm.saving}
+                                                            style={{ flex: 1, padding: '0.35rem', background: '#22c55e', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: '700', fontSize: '0.78rem' }}
+                                                        >
+                                                            {quickForm.saving ? 'Guardando...' : '✓ Guardar y agregar'}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setTicketQuickAddForms(prev => { const n = { ...prev }; delete n[idx]; return n; })}
+                                                            style={{ padding: '0.35rem 0.6rem', background: 'transparent', color: 'var(--color-text-muted)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 6, cursor: 'pointer', fontSize: '0.78rem' }}
+                                                        >✕</button>
+                                                    </div>
+                                                </div>
+                                            ) : (
+                                                <button
+                                                    onClick={() => setTicketQuickAddForms(prev => ({ ...prev, [idx]: { open: true, name: '', price: '' } }))}
+                                                    style={{ marginTop: '0.4rem', padding: '0.25rem 0.65rem', background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, cursor: 'pointer', fontWeight: '700', fontSize: '0.75rem' }}
+                                                >+ Cargar precio y agregar</button>
+                                            )
+                                        )}
                                     </div>
 
                                     {/* Peso y precio */}
@@ -3740,7 +3832,7 @@ const Ventas = () => {
                     {/* Botones de acción */}
                     <div style={{ display: 'flex', gap: '0.75rem' }}>
                         <button
-                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); }}
+                            onClick={() => { setShowTicketPreview(false); setActiveScaleTicketBarcode(null); setTicketQuickAddForms({}); }}
                             style={{
                                 flex: 1, padding: '0.75rem',
                                 border: '1px solid var(--color-border)',
@@ -3754,6 +3846,7 @@ const Ventas = () => {
                                 const toAdd = ticketPreviewItems.filter(i => i.priceRecord && i.product);
                                 toAdd.forEach(i => addToCart(buildCartProductFromPriceRecord(i.product, i.priceRecord), i.weight));
                                 setShowTicketPreview(false);
+                                setTicketQuickAddForms({});
                                 if (toAdd.length < ticketPreviewItems.length) {
                                     setScannerError(`✅ ${toAdd.length} agregado(s). ${ticketPreviewItems.length - toAdd.length} no configurado(s) — revisá Stock.`);
                                     setTimeout(() => setScannerError(''), 4000);
