@@ -343,19 +343,7 @@ export const UserProvider = ({ children }) => {
         } else {
             sessionStorage.removeItem(ACTIVE_BRANCH_KEY);
         }
-
-        // Re-consultamos el perfil con el header de la sucursal recién elegida
-        // (X-MM-Active-Branch-Id) para que el backend recorte licencias/módulos
-        // a lo habilitado en ESA sucursal. Sin esto, cambiar de sucursal dejaba
-        // los módulos de la anterior hasta re-loguear (ej. ver Despostada en una
-        // sucursal que no la tiene licenciada). Best-effort: si falla, queda el
-        // cambio de sucursal local y se corrige en el próximo refresh.
-        fetchCurrentFirebaseUser()
-            .then((payload) => {
-                if (payload?.user) applyResolvedUser(payload.user);
-            })
-            .catch(() => { /* best effort */ });
-    }, [accessProfile?.clientId, applyResolvedUser]);
+    }, [accessProfile?.clientId]);
 
     const refreshClientBranches = useCallback(async () => {
         const data = await fetchClientBranches();
