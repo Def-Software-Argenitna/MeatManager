@@ -854,7 +854,14 @@ const ConfiguracionPromociones = () => {
                 setStatus({ type: 'ok', text: successText });
             }
         } catch (error) {
-            setStatus({ type: 'error', text: error.message || 'No se pudo guardar la promocion.' });
+            const msg = error.message || '';
+            const dupPlu = msg.includes('uniq_promotions_tenant_promo_plu')
+                ? (() => { const m = msg.match(/Duplicate entry '[\d]+-(\d+)'/); return m ? m[1] : null; })()
+                : null;
+            const friendlyMsg = dupPlu
+                ? `El código PLU ${dupPlu} ya está en uso por otra promoción. Elegí un código diferente.`
+                : msg || 'No se pudo guardar la promoción.';
+            setStatus({ type: 'error', text: friendlyMsg });
         } finally {
             setSaving(false);
         }
