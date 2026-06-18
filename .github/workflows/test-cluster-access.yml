@@ -1,0 +1,43 @@
+name: Test cluster access
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  smoke-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.5
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Show context
+        run: |
+          kubectl version --client
+          kubectl config view --minify | grep -E 'server|namespace'
+
+      - name: List pods in meatmanager-demo
+        run: kubectl get pods -n meatmanager-demo
+
+      - name: Show current deployed images
+        run: |
+          echo "API:"
+          kubectl get deployment/api -n meatmanager-demo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          echo "Web:"
+          kubectl get deployment/web -n meatmanager-demo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+      - name: Verify SA cannot touch other namespaces
+        run: |
+          if kubectl get pods -n default 2>&1 | grep -q Forbidden; then
+            echo "OK: SA correctamente restringida"
+          else
+            echo "ALERTA: la SA tiene mas perms"
+            exit 1
+          fi
