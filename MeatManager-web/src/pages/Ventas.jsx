@@ -1017,6 +1017,7 @@ const Ventas = () => {
                 plu,
                 source: 'ticket_quick_add',
                 branchId: currentBranchId,
+                promotions,
             });
 
             const cartProduct = {
@@ -1054,7 +1055,7 @@ const Ventas = () => {
         const product = products.find((item) => item.id === productId);
         if (product) {
             try {
-                assertUniqueProductPluLocal(productsCatalog, plu, product.productId);
+                assertUniqueProductPluLocal(productsCatalog, plu, product.productId, promotions);
                 await ensureUnifiedProduct({
                     products: productsCatalog,
                     prices: [],
@@ -1066,6 +1067,7 @@ const Ventas = () => {
                     plu,
                     source: 'ventas_manual',
                     branchId: currentBranchId,
+                    promotions,
                 });
             } catch (error) {
                 showToast(`⚠️ ${error.message}`, 'warning');

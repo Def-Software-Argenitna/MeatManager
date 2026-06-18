@@ -6234,14 +6234,57 @@ async function findProductByPlu(pool, tenantId, plu, excludeProductId = null, br
     }
 }
 
-async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
-    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId, branchId);
-    if (!conflict) return;
-
+async function findPromotionByPromoPlu(pool, tenantId, plu, branchId = null) {
     const normalizedPlu = normalizePluValue(plu);
-    const error = new Error(`El PLU ${normalizedPlu} ya esta asignado a "${conflict.name}" (producto ${conflict.id})`);
-    error.statusCode = 409;
-    throw error;
+    if (!normalizedPlu) return null;
+
+    const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
+    let sql = `SELECT id, promo_name, product_name, promo_plu
+               FROM promotions
+               WHERE tenant_id = ?
+                 AND COALESCE(active, 1) = 1
+                 AND (
+                    promo_plu = ?
+                    OR (promo_plu REGEXP '^[0-9]+$' AND CAST(promo_plu AS UNSIGNED) = ?)
+                 )`;
+    const normalizedBranchId = Number(branchId);
+    if (Number.isFinite(normalizedBranchId) && normalizedBranchId > 0) {
+        // Una promo con branch_id NULL aplica a todas las sucursales, asi que tambien colisiona.
+        sql += ' AND (branch_id = ? OR branch_id IS NULL)';
+        params.push(normalizedBranchId);
+    }
+    sql += ' ORDER BY id ASC LIMIT 1';
+
+    try {
+        const [rows] = await pool.query(sql, params);
+        return rows?.[0] || null;
+    } catch (error) {
+        // Si la tabla/columna de promos no existe en este tenant, no bloqueamos el alta de productos.
+        if (error?.code === 'ER_NO_SUCH_TABLE' || error?.code === 'ER_BAD_FIELD_ERROR') return null;
+        throw error;
+    }
+}
+
+async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = null, branchId = null) {
+    const normalizedPlu = normalizePluValue(plu);
+
+    const conflict = await findProductByPlu(pool, tenantId, plu, excludeProductId, branchId);
+    if (conflict) {
+        const error = new Error(`El PLU ${normalizedPlu} ya esta asignado a "${conflict.name}" (producto ${conflict.id})`);
+        error.statusCode = 409;
+        throw error;
+    }
+
+    // Un PLU de balanza es un slot unico: tampoco puede pisar el promo_plu de una
+    // promocion activa, porque eso deja el catalogo con PLUs duplicados y el bridge
+    // se niega a sincronizar (deja toda la balanza sin programar).
+    const promoConflict = await findPromotionByPromoPlu(pool, tenantId, plu, branchId);
+    if (promoConflict) {
+        const promoLabel = String(promoConflict.promo_name || promoConflict.product_name || '').trim();
+        const error = new Error(`El PLU ${normalizedPlu} ya lo usa la promocion "${promoLabel}" (promo ${promoConflict.id})`);
+        error.statusCode = 409;
+        throw error;
+    }
 }
 
 async function resolveProductRecordCategory(pool, tenantId, record) {
