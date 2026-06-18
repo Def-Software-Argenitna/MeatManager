@@ -1,7 +1,7 @@
 name: Test cluster access
 
 on:
-  workflow_dispatch: {}
+  workflow_dispatch: {}   # solo run manual desde la UI de GitHub
 
 jobs:
   smoke-test:
@@ -18,7 +18,7 @@ jobs:
           echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
           chmod 600 $HOME/.kube/config
 
-      - name: Show context
+      - name: Show kubectl version + cluster server
         run: |
           kubectl version --client
           kubectl config view --minify | grep -E 'server|namespace'
@@ -33,11 +33,11 @@ jobs:
           echo "Web:"
           kubectl get deployment/web -n meatmanager-demo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
 
-      - name: Verify SA cannot touch other namespaces
+      - name: Verify SA cannot touch other namespaces (debe FALLAR con Forbidden)
         run: |
           if kubectl get pods -n default 2>&1 | grep -q Forbidden; then
             echo "OK: SA correctamente restringida"
           else
-            echo "ALERTA: la SA tiene mas perms"
+            echo "ALERTA: la SA tiene mas perms de los que deberia"
             exit 1
           fi
