@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - dev
+  workflow_dispatch: {}
 
 permissions:
   contents: read
@@ -148,3 +149,64 @@ jobs:
           docker compose -f docker-compose.cloud.yml --env-file .env logs --tail=200 api-dev || true
           echo "=== Deploy debug: docker ps ==="
           docker ps -a || true
+
+  deploy-to-cluster:
+    name: Deploy to K3s cluster (homelab)
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    steps:
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.5
+
+      - name: Configure kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
+          chmod 600 $HOME/.kube/config
+
+      - name: Verify cluster access
+        run: |
+          kubectl version --client
+          kubectl get pods -n meatmanager-demo
+
+      - name: Update API image
+        run: |
+          kubectl set image deployment/api \
+            api=ghcr.io/def-software-argenitna/meatmanager-api:sha-${{ github.sha }} \
+            -n meatmanager-demo
+
+      - name: Update Web image
+        run: |
+          kubectl set image deployment/web \
+            web=ghcr.io/def-software-argenitna/meatmanager-web:sha-${{ github.sha }} \
+            -n meatmanager-demo
+
+      - name: Wait for API rollout
+        run: kubectl rollout status deployment/api -n meatmanager-demo --timeout=180s
+
+      - name: Wait for Web rollout
+        run: kubectl rollout status deployment/web -n meatmanager-demo --timeout=120s
+
+      - name: Show deployed images
+        run: |
+          echo "API:"
+          kubectl get deployment/api -n meatmanager-demo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          echo "Web:"
+          kubectl get deployment/web -n meatmanager-demo -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+
+      - name: Show cluster pod status
+        run: kubectl get pods -n meatmanager-demo
+
+      - name: Debug rollout failure
+        if: failure()
+        run: |
+          echo "=== events ==="
+          kubectl get events -n meatmanager-demo --sort-by='.lastTimestamp' | tail -20
+          echo "=== pods ==="
+          kubectl get pods -n meatmanager-demo
+          echo "=== api logs (last 100) ==="
+          kubectl logs deployment/api -n meatmanager-demo --tail=100 || true
+          echo "=== web logs (last 100) ==="
+          kubectl logs deployment/web -n meatmanager-demo --tail=100 || true
