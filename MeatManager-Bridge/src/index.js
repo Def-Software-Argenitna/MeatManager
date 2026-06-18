@@ -208,6 +208,37 @@ async function runProductSync(reason = 'on-demand') {
     }
 }
 
+async function runClearSalesMemory(reason = 'caja-opening') {
+    if (pulseRunning) return { ok: false, skipped: true, busy: true };
+    pulseRunning = true;
+    try {
+        // Captura cualquier ticket pendiente antes de limpiar.
+        const now = new Date();
+        const skewMs = Math.max(0, Number(config.salesResyncSkewMinutes || 0)) * 60 * 1000;
+        const from = (() => {
+            const initial = new Date(now);
+            if (state.lastTicketSyncAt) {
+                const last = new Date(state.lastTicketSyncAt);
+                if (!Number.isNaN(last.getTime())) {
+                    initial.setTime(last.getTime() - skewMs);
+                    return initial;
+                }
+            }
+            initial.setDate(initial.getDate() - config.salesLookbackDays);
+            return initial;
+        })();
+        await bridge.pullSales({ fromDate: from, toDate: now, closeAfter: false, pulse: false });
+        await bridge.flushSalesMemory();
+        logger.info('Memoria de ventas de balanza limpiada', { reason });
+        return { ok: true };
+    } catch (error) {
+        logger.warn('No se pudo limpiar memoria de ventas de balanza', { reason, error: error.message });
+        return { ok: false, error: error.message };
+    } finally {
+        pulseRunning = false;
+    }
+}
+
 async function processHeartbeatCommands(payload) {
     const commands = Array.isArray(payload?.commands) ? payload.commands : [];
     for (const command of commands) {
@@ -220,6 +251,16 @@ async function processHeartbeatCommands(payload) {
             const result = await runProductSync(`heartbeat-command:${seq}`);
             if (result.ok) {
                 state.lastProductSyncCommandSeq = seq;
+                stateStore.save(state);
+            }
+            continue;
+        }
+
+        if (type === 'clear_sales_memory') {
+            if (Number(state.lastClearSalesCommandSeq || 0) >= seq) continue;
+            const result = await runClearSalesMemory(`heartbeat-command:${seq}`);
+            if (result.ok) {
+                state.lastClearSalesCommandSeq = seq;
                 stateStore.save(state);
             }
             continue;
@@ -403,17 +444,11 @@ async function main() {
     if (config.salesPulseEnabled) {
         const scheduleSalesPulse = (delayMs = config.salesPulseIntervalMs) => {
             if (!schedulerActive) return;
-            // Piso 1000ms: pulsar mas rapido que esto satura el firmware y la
-            // balanza se pone lenta AL PESAR (E3 "se desatendieron datos").
-            const nextDelay = Math.max(1000, Number(delayMs) || 1000);
+            const nextDelay = Math.max(100, Number(delayMs) || 100);
             salesPulseTimer = setTimeout(async () => {
                 salesPulseTimer = null;
-                const pulse = await runSalesPulse('sales-pulse');
-                // Modo rafaga moderado: si acaba de entrar un ticket suelen
-                // venir mas (cola de clientes); acortamos el proximo pulso pero
-                // sin martillar el puerto serie mientras el operario pesa.
-                const newTickets = Number(pulse?.result?.newTickets || 0);
-                scheduleSalesPulse(newTickets > 0 ? 1500 : config.salesPulseIntervalMs);
+                await runSalesPulse('sales-pulse');
+                scheduleSalesPulse(config.salesPulseIntervalMs);
             }, nextDelay);
         };
         scheduleSalesPulse(config.salesPulseIntervalMs);

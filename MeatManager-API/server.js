@@ -168,6 +168,7 @@ const SCALE_BRIDGE_DIRECT_BASE_URL = String(process.env.SCALE_BRIDGE_DIRECT_BASE
 const SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS = Math.max(1000, Number.parseInt(process.env.SCALE_BRIDGE_PULL_SALES_TIMEOUT_MS || '6500', 10) || 6500);
 const SCALE_BRIDGE_PULL_LOOKBACK_MINUTES = Math.max(1, Number.parseInt(process.env.SCALE_BRIDGE_PULL_LOOKBACK_MINUTES || '45', 10) || 45);
 const SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY = 'scale_bridge_product_sync_seq';
+const SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY = 'scale_bridge_clear_sales_seq';
 const DEFAULT_OPERATIONAL_TENANT_ID = Number(process.env.DEFAULT_OPERATIONAL_TENANT_ID || 1);
 const TENANT_COLUMN = 'tenant_id';
 const STRICT_BRANCH_SCOPING = ['1', 'true', 'yes', 'on', 'si', 'sí'].includes(
@@ -250,6 +251,15 @@ async function queueScaleProductSync(pool, tenantId, reason) {
         [tenantId, SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY, String(seq)]
     );
     return { seq, reason };
+}
+
+async function queueScaleClearSales(pool, tenantId) {
+    const seq = Date.now();
+    await pool.query(
+        'INSERT INTO settings (`tenant_id`, `key`, value) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)',
+        [tenantId, SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY, String(seq)]
+    );
+    return { seq };
 }
 
 async function queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record, id }) {
@@ -7268,6 +7278,14 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
         }
 
         await conn.commit();
+
+        // Al abrir caja pedimos al bridge que limpie la memoria de ventas de la
+        // balanza: captura los tickets pendientes y manda fn32. Esto hace que
+        // las lecturas fn72 del dia arranquen livianas (solo lo del dia nuevo).
+        queueScaleClearSales(getOperationalPool(), tenantId).catch((e) =>
+            console.warn('[CAJA OPENING] No se pudo encolar limpieza de ventas de balanza:', e?.message || e)
+        );
+
         return res.json({ ok: true, count: cleanOpenings.length, branchId });
     } catch (error) {
         if (conn) await conn.rollback().catch(() => {});
@@ -12608,17 +12626,19 @@ app.post('/api/bridge/heartbeat', verifyBridgeDeviceToken, async (req, res) => {
         // settings; el bridge ejecuta cuando ve un seq mayor al que persistio.
         const commandKeys = [
             SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+            SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY,
             'scale_bridge_restart_seq',
             'scale_bridge_restart_app_seq',
             'scale_bridge_apply_update_seq',
         ];
         const [rows] = await pool.query(
-            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` IN (?, ?, ?, ?)',
+            'SELECT `key`, value FROM settings WHERE `tenant_id` = ? AND `key` IN (?, ?, ?, ?, ?)',
             [req.bridge.tenantId, ...commandKeys]
         );
         const byKey = Object.fromEntries(rows.map((r) => [String(r.key), Number(r.value || 0) || 0]));
         const commands = [];
         if (byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] > 0) commands.push({ type: 'sync_products', seq: byKey[SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY] });
+        if (byKey[SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY] > 0) commands.push({ type: 'clear_sales_memory', seq: byKey[SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY] });
         if (byKey.scale_bridge_restart_seq > 0) commands.push({ type: 'restart_bridge', seq: byKey.scale_bridge_restart_seq });
         if (byKey.scale_bridge_restart_app_seq > 0) commands.push({ type: 'restart_app', seq: byKey.scale_bridge_restart_app_seq });
         if (byKey.scale_bridge_apply_update_seq > 0) commands.push({ type: 'apply_update', seq: byKey.scale_bridge_apply_update_seq });
@@ -12700,6 +12720,7 @@ app.post('/api/scale/bridge/command', verifyFirebaseToken, async (req, res) => {
             restart_app: 'scale_bridge_restart_app_seq',
             apply_update: 'scale_bridge_apply_update_seq',
             sync_products: SCALE_BRIDGE_PRODUCT_SYNC_SEQ_KEY,
+            clear_sales_memory: SCALE_BRIDGE_CLEAR_SALES_SEQ_KEY,
         };
         const key = keyByType[type];
         if (!key) return res.status(400).json({ error: `Tipo de comando invalido: ${type}` });

@@ -1341,8 +1341,7 @@ class ScaleBridge {
             const pruneChanged = Object.keys(prunedFingerprints).length
                 !== Object.keys(this.state.knownTicketFingerprints || {}).length;
             this.state.knownTicketFingerprints = prunedFingerprints;
-            // state.json se escribe sincronicamente; con pulsos cada ~0.5s solo
-            // grabamos cuando algo cambio de verdad.
+            // state.json se escribe sincronicamente; solo grabamos cuando algo cambio de verdad.
             if (ticketsToSend.length > 0 || pruneChanged) {
                 this.stateStore.save(this.state);
             }
@@ -1389,6 +1388,18 @@ class ScaleBridge {
             });
         }
         return result;
+    }
+
+    async flushSalesMemory() {
+        const close = await this.scale.send(32, '', {
+            timeoutMs: 60000,
+            expectAckAfterInit: true,
+            ackTimeoutMs: 30000,
+        });
+        if (String(close.data || '').startsWith('E')) {
+            throw new Error(`Error al limpiar memoria de ventas: ${close.data}`);
+        }
+        return { ok: true };
     }
 
     async consolidatePluCatalogOnStartup() {

@@ -116,13 +116,11 @@ const config = {
     syncIntervalMs: intEnv('SYNC_INTERVAL_MS', 15000),
     autoGeneralSyncEnabled: boolEnv('AUTO_GENERAL_SYNC_ENABLED', false),
     salesPulseEnabled: boolEnv('SALES_PULSE_ENABLED', true),
-    // Gap entre pulsos de ventas. OJO: el pesaje tiene PRIORIDAD sobre la
-    // sincronizacion. Con 500ms (2 consultas/seg) el firmware CUORA MAX S0060
-    // se saturaba y la balanza respondia lenta AL PESAR — el cliente lo sufrio
-    // en mostrador, y el protocolo lo confirma con errores E3 ("se
-    // desatendieron datos"). 2500ms deja la balanza fluida; la deteccion del
-    // ticket queda en ~3-4s y la ventana de reintentos del lookup en la API
-    // (15s) cubre el escaneo del cajero sin "ticket no encontrado".
+    // Gap entre pulsos de ventas (despues de que fn72 responde). El proximo
+    // setTimeout se agenda DESPUES de que el pulso anterior completa, asi que
+    // el periodo real es: tiempo_fn72 + salesPulseIntervalMs. Con 2500ms y una
+    // balanza que responde en ~200-300ms el periodo efectivo ronda ~2.7s.
+    // Configurable via SALES_PULSE_INTERVAL_MS o config-overrides.json.
     salesPulseIntervalMs: intEnv('SALES_PULSE_INTERVAL_MS', 2500),
     // El heartbeat es el canal de "demanda": el sistema encola cambios (vendedores,
     // settings, productos) y el bridge los descubre aca. 5s acota la espera entre
