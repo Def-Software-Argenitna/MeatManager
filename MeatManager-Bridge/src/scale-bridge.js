@@ -1379,6 +1379,11 @@ class ScaleBridge {
             stored,
             tickets: tickets.size,
             newTickets: ticketsToSend.length,
+            // Lectura truncada por el serial (la balanza tenia mas registros de
+            // los que pudimos parsear). Quien quiera vaciar la balanza despues
+            // de leer DEBE respetar esto: cerrar tras una lectura parcial pierde
+            // los registros no leidos. Ver flushSalesMemory / runClearSalesMemory.
+            partialRead,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
         if (trace || ticketsToSend.length > 0) {
