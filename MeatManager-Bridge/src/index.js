@@ -227,9 +227,25 @@ async function runClearSalesMemory(reason = 'caja-opening') {
             initial.setDate(initial.getDate() - config.salesLookbackDays);
             return initial;
         })();
-        await bridge.pullSales({ fromDate: from, toDate: now, closeAfter: false, pulse: false });
+        const pull = await bridge.pullSales({ fromDate: from, toDate: now, closeAfter: false, pulse: false });
+        // Solo vaciamos la balanza si la lectura salio COMPLETA. Con firmware que
+        // ignora el filtro de fecha (CUORA MAX S0060) la fn72 devuelve toda la
+        // memoria y se trunca por el serial (partialRead): si en ese caso
+        // mandamos fn32 igual, borramos ventas que no alcanzamos a leer/subir.
+        // Saltear el flush no pierde nada — el pulso normal reintenta la lectura
+        // y un proximo ciclo completo limpia la balanza.
+        if (!pull || pull.ok !== true || pull.partialRead) {
+            logger.warn('No se vacia la memoria de balanza: lectura incompleta, se reintenta luego', {
+                reason,
+                ok: pull?.ok,
+                partialRead: pull?.partialRead,
+                fetched: pull?.fetched,
+                stored: pull?.stored,
+            });
+            return { ok: false, skipped: true, partialRead: !!pull?.partialRead };
+        }
         await bridge.flushSalesMemory();
-        logger.info('Memoria de ventas de balanza limpiada', { reason });
+        logger.info('Memoria de ventas de balanza limpiada', { reason, fetched: pull.fetched, stored: pull.stored });
         return { ok: true };
     } catch (error) {
         logger.warn('No se pudo limpiar memoria de ventas de balanza', { reason, error: error.message });
