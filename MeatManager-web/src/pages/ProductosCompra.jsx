@@ -3,7 +3,7 @@ import { Plus, Search, Edit2, Trash2, ShieldCheck, ChevronDown, ChevronRight } f
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
-import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, findProductByPlu, findPromotionByPlu } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useUser } from '../context/UserContext';
 import { Button, Modal, EmptyState, useToast } from '../components/ui';
@@ -36,21 +36,24 @@ const ProductosCompra = () => {
     const [editingItem, setEditingItem] = useState(null);
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
+    const [promotions, setPromotions] = useState([]);
     const [categories, setCategories] = useState([]);
     const [saleCategories, setSaleCategories] = useState([]);
     const [collapsedGroups, setCollapsedGroups] = useState({});
 
     const loadData = React.useCallback(async () => {
-        const [itemsRows, productRows, categoriesRows, saleCategoriesRows] = await Promise.all([
+        const [itemsRows, productRows, categoriesRows, saleCategoriesRows, promotionRows] = await Promise.all([
             fetchTable('purchase_items'),
             fetchProductsSafe(),
             fetchTable('categories'),
             fetchTable('product_categories'),
+            fetchTable('promotions', { limit: 5000 }).catch(() => []),
         ]);
         setItems(Array.isArray(itemsRows) ? itemsRows : []);
         setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
         setSaleCategories(Array.isArray(saleCategoriesRows) ? saleCategoriesRows : []);
+        setPromotions(Array.isArray(promotionRows) ? promotionRows : []);
     }, []);
 
     useEffect(() => {
@@ -113,6 +116,19 @@ const ProductosCompra = () => {
         return existingPlus.length > 0 ? Math.max(...existingPlus) + 1 : 1;
     }, [products]);
 
+    // Aviso en vivo: si el PLU tipeado ya lo usa otro producto o una promo, lo
+    // marcamos inline bajo el campo (no esperamos al guardado / toast).
+    const pluConflict = React.useMemo(() => {
+        const plu = String(formData.sale_plu || '').trim();
+        if (!plu) return null;
+        const excludeId = editingItem?.product_id || null;
+        const product = findProductByPlu(products, plu, excludeId);
+        if (product) return { kind: 'producto', name: product.name };
+        const promo = findPromotionByPlu(promotions, plu);
+        if (promo) return { kind: 'promo', name: promo.promo_name || promo.product_name };
+        return null;
+    }, [formData.sale_plu, products, promotions, editingItem]);
+
     useEffect(() => {
         if (!saleCategoryOptions.length) return;
         const selectedKey = String(formData.sale_category || '').trim().toLowerCase().replace(/-/g, '_');
@@ -155,7 +171,8 @@ const ProductosCompra = () => {
             assertUniqueProductPluLocal(
                 products,
                 requestedPlu,
-                editingItem?.product_id || existingProductCandidate?.id || null
+                editingItem?.product_id || existingProductCandidate?.id || null,
+                promotions
             );
         } catch (error) {
             toast.warning(`⚠️ ${error.message}`);
@@ -206,6 +223,7 @@ const ProductosCompra = () => {
             price: salePrice,
             plu: requestedPlu,
             source: 'catalogo_compra',
+            promotions,
             preferredProductId: editingItem?.product_id || existingProductCandidate?.id || null,
             branchId: currentBranchId,
             useForDespostada: formData.use_for_despostada,
@@ -721,8 +739,13 @@ const ProductosCompra = () => {
                                             required
                                             value={formData.sale_plu}
                                             onChange={e => setFormData({ ...formData, sale_plu: e.target.value })}
+                                            style={pluConflict ? { borderColor: 'var(--color-danger, #d92d20)' } : undefined}
                                         />
-                                        {!editingItem && (
+                                        {pluConflict ? (
+                                            <div style={{ fontSize: '0.72rem', color: 'var(--color-danger, #d92d20)', marginTop: '0.35rem', fontWeight: 600 }}>
+                                                ⚠️ El PLU {String(formData.sale_plu).trim()} ya lo usa {pluConflict.kind === 'promo' ? 'la promoción' : 'el producto'} "{pluConflict.name}". Elegí otro.
+                                            </div>
+                                        ) : !editingItem && (
                                             <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
                                                 Sugerido ({nextSuggestedPlu}) — podés cambiarlo
                                             </div>
@@ -748,7 +771,7 @@ const ProductosCompra = () => {
 
                             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '1rem' }}>
                                 <Button variant="secondary" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
-                                <Button variant="primary" type="submit" disabled={isSaving}>{isSaving ? 'Guardando...' : 'Guardar'}</Button>
+                                <Button variant="primary" type="submit" disabled={isSaving || !!pluConflict}>{isSaving ? 'Guardando...' : 'Guardar'}</Button>
                             </div>
                 </form>
             </Modal>
