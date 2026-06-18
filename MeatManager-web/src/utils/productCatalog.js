@@ -66,11 +66,30 @@ export const findProductByPlu = (products, plu, excludeProductId = null) => {
         }) || null;
 };
 
-export const assertUniqueProductPluLocal = (products, plu, excludeProductId = null) => {
-    const conflict = findProductByPlu(products, plu, excludeProductId);
-    if (!conflict) return null;
+export const findPromotionByPlu = (promotions, plu) => {
+    const normalizedPlu = normalizePlu(plu);
+    if (!normalizedPlu) return null;
 
-    throw new Error(`El PLU ${normalizePlu(plu)} ya esta usado por "${conflict.name}".`);
+    return (Array.isArray(promotions) ? promotions : [])
+        .find((promo) => {
+            if (Number(promo?.active ?? 1) === 0) return false;
+            return normalizePlu(promo?.promo_plu) === normalizedPlu;
+        }) || null;
+};
+
+export const assertUniqueProductPluLocal = (products, plu, excludeProductId = null, promotions = []) => {
+    const conflict = findProductByPlu(products, plu, excludeProductId);
+    if (conflict) {
+        throw new Error(`El PLU ${normalizePlu(plu)} ya esta usado por "${conflict.name}".`);
+    }
+
+    const promoConflict = findPromotionByPlu(promotions, plu);
+    if (promoConflict) {
+        const promoLabel = String(promoConflict.promo_name || promoConflict.product_name || '').trim();
+        throw new Error(`El PLU ${normalizePlu(plu)} ya lo usa la promocion "${promoLabel}". Elegi otro PLU.`);
+    }
+
+    return null;
 };
 
 export const findLegacyPriceRecord = (prices, name, category) => {
@@ -183,6 +202,7 @@ export const ensureUnifiedProduct = async ({
     branchId = null,
     useForDespostada = null,
     despostadaSpecies = null,
+    promotions = [],
     resolveConflict = promptPriceConflictResolution,
 }) => {
     const trimmedName = String(name || '').trim();
@@ -191,7 +211,7 @@ export const ensureUnifiedProduct = async ({
     const incomingPrice = toNumber(price);
     const trimmedPlu = normalizePlu(plu);
 
-    assertUniqueProductPluLocal(products, trimmedPlu, preferredProductId);
+    assertUniqueProductPluLocal(products, trimmedPlu, preferredProductId, promotions);
     const canonicalKey = buildProductCanonicalKey(trimmedName);
 
     let existingProduct = findProductByIdentity(products, {
