@@ -8,7 +8,7 @@ import { formatPrice } from '../utils/priceFormat';
 import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
-import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, findProductByPlu, findPromotionByPlu, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
@@ -1044,6 +1044,20 @@ const Ventas = () => {
             setTicketQuickAddForms(prev => ({ ...prev, [idx]: { ...prev[idx], saving: false } }));
         }
     };
+
+    // Aviso en vivo del modal de precio/PLU: si el PLU tipeado ya lo usa otro
+    // producto o una promo, lo marcamos inline (no toast, no molesta el cobro).
+    const newPluConflict = React.useMemo(() => {
+        const plu = String(newPlu || '').trim();
+        if (!plu || editingPriceId == null) return null;
+        const editingProduct = products.find((p) => p.id === editingPriceId);
+        const excludeId = editingProduct?.productId || null;
+        const product = findProductByPlu(productsCatalog, plu, excludeId);
+        if (product) return { kind: 'producto', name: product.name };
+        const promo = findPromotionByPlu(promotions, plu);
+        if (promo) return { kind: 'promo', name: promo.promo_name || promo.product_name };
+        return null;
+    }, [newPlu, editingPriceId, products, productsCatalog, promotions]);
 
     const updatePrice = async (productId, priceVal, pluVal) => {
         const price = parseFloat(priceVal);
@@ -3281,7 +3295,7 @@ const Ventas = () => {
                                         }}
                                         onKeyDown={(e) => {
                                             if (e.key === 'Enter') {
-                                                updatePrice(editingPriceId, newPrice, newPlu);
+                                                if (!newPluConflict) updatePrice(editingPriceId, newPrice, newPlu);
                                             } else if (e.key === 'Escape') {
                                                 setEditingPriceId(null);
                                             }
@@ -3316,11 +3330,16 @@ const Ventas = () => {
                                         padding: '0.75rem 1rem',
                                         fontSize: '1.1rem',
                                         background: 'var(--color-bg-main)',
-                                        border: '1px solid var(--color-border)',
+                                        border: `1px solid ${newPluConflict ? 'var(--color-danger, #d92d20)' : 'var(--color-border)'}`,
                                         borderRadius: 'var(--radius-md)',
                                         color: 'var(--color-text-main)'
                                     }}
                                 />
+                                {newPluConflict && (
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--color-danger, #d92d20)', marginTop: '0.35rem', fontWeight: 600 }}>
+                                        ⚠️ El PLU {String(newPlu).trim()} ya lo usa {newPluConflict.kind === 'promo' ? 'la promoción' : 'el producto'} "{newPluConflict.name}". Elegí otro.
+                                    </div>
+                                )}
                             </div>
                         </div>
 
@@ -3341,13 +3360,16 @@ const Ventas = () => {
                                 Cancelar
                             </button>
                             <button
-                                onClick={() => updatePrice(editingPriceId, newPrice, newPlu)}
+                                onClick={() => { if (!newPluConflict) updatePrice(editingPriceId, newPrice, newPlu); }}
+                                disabled={!!newPluConflict}
                                 className="neo-button"
                                 style={{
                                     flex: 1,
                                     padding: '1rem',
                                     fontSize: '1rem',
-                                    fontWeight: '800'
+                                    fontWeight: '800',
+                                    opacity: newPluConflict ? 0.5 : 1,
+                                    cursor: newPluConflict ? 'not-allowed' : 'pointer'
                                 }}
                             >
                                 Guardar Precio
