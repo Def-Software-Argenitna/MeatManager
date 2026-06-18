@@ -25,6 +25,14 @@ const isCurrentAccountPurchase = (purchase) => (
     Boolean(purchase?.is_account)
     || ['cta_cte', 'cuenta corriente'].includes(normalizeText(purchase?.payment_method))
 );
+const isCashPaymentMethod = (method) => (
+    normalizeText(method?.type) === 'cash'
+    || normalizeText(method?.name) === 'efectivo'
+);
+const formatCurrency = (value) => `$${Number(value || 0).toLocaleString('es-AR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+})}`;
 
 const Proveedores = () => {
     const toast = useToast();
@@ -47,6 +55,7 @@ const Proveedores = () => {
         description: '',
         date: new Date().toISOString().slice(0, 10),
         cash_account: 'principal',
+        payment_mode: 'full',
     });
     const [supplierPaymentSplits, setSupplierPaymentSplits] = useState([]);
 
@@ -237,13 +246,16 @@ const Proveedores = () => {
 
     const openPayment = (supplier) => {
         const defaultMethod = supplierPaymentMethods.find((method) => !isMixedPaymentMethod(method)) || supplierPaymentMethods[0];
+        const rows = getSupplierLedger(supplier.name);
+        const currentDebt = Math.max(0, Number(rows[rows.length - 1]?.balance || 0));
         setPaymentSupplier(supplier);
         setPaymentForm({
-            amount: '',
+            amount: currentDebt > 0 ? String(currentDebt) : '',
             payment_method: defaultMethod?.name || '',
             description: '',
             date: new Date().toISOString().slice(0, 10),
             cash_account: 'principal',
+            payment_mode: 'full',
         });
         setSupplierPaymentSplits([]);
         setShowPaymentModal(true);
@@ -251,10 +263,23 @@ const Proveedores = () => {
 
     const seedSupplierSplitPayments = React.useCallback((amountValue = paymentForm.amount) => {
         const defaultMethod = splitPaymentMethods.find((method) => method.type === 'cash') || splitPaymentMethods[0];
-        setSupplierPaymentSplits(defaultMethod ? [{
-            methodName: defaultMethod.name,
-            amount: amountValue ? String(amountValue) : '',
-        }] : []);
+        const secondMethod = splitPaymentMethods.find((method) => method.name !== defaultMethod?.name) || defaultMethod;
+        const rows = [];
+        if (defaultMethod) {
+            rows.push({
+                methodName: defaultMethod.name,
+                amount: '',
+                cash_account: 'principal',
+            });
+        }
+        if (secondMethod) {
+            rows.push({
+                methodName: secondMethod.name,
+                amount: rows.length === 0 && amountValue ? String(amountValue) : '',
+                cash_account: 'principal',
+            });
+        }
+        setSupplierPaymentSplits(rows);
     }, [paymentForm.amount, splitPaymentMethods]);
 
     const updateSupplierSplit = (index, field, value) => {
@@ -266,7 +291,7 @@ const Proveedores = () => {
     const addSupplierSplit = () => {
         const defaultMethod = splitPaymentMethods.find((method) => method.type === 'cash') || splitPaymentMethods[0];
         if (!defaultMethod) return;
-        setSupplierPaymentSplits((prev) => [...prev, { methodName: defaultMethod.name, amount: '' }]);
+        setSupplierPaymentSplits((prev) => [...prev, { methodName: defaultMethod.name, amount: '', cash_account: 'principal' }]);
     };
 
     const removeSupplierSplit = (index) => {
@@ -312,6 +337,12 @@ const Proveedores = () => {
         });
     }, [getSupplierLedger]);
 
+    const paymentSupplierDebt = useMemo(() => {
+        if (!paymentSupplier) return 0;
+        const rows = getSupplierLedger(paymentSupplier.name);
+        return Math.max(0, Number(rows[rows.length - 1]?.balance || 0));
+    }, [getSupplierLedger, paymentSupplier]);
+
     const handleRegisterPayment = async (e) => {
         e.preventDefault();
         const amount = Number(paymentForm.amount || 0);
@@ -337,9 +368,10 @@ const Proveedores = () => {
                 return {
                     method,
                     amount: Number(row.amount || 0),
+                    cashAccount: row.cash_account || 'principal',
                 };
             }).filter((row) => row.method && Number.isFinite(row.amount) && row.amount > 0)
-            : [{ method: selectedMethod, amount }];
+            : [{ method: selectedMethod, amount, cashAccount }];
 
         if (isMixedPaymentMethod(selectedMethod)) {
             const total = rowsToSave.reduce((sum, row) => sum + row.amount, 0);
@@ -372,7 +404,7 @@ const Proveedores = () => {
                 supplier: supplierName,
                 payment_method: row.method?.name || 'Efectivo',
                 payment_method_type: row.method?.type || 'cash',
-                cash_account: cashAccount,
+                cash_account: isCashPaymentMethod(row.method) ? (row.cashAccount || cashAccount) : cashAccount,
                 date: paymentDate,
             });
         }
@@ -749,15 +781,50 @@ const Proveedores = () => {
                 title={`Registrar Pago · ${paymentSupplier.name}`}
             >
                 <form onSubmit={handleRegisterPayment}>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                                <div style={{ padding: '1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div style={{ color: 'var(--color-text-muted)', fontSize: '0.82rem', marginBottom: '0.35rem' }}>Deuda total actual</div>
+                                    <div style={{ fontSize: '1.45rem', fontWeight: 800, color: paymentSupplierDebt > 0 ? '#ef4444' : '#22c55e' }}>
+                                        {formatCurrency(paymentSupplierDebt)}
+                                    </div>
+                                </div>
+                                <div style={{ padding: '1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
+                                    <div style={{ color: 'var(--color-text-muted)', fontSize: '0.82rem', marginBottom: '0.6rem' }}>Tipo de pago</div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem' }}>
+                                        <Button
+                                            type="button"
+                                            variant={paymentForm.payment_mode === 'full' ? 'primary' : 'secondary'}
+                                            onClick={() => {
+                                                const nextAmount = paymentSupplierDebt > 0 ? String(paymentSupplierDebt) : '';
+                                                setPaymentForm((prev) => ({ ...prev, payment_mode: 'full', amount: nextAmount }));
+                                                if (isMixedSupplierPayment) seedSupplierSplitPayments(nextAmount);
+                                            }}
+                                        >
+                                            Total
+                                        </Button>
+                                        <Button
+                                            type="button"
+                                            variant={paymentForm.payment_mode === 'partial' ? 'primary' : 'secondary'}
+                                            onClick={() => {
+                                                setPaymentForm((prev) => ({ ...prev, payment_mode: 'partial', amount: '' }));
+                                                if (isMixedSupplierPayment) seedSupplierSplitPayments('');
+                                            }}
+                                        >
+                                            Parcial
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
                             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
                                 <div>
-                                    <label style={{ display: 'block', marginBottom: '0.4rem' }}>Monto</label>
+                                    <label style={{ display: 'block', marginBottom: '0.4rem' }}>Monto a pagar</label>
                                     <input
                                         type="number"
                                         min="0"
                                         step="0.01"
                                         className="neo-input"
                                         value={paymentForm.amount}
+                                        disabled={paymentForm.payment_mode === 'full'}
                                         onChange={(e) => {
                                             const nextAmount = e.target.value;
                                             setPaymentForm((prev) => ({ ...prev, amount: nextAmount }));
@@ -800,6 +867,7 @@ const Proveedores = () => {
                                     ))}
                                 </select>
                             </div>
+                            {!isMixedSupplierPayment && isCashPaymentMethod(selectedPaymentMethod) && (
                             <div style={{ marginTop: '1rem' }}>
                                 <label style={{ display: 'block', marginBottom: '0.4rem' }}>Caja origen</label>
                                 <select
@@ -813,6 +881,7 @@ const Proveedores = () => {
                                     ))}
                                 </select>
                             </div>
+                            )}
                             {isMixedSupplierPayment && (
                                 <div style={{ marginTop: '1rem', padding: '1rem', border: '1px solid var(--color-border)', borderRadius: 'var(--radius-md)', background: 'rgba(255,255,255,0.03)' }}>
                                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
@@ -827,7 +896,7 @@ const Proveedores = () => {
                                         </Button>
                                     </div>
                                     {supplierPaymentSplits.map((row, index) => (
-                                        <div key={`${row.methodName}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: '0.6rem', alignItems: 'center', marginTop: '0.55rem' }}>
+                                        <div key={`${row.methodName}-${index}`} style={{ display: 'grid', gridTemplateColumns: '1fr 130px 150px auto', gap: '0.6rem', alignItems: 'center', marginTop: '0.55rem' }}>
                                             <select
                                                 className="neo-input"
                                                 value={row.methodName}
@@ -848,10 +917,24 @@ const Proveedores = () => {
                                                 placeholder="0.00"
                                                 required
                                             />
+                                            {isCashPaymentMethod(splitPaymentMethods.find((method) => method.name === row.methodName)) ? (
+                                                <select
+                                                    className="neo-input"
+                                                    value={row.cash_account || 'principal'}
+                                                    onChange={(e) => updateSupplierSplit(index, 'cash_account', e.target.value)}
+                                                    required
+                                                >
+                                                    {CASH_ACCOUNTS.map((cashbox) => (
+                                                        <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                                    ))}
+                                                </select>
+                                            ) : (
+                                                <div style={{ color: 'var(--color-text-muted)', fontSize: '0.82rem' }}>Sin caja</div>
+                                            )}
                                             <Button
                                                 variant="secondary"
                                                 onClick={() => removeSupplierSplit(index)}
-                                                disabled={supplierPaymentSplits.length === 1}
+                                                disabled={supplierPaymentSplits.length <= 2}
                                             >
                                                 Quitar
                                             </Button>

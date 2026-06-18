@@ -2895,6 +2895,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'scale_users', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureIndex(conn, 'scale_users', 'idx_scale_users_tenant_branch', `\`${TENANT_COLUMN}\`, branch_id`);
             await dropIndexIfExists(conn, 'scale_users', 'uniq_scale_users_tenant_slot');
+            await dropIndexIfExists(conn, 'scale_users', 'ux_scale_users_tenant_slot');
             try {
                 await conn.query(
                     `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_users
