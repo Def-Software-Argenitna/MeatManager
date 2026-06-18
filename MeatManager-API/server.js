@@ -6919,7 +6919,12 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
             '`date` IS NOT NULL',
             '`date` >= ?',
             '`date` <= ?',
-            '`clientId` IS NOT NULL',
+            `(
+                \`clientId\` IS NOT NULL
+                OR LOWER(TRIM(COALESCE(\`payment_method\`, ''))) = 'cuenta corriente'
+                OR COALESCE(\`payment_breakdown\`, '') LIKE '%cuenta_corriente%'
+                OR COALESCE(\`payment_breakdown\`, '') LIKE '%cuenta corriente%'
+            )`,
         ];
         const saleParams = [tenantId, start, end];
         if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
