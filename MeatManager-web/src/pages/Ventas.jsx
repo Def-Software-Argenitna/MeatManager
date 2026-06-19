@@ -1301,17 +1301,20 @@ const Ventas = () => {
                         return;
                     }
 
-                    // 404 = la balanza todavía no subió el ticket al servidor. El bridge
-                    // entrega la venta hasta ~40s después de imprimir (cadencia del pulso +
-                    // firmware), pero un solo lookup espera ~15s y tira 404. En vez de
-                    // mandar al operario al alta manual al primer intento (tener que pasar el
-                    // ticket 2-3 veces), esperamos activamente a que sincronice y lo cargamos
-                    // solo cuando llega. Recién si tras la ventana total no aparece caemos al
-                    // resolver offline. No toca el bridge: solo reintenta el lookup existente.
+                    // 404 = la balanza todavía no subió el ticket al servidor. Con el
+                    // modelo de acumular durante el día (la balanza se limpia 1 vez al
+                    // día, no tras cada venta), la lectura de la balanza se hace pesada y
+                    // el bridge puede tardar bastante en entregar la venta (se midieron
+                    // hasta ~52s en horario pico). En vez de mandar al operario al alta
+                    // manual al primer intento (tener que pasar el ticket 2-3 veces),
+                    // esperamos activamente a que sincronice y lo cargamos solo cuando
+                    // llega. La ventana cubre el peor caso medido con margen; recién si
+                    // tras ella no aparece (ej. bridge caído) caemos al resolver offline
+                    // como red de seguridad. No toca el bridge: solo reintenta el lookup.
                     setScannerError('');
                     setIsScaleSyncing(true);
                     try {
-                        const syncDeadline = Date.now() + 45000;
+                        const syncDeadline = Date.now() + 90000;
                         while (Date.now() < syncDeadline) {
                             setIsScaleSyncing(true); // loadBridge lo apaga en su finally; lo sostenemos
                             await new Promise((resolve) => setTimeout(resolve, 2000));
