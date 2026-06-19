@@ -107,6 +107,23 @@ export default function ConciliacionBalanzaTab() {
 
     useEffect(() => { if (subTab === 'anulados') buscarAnulados(); }, [subTab, buscarAnulados]);
 
+    // ── Auto-refresco ──────────────────────────────────────────────────────────
+    // Al volver a la ventana/pestaña (ej. tras cobrar en el POS), refresca la
+    // sub-tab activa para no depender de F5.
+    useEffect(() => {
+        const refresh = () => {
+            if (document.visibilityState !== 'visible') return;
+            if (subTab === 'anulados') buscarAnulados();
+            else buscar();
+        };
+        window.addEventListener('focus', refresh);
+        document.addEventListener('visibilitychange', refresh);
+        return () => {
+            window.removeEventListener('focus', refresh);
+            document.removeEventListener('visibilitychange', refresh);
+        };
+    }, [subTab, buscar, buscarAnulados]);
+
     // ── Anular tickets pendientes ──────────────────────────────────────────────
     const anularTickets = async (barcodes) => {
         const list = (Array.isArray(barcodes) ? barcodes : [barcodes]).filter(Boolean);
