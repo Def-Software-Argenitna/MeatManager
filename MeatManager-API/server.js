@@ -9485,13 +9485,19 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const saleId = ventaResult.insertId;
 
         if (ticketBarcodes.length > 0) {
+            // Marca cobrado matcheando por codigo interno (MM...) o por codigo impreso
+            // (escaneado en el resolver offline). Asi un ticket vendido offline tambien
+            // queda cobrado si ya sincronizo al momento del cobro.
+            const inList = ticketBarcodes.map(() => '?').join(',');
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged',
                      charged_sale_id = ?,
                      charged_at = NOW()
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
-                [saleId, tenantId, ...ticketBarcodes]
+                 WHERE tenant_id = ?
+                   AND (UPPER(ticket_barcode) IN (${inList})
+                        OR UPPER(printed_ticket_barcode) IN (${inList}))`,
+                [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes]
             );
         }
 
@@ -13035,6 +13041,19 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             FROM scale_bridge_ticket_map t
             WHERE t.tenant_id = ?
               AND t.ticket_status = 'open'
+              -- Excluir tickets que ya tienen una venta vinculada (cobrados, incluso
+              -- offline): se matchea por codigo interno o impreso. Un ticket nunca
+              -- vendido no tiene venta asociada, asi que nunca se oculta de mas.
+              AND NOT EXISTS (
+                  SELECT 1 FROM ventas v
+                  WHERE v.tenant_id = t.tenant_id
+                    AND v.ticket_barcode IS NOT NULL
+                    AND (
+                        UPPER(v.ticket_barcode) = UPPER(t.ticket_barcode)
+                        OR (t.printed_ticket_barcode IS NOT NULL
+                            AND UPPER(v.ticket_barcode) = UPPER(t.printed_ticket_barcode))
+                    )
+              )
               ${dateFilter}
             ORDER BY t.sale_at DESC
         `, params);

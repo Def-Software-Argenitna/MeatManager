@@ -1687,6 +1687,13 @@ const Ventas = () => {
         for (const line of offlineTicketLines) {
             await addToCart(line.product, line.quantity);
         }
+        // Vincular el codigo impreso del ticket a la venta, para que cuando la balanza
+        // sincronice ese ticket NO reaparezca como pendiente en conciliacion.
+        const printedBarcode = String(offlineTicket?.barcode || '').trim();
+        if (printedBarcode) {
+            setActiveScaleTicketBarcode(printedBarcode);
+            setPendingTicketBarcodes([]);
+        }
         showToast('Ticket offline resuelto con productos reales.', 'success');
         closeOfflineTicketResolver();
     };
