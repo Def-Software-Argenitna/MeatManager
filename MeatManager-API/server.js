@@ -8133,6 +8133,9 @@ async function ensureScaleTicketLifecycleColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_sale_id', '`voided_sale_id` BIGINT NULL AFTER `charged_at`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_by_user_id', '`voided_by_user_id` BIGINT NULL AFTER `voided_at`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_by_username', '`voided_by_username` VARCHAR(150) NULL AFTER `voided_by_user_id`');
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_reason', '`voided_reason` VARCHAR(255) NULL AFTER `voided_by_username`');
 }
 
 async function ensureScaleTicketItemColumns(conn) {
@@ -12912,6 +12915,78 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
     }
 });
 
+// ── RUTA: POST /api/conciliacion/balanza/anular ──────────────────────────
+// Anula tickets de balanza PENDIENTES (estado 'open') que nunca se cobraron.
+// No mueve plata ni stock — el ticket nunca generó venta. Solo cambia el estado
+// a 'voided' para que desaparezca del listado de pendientes y quede registrado.
+app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        conn = await pool.getConnection();
+        await ensureScaleTicketLifecycleColumns(conn);
+
+        const { ticket_barcode, ticket_barcodes, anulado_by_user_id, anulado_by_username, reason } = req.body;
+        const rawList = Array.isArray(ticket_barcodes) && ticket_barcodes.length > 0
+            ? ticket_barcodes
+            : (ticket_barcode ? [ticket_barcode] : []);
+        const barcodes = [...new Set(rawList.map(b => String(b).trim().toUpperCase()).filter(Boolean))];
+        if (barcodes.length === 0) {
+            return res.status(400).json({ error: 'ticket_barcode(s) es requerido' });
+        }
+
+        const userIdParsed = Number.parseInt(anulado_by_user_id, 10);
+        const voidedByUserId = Number.isFinite(userIdParsed) && userIdParsed > 0 ? userIdParsed : null;
+        const voidedByUsername = (anulado_by_username && String(anulado_by_username).trim()) || 'Sistema';
+        const voidedReason = (reason && String(reason).trim()) ? String(reason).trim().slice(0, 255) : null;
+
+        const anulados = [];
+        const skipped = [];
+
+        await conn.beginTransaction();
+        try {
+            for (const barcode of barcodes) {
+                const [[ticket]] = await conn.query(
+                    `SELECT ticket_status FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
+                    [tenantId, barcode]
+                );
+                if (!ticket) {
+                    skipped.push({ ticket_barcode: barcode, reason: 'no_encontrado' });
+                    continue;
+                }
+                if (String(ticket.ticket_status || '').toLowerCase() !== 'open') {
+                    skipped.push({ ticket_barcode: barcode, reason: `estado_${ticket.ticket_status}` });
+                    continue;
+                }
+                await conn.query(
+                    `UPDATE scale_bridge_ticket_map
+                     SET ticket_status = 'voided',
+                         voided_at = NOW(),
+                         voided_by_user_id = ?,
+                         voided_by_username = ?,
+                         voided_reason = ?
+                     WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? AND ticket_status = 'open'`,
+                    [voidedByUserId, voidedByUsername, voidedReason, tenantId, barcode]
+                );
+                anulados.push(barcode);
+            }
+            await conn.commit();
+        } catch (txErr) {
+            await conn.rollback();
+            throw txErr;
+        }
+
+        return res.json({ anulados, skipped });
+    } catch (err) {
+        console.error('[POST /api/conciliacion/balanza/anular ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ── RUTA: GET /api/conciliacion/balanza ───────────────────────────────────
 app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
     try {
@@ -13008,6 +13083,111 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
         return res.json({ tickets: tickets.map(t => ({ ...t, items: itemsByBarcode[t.ticket_barcode] || [] })) });
     } catch (err) {
         console.error('[GET /api/conciliacion/balanza ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: GET /api/conciliacion/balanza/anulados ──────────────────────────
+// Registro de tickets de balanza anulados (estado 'voided'). Filtra por fecha
+// de anulación (voided_at).
+app.get('/api/conciliacion/balanza/anulados', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const conn = await pool.getConnection();
+        try { await ensureScaleTicketLifecycleColumns(conn); } finally { conn.release(); }
+
+        const { dateFrom, dateTo } = req.query;
+        const params = [tenantId];
+        let dateFilter = '';
+        if (dateFrom && dateTo) {
+            dateFilter = ' AND DATE(t.voided_at) BETWEEN ? AND ?';
+            params.push(dateFrom, dateTo);
+        } else if (dateFrom) {
+            dateFilter = ' AND DATE(t.voided_at) >= ?';
+            params.push(dateFrom);
+        } else if (dateTo) {
+            dateFilter = ' AND DATE(t.voided_at) <= ?';
+            params.push(dateTo);
+        }
+
+        const [tickets] = await pool.query(`
+            SELECT
+                t.id,
+                t.ticket_barcode,
+                t.printed_ticket_barcode,
+                t.vendor_code,
+                t.vendor_name,
+                t.sale_at,
+                t.total_amount,
+                t.item_count,
+                t.ticket_status,
+                t.scale_address,
+                t.synced_at,
+                t.voided_at,
+                t.voided_by_username,
+                t.voided_reason
+            FROM scale_bridge_ticket_map t
+            WHERE t.tenant_id = ?
+              AND t.ticket_status = 'voided'
+              ${dateFilter}
+            ORDER BY t.voided_at DESC
+        `, params);
+
+        if (tickets.length === 0) return res.json({ tickets: [] });
+
+        const barcodes = tickets.map(t => t.ticket_barcode);
+        const [items] = await pool.query(`
+            SELECT
+                i.ticket_barcode,
+                i.line_no,
+                i.plu_code,
+                i.vendor_name,
+                i.grams,
+                i.drained_grams,
+                i.amount,
+                i.item_quantity,
+                i.item_quantity_unit,
+                i.sale_at,
+                COALESCE(
+                    (SELECT p.name FROM scale_bridge_product_map m
+                     JOIN products p ON p.id = m.product_id AND p.tenant_id = m.tenant_id
+                     WHERE m.tenant_id = i.tenant_id AND m.device_id = i.device_id
+                       AND CAST(m.plu_code AS CHAR) = CAST(i.plu_code AS CHAR)
+                     LIMIT 1),
+                    (SELECT p.name FROM products p
+                     WHERE p.tenant_id = i.tenant_id
+                       AND (
+                           CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                           OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
+                       )
+                     ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                     LIMIT 1)
+                ) AS product_name
+            FROM scale_bridge_sales_item i
+            WHERE i.tenant_id = ?
+              AND i.ticket_barcode IN (${barcodes.map(() => '?').join(',')})
+            ORDER BY i.ticket_barcode, i.line_no
+        `, [tenantId, ...barcodes]);
+
+        const itemsByBarcode = {};
+        for (const item of items) {
+            if (!itemsByBarcode[item.ticket_barcode]) itemsByBarcode[item.ticket_barcode] = [];
+            itemsByBarcode[item.ticket_barcode].push(item);
+        }
+        return res.json({ tickets: tickets.map(t => ({ ...t, items: itemsByBarcode[t.ticket_barcode] || [] })) });
+    } catch (err) {
+        console.error('[GET /api/conciliacion/balanza/anulados ERROR]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
