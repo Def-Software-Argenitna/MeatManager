@@ -1301,6 +1301,36 @@ const Ventas = () => {
                         return;
                     }
 
+                    // 404 = la balanza todavía no subió el ticket al servidor. El bridge
+                    // entrega la venta hasta ~40s después de imprimir (cadencia del pulso +
+                    // firmware), pero un solo lookup espera ~15s y tira 404. En vez de
+                    // mandar al operario al alta manual al primer intento (tener que pasar el
+                    // ticket 2-3 veces), esperamos activamente a que sincronice y lo cargamos
+                    // solo cuando llega. Recién si tras la ventana total no aparece caemos al
+                    // resolver offline. No toca el bridge: solo reintenta el lookup existente.
+                    setScannerError('');
+                    setIsScaleSyncing(true);
+                    try {
+                        const syncDeadline = Date.now() + 45000;
+                        while (Date.now() < syncDeadline) {
+                            setIsScaleSyncing(true); // loadBridge lo apaga en su finally; lo sostenemos
+                            await new Promise((resolve) => setTimeout(resolve, 2000));
+                            try {
+                                const loaded = await loadBridgeTicketFromBarcode(cleanData);
+                                if (loaded) return;
+                            } catch (retryError) {
+                                if (retryError?.status && retryError.status !== 404) {
+                                    setScannerError(`⚠️ ${retryError.message || 'No se pudo leer ticket de balanza'}`);
+                                    setTimeout(() => { if (!isEditingPriceRef.current) barcodeInputRef.current?.focus(); }, 50);
+                                    return;
+                                }
+                                // sigue 404: el bridge todavía no entregó el ticket → reintentar
+                            }
+                        }
+                    } finally {
+                        setIsScaleSyncing(false);
+                    }
+
                     // Fallback para balanzas offline ("no conectadas a red"):
                     // el código de barra contiene el TOTAL exacto de la compra.
                     // Formato: 22(pref) + XXXX(id) + TTTTTT(total en pesos) + C(check)
