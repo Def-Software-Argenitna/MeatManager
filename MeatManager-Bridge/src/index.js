@@ -228,24 +228,27 @@ async function runClearSalesMemory(reason = 'caja-opening') {
             return initial;
         })();
         const pull = await bridge.pullSales({ fromDate: from, toDate: now, closeAfter: false, pulse: false });
-        // Solo vaciamos la balanza si la lectura salio COMPLETA. Con firmware que
-        // ignora el filtro de fecha (CUORA MAX S0060) la fn72 devuelve toda la
-        // memoria y se trunca por el serial (partialRead): si en ese caso
-        // mandamos fn32 igual, borramos ventas que no alcanzamos a leer/subir.
-        // Saltear el flush no pierde nada — el pulso normal reintenta la lectura
-        // y un proximo ciclo completo limpia la balanza.
-        if (!pull || pull.ok !== true || pull.partialRead) {
-            logger.warn('No se vacia la memoria de balanza: lectura incompleta, se reintenta luego', {
+        // En modo acumular (closeSalesAfterPull=false) este es el UNICO vaciado de
+        // la balanza: la limpieza del nuevo dia al abrir caja. Las ventas del dia
+        // anterior YA se subieron al API en los pulsos, asi que vaciamos aunque
+        // esta lectura final sea parcial. Si no lo hicieramos, la balanza de
+        // Fatima (firmware que devuelve toda la memoria y trunca el serial =
+        // partialRead casi seguro con un dia acumulado) no se limpiaria NUNCA y
+        // creceria dia a dia. Solo no vaciamos si el pull fallo de entrada.
+        if (!pull || pull.ok !== true) {
+            logger.warn('No se vacia la memoria de balanza: el pull fallo, se reintenta luego', {
                 reason,
                 ok: pull?.ok,
-                partialRead: pull?.partialRead,
-                fetched: pull?.fetched,
-                stored: pull?.stored,
             });
-            return { ok: false, skipped: true, partialRead: !!pull?.partialRead };
+            return { ok: false, skipped: true };
         }
         await bridge.flushSalesMemory();
-        logger.info('Memoria de ventas de balanza limpiada', { reason, fetched: pull.fetched, stored: pull.stored });
+        logger.info('Memoria de ventas de balanza limpiada', {
+            reason,
+            fetched: pull.fetched,
+            stored: pull.stored,
+            partialRead: pull.partialRead,
+        });
         return { ok: true };
     } catch (error) {
         logger.warn('No se pudo limpiar memoria de ventas de balanza', { reason, error: error.message });
