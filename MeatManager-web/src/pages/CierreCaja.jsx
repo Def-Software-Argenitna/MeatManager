@@ -463,7 +463,7 @@ const CierreCaja = () => {
         const totals = {};
 
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = toNumber(summaryByMethod[method.name]?.dailyNet);
+            totals[method.name] = toNumber(summaryByMethod[method.name]?.accumulated);
         });
 
         return totals;
@@ -562,9 +562,9 @@ const CierreCaja = () => {
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalSalesIntoCashbox = totalSales - totalReversals;
 
-    // Neto de efectivo del período seleccionado: solo métodos cash activos
+    // Efectivo acumulado en caja: solo métodos cash activos
     const cashInDrawer = cashPaymentMethods.reduce(
-        (sum, method) => sum + toNumber(summaryByMethod[method.name]?.dailyNet), 0
+        (sum, method) => sum + toNumber(summaryByMethod[method.name]?.accumulated), 0
     );
 
     const cashBalanceExplanation = useMemo(() => {
@@ -825,7 +825,7 @@ const CierreCaja = () => {
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
                 <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
-                    <span className="label">Efectivo neto del período ({selectedCashAccountLabel})</span>
+                    <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
                     <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
                     <div className="cash-result-breakdown">
