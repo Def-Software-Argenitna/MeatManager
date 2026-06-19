@@ -5,7 +5,7 @@ import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
-import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode, anularConciliacionTickets } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, findProductByPlu, findPromotionByPlu, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
@@ -2576,10 +2576,41 @@ const Ventas = () => {
                         >
                             ELIMINAR TICKET
                         </Button>
-                        <Button variant="danger" onClick={() => {
+                        <Button variant="danger" onClick={async () => {
+                            const scaleBarcodes = pendingTicketBarcodes.length > 0
+                                ? pendingTicketBarcodes
+                                : (activeScaleTicketBarcode ? [activeScaleTicketBarcode] : []);
+
+                            // Ticket de balanza cargado → anularlo en el sistema (queda registrado)
+                            if (scaleBarcodes.length > 0) {
+                                if (!window.confirm('¿Anular este ticket de balanza? Quedará registrado como anulado y no se podrá cobrar.')) return;
+                                const reason = window.prompt('Motivo (opcional):', '') ?? '';
+                                try {
+                                    const data = await anularConciliacionTickets(scaleBarcodes, {
+                                        anulado_by_user_id: currentUser?.id ?? null,
+                                        anulado_by_username: currentUser?.username || 'Usuario desconocido',
+                                        reason: reason.trim() || null,
+                                    });
+                                    const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
+                                    setCart([]);
+                                    setActiveScaleTicketBarcode(null);
+                                    setPendingTicketBarcodes([]);
+                                    if (skipped > 0) {
+                                        showToast('Algunos tickets ya estaban cobrados o anulados.', 'warning');
+                                    } else {
+                                        showToast('✅ Ticket anulado y registrado.', 'success');
+                                    }
+                                } catch (e) {
+                                    showToast(e.message || 'No se pudo anular el ticket.', 'error');
+                                }
+                                return;
+                            }
+
+                            // Carrito normal sin ticket de balanza → solo descartar
                             if (window.confirm('¿Anular ticket?')) {
                                 setCart([]);
                                 setActiveScaleTicketBarcode(null);
+                                setPendingTicketBarcodes([]);
                             }
                         }}>ANULAR</Button>
                     </div>

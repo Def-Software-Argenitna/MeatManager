@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, CheckSquare, Square, ChevronRight, PlusCircle, Hash, CreditCard, CheckCircle2 } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, CheckSquare, Square, ChevronRight, PlusCircle, Hash, CreditCard, CheckCircle2, Ban } from 'lucide-react';
+import { apiFetch, anularConciliacionTickets } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
 import './ConciliacionBalanzaTab.css';
 
 const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
@@ -21,6 +22,7 @@ const apiFetchJson = async (path, options) => {
 
 export default function ConciliacionBalanzaTab() {
     const navigate = useNavigate();
+    const { currentUser } = useUser();
 
     // ── Listado ──────────────────────────────────────────────────────────────
     const [dateFrom, setDateFrom] = useState(todayStr);
@@ -34,6 +36,11 @@ export default function ConciliacionBalanzaTab() {
     const [sortField, setSortField] = useState('sale_at');
     const [sortDir, setSortDir] = useState('desc');
     const [filterText, setFilterText] = useState('');
+
+    // ── Anulados ─────────────────────────────────────────────────────────────
+    const [anulados, setAnulados] = useState([]);
+    const [anuladosLoading, setAnuladosLoading] = useState(false);
+    const [anulando, setAnulando] = useState(false);
 
     // ── Carga manual ─────────────────────────────────────────────────────────
     const [paymentMethods, setPaymentMethods] = useState([]);
@@ -80,6 +87,52 @@ export default function ConciliacionBalanzaTab() {
     }, [dateFrom, dateTo]);
 
     useEffect(() => { buscar(); }, []);
+
+    // ── Cargar anulados ───────────────────────────────────────────────────────
+    const buscarAnulados = useCallback(async () => {
+        setAnuladosLoading(true);
+        try {
+            const params = new URLSearchParams();
+            if (dateFrom) params.set('dateFrom', dateFrom);
+            if (dateTo) params.set('dateTo', dateTo);
+            const qs = params.toString() ? `?${params.toString()}` : '';
+            const data = await apiFetchJson(`/api/conciliacion/balanza/anulados${qs}`);
+            setAnulados(data.tickets || []);
+        } catch {
+            setAnulados([]);
+        } finally {
+            setAnuladosLoading(false);
+        }
+    }, [dateFrom, dateTo]);
+
+    useEffect(() => { if (subTab === 'anulados') buscarAnulados(); }, [subTab, buscarAnulados]);
+
+    // ── Anular tickets pendientes ──────────────────────────────────────────────
+    const anularTickets = async (barcodes) => {
+        const list = (Array.isArray(barcodes) ? barcodes : [barcodes]).filter(Boolean);
+        if (list.length === 0) return;
+        const plural = list.length > 1;
+        if (!window.confirm(`¿Anular ${list.length} ticket${plural ? 's' : ''}? No se cobrará${plural ? 'n' : ''} ni afectará${plural ? 'n' : ''} stock; quedará${plural ? 'n' : ''} registrado${plural ? 's' : ''} como anulado${plural ? 's' : ''}.`)) return;
+        const reason = window.prompt('Motivo (opcional):', '') ?? '';
+        setAnulando(true);
+        setError(null);
+        try {
+            const data = await anularConciliacionTickets(list, {
+                anulado_by_user_id: currentUser?.id ?? null,
+                anulado_by_username: currentUser?.username || 'Usuario desconocido',
+                reason: reason.trim() || null,
+            });
+            const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
+            setSelectedIds(new Set());
+            await buscar();
+            if (subTab === 'detalle') setSubTab('listado');
+            if (skipped > 0) setError(`${skipped} ticket(s) no se pudieron anular (ya cobrados o anulados).`);
+        } catch (e) {
+            setError(e.message || 'Error al anular el ticket');
+        } finally {
+            setAnulando(false);
+        }
+    };
 
     // ── Carga manual: buscar ticket por barcode ───────────────────────────────
     const buscarManual = async () => {
@@ -244,8 +297,15 @@ export default function ConciliacionBalanzaTab() {
                             <PlusCircle size={14} style={{ marginRight: '0.3rem' }} />
                             Carga Manual
                         </button>
+                        <button
+                            className={`concil-subtab ${subTab === 'anulados' ? 'active' : ''}`}
+                            onClick={() => setSubTab('anulados')}
+                        >
+                            <Ban size={14} style={{ marginRight: '0.3rem' }} />
+                            Anulados
+                        </button>
 
-                        {selectedIds.size > 0 && subTab !== 'manual' && (
+                        {selectedIds.size > 0 && subTab !== 'manual' && subTab !== 'anulados' && (
                             <div className="concil-actions">
                                 {selectedIds.size === 1 ? (
                                     <button
@@ -262,6 +322,13 @@ export default function ConciliacionBalanzaTab() {
                                         <ShoppingBag size={15} /> Combinar y cargar ({selectedIds.size})
                                     </button>
                                 )}
+                                <button
+                                    className="concil-action-btn danger"
+                                    onClick={() => anularTickets(selectedTickets.map(t => t.ticket_barcode))}
+                                    disabled={anulando}
+                                >
+                                    <Ban size={15} /> {anulando ? 'Anulando…' : `Anular (${selectedIds.size})`}
+                                </button>
                             </div>
                         )}
                     </div>
@@ -301,6 +368,7 @@ export default function ConciliacionBalanzaTab() {
                                                     <th onClick={() => handleSort('vendor_name')}><span className="concil-th-sort">Vendedor <SortIcon field="vendor_name" /></span></th>
                                                     <th style={{ width: '70px', textAlign: 'center' }} onClick={() => handleSort('item_count')}><span className="concil-th-sort" style={{ justifyContent: 'center' }}>Ítems <SortIcon field="item_count" /></span></th>
                                                     <th style={{ width: '120px', textAlign: 'right' }} onClick={() => handleSort('total_amount')}><span className="concil-th-sort" style={{ justifyContent: 'flex-end' }}>Importe <SortIcon field="total_amount" /></span></th>
+                                                    <th style={{ width: '44px' }}></th>
                                                     <th style={{ width: '36px' }}></th>
                                                 </tr>
                                             </thead>
@@ -321,6 +389,16 @@ export default function ConciliacionBalanzaTab() {
                                                         <td>{t.vendor_name || '—'}</td>
                                                         <td className="concil-cell-center">{t.item_count}</td>
                                                         <td className="concil-cell-amount">{fmt(t.total_amount)}</td>
+                                                        <td onClick={e => e.stopPropagation()}>
+                                                            <button
+                                                                className="concil-anular-btn"
+                                                                onClick={() => anularTickets([t.ticket_barcode])}
+                                                                disabled={anulando}
+                                                                title="Anular ticket"
+                                                            >
+                                                                <Ban size={15} />
+                                                            </button>
+                                                        </td>
                                                         <td onClick={e => e.stopPropagation()}>
                                                             <button
                                                                 className="concil-detail-btn"
@@ -350,12 +428,21 @@ export default function ConciliacionBalanzaTab() {
                                         {fmtDate(detailTicket.sale_at)} · {detailTicket.vendor_name || 'Sin vendedor'} · {detailTicket.item_count} ítem{detailTicket.item_count !== 1 ? 's' : ''}
                                     </div>
                                 </div>
-                                <button
-                                    className="concil-action-btn primary"
-                                    onClick={() => cargarAlPOS([detailTicket.ticket_barcode])}
-                                >
-                                    <ShoppingBag size={15} /> Cargar al POS
-                                </button>
+                                <div className="concil-actions">
+                                    <button
+                                        className="concil-action-btn primary"
+                                        onClick={() => cargarAlPOS([detailTicket.ticket_barcode])}
+                                    >
+                                        <ShoppingBag size={15} /> Cargar al POS
+                                    </button>
+                                    <button
+                                        className="concil-action-btn danger"
+                                        onClick={() => anularTickets([detailTicket.ticket_barcode])}
+                                        disabled={anulando}
+                                    >
+                                        <Ban size={15} /> {anulando ? 'Anulando…' : 'Anular'}
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="concil-detail-info">
@@ -551,6 +638,50 @@ export default function ConciliacionBalanzaTab() {
                                 </div>
                             )}
                         </div>
+                    )}
+
+                    {/* ── ANULADOS ───────────────────────────────────────────── */}
+                    {subTab === 'anulados' && (
+                        <>
+                            {anuladosLoading ? (
+                                <div className="concil-empty"><p>Cargando anulados…</p></div>
+                            ) : anulados.length === 0 ? (
+                                <div className="concil-empty">
+                                    <Ban size={40} style={{ opacity: 0.2 }} />
+                                    <p>No hay tickets anulados en el rango de fechas seleccionado.</p>
+                                </div>
+                            ) : (
+                                <>
+                                    <div className="concil-result-count">{anulados.length} anulado{anulados.length !== 1 ? 's' : ''}</div>
+                                    <div className="concil-table-wrap">
+                                        <table className="concil-table">
+                                            <thead>
+                                                <tr>
+                                                    <th style={{ width: '140px' }}>Anulado</th>
+                                                    <th style={{ width: '140px' }}>Ticket</th>
+                                                    <th>Vendedor</th>
+                                                    <th style={{ width: '120px', textAlign: 'right' }}>Importe</th>
+                                                    <th>Motivo</th>
+                                                    <th style={{ width: '140px' }}>Anulado por</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {anulados.map(t => (
+                                                    <tr key={t.id}>
+                                                        <td className="concil-cell-date">{fmtDate(t.voided_at)}</td>
+                                                        <td className="concil-cell-ticket">{t.printed_ticket_barcode || t.ticket_barcode?.slice(-10)}</td>
+                                                        <td>{t.vendor_name || '—'}</td>
+                                                        <td className="concil-cell-amount">{fmt(t.total_amount)}</td>
+                                                        <td>{t.voided_reason || '—'}</td>
+                                                        <td>{t.voided_by_username || '—'}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                </>
+                            )}
+                        </>
                     )}
                 </>
             )}

@@ -392,6 +392,40 @@
     padding: 0.2rem 0.6rem;
 }
 
+.concil-badge.voided {
+    background: rgba(148,163,184,0.12);
+    border: 1px solid rgba(148,163,184,0.3);
+    border-radius: 999px;
+    color: #cbd5e1;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    padding: 0.2rem 0.6rem;
+}
+
+/* Botón anular (variante danger / por fila) */
+.concil-action-btn.danger {
+    background: rgba(239,68,68,0.14);
+    border: 1px solid rgba(239,68,68,0.35);
+    color: #fca5a5;
+}
+
+.concil-action-btn.danger:hover { background: rgba(239,68,68,0.22); }
+
+.concil-anular-btn {
+    background: none;
+    border: none;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    padding: 0.25rem;
+    transition: color 0.12s;
+}
+
+.concil-anular-btn:hover { color: #f87171; }
+.concil-anular-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
 /* Carga manual */
 .concil-manual {
     display: flex;

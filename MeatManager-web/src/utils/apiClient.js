@@ -734,6 +734,21 @@ export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username 
     return res.json();
 };
 
+// Anula tickets de balanza PENDIENTES (no cobrados). Solo cambia el estado a
+// 'voided' — no mueve plata ni stock. Acepta un barcode o un array.
+export const anularConciliacionTickets = async (ticket_barcodes, { anulado_by_user_id, anulado_by_username, reason } = {}) => {
+    const list = Array.isArray(ticket_barcodes) ? ticket_barcodes : [ticket_barcodes];
+    const res = await apiFetch('/api/conciliacion/balanza/anular', {
+        method: 'POST',
+        body: JSON.stringify({ ticket_barcodes: list, anulado_by_user_id, anulado_by_username, reason }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Error al anular el ticket');
+    }
+    return res.json();
+};
+
 export const fetchScaleTicketByBarcode = async (barcode) => {
     const code = String(barcode || '').trim();
     if (!code) throw new Error('barcode requerido');
