@@ -13074,6 +13074,23 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
 
         const { dateFrom, dateTo } = req.query;
         const params = [tenantId];
+
+        // Scope por sucursal: cada balanza/bridge sube sus tickets con su branch_id
+        // (ver ingesta del bridge). Sin este filtro, el listado mezclaba los tickets
+        // y vendedores de TODAS las sucursales del tenant. Usamos la sucursal activa
+        // que el front manda (X-MM-Active-Branch-Id) o la sucursal asignada al usuario.
+        // Soporte/admin interno (sin accessContext) ve todo, para debug.
+        let branchFilter = '';
+        const scopedBranchId = Number(
+            accessContext?.activeBranch?.id
+            ?? accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+        );
+        if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+            branchFilter = ' AND t.branch_id = ?';
+            params.push(scopedBranchId);
+        }
+
         let dateFilter = '';
         if (dateFrom && dateTo) {
             dateFilter = ' AND DATE(t.sale_at) BETWEEN ? AND ?';
@@ -13101,7 +13118,7 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
                 t.synced_at
             FROM scale_bridge_ticket_map t
             WHERE t.tenant_id = ?
-              AND t.ticket_status = 'open'
+              AND t.ticket_status = 'open'${branchFilter}
               -- Excluir tickets que ya tienen una venta vinculada (cobrados, incluso
               -- offline): se matchea por codigo interno o impreso. Un ticket nunca
               -- vendido no tiene venta asociada, asi que nunca se oculta de mas.
@@ -13189,6 +13206,20 @@ app.get('/api/conciliacion/balanza/anulados', verifyFirebaseToken, async (req, r
 
         const { dateFrom, dateTo } = req.query;
         const params = [tenantId];
+
+        // Mismo scope por sucursal que el listado de pendientes (ver arriba): no
+        // mezclar anulados entre sucursales del tenant.
+        let branchFilter = '';
+        const scopedBranchId = Number(
+            accessContext?.activeBranch?.id
+            ?? accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+        );
+        if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+            branchFilter = ' AND t.branch_id = ?';
+            params.push(scopedBranchId);
+        }
+
         let dateFilter = '';
         if (dateFrom && dateTo) {
             dateFilter = ' AND DATE(t.voided_at) BETWEEN ? AND ?';
@@ -13219,7 +13250,7 @@ app.get('/api/conciliacion/balanza/anulados', verifyFirebaseToken, async (req, r
                 t.voided_reason
             FROM scale_bridge_ticket_map t
             WHERE t.tenant_id = ?
-              AND t.ticket_status = 'voided'
+              AND t.ticket_status = 'voided'${branchFilter}
               ${dateFilter}
             ORDER BY t.voided_at DESC
         `, params);
