@@ -365,6 +365,22 @@
     padding-left: 0;
 }
 
+.sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding: 0.85rem;
+}
+
+.sidebar.collapsed .nav-group-trigger {
+    border-left: none;
+    border-radius: 12px;
+}
+
+.status-indicator-mini {
+    display: flex;
+    justify-content: center;
+    margin-bottom: 0.75rem;
+}
+
 @media (max-width: 1280px) {
     .sidebar-brand-copy {
         flex-direction: column;
