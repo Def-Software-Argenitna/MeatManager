@@ -12,6 +12,7 @@ import {
     ShieldCheck,
 } from 'lucide-react';
 import { fetchCajaReportData } from '../utils/apiClient';
+import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
 import './InformesCaja.css';
 
@@ -437,6 +438,7 @@ const buildReport = ({ movements, closures, mode, value, cashAccount, compareEna
                     tipoMedioPago: movement.payment_method_type || '',
                     proveedor: movement.supplier || '',
                     descripcion: movement.description || '',
+                    hechoPor: movement.created_by_username || movement.created_by_email || '',
                     ingreso: sign > 0 ? amount : 0,
                     egreso: sign < 0 ? amount : 0,
                     neto: net,
@@ -662,6 +664,10 @@ const InformesCaja = () => {
     const [feedback, setFeedback] = useState(null);
     const [rowFilter, setRowFilter] = useState('all');
 
+    const { currentUser, accessProfile } = useUser();
+    // Solo los administradores ven quién hizo cada movimiento de caja.
+    const canSeeCreator = isEffectiveAdminUser(currentUser, accessProfile);
+
     const selectedValue = useMemo(() => (mode === 'range'
         ? { from: rangeFromValue, to: rangeToValue }
         : mode === 'day'
@@ -727,6 +733,7 @@ const InformesCaja = () => {
         'Tipo medio': row.tipoMedioPago,
         Proveedor: row.proveedor,
         Descripción: row.descripcion,
+        ...(canSeeCreator ? { 'Hecho por': row.hechoPor } : {}),
         Ingreso: row.ingreso,
         Egreso: row.egreso,
         Neto: row.neto,
@@ -986,6 +993,7 @@ const InformesCaja = () => {
                 <td>${escapeHtml(row.categoria)}</td>
                 <td>${escapeHtml(row.medioPago)}</td>
                 <td>${escapeHtml([row.descripcion, row.detalleClasificacion, row.proveedor ? `Proveedor: ${row.proveedor}` : '', row.ticket ? `Ticket: ${row.ticket}` : '', row.ventaId ? `Venta: ${row.ventaId}` : '', row.compraId ? `Compra: ${row.compraId}` : '', row.transferenciaId ? `Transferencia: ${row.transferenciaId}` : '', row.cierreTeorico != null ? `Cierre teórico ${formatCurrency(row.cierreTeorico)} contado ${formatCurrency(row.cierreContado)} diferencia ${formatCurrency(row.diferenciaCierre)}` : ''].filter(Boolean).join(' · '))}</td>
+                ${canSeeCreator ? `<td>${escapeHtml(row.hechoPor || '')}</td>` : ''}
                 <td class="num income">${row.ingreso ? escapeHtml(formatCurrency(row.ingreso)) : ''}</td>
                 <td class="num expense">${row.egreso ? escapeHtml(formatCurrency(row.egreso)) : ''}</td>
                 <td class="num">${row.saldoCaja !== '' ? escapeHtml(formatCurrency(row.saldoCaja)) : ''}</td>
@@ -1041,7 +1049,7 @@ const InformesCaja = () => {
                     <h2>Resumen por medio de pago</h2>
                     <table><thead><tr><th>Medio de pago</th><th>Movimientos</th><th>Ingresos</th><th>Egresos</th><th>Neto</th></tr></thead><tbody>${paymentMethodsHtml}</tbody></table>
                     <h2>Detalle completo</h2>
-                    <table><thead><tr><th>Fecha</th><th>Caja</th><th>Operación</th><th>Clasificación</th><th>Movimiento entre cajas</th><th>Categoría</th><th>Medio</th><th>Detalle</th><th>Ingreso</th><th>Egreso</th><th>Saldo caja</th></tr></thead><tbody>${rowsHtml}</tbody></table>
+                    <table><thead><tr><th>Fecha</th><th>Caja</th><th>Operación</th><th>Clasificación</th><th>Movimiento entre cajas</th><th>Categoría</th><th>Medio</th><th>Detalle</th>${canSeeCreator ? '<th>Hecho por</th>' : ''}<th>Ingreso</th><th>Egreso</th><th>Saldo caja</th></tr></thead><tbody>${rowsHtml}</tbody></table>
                     <script>window.onload = () => window.print();</script>
                 </body>
             </html>

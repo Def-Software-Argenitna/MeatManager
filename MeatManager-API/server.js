@@ -262,6 +262,39 @@ async function queueScaleClearSales(pool, tenantId) {
     return { seq };
 }
 
+// Resuelve quién está ejecutando la acción (apertura/cierre/movimiento de caja)
+// a partir del usuario autenticado en el server — no se confía en el front.
+function resolveCajaCreator(accessContext, req) {
+    const u = (accessContext && accessContext.user) || {};
+    const idNum = Number(u.id);
+    const email = u.email || (req && req.firebaseUser && req.firebaseUser.email) || null;
+    const fullName = [u.name, u.lastname].filter(Boolean).join(' ').trim();
+    return {
+        created_by_user_id: Number.isFinite(idNum) && idNum > 0 ? idNum : null,
+        created_by_username: fullName || email || null,
+        created_by_email: email,
+    };
+}
+
+// Solo los administradores (o dueño/superadmin) pueden VER quién hizo cada
+// acción de caja. Para el resto, los campos created_by_* se omiten de la respuesta.
+function isAdminAccessContext(accessContext) {
+    const u = (accessContext && accessContext.user) || {};
+    return Boolean(u.role === 'admin' || u.isGlobalSuperAdmin || u.isOwnerFallback);
+}
+
+const CAJA_CREATOR_COLUMNS = ['created_by_user_id', 'created_by_username', 'created_by_email'];
+
+function stripCajaCreatorFields(rows) {
+    if (!Array.isArray(rows)) return rows;
+    for (const row of rows) {
+        if (row && typeof row === 'object') {
+            for (const col of CAJA_CREATOR_COLUMNS) delete row[col];
+        }
+    }
+    return rows;
+}
+
 async function queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record, id }) {
     if (!shouldQueueScaleProductSync(table, operation, record)) return null;
 
@@ -3047,6 +3080,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'origin_table', '`origin_table` VARCHAR(64) NULL AFTER `money_flow_kind`');
             await ensureColumn(conn, 'caja_movimientos', 'origin_id', '`origin_id` BIGINT NULL AFTER `origin_table`');
             await ensureColumn(conn, 'caja_movimientos', 'origin_group_id', '`origin_group_id` VARCHAR(64) NULL AFTER `origin_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'created_by_user_id', '`created_by_user_id` BIGINT NULL AFTER `origin_group_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'created_by_username', '`created_by_username` VARCHAR(150) NULL AFTER `created_by_user_id`');
+            await ensureColumn(conn, 'caja_movimientos', 'created_by_email', '`created_by_email` VARCHAR(150) NULL AFTER `created_by_username`');
             await ensureColumn(conn, 'clients', 'client_type', '`client_type` VARCHAR(20) NULL DEFAULT \'person\'');
             await ensureColumn(conn, 'clients', 'company_name', '`company_name` VARCHAR(191) NULL');
             await ensureColumn(conn, 'clients', 'contact_first_name', '`contact_first_name` VARCHAR(120) NULL');
@@ -3094,6 +3130,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
+            await ensureColumn(conn, 'cash_closures', 'created_by_user_id', '`created_by_user_id` BIGINT NULL');
+            await ensureColumn(conn, 'cash_closures', 'created_by_username', '`created_by_username` VARCHAR(150) NULL');
+            await ensureColumn(conn, 'cash_closures', 'created_by_email', '`created_by_email` VARCHAR(150) NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_id', '`authorization_id` BIGINT NULL');
             await ensureColumn(conn, 'caja_movimientos', 'authorization_verified', '`authorization_verified` TINYINT(1) NOT NULL DEFAULT 0');
             await ensureColumn(conn, 'caja_movimientos', 'authorized_recipient_email', '`authorized_recipient_email` VARCHAR(150) NULL');
@@ -6669,6 +6708,16 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (Object.keys(filtered).length === 0) {
                 return res.status(400).json({ error: 'Sin datos para insertar' });
             }
+            // Auditoría de caja: registramos quién hace el movimiento desde el
+            // usuario autenticado en el server (no se confía en el front).
+            if (table === 'caja_movimientos' || table === 'cash_closures') {
+                const creator = resolveCajaCreator(accessContext, req);
+                for (const col of CAJA_CREATOR_COLUMNS) {
+                    if (tableDesc.has(col) && creator[col] !== null && creator[col] !== undefined) {
+                        filtered[col] = creator[col];
+                    }
+                }
+            }
             await assertCashMovementBranch(filtered);
             if (table === 'products') {
                 filtered.plu = normalizePluValue(filtered.plu);
@@ -7211,14 +7260,23 @@ app.get('/api/caja/report-data', verifyFirebaseToken, async (req, res) => {
             return balances;
         };
 
+        // Quién hizo cada movimiento es info sensible: solo se expone a admins.
+        const movementsOut = movementRows || [];
+        const closuresOut = closureRows || [];
+        if (!isAdminAccessContext(accessContext)) {
+            stripCajaCreatorFields(movementsOut);
+            stripCajaCreatorFields(closuresOut);
+        }
+
         return res.json({
             ok: true,
             from: fromDate,
             to: toDate,
             compareFrom: compareFromDate,
             branchId: Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null,
-            movements: movementRows || [],
-            closures: closureRows || [],
+            isAdmin: isAdminAccessContext(accessContext),
+            movements: movementsOut,
+            closures: closuresOut,
             initialBalances: {
                 current: toBalances(currentInitialRows || []),
                 previous: toBalances(previousInitialRows || []),
@@ -7308,6 +7366,7 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
             [tenantId, selectedCashAccount, dayStart, dayEnd, ...branchDeleteParams]
         );
 
+        const openingCreator = resolveCajaCreator(accessContext, req);
         for (const row of cleanOpenings) {
             await conn.query('INSERT INTO caja_movimientos SET ?', [{
                 tenant_id: tenantId,
@@ -7323,6 +7382,7 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
                 payment_method_type: row.paymentMethodType,
                 cash_account: selectedCashAccount,
                 date: openingDate,
+                ...openingCreator,
             }]);
         }
 
@@ -7477,6 +7537,7 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             origin_table: 'caja_transfer',
             origin_id: null,
             date: transferDate,
+            ...resolveCajaCreator(accessContext, req),
         };
 
         const [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
