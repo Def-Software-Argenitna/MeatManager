@@ -1226,7 +1226,15 @@ const Ventas = () => {
                 setTicketPreviewItems(previewItems);
                 setShowTicketPreview(true);
                 setTicketPreviewBranchId(payload?.ticket?.branch_id ?? null);
-                setActiveScaleTicketBarcode(String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null);
+                const newBarcode = String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null;
+                if (newBarcode && activeScaleTicketBarcode && activeScaleTicketBarcode !== newBarcode) {
+                    setPendingTicketBarcodes(prev => {
+                        const existing = new Set(prev);
+                        existing.add(activeScaleTicketBarcode);
+                        return [...existing];
+                    });
+                }
+                setActiveScaleTicketBarcode(newBarcode);
                 setScannerError('');
                 playBeep();
                 return true;
@@ -2057,11 +2065,12 @@ const Ventas = () => {
                 discount_client_id: numericClientId || null,
                 client_discount_pct: selectedClientEmployeeDiscountPct,
                 client_discount_amount: employeeDiscountAmount,
-                ...(pendingTicketBarcodes.length > 1
-                    ? { ticket_barcodes: pendingTicketBarcodes, source: 'conciliacion_balanza' }
-                    : activeScaleTicketBarcode
-                        ? { ticket_barcode: activeScaleTicketBarcode, source: 'scale_ticket' }
-                        : {}),
+                ...(() => {
+                    const allScaleBarcodes = [...new Set([...pendingTicketBarcodes, ...(activeScaleTicketBarcode ? [activeScaleTicketBarcode] : [])])];
+                    if (allScaleBarcodes.length > 1) return { ticket_barcodes: allScaleBarcodes, source: 'conciliacion_balanza' };
+                    if (allScaleBarcodes.length === 1) return { ticket_barcode: allScaleBarcodes[0], source: 'scale_ticket' };
+                    return {};
+                })(),
                 items: cart.map(i => {
                     const line = cartPricing.lineMap.get(i.id);
                     return ({
