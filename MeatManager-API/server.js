@@ -9502,6 +9502,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const primaryBarcode = ticketBarcodes[0] || null;
 
         await ensureScaleTicketLifecycleColumns(conn);
+        let cajaDateOverride = null;
         if (ticketBarcodes.length > 0) {
             const [ticketRows] = await conn.query(
                 `SELECT ticket_barcode, ticket_status
@@ -9560,6 +9561,20 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         OR UPPER(printed_ticket_barcode) IN (${inList}))`,
                 [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes]
             );
+
+            // Para conciliacion: usar la fecha del ticket como fecha de caja.
+            // Si el ticket es de otro dia, el movimiento de caja se registra en esa fecha.
+            const [[ticketRow]] = await conn.query(
+                `SELECT sale_at FROM scale_bridge_ticket_map
+                 WHERE tenant_id = ?
+                   AND (UPPER(ticket_barcode) IN (${inList})
+                        OR UPPER(printed_ticket_barcode) IN (${inList}))
+                 ORDER BY sale_at ASC LIMIT 1`,
+                [tenantId, ...ticketBarcodes, ...ticketBarcodes]
+            );
+            if (ticketRow?.sale_at) {
+                cajaDateOverride = new Date(ticketRow.sale_at);
+            }
         }
 
         // 2. INSERT ventas_items
@@ -9672,6 +9687,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         });
         if (salePaymentParts.length > 0) {
             const saleReceiptLabel = receipt_code || (receipt_number ? `Ticket ${receipt_number}` : `Venta #${saleId}`);
+            const cajaDate = cajaDateOverride || now;
             for (const part of salePaymentParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
@@ -9683,7 +9699,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         `Cobro ${saleReceiptLabel}`,
                         part.methodName,
                         part.methodType || inferPaymentTypeByName(part.methodName),
-                        now,
+                        cajaDate,
                         safeClientId,
                         resolvedBranchId || null,
                         receipt_number || null,
