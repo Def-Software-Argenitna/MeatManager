@@ -9502,13 +9502,15 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         const primaryBarcode = ticketBarcodes[0] || null;
 
         await ensureScaleTicketLifecycleColumns(conn);
-        let cajaDateOverride = null;
+        let ticketDate = null;
         if (ticketBarcodes.length > 0) {
+            const inList = ticketBarcodes.map(() => '?').join(',');
             const [ticketRows] = await conn.query(
-                `SELECT ticket_barcode, ticket_status
+                `SELECT ticket_barcode, ticket_status, sale_at
                  FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) IN (${ticketBarcodes.map(() => '?').join(',')})`,
-                [tenantId, ...ticketBarcodes]
+                 WHERE tenant_id = ? AND (UPPER(ticket_barcode) IN (${inList})
+                     OR UPPER(printed_ticket_barcode) IN (${inList}))`,
+                [tenantId, ...ticketBarcodes, ...ticketBarcodes]
             );
             if (ticketRows.length < ticketBarcodes.length) {
                 await conn.rollback();
@@ -9521,9 +9523,12 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 conn.release();
                 return res.status(409).json({ error: 'Uno o más tickets ya fueron cobrados o anulados' });
             }
+            const earliest = ticketRows.sort((a, b) => new Date(a.sale_at) - new Date(b.sale_at))[0];
+            if (earliest?.sale_at) ticketDate = new Date(earliest.sale_at);
         }
 
         // 1. INSERT ventas
+        const saleDate = ticketDate || now;
         const [ventaResult] = await conn.query(
             `INSERT INTO ventas
              (tenant_id, branch_id, date, subtotal, adjustment, total,
@@ -9533,7 +9538,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                qendra_ticket_id, ticket_barcode, source)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
-                tenantId, resolvedBranchId, now, safeSubtotal, safeAdj, safeTotal,
+                tenantId, resolvedBranchId, saleDate, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
                 payment_method || null, payment_method_id || null,
                 payment_breakdown ? JSON.stringify(payment_breakdown) : null,
@@ -9561,20 +9566,6 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                         OR UPPER(printed_ticket_barcode) IN (${inList}))`,
                 [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes]
             );
-
-            // Para conciliacion: usar la fecha del ticket como fecha de caja.
-            // Si el ticket es de otro dia, el movimiento de caja se registra en esa fecha.
-            const [[ticketRow]] = await conn.query(
-                `SELECT sale_at FROM scale_bridge_ticket_map
-                 WHERE tenant_id = ?
-                   AND (UPPER(ticket_barcode) IN (${inList})
-                        OR UPPER(printed_ticket_barcode) IN (${inList}))
-                 ORDER BY sale_at ASC LIMIT 1`,
-                [tenantId, ...ticketBarcodes, ...ticketBarcodes]
-            );
-            if (ticketRow?.sale_at) {
-                cajaDateOverride = new Date(ticketRow.sale_at);
-            }
         }
 
         // 2. INSERT ventas_items
@@ -9687,7 +9678,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         });
         if (salePaymentParts.length > 0) {
             const saleReceiptLabel = receipt_code || (receipt_number ? `Ticket ${receipt_number}` : `Venta #${saleId}`);
-            const cajaDate = cajaDateOverride || now;
+            const cajaDate = ticketDate || now;
             for (const part of salePaymentParts) {
                 await conn.query(
                     `INSERT INTO caja_movimientos
