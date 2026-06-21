@@ -2174,6 +2174,9 @@ const Ventas = () => {
                 showToast('❌ Código maestro incorrecto. No se eliminó el ticket.', 'error');
                 return;
             }
+        } else if (!isAdmin) {
+            showToast('⚠️ Solo un administrador puede eliminar tickets sin código de autorización.', 'warning');
+            return;
         } else {
             if (!window.confirm('¿Eliminar este ticket? Esta acción no se puede deshacer.')) return;
         }
@@ -3778,10 +3781,12 @@ const Ventas = () => {
                                         </button>
                                     </form>
                                 ) : (
-                                    <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
-                                        style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
-                                        <Trash2 size={15} />
-                                    </button>
+                                    (deleteCodeConfigured || isAdmin) && (
+                                        <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
+                                            style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
+                                            <Trash2 size={15} />
+                                        </button>
+                                    )
                                 )}
                             </div>
                         ))}
