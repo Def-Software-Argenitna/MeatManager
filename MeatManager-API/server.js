@@ -13386,6 +13386,55 @@ app.get('/health', (req, res) => res.json({
     redis: process.env.REDIS_HOST ? redisClient.isReady : false,
 }));
 
+// ── Cierre automático de balanza a medianoche ──────────────────────────────
+// Cada noche a las 00:00 (hora del servidor) encola clear_sales_memory para
+// todos los tenants con bridge ACTIVE. El bridge lo levanta en el siguiente
+// heartbeat (<5s): lee los tickets del día, los sube al API y ejecuta fn32
+// para limpiar la memoria de la balanza. Al otro día arranca en cero, sin
+// que nadie tenga que tocar nada manualmente.
+function scheduleMidnightScaleClear() {
+    const msUntilMidnight = () => {
+        const now = new Date();
+        const next = new Date(now);
+        next.setDate(next.getDate() + 1);
+        next.setHours(0, 0, 0, 0);
+        return next.getTime() - now.getTime();
+    };
+
+    const runMidnightClear = async () => {
+        console.log('[MIDNIGHT CLEAR] Iniciando cierre automático de balanzas...');
+        try {
+            const [devices] = await clientsControlPool.query(
+                `SELECT DISTINCT tenantId FROM \`${CLIENTS_DB_NAME}\`.\`${BRIDGE_DEVICES_TABLE}\` WHERE status = 'ACTIVE'`
+            );
+            if (!devices.length) {
+                console.log('[MIDNIGHT CLEAR] No hay bridges activos, nada que hacer.');
+            } else {
+                const pool = getOperationalPool();
+                let ok = 0;
+                let fail = 0;
+                for (const { tenantId } of devices) {
+                    try {
+                        await queueScaleClearSales(pool, tenantId);
+                        ok++;
+                    } catch (e) {
+                        fail++;
+                        console.warn(`[MIDNIGHT CLEAR] No se pudo encolar tenant=${tenantId}:`, e?.message || e);
+                    }
+                }
+                console.log(`[MIDNIGHT CLEAR] clear_sales_memory encolado: ${ok} OK, ${fail} errores`);
+            }
+        } catch (e) {
+            console.error('[MIDNIGHT CLEAR] Error al encolar limpiezas de balanza:', e?.message || e);
+        }
+        setTimeout(runMidnightClear, msUntilMidnight());
+    };
+
+    const delay = msUntilMidnight();
+    console.log(`[MIDNIGHT CLEAR] Proximo cierre de balanza en ${Math.round(delay / 60000)} min`);
+    setTimeout(runMidnightClear, delay);
+}
+
 // ── Start ──────────────────────────────────────────────────────────────────
 const PORT = process.env.PORT || 3001;
 ensureClientsControlStore()
@@ -13424,6 +13473,7 @@ ensureClientsControlStore()
     .then(() => {
         app.listen(PORT, () => {
             console.log(`MeatManager API corriendo en puerto ${PORT}`);
+            scheduleMidnightScaleClear();
         });
     })
     .catch((err) => {
