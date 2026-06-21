@@ -166,6 +166,7 @@ const Ventas = () => {
     const [deleteTicketSearch, setDeleteTicketSearch] = useState('');
     const [confirmDeleteTicketId, setConfirmDeleteTicketId] = useState(null);
     const [deleteAuthorizationCode, setDeleteAuthorizationCode] = useState('');
+    const [deleteCodeConfigured, setDeleteCodeConfigured] = useState(false);
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
@@ -415,6 +416,9 @@ const Ventas = () => {
     React.useEffect(() => {
         if (showDeleteTicketModal) {
             setDeleteModalRefreshTick((prev) => prev + 1);
+            getRemoteSetting('ticket_delete_authorization_code').then(code => {
+                setDeleteCodeConfigured(!!code && String(code).trim().length > 0);
+            }).catch(() => setDeleteCodeConfigured(false));
         }
     }, [showDeleteTicketModal]);
 
@@ -2161,19 +2165,17 @@ const Ventas = () => {
         const expectedCode = String(remoteDeleteCode ?? '').trim();
         const providedCode = String(deleteAuthorizationCode || '').trim();
 
-        if (!expectedCode) {
-            showToast('⚠️ No hay código maestro configurado para eliminar tickets. Configuralo en Seguridad.', 'warning');
-            return;
-        }
-
-        if (!providedCode) {
-            showToast('⚠️ Ingresá el código de autorización para borrar el ticket.', 'warning');
-            return;
-        }
-
-        if (providedCode !== expectedCode) {
-            showToast('❌ Código maestro incorrecto. No se eliminó el ticket.', 'error');
-            return;
+        if (expectedCode) {
+            if (!providedCode) {
+                showToast('⚠️ Ingresá el código de autorización para borrar el ticket.', 'warning');
+                return;
+            }
+            if (providedCode !== expectedCode) {
+                showToast('❌ Código maestro incorrecto. No se eliminó el ticket.', 'error');
+                return;
+            }
+        } else {
+            if (!window.confirm('¿Eliminar este ticket? Esta acción no se puede deshacer.')) return;
         }
 
         const venta = recentSales.find((sale) => Number(sale.id) === Number(id));
@@ -3742,29 +3744,31 @@ const Ventas = () => {
                                         autoComplete="off"
                                         style={{ display: 'flex', gap: '0.4rem', flexShrink: 0, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}
                                     >
-                                        <input
-                                            type="password"
-                                            id={`ticket-delete-authorization-code-${s.id}`}
-                                            name="ticket-delete-authorization-code"
-                                            inputMode="numeric"
-                                            value={deleteAuthorizationCode}
-                                            onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
-                                            placeholder="Código maestro"
-                                            autoComplete="one-time-code"
-                                            style={{
-                                                width: '150px',
-                                                padding: '0.45rem 0.65rem',
-                                                borderRadius: '6px',
-                                                border: '1px solid rgba(239,68,68,0.35)',
-                                                background: 'var(--color-bg-card)',
-                                                color: 'var(--color-text-main)',
-                                                fontSize: '0.82rem'
-                                            }}
-                                        />
+                                        {deleteCodeConfigured && (
+                                            <input
+                                                type="password"
+                                                id={`ticket-delete-authorization-code-${s.id}`}
+                                                name="ticket-delete-authorization-code"
+                                                inputMode="numeric"
+                                                value={deleteAuthorizationCode}
+                                                onChange={(e) => setDeleteAuthorizationCode(e.target.value.replace(/\D/g, '').slice(0, 12))}
+                                                placeholder="Código maestro"
+                                                autoComplete="one-time-code"
+                                                style={{
+                                                    width: '150px',
+                                                    padding: '0.45rem 0.65rem',
+                                                    borderRadius: '6px',
+                                                    border: '1px solid rgba(239,68,68,0.35)',
+                                                    background: 'var(--color-bg-card)',
+                                                    color: 'var(--color-text-main)',
+                                                    fontSize: '0.82rem'
+                                                }}
+                                            />
+                                        )}
                                         <button
                                             type="submit"
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
-                                            Confirmar
+                                            {deleteCodeConfigured ? 'Confirmar' : 'Eliminar'}
                                         </button>
                                         <button
                                             type="button"
