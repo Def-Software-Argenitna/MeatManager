@@ -167,6 +167,7 @@ const Ventas = () => {
     const [confirmDeleteTicketId, setConfirmDeleteTicketId] = useState(null);
     const [deleteAuthorizationCode, setDeleteAuthorizationCode] = useState('');
     const [deleteCodeConfigured, setDeleteCodeConfigured] = useState(false);
+    const [deletingTicketId, setDeletingTicketId] = useState(null);
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
@@ -2161,47 +2162,58 @@ const Ventas = () => {
     });
 
     const handleDeleteTicket = async (id) => {
-        const remoteDeleteCode = await getRemoteSetting('ticket_delete_authorization_code');
-        const expectedCode = String(remoteDeleteCode ?? '').trim();
-        const providedCode = String(deleteAuthorizationCode || '').trim();
+        if (deletingTicketId) return;
+        setDeletingTicketId(id);
 
-        if (expectedCode) {
-            if (!providedCode) {
-                showToast('⚠️ Ingresá el código de autorización para borrar el ticket.', 'warning');
+        try {
+            const remoteDeleteCode = await getRemoteSetting('ticket_delete_authorization_code');
+            const expectedCode = String(remoteDeleteCode ?? '').trim();
+            const providedCode = String(deleteAuthorizationCode || '').trim();
+
+            if (expectedCode) {
+                if (!providedCode) {
+                    showToast('⚠️ Ingresá el código de autorización para borrar el ticket.', 'warning');
+                    return;
+                }
+                if (providedCode !== expectedCode) {
+                    showToast('❌ Código maestro incorrecto. No se eliminó el ticket.', 'error');
+                    return;
+                }
+            } else if (!isAdmin) {
+                showToast('⚠️ Solo un administrador puede eliminar tickets sin código de autorización.', 'warning');
+                return;
+            } else {
+                if (!window.confirm('¿Eliminar este ticket? Esta acción no se puede deshacer.')) return;
+            }
+
+            const venta = recentSales.find((sale) => Number(sale.id) === Number(id));
+            if (!venta) {
+                showToast('⚠️ La venta ya no está en la lista. Actualizá e intentá de nuevo.', 'warning');
                 return;
             }
-            if (providedCode !== expectedCode) {
-                showToast('❌ Código maestro incorrecto. No se eliminó el ticket.', 'error');
-                return;
-            }
-        } else if (!isAdmin) {
-            showToast('⚠️ Solo un administrador puede eliminar tickets sin código de autorización.', 'warning');
-            return;
-        } else {
-            if (!window.confirm('¿Eliminar este ticket? Esta acción no se puede deshacer.')) return;
+
+            const currentUserId = Number(currentUser?.id);
+            const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
+                ? currentUserId
+                : null;
+
+            // Anular de forma atómica en el servidor: stock + balance + historial + delete
+            await deleteVenta(id, {
+                deleted_by_user_id: deletedByUserId,
+                deleted_by_username: currentUser?.username || 'Usuario desconocido',
+            });
+
+            await refreshVentasData();
+
+            setDeleteAuthorizationCode('');
+            setConfirmDeleteTicketId(null);
+            showToast('✅ Ticket eliminado y registrado en historial.', 'success');
+        } catch (error) {
+            console.error('Error eliminando ticket:', error);
+            showToast(error?.message || 'No se pudo eliminar el ticket.', 'error');
+        } finally {
+            setDeletingTicketId(null);
         }
-
-        const venta = recentSales.find((sale) => Number(sale.id) === Number(id));
-        if (!venta) {
-            throw new Error('La venta ya no existe.');
-        }
-
-        const currentUserId = Number(currentUser?.id);
-        const deletedByUserId = Number.isFinite(currentUserId) && currentUserId > 0
-            ? currentUserId
-            : null;
-
-        // Anular de forma atómica en el servidor: stock + balance + historial + delete
-        await deleteVenta(id, {
-            deleted_by_user_id: deletedByUserId,
-            deleted_by_username: currentUser?.username || 'Usuario desconocido',
-        });
-
-        await refreshVentasData();
-
-        setDeleteAuthorizationCode('');
-        setConfirmDeleteTicketId(null);
-        showToast('✅ Ticket eliminado y registrado en historial.', 'success');
     };
 
     const todayRecentSales = React.useMemo(() => {
@@ -3770,8 +3782,9 @@ const Ventas = () => {
                                         )}
                                         <button
                                             type="submit"
+                                            disabled={deletingTicketId === s.id}
                                             style={{ background: '#ef4444', color: '#fff', border: 'none', borderRadius: '6px', padding: '0.35rem 0.75rem', cursor: 'pointer', fontWeight: '700', fontSize: '0.82rem' }}>
-                                            {deleteCodeConfigured ? 'Confirmar' : 'Eliminar'}
+                                            {deletingTicketId === s.id ? 'Eliminando...' : (deleteCodeConfigured ? 'Confirmar' : 'Eliminar')}
                                         </button>
                                         <button
                                             type="button"
