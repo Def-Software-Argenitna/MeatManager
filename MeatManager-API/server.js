@@ -9793,18 +9793,19 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             );
         }
 
+        const ventaBreakdown = (() => {
+            try {
+                if (!venta.payment_breakdown) return null;
+                return typeof venta.payment_breakdown === 'string'
+                    ? JSON.parse(venta.payment_breakdown)
+                    : venta.payment_breakdown;
+            } catch {
+                return null;
+            }
+        })();
+
         // 2. Revertir balance cliente (solo cta cte)
         if (venta.clientId) {
-            const ventaBreakdown = (() => {
-                try {
-                    if (!venta.payment_breakdown) return null;
-                    return typeof venta.payment_breakdown === 'string'
-                        ? JSON.parse(venta.payment_breakdown)
-                        : venta.payment_breakdown;
-                } catch {
-                    return null;
-                }
-            })();
             const currentAccountAmount = getCurrentAccountAmountFromSale({
                 paymentMethod: venta.payment_method,
                 paymentMethodType: null,
