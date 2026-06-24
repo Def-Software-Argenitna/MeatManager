@@ -9555,6 +9555,12 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             // Marca cobrado matcheando por codigo interno (MM...) o por codigo impreso
             // (escaneado en el resolver offline). Asi un ticket vendido offline tambien
             // queda cobrado si ya sincronizo al momento del cobro.
+            //
+            // OJO: el codigo IMPRESO no es unico (solo codifica balanza + importe), asi
+            // que matchear solo por el marcaria como 'charged' TODOS los tickets open con
+            // el mismo total y los haria desaparecer de conciliacion. Por eso, en la rama
+            // del impreso, exigimos ademas mismo importe y fecha cercana. El codigo interno
+            // si es unico, asi que matchea sin restriccion.
             const inList = ticketBarcodes.map(() => '?').join(',');
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
@@ -9562,9 +9568,15 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                      charged_sale_id = ?,
                      charged_at = NOW()
                  WHERE tenant_id = ?
-                   AND (UPPER(ticket_barcode) IN (${inList})
-                        OR UPPER(printed_ticket_barcode) IN (${inList}))`,
-                [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes]
+                   AND (
+                        UPPER(ticket_barcode) IN (${inList})
+                        OR (
+                            UPPER(printed_ticket_barcode) IN (${inList})
+                            AND ABS(total_amount - ?) < 0.01
+                            AND ABS(DATEDIFF(sale_at, ?)) <= 1
+                        )
+                   )`,
+                [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes, safeTotal, saleDate]
             );
         }
 
@@ -13128,16 +13140,29 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
             WHERE t.tenant_id = ?
               AND t.ticket_status = 'open'${branchFilter}
               -- Excluir tickets que ya tienen una venta vinculada (cobrados, incluso
-              -- offline): se matchea por codigo interno o impreso. Un ticket nunca
-              -- vendido no tiene venta asociada, asi que nunca se oculta de mas.
+              -- offline). Un ticket nunca vendido no tiene venta asociada.
               AND NOT EXISTS (
                   SELECT 1 FROM ventas v
                   WHERE v.tenant_id = t.tenant_id
                     AND v.ticket_barcode IS NOT NULL
                     AND (
+                        -- Match por codigo interno (MM...): es unico, siempre seguro.
                         UPPER(v.ticket_barcode) = UPPER(t.ticket_barcode)
-                        OR (t.printed_ticket_barcode IS NOT NULL
-                            AND UPPER(v.ticket_barcode) = UPPER(t.printed_ticket_barcode))
+                        OR (
+                            -- Match por codigo IMPRESO (resumen). OJO: el codigo
+                            -- impreso NO es unico — solo codifica balanza + importe,
+                            -- asi que dos tickets distintos con el mismo total
+                            -- comparten codigo impreso. Si solo matcheamos por el
+                            -- codigo, una venta vieja con el mismo total esconde un
+                            -- ticket nuevo que nunca se cobro (bug de conciliacion:
+                            -- "no aparecen tickets"). Por eso, ademas del codigo,
+                            -- exigimos mismo importe y fecha cercana: la venta offline
+                            -- se registra el mismo dia de la venta fisica.
+                            t.printed_ticket_barcode IS NOT NULL
+                            AND UPPER(v.ticket_barcode) = UPPER(t.printed_ticket_barcode)
+                            AND ABS(COALESCE(v.total, 0) - COALESCE(t.total_amount, 0)) < 0.01
+                            AND ABS(DATEDIFF(v.date, t.sale_at)) <= 1
+                        )
                     )
               )
               ${dateFilter}
