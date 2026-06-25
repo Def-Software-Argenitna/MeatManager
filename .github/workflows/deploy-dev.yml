@@ -34,6 +34,10 @@ jobs:
           else
             echo "NOT FOUND"
           fi
+          echo "=== tailscale status ==="
+          tailscale status 2>/dev/null || echo "no tailscale cli"
+          echo "=== ping node1 ==="
+          timeout 3 bash -c 'echo > /dev/tcp/100.115.155.115/22' 2>/dev/null && echo "SSH PORT OPEN" || echo "SSH PORT CLOSED"
           echo "=== kubectl config current ==="
           kubectl config view --raw 2>/dev/null || echo "no config"
 
