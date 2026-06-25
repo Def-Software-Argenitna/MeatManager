@@ -20,6 +20,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Diagnose runner environment
+        run: |
+          echo "=== hostname ==="
+          hostname
+          echo "=== whoami ==="
+          whoami
+          echo "=== k3s admin kubeconfig ==="
+          cat /etc/rancher/k3s/k3s.yaml 2>/dev/null || echo "NOT FOUND"
+          echo "=== kubectl config current ==="
+          kubectl config view --raw 2>/dev/null || echo "no config"
+
       - name: Validate web maps key
         run: |
           if [ -z "${{ secrets.WEB_GOOGLE_MAPS_API_KEY }}" ]; then
