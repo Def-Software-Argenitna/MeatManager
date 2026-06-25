@@ -2,7 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: meatmanager-api
-  namespace: meatmanager
+  namespace: meatmanager-demo
 spec:
   replicas: 2
   selector:
