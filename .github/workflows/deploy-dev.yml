@@ -55,18 +55,29 @@ jobs:
             ${{ env.GHCR_NAMESPACE }}/meatmanager-api:dev
             ${{ env.GHCR_NAMESPACE }}/meatmanager-api:sha-${{ github.sha }}
 
-      - name: Deploy dev stack on self-hosted runner
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.35.5
+
+      - name: Configure kubeconfig
+        run: |
+          if [ -n "${{ secrets.KUBECONFIG_HOMELAB }}" ]; then
+            mkdir -p $HOME/.kube
+            echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
+            chmod 600 $HOME/.kube/config
+          else
+            echo "No KUBECONFIG_HOMELAB secret found, assuming local kubeconfig works"
+          fi
+
+      - name: Deploy to K8s (dev)
         env:
+          K8S_NAMESPACE: meatmanager
           GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
-          MAIN_DOMAIN: meatmanager.def-software.com
-          DEMO_DOMAIN: meatmanager.demo.def-software.com
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
-          API_MAIN_ENV: ${{ secrets.API_MAIN_ENV }}
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
-          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: |
           if [ -z "${GHCR_USERNAME}" ]; then
             echo "GHCR_USERNAME is empty or missing"
@@ -74,14 +85,6 @@ jobs:
           fi
           if [ -z "${GHCR_TOKEN}" ]; then
             echo "GHCR_TOKEN is empty or missing"
-            exit 1
-          fi
-          if [ -z "${DEPLOY_PATH}" ]; then
-            echo "DEPLOY_PATH is empty or missing"
-            exit 1
-          fi
-          if [ -z "${API_MAIN_ENV}" ]; then
-            echo "API_MAIN_ENV is empty or missing"
             exit 1
           fi
           if [ -z "${API_DEV_ENV}" ]; then
@@ -92,63 +95,72 @@ jobs:
             echo "FIREBASE_SERVICE_ACCOUNT_JSON is empty or missing"
             exit 1
           fi
-          mkdir -p "${DEPLOY_PATH}/env" "${DEPLOY_PATH}/secrets" "${DEPLOY_PATH}/nginx"
-          cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
-          cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
-          cp deploy/nginx/meatmanager.demo.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.demo.def-software.com.conf"
-          printf "GHCR_NAMESPACE=%s\nMAIN_DOMAIN=%s\nDEMO_DOMAIN=%s\nWEB_MAIN_TAG=%s\nAPI_MAIN_TAG=%s\nWEB_DEV_TAG=%s\nAPI_DEV_TAG=%s\n" \
-            "${GHCR_NAMESPACE}" \
-            "${MAIN_DOMAIN}" \
-            "${DEMO_DOMAIN}" \
-            "main" \
-            "main" \
-            "sha-${{ github.sha }}" \
-            "sha-${{ github.sha }}" > "${DEPLOY_PATH}/.env"
-          printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
-          printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
-          sed -i 's/^DB_PORT=.*/DB_PORT=3307/' "${DEPLOY_PATH}/env/api-dev.env"
-          sed -i 's/^CLIENTS_DB_PORT=.*/CLIENTS_DB_PORT=3307/' "${DEPLOY_PATH}/env/api-dev.env"
-          if [ -n "${FIREBASE_WEB_API_KEY}" ]; then
-            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-dev.env"
-            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-main.env"
-          fi
-          printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
-          chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
-          cd "${DEPLOY_PATH}"
-          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
-          docker compose -f docker-compose.cloud.yml --env-file .env pull web-dev api-dev
-          docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-dev api-dev
 
-      - name: Refresh nginx-proxy-manager upstream DNS
-        run: |
-          # Despues de --force-recreate los containers tienen IPs nuevas. nginx
-          # dentro de NPM cachea la resolucion DNS de proxy_pass de forma
-          # indefinida y queda sirviendo 502s al IP viejo. Reload graceful
-          # (~50ms, sin downtime) re-resuelve los upstream sin afectar a
-          # BarManager/KioskManager/admin/portainer que tambien estan detras.
-          docker exec nginx-proxy-manager nginx -s reload
+          # ── Namespace ──
+          kubectl create ns "${K8S_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
-      - name: Debug deploy failure (containers + logs)
-        if: failure()
-        env:
-          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          # ── Image pull secret for GHCR ──
+          kubectl create secret docker-registry ghcr-pull \
+            --docker-server=ghcr.io \
+            --docker-username="${GHCR_USERNAME}" \
+            --docker-password="${GHCR_TOKEN}" \
+            -n "${K8S_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          # ── ConfigMap from API_DEV_ENV ──
+          printf "%s" "${API_DEV_ENV}" > /tmp/api-dev.env
+          # Override DB port to 3307 for dev
+          sed -i 's/^DB_PORT=.*/DB_PORT=3307/' /tmp/api-dev.env
+          sed -i 's/^CLIENTS_DB_PORT=.*/CLIENTS_DB_PORT=3307/' /tmp/api-dev.env
+          kubectl create configmap meatmanager-config \
+            --from-env-file=/tmp/api-dev.env \
+            -n "${K8S_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          rm -f /tmp/api-dev.env
+
+          # ── Firebase service account Secret ──
+          printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > /tmp/firebase.json
+          kubectl create secret generic meatmanager-api-secret \
+            --from-file=firebase-service-account.json=/tmp/firebase.json \
+            -n "${K8S_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          rm -f /tmp/firebase.json
+
+          # ── Apply manifests ──
+          kubectl apply -f k8s/ -n "${K8S_NAMESPACE}"
+
+          # ── Set image tags ──
+          IMAGE_TAG="sha-${{ github.sha }}"
+          kubectl set image deployment/meatmanager-api \
+            api="${GHCR_NAMESPACE}/meatmanager-api:${IMAGE_TAG}" \
+            -n "${K8S_NAMESPACE}"
+          kubectl set image deployment/meatmanager-web \
+            web="${GHCR_NAMESPACE}/meatmanager-web:${IMAGE_TAG}" \
+            -n "${K8S_NAMESPACE}"
+
+          # ── Restart to pick up new images ──
+          kubectl rollout restart deployment/meatmanager-api -n "${K8S_NAMESPACE}"
+          kubectl rollout restart deployment/meatmanager-web -n "${K8S_NAMESPACE}"
+
+      - name: Wait for dev rollout
         run: |
-          echo "=== Deploy debug: DEPLOY_PATH=${DEPLOY_PATH} ==="
-          if [ -z "${DEPLOY_PATH}" ]; then
-            echo "DEPLOY_PATH missing in debug step too"
-            exit 0
-          fi
-          echo "=== Deploy debug: DEPLOY_PATH tree ==="
-          ls -la "${DEPLOY_PATH}" || true
-          echo "=== Deploy debug: docker compose ps ==="
-          cd "${DEPLOY_PATH}"
-          docker compose -f docker-compose.cloud.yml --env-file .env ps || true
-          echo "=== Deploy debug: web-dev logs (last 200) ==="
-          docker compose -f docker-compose.cloud.yml --env-file .env logs --tail=200 web-dev || true
-          echo "=== Deploy debug: api-dev logs (last 200) ==="
-          docker compose -f docker-compose.cloud.yml --env-file .env logs --tail=200 api-dev || true
-          echo "=== Deploy debug: docker ps ==="
-          docker ps -a || true
+          kubectl rollout status deployment/meatmanager-api -n meatmanager --timeout=180s
+          kubectl rollout status deployment/meatmanager-web -n meatmanager --timeout=120s
+
+      - name: Post-deploy diagnostics
+        if: always()
+        run: |
+          set +e
+          echo "=== pods ==="
+          kubectl get pods -n meatmanager
+          echo "=== api image ==="
+          kubectl get deployment/meatmanager-api -n meatmanager -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          echo "=== web image ==="
+          kubectl get deployment/meatmanager-web -n meatmanager -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          echo "=== api logs (last 80) ==="
+          kubectl logs deployment/meatmanager-api -n meatmanager --tail=80 2>&1 || true
+          echo "=== events (last 20) ==="
+          kubectl get events -n meatmanager --sort-by='.lastTimestamp' | tail -20
 
   deploy-to-cluster:
     name: Deploy to K3s cluster (homelab)
