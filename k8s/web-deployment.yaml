@@ -13,9 +13,11 @@ spec:
       labels:
         app: meatmanager-web
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: web
-          image: ghcr.io/def-software-argentina/meatmanager-web:latest
+          image: ghcr.io/def-software-argentina/meatmanager-web:main
           imagePullPolicy: Always
           ports:
             - containerPort: 80

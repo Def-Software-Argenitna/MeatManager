@@ -13,9 +13,11 @@ spec:
       labels:
         app: meatmanager-api
     spec:
+      imagePullSecrets:
+        - name: ghcr-pull
       containers:
         - name: api
-          image: ghcr.io/def-software-argentina/meatmanager-api:latest
+          image: ghcr.io/def-software-argentina/meatmanager-api:main
           imagePullPolicy: Always
           ports:
             - containerPort: 3001
