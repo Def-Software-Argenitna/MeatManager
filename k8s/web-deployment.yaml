@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meatmanager-web
+  namespace: meatmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: meatmanager-web
+  template:
+    metadata:
+      labels:
+        app: meatmanager-web
+    spec:
+      containers:
+        - name: web
+          image: ghcr.io/def-software-argentina/meatmanager-web:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+              name: http
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "250m"
+              memory: "128Mi"
