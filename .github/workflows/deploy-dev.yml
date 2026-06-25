@@ -72,7 +72,7 @@ jobs:
 
       - name: Deploy to K8s (dev)
         env:
-          K8S_NAMESPACE: meatmanager
+          K8S_NAMESPACE: meatmanager-demo
           GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
@@ -143,24 +143,28 @@ jobs:
           kubectl rollout restart deployment/meatmanager-web -n "${K8S_NAMESPACE}"
 
       - name: Wait for dev rollout
+        env:
+          K8S_NS: meatmanager-demo
         run: |
-          kubectl rollout status deployment/meatmanager-api -n meatmanager --timeout=180s
-          kubectl rollout status deployment/meatmanager-web -n meatmanager --timeout=120s
+          kubectl rollout status deployment/meatmanager-api -n "${K8S_NS}" --timeout=180s
+          kubectl rollout status deployment/meatmanager-web -n "${K8S_NS}" --timeout=120s
 
       - name: Post-deploy diagnostics
         if: always()
+        env:
+          K8S_NS: meatmanager-demo
         run: |
           set +e
           echo "=== pods ==="
-          kubectl get pods -n meatmanager
+          kubectl get pods -n "${K8S_NS}"
           echo "=== api image ==="
-          kubectl get deployment/meatmanager-api -n meatmanager -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          kubectl get deployment/meatmanager-api -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
           echo "=== web image ==="
-          kubectl get deployment/meatmanager-web -n meatmanager -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          kubectl get deployment/meatmanager-web -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
           echo "=== api logs (last 80) ==="
-          kubectl logs deployment/meatmanager-api -n meatmanager --tail=80 2>&1 || true
+          kubectl logs deployment/meatmanager-api -n "${K8S_NS}" --tail=80 2>&1 || true
           echo "=== events (last 20) ==="
-          kubectl get events -n meatmanager --sort-by='.lastTimestamp' | tail -20
+          kubectl get events -n "${K8S_NS}" --sort-by='.lastTimestamp' | tail -20
 
   deploy-to-cluster:
     name: Deploy to K3s cluster (homelab)
