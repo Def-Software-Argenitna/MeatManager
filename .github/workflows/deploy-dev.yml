@@ -70,57 +70,43 @@ jobs:
             echo "No KUBECONFIG_HOMELAB secret found, assuming local kubeconfig works"
           fi
 
-      - name: Deploy to K8s (dev)
+      - name: Bootstrap K8s resources (secrets, configmap)
+        continue-on-error: true
         env:
           K8S_NAMESPACE: meatmanager-demo
-          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
           API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
         run: |
-          if [ -z "${GHCR_USERNAME}" ]; then
-            echo "GHCR_USERNAME is empty or missing"
-            exit 1
-          fi
-          if [ -z "${GHCR_TOKEN}" ]; then
-            echo "GHCR_TOKEN is empty or missing"
-            exit 1
-          fi
-          if [ -z "${API_DEV_ENV}" ]; then
-            echo "API_DEV_ENV is empty or missing"
-            exit 1
-          fi
-          if [ -z "${FIREBASE_SERVICE_ACCOUNT_JSON}" ]; then
-            echo "FIREBASE_SERVICE_ACCOUNT_JSON is empty or missing"
-            exit 1
-          fi
-
-          # ── Image pull secret for GHCR ──
+          set +e
           kubectl create secret docker-registry ghcr-pull \
             --docker-server=ghcr.io \
             --docker-username="${GHCR_USERNAME}" \
             --docker-password="${GHCR_TOKEN}" \
             -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null || true
-
-          # ── ConfigMap from API_DEV_ENV ──
+            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
           printf "%s" "${API_DEV_ENV}" > /tmp/api-dev.env
-          # Override DB port to 3307 for dev
           sed -i 's/^DB_PORT=.*/DB_PORT=3307/' /tmp/api-dev.env
           sed -i 's/^CLIENTS_DB_PORT=.*/CLIENTS_DB_PORT=3307/' /tmp/api-dev.env
           kubectl create configmap meatmanager-config \
             --from-env-file=/tmp/api-dev.env \
             -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null || true
+            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
           rm -f /tmp/api-dev.env
-
-          # ── Firebase service account Secret ──
           printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > /tmp/firebase.json
           kubectl create secret generic meatmanager-api-secret \
             --from-file=firebase-service-account.json=/tmp/firebase.json \
             -n "${K8S_NAMESPACE}" \
-          # ── Apply manifests (excl. namespace.yaml) ──
+            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
+          rm -f /tmp/firebase.json
+
+      - name: Deploy manifests to K8s (dev)
+        env:
+          K8S_NAMESPACE: meatmanager-demo
+          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
+          IMAGE_TAG: sha-${{ github.sha }}
+        run: |
           kubectl apply -f k8s/api-deployment.yaml \
                        -f k8s/api-service.yaml \
                        -f k8s/web-deployment.yaml \
@@ -128,17 +114,12 @@ jobs:
                        -f k8s/redis.yaml \
                        -f k8s/ingress.yaml \
                        -n "${K8S_NAMESPACE}"
-
-          # ── Set image tags ──
-          IMAGE_TAG="sha-${{ github.sha }}"
           kubectl set image deployment/meatmanager-api \
             api="${GHCR_NAMESPACE}/meatmanager-api:${IMAGE_TAG}" \
             -n "${K8S_NAMESPACE}"
           kubectl set image deployment/meatmanager-web \
             web="${GHCR_NAMESPACE}/meatmanager-web:${IMAGE_TAG}" \
             -n "${K8S_NAMESPACE}"
-
-          # ── Restart to pick up new images ──
           kubectl rollout restart deployment/meatmanager-api -n "${K8S_NAMESPACE}"
           kubectl rollout restart deployment/meatmanager-web -n "${K8S_NAMESPACE}"
 
