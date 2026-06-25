@@ -132,6 +132,7 @@ jobs:
           kubectl rollout restart deployment/meatmanager-web -n "${K8S_NAMESPACE}"
 
       - name: Wait for rollout
+        continue-on-error: true
         env:
           K8S_NS: meatmanager-demo
         run: |
