@@ -112,35 +112,28 @@ jobs:
             --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
           rm -f /tmp/firebase.json
 
-      - name: Deploy manifests to K8s (dev)
+      - name: Deploy to K8s (dev)
         env:
           K8S_NAMESPACE: meatmanager-demo
           GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           IMAGE_TAG: sha-${{ github.sha }}
         run: |
-          kubectl apply -f k8s/api-deployment.yaml \
-                       -f k8s/api-service.yaml \
-                       -f k8s/web-deployment.yaml \
-                       -f k8s/web-service.yaml \
-                       -f k8s/redis.yaml \
-                       -f k8s/ingress.yaml \
-                       -n "${K8S_NAMESPACE}"
-          kubectl set image deployment/meatmanager-api \
+          kubectl set image deployment/api \
             api="${GHCR_NAMESPACE}/meatmanager-api:${IMAGE_TAG}" \
             -n "${K8S_NAMESPACE}"
-          kubectl set image deployment/meatmanager-web \
+          kubectl set image deployment/web \
             web="${GHCR_NAMESPACE}/meatmanager-web:${IMAGE_TAG}" \
             -n "${K8S_NAMESPACE}"
-          kubectl rollout restart deployment/meatmanager-api -n "${K8S_NAMESPACE}"
-          kubectl rollout restart deployment/meatmanager-web -n "${K8S_NAMESPACE}"
+          kubectl rollout restart deployment/api -n "${K8S_NAMESPACE}"
+          kubectl rollout restart deployment/web -n "${K8S_NAMESPACE}"
 
-      - name: Wait for dev rollout
+      - name: Wait for rollout
         continue-on-error: true
         env:
           K8S_NS: meatmanager-demo
         run: |
-          kubectl rollout status deployment/meatmanager-api -n "${K8S_NS}" --timeout=180s
-          kubectl rollout status deployment/meatmanager-web -n "${K8S_NS}" --timeout=120s
+          kubectl rollout status deployment/api -n "${K8S_NS}" --timeout=180s
+          kubectl rollout status deployment/web -n "${K8S_NS}" --timeout=120s
 
       - name: Post-deploy diagnostics
         if: always()
@@ -151,10 +144,10 @@ jobs:
           echo "=== pods ==="
           kubectl get pods -n "${K8S_NS}"
           echo "=== api image ==="
-          kubectl get deployment/meatmanager-api -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          kubectl get deployment/api -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
           echo "=== web image ==="
-          kubectl get deployment/meatmanager-web -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
+          kubectl get deployment/web -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
           echo "=== api logs (last 80) ==="
-          kubectl logs deployment/meatmanager-api -n "${K8S_NS}" --tail=80 2>&1 || true
+          kubectl logs deployment/api -n "${K8S_NS}" --tail=80 2>&1 || true
           echo "=== events (last 20) ==="
           kubectl get events -n "${K8S_NS}" --sort-by='.lastTimestamp' | tail -20
