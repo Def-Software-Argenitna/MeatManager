@@ -106,8 +106,6 @@ jobs:
             exit 1
           fi
 
-          # ── Namespace ──
-          kubectl create ns "${K8S_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
           # ── Image pull secret for GHCR ──
           kubectl create secret docker-registry ghcr-pull \
@@ -115,14 +113,14 @@ jobs:
             --docker-username="${GHCR_USERNAME}" \
             --docker-password="${GHCR_TOKEN}" \
             -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null || true
 
           # ── ConfigMap from API_MAIN_ENV ──
           printf "%s" "${API_MAIN_ENV}" > /tmp/api-main.env
           kubectl create configmap meatmanager-config \
             --from-env-file=/tmp/api-main.env \
             -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null || true
           rm -f /tmp/api-main.env
 
           # ── Firebase service account Secret ──
@@ -130,11 +128,14 @@ jobs:
           kubectl create secret generic meatmanager-api-secret \
             --from-file=firebase-service-account.json=/tmp/firebase.json \
             -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-          rm -f /tmp/firebase.json
-
-          # ── Apply manifests ──
-          kubectl apply -f k8s/ -n "${K8S_NAMESPACE}"
+          # ── Apply manifests (excl. namespace.yaml — service account sin permisos) ──
+          kubectl apply -f k8s/api-deployment.yaml \
+                       -f k8s/api-service.yaml \
+                       -f k8s/web-deployment.yaml \
+                       -f k8s/web-service.yaml \
+                       -f k8s/redis.yaml \
+                       -f k8s/ingress.yaml \
+                       -n "${K8S_NAMESPACE}"
 
           # ── Set image tags ──
           IMAGE_TAG="sha-${{ github.sha }}"
