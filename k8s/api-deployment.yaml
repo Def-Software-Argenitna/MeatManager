@@ -1,0 +1,62 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: meatmanager-api
+  namespace: meatmanager
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: meatmanager-api
+  template:
+    metadata:
+      labels:
+        app: meatmanager-api
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/def-software-argentina/meatmanager-api:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 3001
+              name: http
+          envFrom:
+            - configMapRef:
+                name: meatmanager-config
+            - secretRef:
+                name: meatmanager-api-secret
+          env:
+            - name: FIREBASE_SERVICE_ACCOUNT
+              value: "/etc/secrets/firebase-service-account.json"
+            - name: NODE_ENV
+              value: "production"
+          volumeMounts:
+            - name: firebase-secret
+              mountPath: /etc/secrets
+              readOnly: true
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: firebase-secret
+          secret:
+            secretName: meatmanager-api-secret
+            items:
+              - key: firebase-service-account.json
+                path: firebase-service-account.json

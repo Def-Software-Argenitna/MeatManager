@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: meatmanager-config
+  namespace: meatmanager
+data:
+  DB_HOST: "mysql.meatmanager.svc.cluster.local"
+  DB_PORT: "3306"
+  CLIENTS_DB_HOST: "mysql.meatmanager.svc.cluster.local"
+  CLIENTS_DB_PORT: "3306"
+  MEATMANAGER_DB_NAME: "meatmanager"
+  OPERATIONAL_DB_NAME: "meatmanager"
+  CLIENTS_DB_NAME: "GestionClientes"
+  CLIENTS_TABLE: "clients"
+  CLIENT_USERS_TABLE: "client_users"
+  CLIENT_LICENSES_TABLE: "client_licenses"
+  CLIENT_USER_PERMISSIONS_TABLE: "client_user_permissions"
+  LICENSES_TABLE: "licenses"
+  REDIS_HOST: "redis.meatmanager.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+  REDIS_TLS: "false"
+  REDIS_TTL_SECONDS: "90"
+  PORT: "3001"
+  CORS_ORIGIN: "https://meatmanager.tudominio.com"
