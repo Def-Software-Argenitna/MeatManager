@@ -48,6 +48,16 @@ jobs:
         with:
           version: v1.35.5
 
+      - name: Configure kubeconfig
+        run: |
+          if [ -n "${{ secrets.KUBECONFIG_HOMELAB }}" ]; then
+            mkdir -p $HOME/.kube
+            echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
+            chmod 600 $HOME/.kube/config
+          else
+            echo "No KUBECONFIG_HOMELAB secret found, assuming local kubeconfig works"
+          fi
+
       - uses: docker/build-push-action@v6
         with:
           context: ./MeatManager-web
