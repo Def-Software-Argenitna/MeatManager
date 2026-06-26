@@ -677,6 +677,15 @@ const CierreCaja = () => {
             return;
         }
 
+        // El movimiento debe quedar en el dia seleccionado (selectedDate), no en
+        // el de hoy. Usamos un datetime local "plano" (YYYY-MM-DD HH:MM:SS) igual
+        // que la apertura (openingDate). NO usar toISOString(): /api/data inserta
+        // el string crudo y la conversion a UTC corre el dia (ej: 22:00 ART -> dia
+        // siguiente). El string plano mantiene la fecha exacta a cualquier hora.
+        const stamp = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const movementDate = `${selectedDate} ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+
         try {
             await saveTableRecord('caja_movimientos', 'insert', {
                 type: movementType,
@@ -690,7 +699,7 @@ const CierreCaja = () => {
                 payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
                 cash_account: selectedCashAccount,
                 branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-                date: (() => { const [y, m, d] = selectedDate.split('-').map(Number); return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds()).toISOString(); })(),
+                date: movementDate,
             });
         } catch (error) {
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar el movimiento de caja.' });
