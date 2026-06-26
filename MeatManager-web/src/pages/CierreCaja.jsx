@@ -677,20 +677,25 @@ const CierreCaja = () => {
             return;
         }
 
-        await saveTableRecord('caja_movimientos', 'insert', {
-            type: movementType,
-            amount: parseFloat(movementAmount),
-            category: movementCategory,
-            money_flow_kind: movementType === 'ingreso' ? 'manual_income' : 'manual_expense',
-            origin_table: 'cierre_caja',
-            origin_group_id: `manual_${selectedDate}_${selectedCashAccount}`,
-            description: movementDesc,
-            payment_method: movementPaymentMethod,
-            payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
-            cash_account: selectedCashAccount,
-            branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-            date: new Date().toISOString(),
-        });
+        try {
+            await saveTableRecord('caja_movimientos', 'insert', {
+                type: movementType,
+                amount: parseFloat(movementAmount),
+                category: movementCategory,
+                money_flow_kind: movementType === 'ingreso' ? 'manual_income' : 'manual_expense',
+                origin_table: 'cierre_caja',
+                origin_group_id: `manual_${selectedDate}_${selectedCashAccount}`,
+                description: movementDesc,
+                payment_method: movementPaymentMethod,
+                payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
+                cash_account: selectedCashAccount,
+                branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                date: new Date().toISOString(),
+            });
+        } catch (error) {
+            setFeedback({ type: 'error', text: error.message || 'No se pudo guardar el movimiento de caja.' });
+            return;
+        }
 
         await loadData();
         setMovementAmount('');
