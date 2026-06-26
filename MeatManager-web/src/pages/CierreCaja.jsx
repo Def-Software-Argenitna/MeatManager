@@ -690,7 +690,7 @@ const CierreCaja = () => {
                 payment_method_type: activePaymentMethods.find((method) => method.name === movementPaymentMethod)?.type || 'cash',
                 cash_account: selectedCashAccount,
                 branch_id: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
-                date: new Date().toISOString(),
+                date: (() => { const [y, m, d] = selectedDate.split('-').map(Number); return new Date(y, m - 1, d, now.getHours(), now.getMinutes(), now.getSeconds()).toISOString(); })(),
             });
         } catch (error) {
             setFeedback({ type: 'error', text: error.message || 'No se pudo guardar el movimiento de caja.' });
