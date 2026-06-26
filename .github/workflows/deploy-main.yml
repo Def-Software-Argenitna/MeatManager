@@ -43,21 +43,6 @@ jobs:
           username: ${{ secrets.GHCR_USERNAME }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      - name: Setup kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: v1.35.5
-
-      - name: Configure kubeconfig
-        run: |
-          if [ -n "${{ secrets.KUBECONFIG_HOMELAB }}" ]; then
-            mkdir -p $HOME/.kube
-            echo "${{ secrets.KUBECONFIG_HOMELAB }}" > $HOME/.kube/config
-            chmod 600 $HOME/.kube/config
-          else
-            echo "No KUBECONFIG_HOMELAB secret found, assuming local kubeconfig works"
-          fi
-
       - uses: docker/build-push-action@v6
         with:
           context: ./MeatManager-web
@@ -80,71 +65,76 @@ jobs:
             ${{ env.GHCR_NAMESPACE }}/meatmanager-api:main
             ${{ env.GHCR_NAMESPACE }}/meatmanager-api:sha-${{ github.sha }}
 
-      - name: Bootstrap K8s resources (secrets, configmap)
-        continue-on-error: true
+      - name: Deploy main stack on self-hosted runner
         env:
-          K8S_NAMESPACE: meatmanager-demo
+          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
           GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
           GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          MAIN_DOMAIN: meatmanager.def-software.com
+          DEMO_DOMAIN: meatmanager.demo.def-software.com
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
           API_MAIN_ENV: ${{ secrets.API_MAIN_ENV }}
+          API_DEV_ENV: ${{ secrets.API_DEV_ENV }}
           FIREBASE_SERVICE_ACCOUNT_JSON: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_JSON }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
         run: |
-          set +e
-          kubectl create secret docker-registry ghcr-pull \
-            --docker-server=ghcr.io \
-            --docker-username="${GHCR_USERNAME}" \
-            --docker-password="${GHCR_TOKEN}" \
-            -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
-          printf "%s" "${API_MAIN_ENV}" > /tmp/api-main.env
-          kubectl create configmap meatmanager-config \
-            --from-env-file=/tmp/api-main.env \
-            -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
-          rm -f /tmp/api-main.env
-          printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > /tmp/firebase.json
-          kubectl create secret generic meatmanager-api-secret \
-            --from-file=firebase-service-account.json=/tmp/firebase.json \
-            -n "${K8S_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl create -f - 2>/dev/null
-          rm -f /tmp/firebase.json
+          if [ -z "${GHCR_USERNAME}" ]; then
+            echo "GHCR_USERNAME is empty or missing"
+            exit 1
+          fi
+          if [ -z "${GHCR_TOKEN}" ]; then
+            echo "GHCR_TOKEN is empty or missing"
+            exit 1
+          fi
+          mkdir -p "${DEPLOY_PATH}/env" "${DEPLOY_PATH}/secrets" "${DEPLOY_PATH}/nginx"
+          cp deploy/docker-compose.cloud.yml "${DEPLOY_PATH}/docker-compose.cloud.yml"
+          cp deploy/nginx/meatmanager.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.def-software.com.conf"
+          cp deploy/nginx/meatmanager.demo.def-software.com.conf "${DEPLOY_PATH}/nginx/meatmanager.demo.def-software.com.conf"
+          printf "GHCR_NAMESPACE=%s\nMAIN_DOMAIN=%s\nDEMO_DOMAIN=%s\nWEB_MAIN_TAG=%s\nAPI_MAIN_TAG=%s\nWEB_DEV_TAG=%s\nAPI_DEV_TAG=%s\n" \
+            "${GHCR_NAMESPACE}" \
+            "${MAIN_DOMAIN}" \
+            "${DEMO_DOMAIN}" \
+            "sha-${{ github.sha }}" \
+            "sha-${{ github.sha }}" \
+            "dev" \
+            "dev" > "${DEPLOY_PATH}/.env"
+          printf "%s" "${API_MAIN_ENV}" > "${DEPLOY_PATH}/env/api-main.env"
+          printf "%s" "${API_DEV_ENV}" > "${DEPLOY_PATH}/env/api-dev.env"
+          if [ -n "${FIREBASE_WEB_API_KEY}" ]; then
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-dev.env"
+            printf "\nFIREBASE_WEB_API_KEY=%s\n" "${FIREBASE_WEB_API_KEY}" >> "${DEPLOY_PATH}/env/api-main.env"
+          fi
+          printf "%s" "${FIREBASE_SERVICE_ACCOUNT_JSON}" > "${DEPLOY_PATH}/secrets/firebase-service-account.json"
+          chmod 600 "${DEPLOY_PATH}/secrets/firebase-service-account.json"
+          cd "${DEPLOY_PATH}"
+          echo "${GHCR_TOKEN}" | docker login ghcr.io -u "${GHCR_USERNAME}" --password-stdin
+          docker compose -f docker-compose.cloud.yml --env-file .env pull web-main api-main
+          docker compose -f docker-compose.cloud.yml --env-file .env up -d --force-recreate --wait web-main api-main
 
-      - name: Deploy manifests to K8s
-        env:
-          K8S_NAMESPACE: meatmanager-demo
-          GHCR_NAMESPACE: ${{ env.GHCR_NAMESPACE }}
-          IMAGE_TAG: sha-${{ github.sha }}
+      - name: Refresh nginx-proxy-manager upstream DNS
         run: |
-          kubectl set image deployment/api \
-            api="${GHCR_NAMESPACE}/meatmanager-api:${IMAGE_TAG}" \
-            -n "${K8S_NAMESPACE}"
-          kubectl set image deployment/web \
-            web="${GHCR_NAMESPACE}/meatmanager-web:${IMAGE_TAG}" \
-            -n "${K8S_NAMESPACE}"
-          kubectl rollout restart deployment/api -n "${K8S_NAMESPACE}"
-          kubectl rollout restart deployment/web -n "${K8S_NAMESPACE}"
-
-      - name: Wait for rollout
-        continue-on-error: true
-        env:
-          K8S_NS: meatmanager-demo
-        run: |
-          kubectl rollout status deployment/api -n "${K8S_NS}" --timeout=180s
-          kubectl rollout status deployment/web -n "${K8S_NS}" --timeout=120s
+          # Despues de --force-recreate los containers tienen IPs nuevas. nginx
+          # dentro de NPM cachea la resolucion DNS de proxy_pass de forma
+          # indefinida y queda sirviendo 502s al IP viejo. Reload graceful
+          # (~50ms, sin downtime) re-resuelve los upstream sin afectar a
+          # BarManager/KioskManager/admin/portainer que tambien estan detras.
+          docker exec nginx-proxy-manager nginx -s reload
 
       - name: Post-deploy diagnostics
         if: always()
         env:
-          K8S_NS: meatmanager-demo
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
         run: |
           set +e
-          echo "=== pods ==="
-          kubectl get pods -n "${K8S_NS}"
-          echo "=== api image ==="
-          kubectl get deployment/api -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-          echo "=== web image ==="
-          kubectl get deployment/web -n "${K8S_NS}" -o jsonpath='{.spec.template.spec.containers[0].image}{"\n"}'
-          echo "=== api logs (last 80) ==="
-          kubectl logs deployment/api -n "${K8S_NS}" --tail=80 2>&1 || true
-          echo "=== events (last 20) ==="
-          kubectl get events -n "${K8S_NS}" --sort-by='.lastTimestamp' | tail -20
+          echo "=== docker ps -a (filtered) ==="
+          docker ps -a --filter "name=meatmanager-" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+          echo "=== docker compose ps ==="
+          cd "${DEPLOY_PATH}"
+          docker compose -f docker-compose.cloud.yml --env-file .env ps
+          echo "=== api-main logs (last 80) ==="
+          docker logs --tail 80 meatmanager-api-main 2>&1
+          echo "=== api-main HTTP check from host ==="
+          curl -sS -o /dev/null -w "host→api-main: HTTP %{http_code} (%{time_total}s)\n" http://127.0.0.1:4101/health
+          echo "=== nginx-proxy-manager container status ==="
+          docker ps -a --filter "name=nginx-proxy-manager" --format "table {{.Names}}\t{{.Status}}"
+          true
