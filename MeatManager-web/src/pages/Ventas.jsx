@@ -424,6 +424,21 @@ const Ventas = () => {
     const branchResolved = currentBranchId != null;
     const cashOpeningRequired = branchResolved && !hasCashOpeningToday;
 
+    // Blindaje del cobro mientras la sucursal no hidrata. Registramos desde
+    // cuando currentBranchId esta en null: si es transitorio (hidratacion, <5s)
+    // mostramos "resolviendo sucursal"; si persiste (sesion sin sucursal elegida)
+    // pasamos a un mensaje accionable en vez de dejar esperando. Nunca redirige
+    // a /caja ni reabre caja.
+    const BRANCH_RESOLVE_GRACE_MS = 5000;
+    const branchUnresolvedSinceRef = React.useRef(null);
+    React.useEffect(() => {
+        if (currentBranchId == null) {
+            if (branchUnresolvedSinceRef.current == null) branchUnresolvedSinceRef.current = Date.now();
+        } else {
+            branchUnresolvedSinceRef.current = null;
+        }
+    }, [currentBranchId]);
+
     React.useEffect(() => {
         if (showDeleteTicketModal) {
             setDeleteModalRefreshTick((prev) => prev + 1);
@@ -1916,7 +1931,20 @@ const Ventas = () => {
     };
 
     const openPaymentModal = (preferredMethod = null) => {
-        if (cashOpeningRequired) {
+        // Sucursal sin resolver: no abrimos el modal ni redirigimos. Gracia corta
+        // para la hidratacion; pasada la gracia, mensaje accionable (no se cuelga).
+        if (!branchResolved) {
+            const since = branchUnresolvedSinceRef.current || Date.now();
+            const stillHydrating = Date.now() - since < BRANCH_RESOLVE_GRACE_MS;
+            showToast(
+                stillHydrating
+                    ? '⏳ Esperá un segundo, resolviendo la sucursal…'
+                    : '⚠️ No se pudo determinar la sucursal activa. Elegí la sucursal arriba y reintentá.',
+                'warning'
+            );
+            return;
+        }
+        if (!hasCashOpeningToday) {
             showToast('⚠️ No hay apertura de caja registrada hoy. Te llevamos a realizarla...', 'warning');
             setTimeout(() => navigate('/caja'), 2500);
             return;
