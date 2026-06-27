@@ -13420,18 +13420,25 @@ app.get('/health', (req, res) => res.json({
 }));
 
 // ── Cierre automático de balanza a medianoche ──────────────────────────────
-// Cada noche a las 00:00 (hora del servidor) encola clear_sales_memory para
+// Cada noche a las 00:00 de Argentina (UTC-3) encola clear_sales_memory para
 // todos los tenants con bridge ACTIVE. El bridge lo levanta en el siguiente
 // heartbeat (<5s): lee los tickets del día, los sube al API y ejecuta fn32
 // para limpiar la memoria de la balanza. Al otro día arranca en cero, sin
 // que nadie tenga que tocar nada manualmente.
+const AR_TIMEZONE = 'America/Argentina/Buenos_Aires';
 function scheduleMidnightScaleClear() {
     const msUntilMidnight = () => {
+        // La medianoche es en hora de Argentina, NO en la del proceso (el server
+        // corre en UTC). Sin esto disparaba a las 00:00 UTC = 21:00 ART y vaciaba
+        // balanzas de locales todavía abiertos. Reinterpretamos la hora de pared
+        // de AR como Date local del proceso: el delta hasta la próxima 00:00 ART
+        // es el mismo lapso real (AR no tiene horario de verano, sin saltos).
         const now = new Date();
-        const next = new Date(now);
-        next.setDate(next.getDate() + 1);
-        next.setHours(0, 0, 0, 0);
-        return next.getTime() - now.getTime();
+        const artNow = new Date(now.toLocaleString('en-US', { timeZone: AR_TIMEZONE }));
+        const artNext = new Date(artNow);
+        artNext.setDate(artNext.getDate() + 1);
+        artNext.setHours(0, 0, 0, 0);
+        return artNext.getTime() - artNow.getTime();
     };
 
     const runMidnightClear = async () => {

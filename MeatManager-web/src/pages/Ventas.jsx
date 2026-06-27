@@ -272,7 +272,11 @@ const Ventas = () => {
         const normalizedSales = (Array.isArray(salesRows) ? salesRows : []).filter(branchMatches);
         const normalizedSalesItems = Array.isArray(salesItemsRows) ? salesItemsRows : [];
         const normalizedMovements = (Array.isArray(movementsRows) ? movementsRows : []).filter(branchMatches);
-        const todayKey = new Date().toISOString().slice(0, 10);
+        // Clave del dia en hora LOCAL (no UTC). La apertura se guarda con fecha
+        // local ("YYYY-MM-DD 08:00:00"); comparar contra toISOString() (UTC) daba
+        // falso negativo entre 21:00 y 23:59 ART (UTC ya esta en el dia siguiente).
+        const localNow = new Date();
+        const todayKey = `${localNow.getFullYear()}-${String(localNow.getMonth() + 1).padStart(2, '0')}-${String(localNow.getDate()).padStart(2, '0')}`;
 
         setStockItems(normalizedStockRows);
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
@@ -413,6 +417,12 @@ const Ventas = () => {
     }, [refreshVentasData]);
 
     const hasCashOpeningToday = (todayOpeningMovements?.length || 0) > 0;
+    // Mientras la sucursal activa no este resuelta (currentBranchId == null),
+    // branchMatches descarta TODAS las aperturas, lo que daba un falso "no hay
+    // apertura -> reabri caja" (y al reabrir se vaciaba la balanza). Solo
+    // exigimos la apertura cuando ya sabemos en que sucursal estamos.
+    const branchResolved = currentBranchId != null;
+    const cashOpeningRequired = branchResolved && !hasCashOpeningToday;
 
     React.useEffect(() => {
         if (showDeleteTicketModal) {
@@ -1906,7 +1916,7 @@ const Ventas = () => {
     };
 
     const openPaymentModal = (preferredMethod = null) => {
-        if (!hasCashOpeningToday) {
+        if (cashOpeningRequired) {
             showToast('⚠️ No hay apertura de caja registrada hoy. Te llevamos a realizarla...', 'warning');
             setTimeout(() => navigate('/caja'), 2500);
             return;
@@ -2689,7 +2699,7 @@ const Ventas = () => {
                     >
                         {isProcessing ? 'PROCESANDO...' : 'COBRAR TICKET'}
                     </button>
-                    {!hasCashOpeningToday && (
+                    {cashOpeningRequired && (
                         <div style={{
                             marginTop: '0.6rem',
                             padding: '0.75rem 0.85rem',
