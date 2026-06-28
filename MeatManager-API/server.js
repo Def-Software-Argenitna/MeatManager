@@ -13035,6 +13035,66 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
     }
 });
 
+// ── RUTA: GET /api/informes/kilos ────────────────────────────────────────
+// Kilos por dia y sucursal, en dos series para comparar:
+//  - pesado: TODO lo que paso por la balanza (de las tablas del bridge),
+//    salga o no el ticket / se haya cobrado o no.
+//  - cobrado: kilos de ventas registradas (ventas_items), solo items por peso.
+// La diferencia (pesado - cobrado) deja ver lo que se peso pero no se cobro.
+app.get('/api/informes/kilos', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        conn = await pool.getConnection();
+
+        const from = String(req.query.from || '').trim();
+        const to = String(req.query.to || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+            return res.status(400).json({ error: 'from y to requeridos en formato YYYY-MM-DD' });
+        }
+        const fromDt = `${from} 00:00:00`;
+        const toDt = `${to} 23:59:59`;
+
+        const [pesado] = await conn.query(
+            `SELECT DATE(m.sale_at) AS dia, m.branch_id AS branch_id,
+                    ROUND(SUM(CASE WHEN s.item_quantity_unit = 'kg' THEN s.item_quantity ELSE 0 END), 3) AS kg
+             FROM scale_bridge_ticket_map m
+             JOIN scale_bridge_sales_item s
+               ON s.tenant_id = m.tenant_id AND UPPER(s.ticket_barcode) = UPPER(m.ticket_barcode)
+             WHERE m.tenant_id = ? AND m.sale_at BETWEEN ? AND ?
+             GROUP BY DATE(m.sale_at), m.branch_id`,
+            [tenantId, fromDt, toDt]
+        );
+
+        const [cobrado] = await conn.query(
+            `SELECT DATE(v.date) AS dia, v.branch_id AS branch_id,
+                    ROUND(SUM(CASE WHEN COALESCE(p.unit, 'kg') = 'kg' THEN vi.quantity ELSE 0 END), 3) AS kg
+             FROM ventas v
+             JOIN ventas_items vi ON vi.tenant_id = v.tenant_id AND vi.venta_id = v.id
+             LEFT JOIN products p ON p.tenant_id = v.tenant_id AND p.id = vi.product_id
+             WHERE v.tenant_id = ? AND v.date BETWEEN ? AND ?
+             GROUP BY DATE(v.date), v.branch_id`,
+            [tenantId, fromDt, toDt]
+        );
+
+        const norm = (rows) => (Array.isArray(rows) ? rows : []).map((r) => ({
+            dia: r.dia instanceof Date
+                ? `${r.dia.getFullYear()}-${String(r.dia.getMonth() + 1).padStart(2, '0')}-${String(r.dia.getDate()).padStart(2, '0')}`
+                : String(r.dia),
+            branch_id: r.branch_id == null ? null : Number(r.branch_id),
+            kg: Number(r.kg || 0),
+        }));
+
+        return res.json({ from, to, pesado: norm(pesado), cobrado: norm(cobrado) });
+    } catch (err) {
+        console.error('[GET /api/informes/kilos ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ── RUTA: POST /api/conciliacion/balanza/anular ──────────────────────────
 // Anula tickets de balanza PENDIENTES (estado 'open') que nunca se cobraron.
 // No mueve plata ni stock — el ticket nunca generó venta. Solo cambia el estado

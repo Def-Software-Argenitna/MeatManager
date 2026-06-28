@@ -32,7 +32,8 @@ import {
   Cpu,
   Lock,
   HelpCircle,
-  Crown
+  Crown,
+  Scale
 } from 'lucide-react';
 import { useLicense } from '../context/LicenseContext';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
@@ -137,6 +138,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Ventas', path: '/ventas', icon: Banknote },
     { title: 'Caja', path: '/caja', icon: Calculator },
     { title: 'Informes de Caja', path: '/informes-caja', icon: BarChart3, permissionPath: '/caja' },
+    { title: 'Kilos Vendidos', path: '/informes-kilos', icon: Scale, permissionPath: '/caja' },
     { title: 'Compras', path: '/compras', icon: ShoppingCart },
     { title: 'Stock', path: '/stock', icon: PackageSearch },
   ];

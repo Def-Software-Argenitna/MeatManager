@@ -536,6 +536,17 @@ export const fetchClientBranches = async () => {
     return res.json();
 };
 
+// Informe de kilos: pesado en balanza vs cobrado, por dia y sucursal.
+export const fetchKilosReport = async ({ from, to }) => {
+    const query = new URLSearchParams({ from: String(from || ''), to: String(to || '') });
+    const res = await apiFetch(`/api/informes/kilos?${query.toString()}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer el informe de kilos');
+    }
+    return res.json();
+};
+
 export const fetchBranchTransfers = async ({ direction, status } = {}) => {
     const query = new URLSearchParams();
     if (direction) query.set('direction', direction);
