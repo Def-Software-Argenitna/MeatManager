@@ -12952,14 +12952,19 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
         }
 
         const total = Number(ticket.total_amount || 0);
+        // La venta y la caja se fechan con la fecha REAL del ticket (sale_at), no
+        // con la de hoy, y se imputan a la sucursal del ticket. Asi conciliar un
+        // ticket viejo impacta en la caja del dia que corresponde.
+        const saleDate = ticket.sale_at ? new Date(ticket.sale_at) : new Date();
+        const branchId = ticket.branch_id || null;
 
         await conn.beginTransaction();
         try {
-            // Insertar venta
+            // Insertar venta con la fecha del ticket y su sucursal
             const [ventaResult] = await conn.query(
-                `INSERT INTO ventas (tenant_id, date, total, payment_method, payment_method_id, source, created_at)
-                 VALUES (?, NOW(), ?, ?, ?, 'conciliacion_manual', NOW())`,
-                [tenantId, total, pmName, pmId || null]
+                `INSERT INTO ventas (tenant_id, branch_id, date, subtotal, total, payment_method, payment_method_id, source, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, 'conciliacion_manual', NOW())`,
+                [tenantId, branchId, saleDate, total, total, pmName, pmId || null]
             );
             const saleId = ventaResult.insertId;
 
@@ -12967,6 +12972,7 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
             if (items.length > 0) {
                 const itemRows = items.map(it => [
                     tenantId,
+                    branchId,
                     saleId,
                     it.product_db_id || null,
                     it.product_name || `PLU ${it.plu_code}`,
@@ -12975,8 +12981,35 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
                     Number(it.amount || 0),
                 ]);
                 await conn.query(
-                    `INSERT INTO ventas_items (tenant_id, venta_id, product_id, product_name, quantity, price, subtotal) VALUES ?`,
+                    `INSERT INTO ventas_items (tenant_id, branch_id, venta_id, product_id, product_name, quantity, price, subtotal) VALUES ?`,
                     [itemRows]
+                );
+            }
+
+            // Registrar ingreso en caja del DIA DEL TICKET (cuenta corriente no toca caja)
+            const cajaParts = buildCajaPartsFromSale({
+                paymentMethod: pmName,
+                paymentMethodType: null,
+                paymentBreakdown: null,
+                totalAmount: total,
+            });
+            for (const part of cajaParts) {
+                await conn.query(
+                    `INSERT INTO caja_movimientos
+                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, branch_id, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                     VALUES (?, 'venta', ?, 'Venta', ?, ?, ?, 'principal', ?, ?, ?, 'sale_collection', 'ventas', ?, CONCAT('sale_', ?))`,
+                    [
+                        tenantId,
+                        parseFloat(part.amount) || 0,
+                        `Cobro conciliación ticket ${ticket.printed_ticket_barcode || barcode}`,
+                        part.methodName,
+                        part.methodType || inferPaymentTypeByName(part.methodName),
+                        saleDate,
+                        branchId,
+                        saleId,
+                        saleId,
+                        saleId,
+                    ]
                 );
             }
 
