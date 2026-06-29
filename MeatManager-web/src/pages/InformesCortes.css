@@ -1,0 +1,187 @@
+.informes-cortes-container {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 1.5rem;
+}
+
+.informes-cortes-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.informes-cortes-header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
+.informes-cortes-header p {
+    margin: 0.25rem 0 0;
+    color: var(--color-text-muted);
+    font-size: 0.88rem;
+}
+
+.ic-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.45rem;
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    background: var(--color-primary);
+    padding: 0.65rem 1rem;
+    font-weight: 800;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.ic-refresh-btn:hover {
+    opacity: 0.9;
+}
+
+.ic-loading {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 3rem;
+}
+
+/* ── Filtros ── */
+.informes-cortes-filters {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.ic-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    padding: 0.5rem;
+    cursor: pointer;
+    color: var(--color-text);
+}
+
+.ic-nav-btn:hover {
+    background: var(--color-bg-hover);
+}
+
+.ic-period-selector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.ic-period-label {
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+
+.ic-period-toggle {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.ic-period-toggle label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+}
+
+/* ── Secciones ── */
+.ic-section {
+    margin-bottom: 2.5rem;
+}
+
+.ic-section h2 {
+    margin: 0 0 1rem;
+    font-size: 1.15rem;
+    font-weight: 800;
+}
+
+/* ── Ranking especies ── */
+.ic-especies-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.ic-especie-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    padding: 1rem 1.25rem;
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+    border-left: 4px solid;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.ic-especie-name {
+    font-weight: 800;
+    font-size: 1rem;
+}
+
+.ic-especie-kg {
+    font-size: 1.4rem;
+    font-weight: 800;
+}
+
+.ic-especie-pct {
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+}
+
+/* ── Gráfico ── */
+.ic-chart-wrapper {
+    border-radius: var(--radius-md);
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+/* ── Tabla ── */
+.ic-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+}
+
+.ic-table th,
+.ic-table td {
+    padding: 0.55rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid var(--color-border);
+}
+
+.ic-table th {
+    font-weight: 800;
+    color: var(--color-text-muted);
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+.ic-table td {
+    font-weight: 600;
+}
+
+.ic-table tbody tr:hover {
+    background: var(--color-bg-hover);
+}
+
+.ic-empty {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 2rem !important;
+}

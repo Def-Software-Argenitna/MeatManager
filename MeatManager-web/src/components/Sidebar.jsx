@@ -137,6 +137,7 @@ const Sidebar = ({ isCollapsed }) => {
     { title: 'Ventas', path: '/ventas', icon: Banknote },
     { title: 'Caja', path: '/caja', icon: Calculator },
     { title: 'Informes de Caja', path: '/informes-caja', icon: BarChart3, permissionPath: '/caja' },
+    { title: 'Ranking Cortes', path: '/informes-cortes', icon: BarChart3 },
     { title: 'Compras', path: '/compras', icon: ShoppingCart },
     { title: 'Stock', path: '/stock', icon: PackageSearch },
   ];

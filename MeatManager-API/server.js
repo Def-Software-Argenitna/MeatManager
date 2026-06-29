@@ -7578,6 +7578,100 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: { branch_id: req.query.branch_id } })
+            : null;
+
+        // Filtro por mes y año
+        const now = new Date();
+        const year = parseInt(req.query.year) || now.getFullYear();
+        const month = parseInt(req.query.month);
+        let startDate, endDate;
+        if (Number.isFinite(month) && month >= 1 && month <= 12) {
+            startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+            const nextMonth = month === 12 ? 1 : month + 1;
+            const nextYear = month === 12 ? year + 1 : year;
+            endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+        } else {
+            startDate = `${year}-01-01`;
+            endDate = `${year + 1}-01-01`;
+        }
+
+        const where = ['vi.tenant_id = ?', 'v.date >= ?', 'v.date < ?', 'v.source != ?'];
+        const params = [tenantId, startDate, endDate, 'scale_ticket'];
+
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            where.push('v.branch_id = ?');
+            params.push(resolvedBranchId);
+        }
+
+        const [rows] = await pool.query(`
+            SELECT
+                pc.code AS especie,
+                pc.name AS especie_nombre,
+                vi.product_name AS corte,
+                ROUND(SUM(vi.quantity), 2) AS total_kg,
+                ROUND(SUM(vi.subtotal), 2) AS total_vendido,
+                COUNT(DISTINCT vi.venta_id) AS veces_vendido
+            FROM ventas_items vi
+            JOIN ventas v ON v.tenant_id = vi.tenant_id AND v.id = vi.venta_id
+            JOIN products p ON p.tenant_id = vi.tenant_id AND p.id = vi.product_id
+            JOIN product_categories pc ON pc.tenant_id = p.tenant_id AND pc.id = p.category_id
+            WHERE ${where.join(' AND ')}
+              AND pc.code IN ('vaca', 'cerdo', 'pollo')
+            GROUP BY pc.code, pc.name, vi.product_name
+            ORDER BY pc.code, total_kg DESC
+        `, params);
+
+        // Armar estructura: ranking general de especies + top 10 por especie
+        const rankingEspecies = [];
+        const rankingCortes = { vaca: [], cerdo: [], pollo: [] };
+        const acum = {};
+        for (const r of rows) {
+            if (!acum[r.especie]) acum[r.especie] = { code: r.especie, nombre: r.especie_nombre, total_kg: 0, total_vendido: 0 };
+            acum[r.especie].total_kg += r.total_kg;
+            acum[r.especie].total_vendido += r.total_vendido;
+            if (rankingCortes[r.especie] && rankingCortes[r.especie].length < 10) {
+                rankingCortes[r.especie].push({
+                    corte: r.corte,
+                    total_kg: r.total_kg,
+                    total_vendido: r.total_vendido,
+                    veces_vendido: r.veces_vendido,
+                });
+            }
+        }
+        for (const key of ['vaca', 'cerdo', 'pollo']) {
+            if (acum[key]) rankingEspecies.push(acum[key]);
+        }
+        rankingEspecies.sort((a, b) => b.total_kg - a.total_kg);
+
+        res.json({
+            year,
+            month: Number.isFinite(month) ? month : null,
+            rankingEspecies,
+            rankingCortes,
+            totalGeneral: rankingEspecies.reduce((s, e) => s + e.total_kg, 0),
+        });
+    } catch (err) {
+        console.error('[CORTES-RANKING ERROR]', err.message);
+        res.status(500).json({ error: err.message || 'Error al obtener ranking de cortes' });
+    }
+});
+
 app.get('/api/settings/:key', verifyFirebaseToken, async (req, res) => {
     try {
         const settingKey = String(req.params.key || '').trim();
