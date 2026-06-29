@@ -7596,17 +7596,27 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
             ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: { branch_id: req.query.branch_id } })
             : null;
 
-        // Filtro por mes y año
+        // Filtro por año, mes y día
         const now = new Date();
         const year = parseInt(req.query.year) || now.getFullYear();
         const month = parseInt(req.query.month);
+        const day = parseInt(req.query.day);
         let startDate, endDate;
         if (Number.isFinite(month) && month >= 1 && month <= 12) {
-            startDate = `${year}-${String(month).padStart(2, '0')}-01`;
-            const nextMonth = month === 12 ? 1 : month + 1;
-            const nextYear = month === 12 ? year + 1 : year;
-            endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+            if (Number.isFinite(day) && day >= 1 && day <= 31) {
+                // Filtrar por día específico
+                startDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const d = new Date(year, month - 1, day + 1);
+                endDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            } else {
+                // Filtrar por mes completo
+                startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+                const nextMonth = month === 12 ? 1 : month + 1;
+                const nextYear = month === 12 ? year + 1 : year;
+                endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+            }
         } else {
+            // Filtrar por año completo
             startDate = `${year}-01-01`;
             endDate = `${year + 1}-01-01`;
         }
@@ -7666,6 +7676,7 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
         res.json({
             year,
             month: Number.isFinite(month) ? month : null,
+            day: Number.isFinite(day) ? day : null,
             rankingEspecies,
             rankingCortes,
             totalGeneral,

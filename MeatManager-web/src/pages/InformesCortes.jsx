@@ -22,15 +22,20 @@ export default function InformesCortes() {
     const now = new Date();
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth() + 1);
+    const [day, setDay] = useState(now.getDate());
     const [useMonthFilter, setUseMonthFilter] = useState(true);
+    const [useDayFilter, setUseDayFilter] = useState(false);
     const [data, setData] = useState(null);
     const [loading, setLoading] = useState(true);
+
+    const daysInMonth = (y, m) => new Date(y, m, 0).getDate();
 
     const fetchData = useCallback(async () => {
         setLoading(true);
         try {
             const params = new URLSearchParams({ year: String(year) });
             if (useMonthFilter) params.set('month', String(month));
+            if (useMonthFilter && useDayFilter) params.set('day', String(day));
             const res = await apiFetch(`/api/informes/cortes-ranking?${params}`);
             if (!res.ok) throw new Error('Error al obtener datos');
             setData(await res.json());
@@ -39,7 +44,7 @@ export default function InformesCortes() {
         } finally {
             setLoading(false);
         }
-    }, [year, month, useMonthFilter]);
+    }, [year, month, day, useMonthFilter, useDayFilter]);
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
@@ -47,7 +52,12 @@ export default function InformesCortes() {
     const formatMoney = (n) => `$${Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`;
 
     const prevPeriod = () => {
-        if (useMonthFilter) {
+        if (useMonthFilter && useDayFilter) {
+            const prev = new Date(year, month - 1, day - 1);
+            setYear(prev.getFullYear());
+            setMonth(prev.getMonth() + 1);
+            setDay(prev.getDate());
+        } else if (useMonthFilter) {
             if (month === 1) { setMonth(12); setYear(y => y - 1); }
             else setMonth(m => m - 1);
         } else {
@@ -56,7 +66,12 @@ export default function InformesCortes() {
     };
 
     const nextPeriod = () => {
-        if (useMonthFilter) {
+        if (useMonthFilter && useDayFilter) {
+            const next = new Date(year, month - 1, day + 1);
+            setYear(next.getFullYear());
+            setMonth(next.getMonth() + 1);
+            setDay(next.getDate());
+        } else if (useMonthFilter) {
             if (month === 12) { setMonth(1); setYear(y => y + 1); }
             else setMonth(m => m + 1);
         } else {
@@ -64,7 +79,9 @@ export default function InformesCortes() {
         }
     };
 
-    const periodLabel = useMonthFilter
+    const periodLabel = useMonthFilter && useDayFilter
+        ? `${day} de ${months[month - 1]} ${year}`
+        : useMonthFilter
         ? `${months[month - 1]} ${year}`
         : `Año ${year}`;
 
@@ -86,15 +103,39 @@ export default function InformesCortes() {
                 </button>
                 <div className="ic-period-selector">
                     <span className="ic-period-label">{periodLabel}</span>
-                    <div className="ic-period-toggle">
+                    <div className="ic-period-toggles">
                         <label>
                             <input
                                 type="checkbox"
                                 checked={useMonthFilter}
-                                onChange={(e) => setUseMonthFilter(e.target.checked)}
+                                onChange={(e) => {
+                                    setUseMonthFilter(e.target.checked);
+                                    if (!e.target.checked) setUseDayFilter(false);
+                                }}
                             />
-                            Filtrar por mes
+                            Mes
                         </label>
+                        {useMonthFilter && (
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    checked={useDayFilter}
+                                    onChange={(e) => setUseDayFilter(e.target.checked)}
+                                />
+                                Día
+                            </label>
+                        )}
+                        {useMonthFilter && useDayFilter && (
+                            <select
+                                className="ic-day-select"
+                                value={day}
+                                onChange={(e) => setDay(Number(e.target.value))}
+                            >
+                                {Array.from({ length: daysInMonth(year, month) }, (_, i) => i + 1).map(d => (
+                                    <option key={d} value={d}>{d}</option>
+                                ))}
+                            </select>
+                        )}
                     </div>
                 </div>
                 <button className="ic-nav-btn" onClick={nextPeriod}>

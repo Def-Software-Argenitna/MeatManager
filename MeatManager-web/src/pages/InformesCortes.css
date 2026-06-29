@@ -96,6 +96,32 @@
     cursor: pointer;
 }
 
+.ic-period-toggles {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.ic-period-toggles label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+}
+
+.ic-day-select {
+    background: var(--glass-bg);
+    color: var(--color-text-main);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm, 6px);
+    padding: 0.2rem 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
 /* ── Panel glass (igual que Dashboard) ── */
 .ic-panel {
     background: var(--glass-bg);
