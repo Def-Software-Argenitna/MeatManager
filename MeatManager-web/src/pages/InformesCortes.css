@@ -1,7 +1,7 @@
 .informes-cortes-container {
-    max-width: 1280px;
-    margin: 0 auto;
-    padding: 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
 }
 
 .informes-cortes-header {
@@ -9,7 +9,6 @@
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
-    margin-bottom: 1.5rem;
 }
 
 .informes-cortes-header h1 {
@@ -28,7 +27,6 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 0.45rem;
     border: none;
     border-radius: var(--radius-md);
     color: white;
@@ -55,23 +53,23 @@
     align-items: center;
     justify-content: center;
     gap: 1rem;
-    margin-bottom: 2rem;
 }
 
 .ic-nav-btn {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--color-border);
+    border: 1px solid var(--glass-border);
     border-radius: var(--radius-md);
-    background: var(--color-surface);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
     padding: 0.5rem;
     cursor: pointer;
     color: var(--color-text);
 }
 
 .ic-nav-btn:hover {
-    background: var(--color-bg-hover);
+    background: rgba(255, 255, 255, 0.08);
 }
 
 .ic-period-selector {
@@ -98,86 +96,99 @@
     cursor: pointer;
 }
 
-/* ── Secciones ── */
-.ic-section {
-    margin-bottom: 2.5rem;
+/* ── Panel glass (igual que Dashboard) ── */
+.ic-panel {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow:
+        0 15px 50px rgba(0, 0, 0, 0.3),
+        inset 0 0 1px 1px rgba(255, 255, 255, 0.08);
+    position: relative;
+    overflow: hidden;
+    padding: 1.5rem;
 }
 
-.ic-section h2 {
-    margin: 0 0 1rem;
+.ic-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--glass-reflection);
+    pointer-events: none;
+}
+
+.ic-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.ic-panel-header h3 {
+    margin: 0;
     font-size: 1.15rem;
     font-weight: 800;
-}
-
-/* ── Ranking especies ── */
-.ic-especies-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-    gap: 1rem;
-    margin-bottom: 2rem;
-}
-
-.ic-especie-card {
     display: flex;
-    flex-direction: column;
-    gap: 0.3rem;
-    padding: 1rem 1.25rem;
-    border-radius: var(--radius-md);
-    background: var(--color-surface);
-    border-left: 4px solid;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    align-items: center;
+    gap: 0.5rem;
 }
 
-.ic-especie-name {
-    font-weight: 800;
-    font-size: 1rem;
+.ic-especie-icon {
+    font-size: 1.3rem;
 }
 
-.ic-especie-kg {
-    font-size: 1.4rem;
-    font-weight: 800;
-}
-
-.ic-especie-pct {
-    font-size: 0.85rem;
+.ic-total-label {
     color: var(--color-text-muted);
+    font-size: 0.85rem;
 }
 
-/* ── Gráfico ── */
-.ic-chart-wrapper {
-    border-radius: var(--radius-md);
-    padding: 1rem;
-    margin-bottom: 1rem;
+.ic-total-label strong {
+    color: var(--color-text-main);
+}
+
+.ic-especies-chart {
+    position: relative;
+    z-index: 1;
 }
 
 /* ── Tabla ── */
 .ic-table {
     width: 100%;
     border-collapse: collapse;
-    font-size: 0.88rem;
+    font-size: 0.85rem;
+    position: relative;
+    z-index: 1;
 }
 
 .ic-table th,
 .ic-table td {
     padding: 0.55rem 0.75rem;
     text-align: left;
-    border-bottom: 1px solid var(--color-border);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
 }
 
 .ic-table th {
     font-weight: 800;
     color: var(--color-text-muted);
-    font-size: 0.78rem;
+    font-size: 0.72rem;
     text-transform: uppercase;
-    letter-spacing: 0.03em;
+    letter-spacing: 0.04em;
 }
 
 .ic-table td {
     font-weight: 600;
+    color: var(--color-text-main);
 }
 
 .ic-table tbody tr:hover {
-    background: var(--color-bg-hover);
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.ic-rank {
+    font-weight: 800;
+    color: var(--color-primary);
+    width: 2rem;
 }
 
 .ic-empty {

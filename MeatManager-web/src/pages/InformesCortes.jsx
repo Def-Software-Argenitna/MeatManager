@@ -9,13 +9,14 @@ const months = [
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
-const SPECIES_COLORS = {
-    vaca: { bg: '#dc2626', light: '#fef2f2' },
-    cerdo: { bg: '#eab308', light: '#fefce8' },
-    pollo: { bg: '#f97316', light: '#fff7ed' },
-};
-
 const SPECIES_LABELS = { vaca: 'Vaca', cerdo: 'Cerdo', pollo: 'Pollo' };
+const SPECIES_ICONS = { vaca: '🐄', cerdo: '🐖', pollo: '🐔' };
+
+const formatCompact = (n) => {
+    const num = Number(n) || 0;
+    if (num >= 1000) return `${(num / 1000).toFixed(1)}k`;
+    return `${num.toFixed(1)}`;
+};
 
 export default function InformesCortes() {
     const now = new Date();
@@ -42,8 +43,8 @@ export default function InformesCortes() {
 
     useEffect(() => { fetchData(); }, [fetchData]);
 
-    const formatKg = (n) => `${Number(n).toLocaleString('es-AR', { maximumFractionDigits: 2 })} kg`;
-    const formatMoney = (n) => `$${Number(n).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`;
+    const formatKg = (n) => `${Number(n || 0).toLocaleString('es-AR', { maximumFractionDigits: 2 })} kg`;
+    const formatMoney = (n) => `$${Number(n || 0).toLocaleString('es-AR', { minimumFractionDigits: 2 })}`;
 
     const prevPeriod = () => {
         if (useMonthFilter) {
@@ -106,48 +107,55 @@ export default function InformesCortes() {
             {data && !loading && (
                 <>
                     {/* Ranking general de especies */}
-                    <section className="ic-section">
-                        <h2>Ranking General por Especie</h2>
-                        <div className="ic-especies-grid">
-                            {data.rankingEspecies.map((esp) => {
-                                const color = SPECIES_COLORS[esp.code] || { bg: '#6b7280', light: '#f9fafb' };
-                                return (
-                                    <div key={esp.code} className="ic-especie-card" style={{ borderLeftColor: color.bg }}>
-                                        <span className="ic-especie-name">{esp.nombre}</span>
-                                        <span className="ic-especie-kg">{formatKg(esp.total_kg)}</span>
-                                        <span className="ic-especie-pct">
-                                            {data.totalGeneral > 0
-                                                ? `${((esp.total_kg / data.totalGeneral) * 100).toFixed(1)}%`
-                                                : '0%'}
-                                        </span>
-                                    </div>
-                                );
-                            })}
+                    <section className="ic-panel ic-ranking-general">
+                        <div className="ic-panel-header">
+                            <h3>Ranking General por Especie</h3>
+                            <span className="ic-total-label">
+                                Total: <strong>{formatKg(data.totalGeneral)}</strong>
+                            </span>
+                        </div>
+                        <div className="ic-especies-chart">
+                            <BarChart
+                                data={data.rankingEspecies.map(esp => ({
+                                    label: esp.nombre,
+                                    value: esp.total_kg,
+                                    fullLabel: `${esp.nombre}: ${formatKg(esp.total_kg)}`,
+                                }))}
+                                formatValue={(n) => formatKg(n)}
+                                formatTooltip={(p) => `${p.fullLabel || p.label}: ${formatKg(p.value)}`}
+                                height={170}
+                            />
                         </div>
                     </section>
 
                     {/* Top 10 por especie */}
                     {['vaca', 'cerdo', 'pollo'].map((especie) => {
                         const cortes = data.rankingCortes[especie] || [];
-                        const color = SPECIES_COLORS[especie] || { bg: '#6b7280', light: '#f9fafb' };
-                        const chartData = cortes.map((c, i) => ({
-                            label: c.corte.length > 15 ? c.corte.slice(0, 15) + '...' : c.corte,
+                        const especieData = data.rankingEspecies.find(e => e.code === especie);
+                        const chartData = cortes.map((c) => ({
+                            label: c.corte.length > 14 ? c.corte.slice(0, 14) + '...' : c.corte,
                             value: c.total_kg,
                             fullLabel: c.corte,
                         }));
 
                         return (
-                            <section key={especie} className="ic-section">
-                                <h2 style={{ color: color.bg }}>
-                                    Top 10 — {SPECIES_LABELS[especie]}
-                                </h2>
+                            <section key={especie} className="ic-panel">
+                                <div className="ic-panel-header">
+                                    <h3>
+                                        <span className="ic-especie-icon">{SPECIES_ICONS[especie]}</span>
+                                        Top 10 — {SPECIES_LABELS[especie]}
+                                    </h3>
+                                    <span className="ic-total-label">
+                                        Total: <strong>{formatKg(especieData?.total_kg || 0)}</strong>
+                                    </span>
+                                </div>
 
-                                <div className="ic-chart-wrapper" style={{ background: color.light }}>
+                                <div className="ic-especies-chart">
                                     <BarChart
                                         data={chartData}
                                         formatValue={(n) => formatKg(n)}
                                         formatTooltip={(p) => `${p.fullLabel || p.label}: ${formatKg(p.value)}`}
-                                        height={220}
+                                        height={200}
                                     />
                                 </div>
 
@@ -164,7 +172,7 @@ export default function InformesCortes() {
                                     <tbody>
                                         {cortes.map((c, i) => (
                                             <tr key={c.corte}>
-                                                <td>{i + 1}</td>
+                                                <td className="ic-rank">{i + 1}</td>
                                                 <td>{c.corte}</td>
                                                 <td>{formatKg(c.total_kg)}</td>
                                                 <td>{formatMoney(c.total_vendido)}</td>
