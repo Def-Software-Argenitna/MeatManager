@@ -7642,15 +7642,17 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
         const rankingCortes = { vaca: [], cerdo: [], pollo: [] };
         const acum = {};
         for (const r of rows) {
+            const kg = Number(r.total_kg) || 0;
+            const vendido = Number(r.total_vendido) || 0;
             if (!acum[r.especie]) acum[r.especie] = { code: r.especie, nombre: r.especie_nombre, total_kg: 0, total_vendido: 0 };
-            acum[r.especie].total_kg += r.total_kg;
-            acum[r.especie].total_vendido += r.total_vendido;
+            acum[r.especie].total_kg += kg;
+            acum[r.especie].total_vendido += vendido;
             if (rankingCortes[r.especie] && rankingCortes[r.especie].length < 10) {
                 rankingCortes[r.especie].push({
                     corte: r.corte,
-                    total_kg: r.total_kg,
-                    total_vendido: r.total_vendido,
-                    veces_vendido: r.veces_vendido,
+                    total_kg: kg,
+                    total_vendido: vendido,
+                    veces_vendido: Number(r.veces_vendido) || 0,
                 });
             }
         }
@@ -7659,12 +7661,14 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
         }
         rankingEspecies.sort((a, b) => b.total_kg - a.total_kg);
 
+        const totalGeneral = rankingEspecies.reduce((s, e) => s + Number(e.total_kg) || 0, 0);
+
         res.json({
             year,
             month: Number.isFinite(month) ? month : null,
             rankingEspecies,
             rankingCortes,
-            totalGeneral: rankingEspecies.reduce((s, e) => s + e.total_kg, 0),
+            totalGeneral,
         });
     } catch (err) {
         console.error('[CORTES-RANKING ERROR]', err.message);
