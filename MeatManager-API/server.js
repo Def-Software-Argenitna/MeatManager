@@ -7611,8 +7611,8 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
             endDate = `${year + 1}-01-01`;
         }
 
-        const where = ['vi.tenant_id = ?', 'v.date >= ?', 'v.date < ?', 'v.source != ?'];
-        const params = [tenantId, startDate, endDate, 'scale_ticket'];
+        const where = ['vi.tenant_id = ?', 'v.date >= ?', 'v.date < ?'];
+        const params = [tenantId, startDate, endDate];
 
         if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
             where.push('v.branch_id = ?');
