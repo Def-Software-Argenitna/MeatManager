@@ -1,0 +1,224 @@
+.informes-cortes-container {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+}
+
+.informes-cortes-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+}
+
+.informes-cortes-header h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 800;
+}
+
+.informes-cortes-header p {
+    margin: 0.25rem 0 0;
+    color: var(--color-text-muted);
+    font-size: 0.88rem;
+}
+
+.ic-refresh-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: var(--radius-md);
+    color: white;
+    background: var(--color-primary);
+    padding: 0.65rem 1rem;
+    font-weight: 800;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.ic-refresh-btn:hover {
+    opacity: 0.9;
+}
+
+.ic-loading {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 3rem;
+}
+
+/* ── Filtros ── */
+.informes-cortes-filters {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+}
+
+.ic-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-md);
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    padding: 0.5rem;
+    cursor: pointer;
+    color: var(--color-text);
+}
+
+.ic-nav-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.ic-period-selector {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0.25rem;
+}
+
+.ic-period-label {
+    font-weight: 800;
+    font-size: 1.1rem;
+}
+
+.ic-period-toggle {
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.ic-period-toggle label {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    cursor: pointer;
+}
+
+.ic-period-toggles {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+}
+
+.ic-period-toggles label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    cursor: pointer;
+}
+
+.ic-day-select {
+    background: var(--glass-bg);
+    color: var(--color-text-main);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm, 6px);
+    padding: 0.2rem 0.4rem;
+    font-size: 0.8rem;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+/* ── Panel glass (igual que Dashboard) ── */
+.ic-panel {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-lg);
+    box-shadow:
+        0 15px 50px rgba(0, 0, 0, 0.3),
+        inset 0 0 1px 1px rgba(255, 255, 255, 0.08);
+    position: relative;
+    overflow: hidden;
+    padding: 1.5rem;
+}
+
+.ic-panel::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--glass-reflection);
+    pointer-events: none;
+}
+
+.ic-panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.ic-panel-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.ic-especie-icon {
+    font-size: 1.3rem;
+}
+
+.ic-total-label {
+    color: var(--color-text-muted);
+    font-size: 0.85rem;
+}
+
+.ic-total-label strong {
+    color: var(--color-text-main);
+}
+
+.ic-especies-chart {
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Tabla ── */
+.ic-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+    position: relative;
+    z-index: 1;
+}
+
+.ic-table th,
+.ic-table td {
+    padding: 0.55rem 0.75rem;
+    text-align: left;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.ic-table th {
+    font-weight: 800;
+    color: var(--color-text-muted);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.ic-table td {
+    font-weight: 600;
+    color: var(--color-text-main);
+}
+
+.ic-table tbody tr:hover {
+    background: rgba(255, 255, 255, 0.04);
+}
+
+.ic-rank {
+    font-weight: 800;
+    color: var(--color-primary);
+    width: 2rem;
+}
+
+.ic-empty {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 2rem !important;
+}

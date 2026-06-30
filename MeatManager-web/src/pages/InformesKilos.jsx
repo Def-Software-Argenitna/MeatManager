@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Scale, Download, AlertTriangle } from 'lucide-react';
+import { RefreshCw, Scale, Download, AlertTriangle, BarChart3 } from 'lucide-react';
 import { fetchKilosReport, fetchClientBranches } from '../utils/apiClient';
+import InformesCortes from './InformesCortes';
 
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -16,6 +17,7 @@ const InformesKilos = () => {
     const weekAgo = new Date(now);
     weekAgo.setDate(now.getDate() - 6);
 
+    const [tab, setTab] = useState('kilos'); // 'kilos' | 'cortes'
     const [from, setFrom] = useState(toInput(weekAgo));
     const [to, setTo] = useState(toInput(now));
     const [data, setData] = useState({ pesado: [], cobrado: [] });
@@ -119,6 +121,35 @@ const InformesKilos = () => {
 
     return (
         <div className="animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
+            {/* Solapas: Kilos Vendidos · Ranking de Cortes */}
+            <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
+                {[
+                    { key: 'kilos', label: 'Kilos Vendidos', Icon: Scale },
+                    { key: 'cortes', label: 'Ranking de Cortes', Icon: BarChart3 },
+                ].map(({ key, label, Icon }) => {
+                    const active = tab === key;
+                    return (
+                        <button
+                            key={key}
+                            onClick={() => setTab(key)}
+                            style={{
+                                display: 'flex', alignItems: 'center', gap: '0.4rem',
+                                background: 'none', border: 'none', cursor: 'pointer',
+                                padding: '0.6rem 0.9rem', marginBottom: '-1px',
+                                fontSize: '0.92rem', fontWeight: 700,
+                                color: active ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                                borderBottom: `2px solid ${active ? 'var(--color-primary)' : 'transparent'}`,
+                            }}
+                        >
+                            <Icon size={17} /> {label}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {tab === 'cortes' && <InformesCortes />}
+
+            {tab === 'kilos' && (<>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>
                 <div>
                     <h1 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
@@ -232,6 +263,7 @@ const InformesKilos = () => {
             <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: 0 }}>
                 ⚠️ Si un día aparece en cero o casi, es porque la balanza no registró ese día (no es un error del informe): ese dato no quedó guardado en ningún lado.
             </p>
+            </>)}
         </div>
     );
 };
