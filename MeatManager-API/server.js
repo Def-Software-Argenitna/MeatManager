@@ -7420,9 +7420,40 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             });
         }
 
+        // Modo de transferencia: 'cashboxes' (efectivo entre cajas, comportamiento original)
+        // o 'between_methods' (mover saldo de un medio de pago a otro dentro de la misma caja).
+        const mode = String(req.body?.mode || 'cashboxes').trim().toLowerCase();
+        const isMethodTransfer = mode === 'between_methods' || mode === 'methods';
+
+        // Campos para transferencia entre cajas (efectivo)
         const fromCashAccount = normalizeCashAccountToken(req.body?.fromCashAccount || req.body?.from_cash_account);
         const toCashAccount = normalizeCashAccountToken(req.body?.toCashAccount || req.body?.to_cash_account);
-        if (fromCashAccount === toCashAccount) {
+
+        // Campos para transferencia entre medios de pago
+        const methodCashAccount = normalizeCashAccountToken(req.body?.cashAccount || req.body?.cash_account || 'principal');
+        const fromPaymentMethod = String(req.body?.fromPaymentMethod || req.body?.from_payment_method || '').trim();
+        const toPaymentMethod = String(req.body?.toPaymentMethod || req.body?.to_payment_method || '').trim();
+        const fromPaymentMethodType = String(req.body?.fromPaymentMethodType || req.body?.from_payment_method_type || 'cash').trim() || 'cash';
+        const toPaymentMethodType = String(req.body?.toPaymentMethodType || req.body?.to_payment_method_type || 'cash').trim() || 'cash';
+
+        if (isMethodTransfer) {
+            if (!fromPaymentMethod || !toPaymentMethod) {
+                return res.status(400).json({
+                    code: 'INVALID_TRANSFER_METHODS',
+                    error: 'Elegí medio de origen y destino para transferir',
+                    fromPaymentMethod,
+                    toPaymentMethod,
+                });
+            }
+            if (fromPaymentMethod.toLowerCase() === toPaymentMethod.toLowerCase()) {
+                return res.status(400).json({
+                    code: 'SAME_METHOD_TRANSFER',
+                    error: 'Elegí medios de pago diferentes para transferir',
+                    fromPaymentMethod,
+                    toPaymentMethod,
+                });
+            }
+        } else if (fromCashAccount === toCashAccount) {
             return res.status(400).json({
                 code: 'SAME_CASHBOX_TRANSFER',
                 error: 'Elegí cajas diferentes para transferir',
@@ -7498,6 +7529,13 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
         });
         const branchWhereSql = branchScope.sql ? `AND ${branchScope.sql}` : '';
         const branchWhereParams = branchScope.params;
+        // El origen a validar depende del modo: efectivo de la caja (entre cajas) o
+        // saldo acumulado del medio de pago dentro de la caja (entre medios).
+        const balanceCashAccount = isMethodTransfer ? methodCashAccount : fromCashAccount;
+        const balanceMethodClause = isMethodTransfer
+            ? 'AND payment_method = ?'
+            : "AND LOWER(COALESCE(payment_method_type, '')) = 'cash'";
+        const balanceMethodParams = isMethodTransfer ? [fromPaymentMethod] : [];
         const [balanceRows] = await conn.query(
             `SELECT SUM(CASE
                 WHEN type IN ('apertura', 'ingreso', 'venta') THEN COALESCE(amount, 0)
@@ -7513,25 +7551,23 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
                     WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
                     ELSE 'principal'
                END = ?
-               AND LOWER(COALESCE(payment_method_type, '')) = 'cash'`,
-            [tenantId, transferDate, ...branchWhereParams, fromCashAccount]
+               ${balanceMethodClause}`,
+            [tenantId, transferDate, ...branchWhereParams, balanceCashAccount, ...balanceMethodParams]
         );
 
         const available = Number(balanceRows?.[0]?.balance || 0);
         if (amount > available + 0.0001) {
-            const error = new Error(`Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}`);
+            const error = new Error(isMethodTransfer
+                ? `Saldo insuficiente en ${fromPaymentMethod}. Disponible: $${available.toLocaleString('es-AR')}`
+                : `Efectivo insuficiente en caja origen. Disponible: $${available.toLocaleString('es-AR')}`);
             error.statusCode = 409;
             throw error;
         }
 
-        const fromLabel = fromCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
-        const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
         const common = {
             tenant_id: tenantId,
             branch_id: hasResolvedBranch ? resolvedBranchId : null,
             amount,
-            payment_method: paymentMethod,
-            payment_method_type: paymentMethodType,
             transfer_group_id: transferGroupId,
             origin_group_id: transferGroupId,
             origin_table: 'caja_transfer',
@@ -7540,23 +7576,59 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             ...resolveCajaCreator(accessContext, req),
         };
 
-        const [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
-            ...common,
-            type: 'retiro',
-            money_flow_kind: 'cash_transfer_out',
-            category: 'Transferencia enviada entre cajas',
-            description: description || `Transferencia a ${toLabel}`,
-            cash_account: fromCashAccount,
-        }]);
+        let outResult;
+        let inResult;
 
-        const [inResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
-            ...common,
-            type: 'ingreso',
-            money_flow_kind: 'cash_transfer_in',
-            category: 'Transferencia recibida entre cajas',
-            description: description || `Transferencia desde ${fromLabel}`,
-            cash_account: toCashAccount,
-        }]);
+        if (isMethodTransfer) {
+            // Transferencia entre medios de pago: ambas patas en la misma caja,
+            // cambia el medio de pago. Netea a cero en la caja y mueve el acumulado por medio.
+            [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+                ...common,
+                type: 'retiro',
+                money_flow_kind: 'method_transfer_out',
+                category: 'Transferencia enviada entre medios',
+                description: description || `Transferencia a ${toPaymentMethod}`,
+                cash_account: methodCashAccount,
+                payment_method: fromPaymentMethod,
+                payment_method_type: fromPaymentMethodType,
+            }]);
+
+            [inResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+                ...common,
+                type: 'ingreso',
+                money_flow_kind: 'method_transfer_in',
+                category: 'Transferencia recibida entre medios',
+                description: description || `Transferencia desde ${fromPaymentMethod}`,
+                cash_account: methodCashAccount,
+                payment_method: toPaymentMethod,
+                payment_method_type: toPaymentMethodType,
+            }]);
+        } else {
+            const fromLabel = fromCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
+            const toLabel = toCashAccount === 'secondary' ? 'Caja Secundaria' : 'Caja Principal';
+
+            [outResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+                ...common,
+                payment_method: paymentMethod,
+                payment_method_type: paymentMethodType,
+                type: 'retiro',
+                money_flow_kind: 'cash_transfer_out',
+                category: 'Transferencia enviada entre cajas',
+                description: description || `Transferencia a ${toLabel}`,
+                cash_account: fromCashAccount,
+            }]);
+
+            [inResult] = await conn.query('INSERT INTO caja_movimientos SET ?', [{
+                ...common,
+                payment_method: paymentMethod,
+                payment_method_type: paymentMethodType,
+                type: 'ingreso',
+                money_flow_kind: 'cash_transfer_in',
+                category: 'Transferencia recibida entre cajas',
+                description: description || `Transferencia desde ${fromLabel}`,
+                cash_account: toCashAccount,
+            }]);
+        }
 
         await conn.commit();
         return res.json({

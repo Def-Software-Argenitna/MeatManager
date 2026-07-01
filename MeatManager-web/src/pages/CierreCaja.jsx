@@ -82,12 +82,29 @@ const isTransferMovement = (movement) => (
     Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
 );
 
+// Transferencia entre MEDIOS de pago (misma caja, cambia el medio). Se distingue de la
+// transferencia entre cajas por el money_flow_kind, para no contaminar los recuadros y la
+// reconciliacion de efectivo que son exclusivos de transferencias entre cajas.
+const isMethodTransferMovement = (movement) => {
+    const kind = String(movement?.money_flow_kind || '').trim().toLowerCase();
+    if (kind === 'method_transfer_in' || kind === 'method_transfer_out') return true;
+    return String(movement?.category || '').trim().toLowerCase().includes('entre medios');
+};
+
 const isCustomerPayment = (movement) => (
     String(movement?.money_flow_kind || '').trim().toLowerCase() === 'customer_payment'
     || String(movement?.category || '').trim().toLowerCase() === 'cobro pendientes'
 );
 
 const getManualMovementPresentation = (movement) => {
+    if (isMethodTransferMovement(movement)) {
+        return {
+            label: movement.type === 'ingreso' ? 'Transferencia recibida (entre medios)' : 'Transferencia enviada (entre medios)',
+            note: movement.type === 'ingreso'
+                ? 'Ingreso interno desde otro medio de pago. No es venta ni ajuste.'
+                : 'Salida interna hacia otro medio de pago. No es gasto ni consumo.',
+        };
+    }
     if (isTransferMovement(movement)) {
         return {
             label: movement.type === 'ingreso' ? 'Transferencia recibida' : 'Transferencia enviada',
@@ -134,8 +151,11 @@ const CierreCaja = () => {
     const [feedback, setFeedback] = useState(null);
     const [selectedCashAccount, setSelectedCashAccount] = useState('principal');
     const [showTransferForm, setShowTransferForm] = useState(false);
+    const [transferMode, setTransferMode] = useState('cashboxes'); // 'cashboxes' | 'methods'
     const [transferFromAccount, setTransferFromAccount] = useState('principal');
     const [transferToAccount, setTransferToAccount] = useState('secondary');
+    const [transferFromMethod, setTransferFromMethod] = useState('');
+    const [transferToMethod, setTransferToMethod] = useState('');
     const [transferAmount, setTransferAmount] = useState('');
     const [transferPaymentMethod, setTransferPaymentMethod] = useState('Efectivo');
     const [transferDesc, setTransferDesc] = useState('');
@@ -418,9 +438,9 @@ const CierreCaja = () => {
 
     // Totales diarios derivados de los movimientos del frontend (fuente de verdad consistente con la lista)
     const transferOutMovements = manualMovements
-        .filter((movement) => isTransferMovement(movement) && movement.type === 'retiro');
+        .filter((movement) => isTransferMovement(movement) && !isMethodTransferMovement(movement) && movement.type === 'retiro');
     const transferInMovements = manualMovements
-        .filter((movement) => isTransferMovement(movement) && movement.type === 'ingreso');
+        .filter((movement) => isTransferMovement(movement) && !isMethodTransferMovement(movement) && movement.type === 'ingreso');
     const totalTransfersOut = transferOutMovements
         .reduce((sum, movement) => sum + toNumber(movement.amount), 0);
     const totalTransfersIn = transferInMovements
@@ -755,6 +775,71 @@ const CierreCaja = () => {
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
     };
 
+    const handleTransferSubmit = (e) => {
+        if (transferMode === 'methods') return handleTransferBetweenMethods(e);
+        return handleTransferBetweenCashboxes(e);
+    };
+
+    const handleTransferBetweenMethods = async (e) => {
+        e.preventDefault();
+        if (transferSubmitting) return;
+        const amount = parseFloat(transferAmount);
+        if (!Number.isFinite(amount) || amount <= 0) {
+            setFeedback({ type: 'warning', text: 'Ingresá un monto válido para transferir.' });
+            return;
+        }
+        if (!transferFromMethod || !transferToMethod) {
+            setFeedback({ type: 'warning', text: 'Elegí el medio de origen y el de destino.' });
+            return;
+        }
+        if (transferFromMethod === transferToMethod) {
+            setFeedback({ type: 'warning', text: 'Elegí medios de pago diferentes para transferir.' });
+            return;
+        }
+        if (clientBranches.length > 0 && (!Number.isFinite(transferBranchId) || transferBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Esta caja necesita una sucursal activa. Cambiá de empresa/sucursal y volvé a ingresar.' });
+            return;
+        }
+        const available = toNumber(accumulatedByMethod[transferFromMethod]);
+        if (amount > available) {
+            setFeedback({ type: 'warning', text: `Saldo insuficiente en ${transferFromMethod}. Disponible: $${available.toLocaleString('es-AR')}` });
+            return;
+        }
+
+        const transferGroupId = `trm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        const fromType = activePaymentMethods.find((method) => method.name === transferFromMethod)?.type || 'cash';
+        const toType = activePaymentMethods.find((method) => method.name === transferToMethod)?.type || 'cash';
+
+        try {
+            setTransferSubmitting(true);
+            await createCashboxTransfer({
+                mode: 'between_methods',
+                amount,
+                cashAccount: selectedCashAccount,
+                fromPaymentMethod: transferFromMethod,
+                toPaymentMethod: transferToMethod,
+                fromPaymentMethodType: fromType,
+                toPaymentMethodType: toType,
+                description: transferDesc,
+                transferGroupId,
+                date: new Date().toISOString(),
+                ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
+            });
+
+            await loadData();
+            setTransferAmount('');
+            setTransferDesc('');
+            setTransferFromMethod('');
+            setTransferToMethod('');
+            setShowTransferForm(false);
+            setFeedback({ type: 'success', text: `Transferencia registrada: ${transferFromMethod} → ${transferToMethod}.` });
+        } catch (error) {
+            setFeedback({ type: 'error', text: error?.message || 'No se pudo registrar la transferencia entre medios de pago.' });
+        } finally {
+            setTransferSubmitting(false);
+        }
+    };
+
     const handleTransferBetweenCashboxes = async (e) => {
         e.preventDefault();
         if (transferSubmitting) return;
@@ -1041,15 +1126,33 @@ const CierreCaja = () => {
                         )}
 
                         <div className="section-header section-header-secondary">
-                            <h3>Transferencia entre cajas</h3>
+                            <h3>Transferencia de fondos</h3>
                             <button type="button" className="cierre-add-btn" onClick={() => setShowTransferForm((prev) => !prev)}>
                                 {showTransferForm ? 'Cancelar' : 'Transferir fondos'}
                             </button>
                         </div>
 
                         {showTransferForm && (
-                            <form className="expense-form animate-slide-down" onSubmit={handleTransferBetweenCashboxes}>
+                            <form className="expense-form animate-slide-down" onSubmit={handleTransferSubmit}>
                                 <div className="form-grid">
+                                    <div className="form-group full">
+                                        <div className="type-toggle">
+                                            <button
+                                                type="button"
+                                                className={transferMode === 'cashboxes' ? 'active' : ''}
+                                                onClick={() => setTransferMode('cashboxes')}
+                                            >
+                                                Entre cajas
+                                            </button>
+                                            <button
+                                                type="button"
+                                                className={transferMode === 'methods' ? 'active' : ''}
+                                                onClick={() => setTransferMode('methods')}
+                                            >
+                                                Entre medios de pago
+                                            </button>
+                                        </div>
+                                    </div>
                                     {clientBranches.length > 0 && Number.isFinite(transferBranchId) && transferBranchId > 0 && (
                                         <div className="form-group full">
                                             <label>Sucursal operativa</label>
@@ -1071,45 +1174,86 @@ const CierreCaja = () => {
                                             </div>
                                         </div>
                                     )}
-                                    <div className="form-group">
-                                        <label>Desde caja</label>
-                                        <select
-                                            className="neo-input"
-                                            value={transferFromAccount}
-                                            onChange={(e) => setTransferFromAccount(e.target.value)}
-                                        >
-                                            {CASH_ACCOUNTS.map((cashbox) => (
-                                                <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
-                                            ))}
-                                        </select>
-                                        <small style={{ color: 'var(--color-text-muted)' }}>
-                                            Disponible efectivo: ${toNumber(cashboxCashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
-                                        </small>
-                                    </div>
-                                    <div className="form-group">
-                                        <label>Hacia caja</label>
-                                        <select
-                                            className="neo-input"
-                                            value={transferToAccount}
-                                            onChange={(e) => setTransferToAccount(e.target.value)}
-                                        >
-                                            {CASH_ACCOUNTS.map((cashbox) => (
-                                                <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
-                                            ))}
-                                        </select>
-                                    </div>
-                                    <div className="form-group">
-                                        <label>Medio de pago</label>
-                                        <select
-                                            className="neo-input"
-                                            value={transferPaymentMethod}
-                                            onChange={(e) => setTransferPaymentMethod(e.target.value)}
-                                        >
-                                            {cashPaymentMethods.map((method) => (
-                                                <option key={method.name} value={method.name}>{method.name}</option>
-                                            ))}
-                                        </select>
-                                    </div>
+                                    {transferMode === 'cashboxes' && (
+                                        <>
+                                            <div className="form-group">
+                                                <label>Desde caja</label>
+                                                <select
+                                                    className="neo-input"
+                                                    value={transferFromAccount}
+                                                    onChange={(e) => setTransferFromAccount(e.target.value)}
+                                                >
+                                                    {CASH_ACCOUNTS.map((cashbox) => (
+                                                        <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                                    ))}
+                                                </select>
+                                                <small style={{ color: 'var(--color-text-muted)' }}>
+                                                    Disponible efectivo: ${toNumber(cashboxCashBalanceByAccount[transferFromAccount]).toLocaleString('es-AR')}
+                                                </small>
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Hacia caja</label>
+                                                <select
+                                                    className="neo-input"
+                                                    value={transferToAccount}
+                                                    onChange={(e) => setTransferToAccount(e.target.value)}
+                                                >
+                                                    {CASH_ACCOUNTS.map((cashbox) => (
+                                                        <option key={cashbox.value} value={cashbox.value}>{cashbox.label}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Medio de pago</label>
+                                                <select
+                                                    className="neo-input"
+                                                    value={transferPaymentMethod}
+                                                    onChange={(e) => setTransferPaymentMethod(e.target.value)}
+                                                >
+                                                    {cashPaymentMethods.map((method) => (
+                                                        <option key={method.name} value={method.name}>{method.name}</option>
+                                                    ))}
+                                                </select>
+                                            </div>
+                                        </>
+                                    )}
+                                    {transferMode === 'methods' && (
+                                        <>
+                                            <div className="form-group">
+                                                <label>Desde medio</label>
+                                                <select
+                                                    className="neo-input"
+                                                    value={transferFromMethod}
+                                                    onChange={(e) => setTransferFromMethod(e.target.value)}
+                                                >
+                                                    <option value="">Elegí un medio…</option>
+                                                    {activePaymentMethods.map((method) => (
+                                                        <option key={method.name} value={method.name}>{method.name}</option>
+                                                    ))}
+                                                </select>
+                                                {transferFromMethod && (
+                                                    <small style={{ color: 'var(--color-text-muted)' }}>
+                                                        Disponible: ${toNumber(accumulatedByMethod[transferFromMethod]).toLocaleString('es-AR')} · {getCashAccountLabel(selectedCashAccount)}
+                                                    </small>
+                                                )}
+                                            </div>
+                                            <div className="form-group">
+                                                <label>Hacia medio</label>
+                                                <select
+                                                    className="neo-input"
+                                                    value={transferToMethod}
+                                                    onChange={(e) => setTransferToMethod(e.target.value)}
+                                                >
+                                                    <option value="">Elegí un medio…</option>
+                                                    {activePaymentMethods
+                                                        .filter((method) => method.name !== transferFromMethod)
+                                                        .map((method) => (
+                                                            <option key={method.name} value={method.name}>{method.name}</option>
+                                                        ))}
+                                                </select>
+                                            </div>
+                                        </>
+                                    )}
                                     <div className="form-group">
                                         <label>Monto</label>
                                         <input
