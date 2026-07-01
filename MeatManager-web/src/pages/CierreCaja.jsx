@@ -371,20 +371,8 @@ const CierreCaja = () => {
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             totals[methodName] = (totals[methodName] || 0) + 1;
         });
-        // Los cobros de cuenta corriente se registran como ingreso manual (type: 'ingreso',
-        // money_flow_kind: 'customer_payment'). Se cuentan como cobro del medio con el que se cobró.
-        (movements || []).forEach((movement) => {
-            if (!isCustomerPayment(movement)) return;
-            if (hiddenDigitalPaymentsOnly && !isDigitalPaymentMethodLike({
-                name: movement.payment_method,
-                type: movement.payment_method_type,
-            })) return;
-            const methodName = movement.payment_method || 'Efectivo';
-            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
-            totals[methodName] = (totals[methodName] || 0) + 1;
-        });
         return totals;
-    }, [salesMovements, movements, hiddenDigitalPaymentsOnly]);
+    }, [salesMovements]);
 
     const openingMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type === 'apertura')
@@ -503,20 +491,22 @@ const CierreCaja = () => {
         return totals;
     }, [activePaymentMethods, manualMovements]);
 
-    // Monto de cobros de cuenta corriente (customer_payment) por medio de pago.
-    // Se muestra en su propia linea; no se incluye en "Mov. manuales" para no duplicar.
-    const cobrosAmountByMethod = useMemo(() => {
+    // Cobros de cuenta corriente (customer_payment) por medio de pago: cantidad y suma.
+    // Se muestran en su propia linea; no se incluyen en "Mov. manuales" para no duplicar.
+    const cobrosByMethod = useMemo(() => {
         const totals = {};
         activePaymentMethods.forEach((method) => {
-            totals[method.name] = 0;
+            totals[method.name] = { count: 0, amount: 0 };
         });
 
         manualMovements
             .filter((movement) => isCustomerPayment(movement))
             .forEach((movement) => {
                 const methodName = movement.payment_method || 'Efectivo';
+                if (!totals[methodName]) totals[methodName] = { count: 0, amount: 0 };
                 const sign = movement.type === 'egreso' || movement.type === 'retiro' ? -1 : 1;
-                totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+                totals[methodName].count += 1;
+                totals[methodName].amount += toNumber(movement.amount) * sign;
             });
 
         return totals;
@@ -532,11 +522,12 @@ const CierreCaja = () => {
             reversals: toNumber(summaryByMethod[method.name]?.reversals),
             netSales: toNumber(summaryByMethod[method.name]?.sales) - toNumber(summaryByMethod[method.name]?.reversals),
             salesCount: salesCountByMethod[method.name] || 0,
-            cobrosAmount: cobrosAmountByMethod[method.name] || 0,
+            cobrosCount: cobrosByMethod[method.name]?.count || 0,
+            cobrosAmount: cobrosByMethod[method.name]?.amount || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, accumulatedByMethod, cobrosAmountByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, cobrosByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -944,7 +935,7 @@ const CierreCaja = () => {
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
                                                 <span>Ventas netas hoy: ${item.netSales.toLocaleString('es-AR')}</span>
                                                 <span>Brutas: ${item.sales.toLocaleString('es-AR')} · Anuladas: ${item.reversals.toLocaleString('es-AR')}</span>
-                                                <span>Cobros: {item.salesCount}{item.cobrosAmount ? ` · ${item.cobrosAmount >= 0 ? '+' : '-'}$${Math.abs(item.cobrosAmount).toLocaleString('es-AR')}` : ''}</span>
+                                                <span>Cobros: {item.cobrosCount}{item.cobrosCount ? ` · ${item.cobrosAmount >= 0 ? '+' : '-'}$${Math.abs(item.cobrosAmount).toLocaleString('es-AR')}` : ''}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
