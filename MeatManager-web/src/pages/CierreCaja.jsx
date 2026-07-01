@@ -82,6 +82,11 @@ const isTransferMovement = (movement) => (
     Boolean(movement?.transfer_group_id) || String(movement?.category || '').toLowerCase().includes('transferencia')
 );
 
+const isCustomerPayment = (movement) => (
+    String(movement?.money_flow_kind || '').trim().toLowerCase() === 'customer_payment'
+    || String(movement?.category || '').trim().toLowerCase() === 'cobro pendientes'
+);
+
 const getManualMovementPresentation = (movement) => {
     if (isTransferMovement(movement)) {
         return {
@@ -366,8 +371,20 @@ const CierreCaja = () => {
             if (isCurrentAccount(methodName, movement.payment_method_type)) return;
             totals[methodName] = (totals[methodName] || 0) + 1;
         });
+        // Los cobros de cuenta corriente se registran como ingreso manual (type: 'ingreso',
+        // money_flow_kind: 'customer_payment'). Se cuentan como cobro del medio con el que se cobró.
+        (movements || []).forEach((movement) => {
+            if (!isCustomerPayment(movement)) return;
+            if (hiddenDigitalPaymentsOnly && !isDigitalPaymentMethodLike({
+                name: movement.payment_method,
+                type: movement.payment_method_type,
+            })) return;
+            const methodName = movement.payment_method || 'Efectivo';
+            if (isCurrentAccount(methodName, movement.payment_method_type)) return;
+            totals[methodName] = (totals[methodName] || 0) + 1;
+        });
         return totals;
-    }, [salesMovements]);
+    }, [salesMovements, movements, hiddenDigitalPaymentsOnly]);
 
     const openingMovements = useMemo(() => (
         (movements || []).filter((movement) => movement.type === 'apertura')
