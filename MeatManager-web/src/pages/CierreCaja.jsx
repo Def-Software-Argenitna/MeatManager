@@ -493,7 +493,26 @@ const CierreCaja = () => {
         });
 
         manualMovements
-            .filter((movement) => !isTransferMovement(movement))
+            .filter((movement) => !isTransferMovement(movement) && !isCustomerPayment(movement))
+            .forEach((movement) => {
+                const methodName = movement.payment_method || 'Efectivo';
+                const sign = movement.type === 'egreso' || movement.type === 'retiro' ? -1 : 1;
+                totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            });
+
+        return totals;
+    }, [activePaymentMethods, manualMovements]);
+
+    // Monto de cobros de cuenta corriente (customer_payment) por medio de pago.
+    // Se muestra en su propia linea; no se incluye en "Mov. manuales" para no duplicar.
+    const cobrosAmountByMethod = useMemo(() => {
+        const totals = {};
+        activePaymentMethods.forEach((method) => {
+            totals[method.name] = 0;
+        });
+
+        manualMovements
+            .filter((movement) => isCustomerPayment(movement))
             .forEach((movement) => {
                 const methodName = movement.payment_method || 'Efectivo';
                 const sign = movement.type === 'egreso' || movement.type === 'retiro' ? -1 : 1;
@@ -513,10 +532,11 @@ const CierreCaja = () => {
             reversals: toNumber(summaryByMethod[method.name]?.reversals),
             netSales: toNumber(summaryByMethod[method.name]?.sales) - toNumber(summaryByMethod[method.name]?.reversals),
             salesCount: salesCountByMethod[method.name] || 0,
+            cobrosAmount: cobrosAmountByMethod[method.name] || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, accumulatedByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, cobrosAmountByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -924,7 +944,7 @@ const CierreCaja = () => {
                                                 <span>Apertura: ${item.opening.toLocaleString('es-AR')}</span>
                                                 <span>Ventas netas hoy: ${item.netSales.toLocaleString('es-AR')}</span>
                                                 <span>Brutas: ${item.sales.toLocaleString('es-AR')} · Anuladas: ${item.reversals.toLocaleString('es-AR')}</span>
-                                                <span>Cobros: {item.salesCount}</span>
+                                                <span>Cobros: {item.salesCount}{item.cobrosAmount ? ` · ${item.cobrosAmount >= 0 ? '+' : '-'}$${Math.abs(item.cobrosAmount).toLocaleString('es-AR')}` : ''}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
                                             </div>
                                         </div>
