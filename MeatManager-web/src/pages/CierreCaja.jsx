@@ -175,6 +175,7 @@ const CierreCaja = () => {
     const activeBranchName = activeBranch?.name || '';
     const transferBranchId = activeBranchId;
     const canSelectCashboxBranch = isEffectiveAdminUser(currentUser, accessProfile);
+    const canTransferBetweenMethods = isEffectiveAdminUser(currentUser, accessProfile);
     const requiresCashboxBranch = clientBranches.length > 1;
 
     const handleBranchChange = (branchId) => {
@@ -783,6 +784,10 @@ const CierreCaja = () => {
     const handleTransferBetweenMethods = async (e) => {
         e.preventDefault();
         if (transferSubmitting) return;
+        if (!canTransferBetweenMethods) {
+            setFeedback({ type: 'warning', text: 'Solo un administrador puede transferir fondos entre medios de pago.' });
+            return;
+        }
         const amount = parseFloat(transferAmount);
         if (!Number.isFinite(amount) || amount <= 0) {
             setFeedback({ type: 'warning', text: 'Ingresá un monto válido para transferir.' });
@@ -1135,24 +1140,26 @@ const CierreCaja = () => {
                         {showTransferForm && (
                             <form className="expense-form animate-slide-down" onSubmit={handleTransferSubmit}>
                                 <div className="form-grid">
-                                    <div className="form-group full">
-                                        <div className="type-toggle">
-                                            <button
-                                                type="button"
-                                                className={transferMode === 'cashboxes' ? 'active' : ''}
-                                                onClick={() => setTransferMode('cashboxes')}
-                                            >
-                                                Entre cajas
-                                            </button>
-                                            <button
-                                                type="button"
-                                                className={transferMode === 'methods' ? 'active' : ''}
-                                                onClick={() => setTransferMode('methods')}
-                                            >
-                                                Entre medios de pago
-                                            </button>
+                                    {canTransferBetweenMethods && (
+                                        <div className="form-group full">
+                                            <div className="type-toggle">
+                                                <button
+                                                    type="button"
+                                                    className={transferMode === 'cashboxes' ? 'active' : ''}
+                                                    onClick={() => setTransferMode('cashboxes')}
+                                                >
+                                                    Entre cajas
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    className={transferMode === 'methods' ? 'active' : ''}
+                                                    onClick={() => setTransferMode('methods')}
+                                                >
+                                                    Entre medios de pago
+                                                </button>
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                     {clientBranches.length > 0 && Number.isFinite(transferBranchId) && transferBranchId > 0 && (
                                         <div className="form-group full">
                                             <label>Sucursal operativa</label>

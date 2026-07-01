@@ -7482,6 +7482,14 @@ app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
             accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
         }
 
+        // La transferencia entre medios de pago es una operación sensible: solo admin.
+        if (isMethodTransfer && accessContext && !isAdminAccessContext(accessContext)) {
+            return res.status(403).json({
+                code: 'METHOD_TRANSFER_ADMIN_ONLY',
+                error: 'Solo un administrador puede transferir fondos entre medios de pago',
+            });
+        }
+
         const branchId = accessContext
             ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: req.body || {} })
             : null;
