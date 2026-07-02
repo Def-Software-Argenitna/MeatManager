@@ -547,6 +547,18 @@ export const fetchKilosReport = async ({ from, to }) => {
     return res.json();
 };
 
+// Informe de descuentos de empleado: bruto (sin desc.), descuento y neto cobrado,
+// por dia y por empleado. bruto = neto + descuento (cuadra contra la balanza).
+export const fetchDescuentosReport = async ({ from, to }) => {
+    const query = new URLSearchParams({ from: String(from || ''), to: String(to || '') });
+    const res = await apiFetch(`/api/informes/descuentos?${query.toString()}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo leer el informe de descuentos');
+    }
+    return res.json();
+};
+
 export const fetchBranchTransfers = async ({ direction, status } = {}) => {
     const query = new URLSearchParams();
     if (direction) query.set('direction', direction);

@@ -13175,6 +13175,105 @@ app.get('/api/informes/kilos', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: GET /api/informes/descuentos ───────────────────────────────────
+// Descuentos de empleado otorgados en ventas, por dia y por empleado.
+// La balanza suma SIN descuento (bruto = SUM(subtotal)); la caja cobra el
+// neto (SUM(total)). La diferencia entre ambos es, exactamente, la suma de
+// los descuentos (SUM(client_discount_amount)). Esto le permite al comercio
+// cuadrar el control contra la balanza sin cazar la diferencia ticket por
+// ticket: bruto = neto + descuento.
+app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        conn = await pool.getConnection();
+
+        const from = String(req.query.from || '').trim();
+        const to = String(req.query.to || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+            return res.status(400).json({ error: 'from y to requeridos en formato YYYY-MM-DD' });
+        }
+        const fromDt = `${from} 00:00:00`;
+        const toDt = `${to} 23:59:59`;
+
+        // Solo ventas con descuento efectivamente aplicado.
+        const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ? AND v.client_discount_amount > 0`;
+
+        const [porDia] = await conn.query(
+            `SELECT DATE(v.date) AS dia,
+                    COUNT(*) AS tickets,
+                    ROUND(SUM(v.subtotal), 2) AS bruto,
+                    ROUND(SUM(v.client_discount_amount), 2) AS descuento,
+                    ROUND(SUM(v.total), 2) AS neto
+             FROM ventas v
+             WHERE ${whereDto}
+             GROUP BY DATE(v.date)`,
+            [tenantId, fromDt, toDt]
+        );
+
+        const [porEmpleado] = await conn.query(
+            `SELECT v.discount_client_id AS empleado_id,
+                    c.name AS empleado,
+                    COUNT(*) AS tickets,
+                    ROUND(SUM(v.subtotal), 2) AS bruto,
+                    ROUND(SUM(v.client_discount_amount), 2) AS descuento,
+                    ROUND(SUM(v.total), 2) AS neto
+             FROM ventas v
+             LEFT JOIN clients c ON c.tenant_id = v.tenant_id AND c.id = v.discount_client_id
+             WHERE ${whereDto}
+             GROUP BY v.discount_client_id, c.name`,
+            [tenantId, fromDt, toDt]
+        );
+
+        const [[totalRow]] = await conn.query(
+            `SELECT COUNT(*) AS tickets,
+                    ROUND(SUM(v.subtotal), 2) AS bruto,
+                    ROUND(SUM(v.client_discount_amount), 2) AS descuento,
+                    ROUND(SUM(v.total), 2) AS neto
+             FROM ventas v
+             WHERE ${whereDto}`,
+            [tenantId, fromDt, toDt]
+        );
+
+        const normDia = (rows) => (Array.isArray(rows) ? rows : []).map((r) => ({
+            dia: r.dia instanceof Date
+                ? `${r.dia.getFullYear()}-${String(r.dia.getMonth() + 1).padStart(2, '0')}-${String(r.dia.getDate()).padStart(2, '0')}`
+                : String(r.dia),
+            tickets: Number(r.tickets || 0),
+            bruto: Number(r.bruto || 0),
+            descuento: Number(r.descuento || 0),
+            neto: Number(r.neto || 0),
+        }));
+        const normEmpleado = (rows) => (Array.isArray(rows) ? rows : []).map((r) => ({
+            empleado_id: r.empleado_id == null ? null : Number(r.empleado_id),
+            empleado: r.empleado || 'Sin asignar',
+            tickets: Number(r.tickets || 0),
+            bruto: Number(r.bruto || 0),
+            descuento: Number(r.descuento || 0),
+            neto: Number(r.neto || 0),
+        }));
+
+        return res.json({
+            from,
+            to,
+            porDia: normDia(porDia),
+            porEmpleado: normEmpleado(porEmpleado),
+            total: {
+                tickets: Number(totalRow?.tickets || 0),
+                bruto: Number(totalRow?.bruto || 0),
+                descuento: Number(totalRow?.descuento || 0),
+                neto: Number(totalRow?.neto || 0),
+            },
+        });
+    } catch (err) {
+        console.error('[GET /api/informes/descuentos ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
 // ── RUTA: GET /api/informes/cortes-ranking ───────────────────────────────
 // Ranking de cortes vendidos por especie (vaca/cerdo/pollo). Top 10 por especie.
 // Se muestra como solapa dentro de "Kilos Vendidos".
