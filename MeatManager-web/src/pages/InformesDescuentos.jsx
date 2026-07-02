@@ -82,8 +82,8 @@ const InformesDescuentos = () => {
     const summaryCards = [
         { key: 'bruto', label: 'Bruto (como en la balanza)', value: fmt(bruto), Icon: Scale, color: 'var(--color-text-main)', hint: 'Suma de tickets sin descuento' },
         { key: 'descuento', label: 'Descuentos otorgados', value: fmt(descuento), Icon: TrendingDown, color: '#f59e0b', hint: 'La diferencia contra la balanza' },
-        { key: 'neto', label: 'Neto cobrado (a caja)', value: fmt(neto), Icon: Receipt, color: '#22c55e', hint: 'Lo que realmente entró' },
-        { key: 'tickets', label: 'Tickets con descuento', value: tickets.toLocaleString('es-AR'), Icon: Percent, color: 'var(--color-primary)', hint: 'Cantidad en el período' },
+        { key: 'neto', label: 'Neto a la cuenta', value: fmt(neto), Icon: Receipt, color: '#22c55e', hint: 'Lo que se cargó al cliente' },
+        { key: 'tickets', label: 'Tickets con descuento', value: tickets.toLocaleString('es-AR'), Icon: Percent, color: 'var(--color-primary)', hint: 'Cuenta corriente · en el período' },
     ];
 
     return (
@@ -94,9 +94,10 @@ const InformesDescuentos = () => {
                         <Percent size={26} /> Informes de Descuentos
                     </h1>
                     <p style={{ margin: '0.3rem 0 0', color: 'var(--color-text-muted)', maxWidth: 720 }}>
-                        Descuentos de empleado aplicados en ventas. <strong>Bruto</strong> = lo que marcó la balanza
-                        (sin descuento). <strong>Descuento</strong> = lo que se bonificó. <strong>Neto</strong> = lo
-                        que realmente entró a la caja. La diferencia contra la balanza <strong>es</strong> el descuento.
+                        Descuentos de empleado aplicados en ventas de <strong>cuenta corriente</strong>.
+                        <strong> Bruto</strong> = lo que marcó la balanza (sin descuento). <strong>Descuento</strong> = lo
+                        que se bonificó. <strong>Neto</strong> = lo que se cargó a la cuenta del cliente.
+                        La diferencia contra la balanza <strong>es</strong> el descuento.
                     </p>
                 </div>
             </div>
@@ -230,8 +231,9 @@ const InformesDescuentos = () => {
             </div>
 
             <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: 0 }}>
-                💡 Los descuentos solo se registran cuando la venta se cobra desde el punto de venta. Si un ticket con
-                descuento se cobra desde <strong>Conciliación de balanza</strong>, se registra por el monto pleno (sin descuento).
+                💡 Este informe cuenta solo las ventas cuyo medio de pago fue <strong>cuenta corriente</strong>. Los
+                descuentos se registran cuando la venta se toma desde el punto de venta; si un ticket con descuento se
+                cobra desde <strong>Conciliación de balanza</strong>, se registra por el monto pleno (sin descuento).
             </p>
         </div>
     );

@@ -13197,8 +13197,17 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
         const fromDt = `${from} 00:00:00`;
         const toDt = `${to} 23:59:59`;
 
-        // Solo ventas con descuento efectivamente aplicado.
-        const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ? AND v.client_discount_amount > 0`;
+        // Solo ventas con descuento efectivamente aplicado Y que hayan sido a
+        // cuenta corriente (fiado). Cuenta corriente = payment_method
+        // 'Cuenta Corriente', o pago mixto cuyo payment_breakdown incluye una
+        // parte de cuenta corriente (method_type/method_name).
+        const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ?
+              AND v.client_discount_amount > 0
+              AND (
+                  LOWER(TRIM(COALESCE(v.payment_method, ''))) = 'cuenta corriente'
+                  OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta_corriente%'
+                  OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta corriente%'
+              )`;
 
         const [porDia] = await conn.query(
             `SELECT DATE(v.date) AS dia,
