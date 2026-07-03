@@ -105,20 +105,17 @@ async function runCycle(reason = 'scheduled') {
         });
         logger.info('Ciclo de sincronizacion finalizado', { reason, result });
 
-        // Firmware "full-dump" (ej. CUORA MAX S0060): fn72 devuelve toda la
-        // memoria y la trunca cuando hay mucho acumulado. Si al arrancar la
-        // primera lectura fue parcial, significa que la balanza tiene datos de
-        // dias anteriores que no se limpiaron (apertura de caja no ejecutada).
-        // Auto-limpiamos: subimos lo que se pudo leer y ejecutamos fn32 para
-        // que los proximos pulsos arranquen con la balanza vacia. Sin esto,
-        // la memoria crece dia a dia y fn72 siempre devuelve datos truncados.
+        // NO se auto-limpia la balanza en el arranque, aunque la lectura sea
+        // parcial. Por decision de producto la memoria de ventas SOLO se vacia
+        // en dos momentos: (1) apertura de caja y (2) medianoche ART, ambos por
+        // comando clear_sales_memory. Un reinicio del bridge a mitad del dia
+        // (crash, update, reboot) NO debe borrar lo acumulado: eso vaciaria el
+        // reporte del dia de la balanza. Si la lectura viene truncada, el pulso
+        // normal sube lo que puede y el proximo clear programado la deja limpia.
         if (reason === 'startup' && result.result?.sales?.partialRead === true) {
-            logger.warn('Lectura parcial detectada en arranque: la balanza tiene datos acumulados de dias anteriores; auto-limpiando memoria', {
+            logger.warn('Lectura parcial en arranque (memoria acumulada). NO se limpia: solo se vacia por apertura de caja o medianoche', {
                 fetched: result.result.sales.fetched,
                 stored: result.result.sales.stored,
-            });
-            await runClearSalesMemory('auto-startup-partial').catch((error) => {
-                logger.warn('No se pudo auto-limpiar la memoria de balanza en arranque', { error: error.message });
             });
         }
 

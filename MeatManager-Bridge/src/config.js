@@ -135,9 +135,17 @@ const config = {
     // ticketsToSend.length > 0 && stored > 0 (venta nueva confirmada por el
     // API), nunca en pulsos sin novedad. Esto elimina el E3 que se generaba
     // cuando la condicion era "rows.length > 0" y fn32 corria cada 2.5s.
-    // Desactivable con SCALE_CLOSE_SALES_AFTER_PULL=false si el firmware da
-    // problemas (verificar con el operario pesando en hora pico).
-    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', true),
+    // DEFAULT false (modo acumular): la balanza retiene las ventas del dia y
+    // SOLO se vacia en dos momentos, ambos por comando del sistema
+    // (clear_sales_memory via heartbeat): (1) apertura de caja y (2) medianoche
+    // ART (scheduleMidnightScaleClear en la API). Asi el reporte "Detalle
+    // Ventas" de la balanza muestra el total del dia al cerrar. El default vive
+    // en codigo (no en el .env) para que un update/reinstalacion no lo revierta.
+    // Poner SCALE_CLOSE_SALES_AFTER_PULL=true reactiva el vaciado tras cada
+    // venta (memoria minima, lecturas ~0.3s) a costa de que la balanza no
+    // acumule el dia. OJO en firmwares full-dump (CUORA MAX S0060, Fatima):
+    // acumular = lecturas cada vez mas pesadas = riesgo de lentitud/E3 al pesar.
+    closeSalesAfterPull: boolEnv('SCALE_CLOSE_SALES_AFTER_PULL', false),
     productLookbackHours: intEnv('PRODUCT_LOOKBACK_HOURS', 168),
     // Port 4045 es "lockd" en la lista de bad-ports del Fetch spec — undici lo
     // rechaza, asi que fetch(http://127.0.0.1:4045/...) falla con "bad port".
