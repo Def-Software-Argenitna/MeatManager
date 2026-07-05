@@ -13187,6 +13187,16 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
     try {
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
         conn = await pool.getConnection();
 
         const from = String(req.query.from || '').trim();
@@ -13197,17 +13207,34 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
         const fromDt = `${from} 00:00:00`;
         const toDt = `${to} 23:59:59`;
 
+        // Scope por sucursal: sin este filtro el informe mezclaba los descuentos
+        // de TODAS las sucursales del tenant (p. ej. Fatima veía los de Pilar).
+        // Usamos la sucursal activa que manda el front (X-MM-Active-Branch-Id) o
+        // la asignada al usuario. Soporte/admin interno (sin accessContext) ve todo.
+        let branchFilter = '';
+        const branchParams = [];
+        const scopedBranchId = Number(
+            accessContext?.activeBranch?.id
+            ?? accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+        );
+        if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+            branchFilter = ' AND v.branch_id = ?';
+            branchParams.push(scopedBranchId);
+        }
+
         // Solo ventas con descuento efectivamente aplicado Y que hayan sido a
         // cuenta corriente (fiado). Cuenta corriente = payment_method
         // 'Cuenta Corriente', o pago mixto cuyo payment_breakdown incluye una
         // parte de cuenta corriente (method_type/method_name).
-        const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ?
+        const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ?${branchFilter}
               AND v.client_discount_amount > 0
               AND (
                   LOWER(TRIM(COALESCE(v.payment_method, ''))) = 'cuenta corriente'
                   OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta_corriente%'
                   OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta corriente%'
               )`;
+        const whereParams = [tenantId, fromDt, toDt, ...branchParams];
 
         const [porDia] = await conn.query(
             `SELECT DATE(v.date) AS dia,
@@ -13218,7 +13245,7 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
              FROM ventas v
              WHERE ${whereDto}
              GROUP BY DATE(v.date)`,
-            [tenantId, fromDt, toDt]
+            whereParams
         );
 
         const [porEmpleado] = await conn.query(
@@ -13232,7 +13259,7 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
              LEFT JOIN clients c ON c.tenant_id = v.tenant_id AND c.id = v.discount_client_id
              WHERE ${whereDto}
              GROUP BY v.discount_client_id, c.name`,
-            [tenantId, fromDt, toDt]
+            whereParams
         );
 
         const [[totalRow]] = await conn.query(
@@ -13242,7 +13269,7 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
                     ROUND(SUM(v.total), 2) AS neto
              FROM ventas v
              WHERE ${whereDto}`,
-            [tenantId, fromDt, toDt]
+            whereParams
         );
 
         const normDia = (rows) => (Array.isArray(rows) ? rows : []).map((r) => ({
