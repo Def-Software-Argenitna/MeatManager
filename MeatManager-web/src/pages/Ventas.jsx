@@ -1770,7 +1770,18 @@ const Ventas = () => {
     };
 
     const removeFromCart = (id) => {
-        setCart(prev => prev.filter(item => item.id !== id));
+        setCart(prev => {
+            const next = prev.filter(item => item.id !== id);
+            // Si el carrito queda vacio, cortamos el vinculo con el ticket de
+            // balanza escaneado. De lo contrario ese barcode queda "pegado" y la
+            // proxima venta (otro comprador) lo consumiria por error, marcando el
+            // ticket como cobrado e impidiendo volver a escanearlo.
+            if (next.length === 0) {
+                setActiveScaleTicketBarcode(null);
+                setPendingTicketBarcodes([]);
+            }
+            return next;
+        });
     };
 
     const updateQuantity = (id, delta) => {
