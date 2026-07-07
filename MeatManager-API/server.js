@@ -4452,6 +4452,17 @@ async function resolveOperationalBranchId({ pool, tenantId, accessContext, recor
         }
     }
 
+    // Último recurso: si el cliente tiene UNA sola sucursal en total (aunque
+    // esté inactiva o todavía en setup), usarla. Evita bloquear el alta de
+    // proveedores/clientes cuando la sucursal única no figura como ACTIVE.
+    const allBranches = await listAllClientBranches(accessContext.client.id);
+    if (allBranches.length === 1) {
+        const onlyBranchId = Number(allBranches[0]?.id);
+        if (Number.isFinite(onlyBranchId) && onlyBranchId > 0) {
+            return onlyBranchId;
+        }
+    }
+
     return null;
 }
 

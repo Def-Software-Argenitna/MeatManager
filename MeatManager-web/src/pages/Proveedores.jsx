@@ -135,7 +135,7 @@ const Proveedores = () => {
             resetForm();
         } catch (error) {
             console.error("Error saving supplier:", error);
-            toast.error("Error al guardar proveedor. Verifique los datos.");
+            toast.error(error?.message ? `No se pudo guardar el proveedor: ${error.message}` : "Error al guardar proveedor. Verifique los datos.");
         }
     };
 
