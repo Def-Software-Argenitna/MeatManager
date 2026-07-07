@@ -5,6 +5,7 @@ import { PROVINCES, MAJOR_CITIES } from '../utils/argentina_locations';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import { Button, EmptyState, Modal, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
+import { useUser } from '../context/UserContext';
 
 const normalizeText = (value) => String(value || '').trim().toLowerCase();
 const CASH_ACCOUNTS = [
@@ -36,6 +37,8 @@ const formatCurrency = (value) => `$${Number(value || 0).toLocaleString('es-AR',
 
 const Proveedores = () => {
     const toast = useToast();
+    const { activeBranch, accessProfile } = useUser();
+    const currentBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
     const [isLoading, setIsLoading] = useState(true);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
@@ -125,10 +128,14 @@ const Proveedores = () => {
         if (!formData.name) return;
 
         try {
+            // El alta/edición toma la sucursal que el admin tiene seleccionada.
+            // suppliers es estricto por sucursal en el server, así que sin este
+            // branch_id la carga fallaba en clientes multi-sucursal (Pilar/Fátima).
+            const payload = currentBranchId ? { ...formData, branch_id: currentBranchId } : formData;
             if (editingId) {
-                await saveTableRecord('suppliers', 'update', formData, editingId);
+                await saveTableRecord('suppliers', 'update', payload, editingId);
             } else {
-                await saveTableRecord('suppliers', 'insert', formData);
+                await saveTableRecord('suppliers', 'insert', payload);
             }
             await loadSuppliersData();
             setIsModalOpen(false);
