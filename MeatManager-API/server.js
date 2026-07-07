@@ -7355,6 +7355,21 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
         await conn.beginTransaction();
         const branchDeleteSql = branchDeleteScope.sql ? `AND ${branchDeleteScope.sql}` : 'AND branch_id IS NULL';
         const branchDeleteParams = branchDeleteScope.params;
+        // ¿Ya hubo una apertura HOY en esta sucursal? Si la hay, este POST es una
+        // MODIFICACION de montos (no una apertura nueva) → NO hay que volver a
+        // limpiar la balanza. Limpiarla de nuevo vaciaba su memoria y dejaba el
+        // reporte "Detalle Ventas" del dia en $0. La limpieza solo debe correr en
+        // la PRIMERA apertura del dia (y a medianoche, scheduleMidnightScaleClear).
+        const [existingOpeningRows] = await conn.query(
+            `SELECT COUNT(*) AS cnt FROM caja_movimientos
+             WHERE tenant_id = ?
+               AND type = 'apertura'
+               AND date >= ?
+               AND date <= ?
+               ${branchDeleteSql}`,
+            [tenantId, dayStart, dayEnd, ...branchDeleteParams]
+        );
+        const hadOpeningToday = Number(existingOpeningRows?.[0]?.cnt || 0) > 0;
         await conn.query(
             `DELETE FROM caja_movimientos
              WHERE tenant_id = ?
@@ -7388,12 +7403,15 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
 
         await conn.commit();
 
-        // Al abrir caja pedimos al bridge que limpie la memoria de ventas de la
-        // balanza: captura los tickets pendientes y manda fn32. Esto hace que
-        // las lecturas fn72 del dia arranquen livianas (solo lo del dia nuevo).
-        queueScaleClearSales(getOperationalPool(), tenantId).catch((e) =>
-            console.warn('[CAJA OPENING] No se pudo encolar limpieza de ventas de balanza:', e?.message || e)
-        );
+        // Solo en la PRIMERA apertura del dia pedimos al bridge que limpie la
+        // memoria de ventas de la balanza (captura los tickets pendientes + fn32).
+        // Si ya habia una apertura hoy esto fue una modificacion de montos → NO
+        // limpiar: vaciar la balanza de nuevo borraba el reporte del dia del local.
+        if (!hadOpeningToday) {
+            queueScaleClearSales(getOperationalPool(), tenantId).catch((e) =>
+                console.warn('[CAJA OPENING] No se pudo encolar limpieza de ventas de balanza:', e?.message || e)
+            );
+        }
 
         return res.json({ ok: true, count: cleanOpenings.length, branchId });
     } catch (error) {

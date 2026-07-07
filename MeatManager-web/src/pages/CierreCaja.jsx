@@ -142,6 +142,7 @@ const CierreCaja = () => {
     );
     const [showMovementForm, setShowMovementForm] = useState(false);
     const [showOpeningForm, setShowOpeningForm] = useState(false);
+    const [showAlreadyOpenModal, setShowAlreadyOpenModal] = useState(false);
     const [movementType, setMovementType] = useState('retiro');
     const [movementAmount, setMovementAmount] = useState('');
     const [movementCategory, setMovementCategory] = useState(OUTFLOW_CATEGORIES[0]);
@@ -468,16 +469,27 @@ const CierreCaja = () => {
     const counterpartCashAccountLabel = getCashAccountLabel(counterpartCashAccount);
     const currentAccountSales = toNumber(cashSummary?.currentAccountSales);
 
+    const openOpeningForm = () => {
+        setOpeningDraft(buildOpeningDraft(
+            openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
+        ));
+        setShowOpeningForm(true);
+        setFeedback(null);
+    };
+
     const handleToggleOpeningForm = (event) => {
         event?.preventDefault?.();
         event?.stopPropagation?.();
 
         if (!showOpeningForm) {
-            setOpeningDraft(buildOpeningDraft(
-                openingMovements.length > 0 ? openingByMethod : lastClosingByMethod
-            ));
-            setShowOpeningForm(true);
-            setFeedback(null);
+            // Si ya hay una caja abierta hoy, avisamos antes de dejar tocar la
+            // apertura: evita que alguien "reabra" la caja sin querer. Igual pueden
+            // corregir montos desde el cartel; la balanza NO se reinicia al editar.
+            if (openingMovements.length > 0) {
+                setShowAlreadyOpenModal(true);
+                return;
+            }
+            openOpeningForm();
             return;
         }
 
@@ -1081,6 +1093,66 @@ const CierreCaja = () => {
                             <span className="stat-note">{transferInMovements.length} transferencia{transferInMovements.length === 1 ? '' : 's'} interna{transferInMovements.length === 1 ? '' : 's'} del día</span>
                         </div>
                     </div>
+
+                    {showAlreadyOpenModal && (
+                        <div
+                            style={{
+                                position: 'fixed', inset: 0, zIndex: 99990,
+                                backgroundColor: 'rgba(0,0,0,0.72)',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                padding: '1rem',
+                            }}
+                            onClick={() => setShowAlreadyOpenModal(false)}
+                        >
+                            <div
+                                className="neo-card"
+                                onClick={(e) => e.stopPropagation()}
+                                style={{
+                                    width: 'min(460px, 94vw)',
+                                    borderRadius: '16px',
+                                    border: '1px solid rgba(245, 158, 11, 0.45)',
+                                    background: 'rgba(13, 18, 24, 0.97)',
+                                    boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+                                    padding: '1.6rem 1.5rem',
+                                    textAlign: 'center',
+                                }}
+                            >
+                                <div style={{ fontSize: '2.6rem', lineHeight: 1, marginBottom: '0.6rem' }}>⚠️</div>
+                                <div style={{ fontWeight: 800, fontSize: '1.4rem', color: '#fbbf24', marginBottom: '0.6rem' }}>
+                                    Ya hay una caja abierta
+                                </div>
+                                <div style={{ fontSize: '0.95rem', color: 'var(--color-text-muted)', lineHeight: 1.55, marginBottom: '1.4rem' }}>
+                                    Hoy ya se abrió la caja, no hace falta abrirla de nuevo.
+                                    Si te equivocaste en un monto podés corregirlo: eso NO reinicia
+                                    la balanza ni borra el reporte del día.
+                                </div>
+                                <div style={{ display: 'flex', gap: '0.7rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowAlreadyOpenModal(false)}
+                                        style={{
+                                            padding: '0.7rem 1.7rem', borderRadius: '10px',
+                                            border: '1px solid var(--glass-border)', background: 'transparent',
+                                            color: 'var(--color-text-main)', fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem',
+                                        }}
+                                    >
+                                        Salir
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => { setShowAlreadyOpenModal(false); openOpeningForm(); }}
+                                        style={{
+                                            padding: '0.7rem 1.7rem', borderRadius: '10px',
+                                            border: '1px solid rgba(245, 158, 11, 0.5)', background: 'rgba(245, 158, 11, 0.15)',
+                                            color: '#fbbf24', fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem',
+                                        }}
+                                    >
+                                        Corregir montos
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="expenses-section">
                         <div className="section-header">
