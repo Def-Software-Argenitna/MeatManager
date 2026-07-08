@@ -150,8 +150,8 @@ const isCustomerPaymentMovement = (movement, clientName) => {
     if (kind === 'customer_payment') return true;
 
     return cleanValue(movement?.type).toLowerCase() === 'ingreso'
-        && cleanValue(movement?.category) === 'Cobro Pendientes'
-        && String(movement?.description || '').includes(`cliente: ${clientName}`);
+        && cleanValue(movement?.category).toLowerCase() === 'cobro pendientes'
+        && String(movement?.description || '').toLowerCase().includes(`cliente: ${clientName.toLowerCase()}`);
 };
 
 const getClientLedgerPaymentMethod = (row) => {
@@ -216,9 +216,9 @@ const Clientes = () => {
         const clientId = Number(clientRef.id);
         const clientName = getClientFullName(clientRef);
         const [ventas, movimientos, ventasItems] = await Promise.all([
-            fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('caja_movimientos', { limit: 5000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('ventas_items', { limit: 10000, orderBy: 'id', direction: 'ASC' })
+            fetchTable('ventas', { limit: 10000, orderBy: 'date', direction: 'ASC' }),
+            fetchTable('caja_movimientos', { limit: 10000, orderBy: 'date', direction: 'ASC' }),
+            fetchTable('ventas_items', { limit: 20000, orderBy: 'id', direction: 'ASC' })
         ]);
 
         const saleRows = ventas
@@ -319,31 +319,6 @@ const Clientes = () => {
     useEffect(() => {
         loadLedger();
     }, [loadLedger]);
-
-    useEffect(() => {
-        if (!clients?.length) return;
-
-        const syncMislabeledSales = async () => {
-            const ventas = await fetchTable('ventas', { limit: 5000, orderBy: 'date', direction: 'ASC' });
-            const fixes = ventas.filter((venta) => {
-                if (!venta.clientId) return false;
-                const hasCurrentAccountInBreakdown = Array.isArray(venta.payment_breakdown)
-                    && venta.payment_breakdown.some((part) => part.method_type === 'cuenta_corriente' || part.method_name === 'Cuenta Corriente');
-
-                return venta.payment_method !== 'Cuenta Corriente' && !hasCurrentAccountInBreakdown;
-            });
-
-            if (fixes.length === 0) return;
-
-            await Promise.all(
-                fixes.map((venta) =>
-                    saveTableRecord('ventas', 'update', { ...venta, clientId: null }, venta.id)
-                )
-            );
-        };
-
-        syncMislabeledSales();
-    }, [clients]);
 
     useEffect(() => {
         setExpandedLedgerRowId(null);
