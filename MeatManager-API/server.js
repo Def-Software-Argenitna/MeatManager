@@ -12767,6 +12767,55 @@ async function storeScaleSalesLog(pool, ctx) {
     return true;
 }
 
+// Red de seguridad del Detalle de Ventas: reconcilia los tickets RECIENTES que esten
+// en la tabla operativa (scale_bridge_ticket_map) pero que la captura en vivo no haya
+// archivado (p.ej. por un error transitorio, que hoy no se reintenta). Garantiza que
+// el reporte-control no se pierda ninguna venta. Disenada para ser BARATA e INOFENSIVA:
+// ventana de 48h + LIMIT 100 (no dredgea historia), corre sobre la unique key del
+// archivo, tiene guard anti-solapamiento y NUNCA lanza (todo en try/catch).
+let _reconcileScaleLogRunning = false;
+async function reconcileScaleSalesLog(pool) {
+    if (_reconcileScaleLogRunning) return 0;
+    _reconcileScaleLogRunning = true;
+    let archived = 0;
+    try {
+        const [pending] = await pool.query(`
+            SELECT t.tenant_id, t.branch_id, t.device_id, t.scale_address, t.ticket_id,
+                   t.ticket_barcode, t.printed_ticket_barcode, t.vendor_code, t.vendor_name,
+                   t.sale_at, t.total_amount, t.item_count
+            FROM scale_bridge_ticket_map t
+            WHERE t.sale_at >= (UTC_TIMESTAMP() - INTERVAL 2 DAY)
+              AND NOT EXISTS (
+                  SELECT 1 FROM scale_sales_log s
+                  WHERE s.tenant_id = t.tenant_id
+                    AND s.ticket_barcode = t.ticket_barcode COLLATE utf8mb4_unicode_ci
+              )
+            ORDER BY t.sale_at DESC
+            LIMIT 100
+        `);
+        for (const t of pending) {
+            try {
+                await storeScaleSalesLog(pool, {
+                    tenantId: t.tenant_id, branchId: t.branch_id, deviceId: t.device_id,
+                    scaleAddress: t.scale_address, ticketId: t.ticket_id,
+                    ticketBarcode: t.ticket_barcode, printedTicketBarcode: t.printed_ticket_barcode,
+                    vendorCode: t.vendor_code, vendorName: t.vendor_name, saleAt: t.sale_at,
+                    totalAmount: t.total_amount, itemCount: t.item_count,
+                });
+                archived += 1;
+            } catch (e) {
+                console.warn('[RECONCILE scale_sales_log] ticket', t.ticket_barcode, e?.message || e);
+            }
+        }
+    } catch (e) {
+        console.warn('[RECONCILE scale_sales_log]', e?.message || e);
+    } finally {
+        _reconcileScaleLogRunning = false;
+    }
+    if (archived > 0) console.log(`[RECONCILE scale_sales_log] ${archived} tickets recuperados`);
+    return archived;
+}
+
 app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
     const bridgeRequestStartedAt = Date.now();
     try {
@@ -14237,6 +14286,13 @@ ensureClientsControlStore()
         app.listen(PORT, () => {
             console.log(`MeatManager API corriendo en puerto ${PORT}`);
             scheduleMidnightScaleClear();
+            // Red de seguridad del Detalle de Ventas: reconcilia cada 5 min los tickets
+            // recientes que la captura en vivo pueda haber salteado. Liviano y aislado
+            // (nunca throwea, guard anti-solapamiento) → no bloquea ni afecta el resto.
+            const runReconcileScaleLog = () => reconcileScaleSalesLog(getOperationalPool())
+                .catch((e) => console.warn('[RECONCILE scale_sales_log] scheduler:', e?.message || e));
+            setTimeout(runReconcileScaleLog, 15000);
+            setInterval(runReconcileScaleLog, 5 * 60 * 1000);
         });
     })
     .catch((err) => {
