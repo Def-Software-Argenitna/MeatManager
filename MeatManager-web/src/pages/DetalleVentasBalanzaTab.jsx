@@ -1,6 +1,7 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft } from 'lucide-react';
 import { apiFetch } from '../utils/apiClient';
+import { useUser } from '../context/UserContext';
 import './ConciliacionBalanzaTab.css';
 
 const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
@@ -49,7 +50,10 @@ const cantidadLinea = (item) => {
 // se puede reimprimir aunque la balanza ya se haya vaciado.
 const imprimirTicket = (t) => {
     const win = window.open('', '_blank', 'width=380,height=640');
-    if (!win) return;
+    if (!win) {
+        alert('El navegador bloqueó la ventana de impresión. Habilitá las ventanas emergentes para este sitio y volvé a intentar.');
+        return;
+    }
     const lineas = (t.items || []).map((it) => `
         <tr>
             <td class="d">${(it.productName || it.pluCode || '—')}</td>
@@ -89,6 +93,8 @@ const imprimirTicket = (t) => {
 };
 
 export default function DetalleVentasBalanzaTab() {
+    const { activeBranch } = useUser();
+    const branchId = Number(activeBranch?.id ?? 0);
     const [dateFrom, setDateFrom] = useState(todayStr);
     const [dateTo, setDateTo] = useState(todayStr);
     const [loading, setLoading] = useState(false);
@@ -115,7 +121,10 @@ export default function DetalleVentasBalanzaTab() {
         }
     }, [dateFrom, dateTo]);
 
-    useEffect(() => { buscar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // Refetch al montar Y al cambiar de sucursal: garantiza que nunca se muestren
+    // tickets de la otra sucursal (el endpoint ya filtra por branch, esto ademas
+    // refresca la vista al cambiar el selector Pilar/Fatima sin quedar datos viejos).
+    useEffect(() => { buscar(); }, [branchId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const filtered = useMemo(() => {
         const q = filterText.trim().toLowerCase();

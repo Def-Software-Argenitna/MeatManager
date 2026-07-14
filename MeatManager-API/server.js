@@ -3069,8 +3069,26 @@ async function ensureOperationalTenantIsolation() {
                     UNIQUE KEY ux_sales_log_barcode (tenant_id, ticket_barcode),
                     KEY ix_sales_log_branch_date (tenant_id, branch_id, sale_at),
                     KEY ix_sales_log_printed (tenant_id, printed_ticket_barcode)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             `);
+
+            // La tabla DEBE compartir collation con las tablas operativas
+            // (scale_bridge_ticket_map usa utf8mb4_unicode_ci) para poder JOINear por
+            // ticket_barcode sin "Illegal mix of collations". Si una version anterior
+            // la creo con la collation por defecto del server (general_ci), la
+            // normalizamos una unica vez (tabla chica, datos ASCII → ALTER instantaneo).
+            const [salesLogCollRows] = await conn.query(
+                `SELECT collation_name AS coll FROM information_schema.columns
+                 WHERE table_schema = ? AND table_name = 'scale_sales_log' AND column_name = 'ticket_barcode'`,
+                [OPERATIONAL_DB_NAME]
+            );
+            const salesLogColl = salesLogCollRows?.[0]?.coll || '';
+            if (salesLogColl && salesLogColl !== 'utf8mb4_unicode_ci') {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_sales_log
+                     CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
+                );
+            }
 
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
@@ -13870,7 +13888,7 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             FROM scale_sales_log l
             LEFT JOIN scale_bridge_ticket_map t
                    ON t.tenant_id = l.tenant_id
-                  AND t.ticket_barcode = l.ticket_barcode
+                  AND t.ticket_barcode = l.ticket_barcode COLLATE utf8mb4_unicode_ci
             WHERE l.tenant_id = ?${branchFilter}${dateFilter}
             ORDER BY l.sale_at DESC, l.id DESC
         `, params);
