@@ -3066,7 +3066,8 @@ async function ensureOperationalTenantIsolation() {
                     header_json JSON NULL,
                     captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                    UNIQUE KEY ux_sales_log_barcode (tenant_id, ticket_barcode),
+                    UNIQUE KEY ux_sales_log_ticket (device_id, ticket_id, sale_at),
+                    KEY ix_sales_log_barcode (tenant_id, ticket_barcode),
                     KEY ix_sales_log_branch_date (tenant_id, branch_id, sale_at),
                     KEY ix_sales_log_printed (tenant_id, printed_ticket_barcode)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -3088,6 +3089,36 @@ async function ensureOperationalTenantIsolation() {
                     `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_sales_log
                      CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`
                 );
+            }
+
+            // La identidad del ticket en el archivo debe ser la FISICA
+            // (device_id, ticket_id, sale_at) — la misma que usa la tabla operativa —
+            // NO el ticket_barcode. El barcode incluye el fingerprint del contenido, asi
+            // que un ticket leido en dos etapas (parcial y luego completo) generaba DOS
+            // filas = doble conteo en el reporte. Migramos: colapsamos duplicados
+            // (conservando el mas completo) y cambiamos la unique key a la identidad
+            // fisica, para quedar 1:1 con la operativa. Corre una sola vez.
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_sales_log', 'ux_sales_log_ticket'))) {
+                await conn.query(`
+                    DELETE s1 FROM \`${OPERATIONAL_DB_NAME}\`.scale_sales_log s1
+                    JOIN \`${OPERATIONAL_DB_NAME}\`.scale_sales_log s2
+                      ON s1.device_id = s2.device_id
+                     AND s1.ticket_id = s2.ticket_id
+                     AND s1.sale_at   = s2.sale_at
+                     AND (s1.item_count < s2.item_count
+                          OR (s1.item_count = s2.item_count AND s1.id < s2.id))
+                `);
+                await conn.query(`
+                    ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_sales_log
+                    ADD UNIQUE KEY ux_sales_log_ticket (device_id, ticket_id, sale_at)
+                `);
+                if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_sales_log', 'ix_sales_log_barcode'))) {
+                    await conn.query(`
+                        ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_sales_log
+                        ADD KEY ix_sales_log_barcode (tenant_id, ticket_barcode)
+                    `);
+                }
+                await dropIndexIfExists(conn, 'scale_sales_log', 'ux_sales_log_barcode');
             }
 
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
@@ -12751,11 +12782,10 @@ async function storeScaleSalesLog(pool, ctx) {
         ON DUPLICATE KEY UPDATE
             branch_id              = VALUES(branch_id),
             scale_address          = VALUES(scale_address),
-            ticket_id              = VALUES(ticket_id),
-            printed_ticket_barcode = VALUES(printed_ticket_barcode),
+            ticket_barcode         = IF(VALUES(item_count) >= item_count, VALUES(ticket_barcode), ticket_barcode),
+            printed_ticket_barcode = IF(VALUES(item_count) >= item_count, VALUES(printed_ticket_barcode), printed_ticket_barcode),
             vendor_code            = VALUES(vendor_code),
             vendor_name            = VALUES(vendor_name),
-            sale_at                = VALUES(sale_at),
             total_amount           = IF(VALUES(item_count) >= item_count, VALUES(total_amount), total_amount),
             lines_json             = IF(VALUES(item_count) >= item_count, VALUES(lines_json), lines_json),
             item_count             = GREATEST(item_count, VALUES(item_count))
@@ -12787,8 +12817,9 @@ async function reconcileScaleSalesLog(pool) {
             WHERE t.sale_at >= (UTC_TIMESTAMP() - INTERVAL 2 DAY)
               AND NOT EXISTS (
                   SELECT 1 FROM scale_sales_log s
-                  WHERE s.tenant_id = t.tenant_id
-                    AND s.ticket_barcode = t.ticket_barcode COLLATE utf8mb4_unicode_ci
+                  WHERE s.device_id = t.device_id
+                    AND s.ticket_id = t.ticket_id
+                    AND s.sale_at   = t.sale_at
               )
             ORDER BY t.sale_at DESC
             LIMIT 100
@@ -13947,8 +13978,9 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 t.voided_sale_id
             FROM scale_sales_log l
             LEFT JOIN scale_bridge_ticket_map t
-                   ON t.tenant_id = l.tenant_id
-                  AND t.ticket_barcode = l.ticket_barcode COLLATE utf8mb4_unicode_ci
+                   ON t.device_id = l.device_id
+                  AND t.ticket_id = l.ticket_id
+                  AND t.sale_at   = l.sale_at
             WHERE l.tenant_id = ?${branchFilter}${dateFilter}
             ORDER BY l.sale_at DESC, l.id DESC
         `, params);
