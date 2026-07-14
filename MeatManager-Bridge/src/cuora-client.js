@@ -97,6 +97,13 @@ class CuoraClient {
             const address = Number(options.address ?? this.config.address);
             await this.open();
 
+            // Purga el buffer de entrada antes de escribir el comando: descarta bytes
+            // viejos de una respuesta anterior tardia o truncada (p.ej. un ACK de fn32
+            // que llego fuera de tiempo, o ruido de linea) para que no se mezclen con
+            // la lectura de este comando y la corrompan. Seguro: la cola serializa los
+            // comandos, asi que aca no hay una respuesta legitima en curso.
+            await new Promise((resolve) => this.port.flush(() => resolve()));
+
             const frame = encodeFrame(address, fn, data);
             const responsePromise = this.waitFrame(fn, options.timeoutMs || this.config.responseTimeoutMs);
 

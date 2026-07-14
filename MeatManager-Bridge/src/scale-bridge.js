@@ -1175,6 +1175,12 @@ class ScaleBridge {
             }
         }
         const partialRead = rawRecordCount > rows.length;
+        // HUECO B: la lectura se considera COMPLETA solo si el payload de la fn72
+        // termino con el terminador 'F' (ver parseSales72). Si falta, el stream serie
+        // se corto — a veces limpio, en un borde de registro, donde partialRead no lo
+        // detecta. En ese caso NO debemos vaciar: perderiamos los registros que la
+        // balanza no llego a transmitir.
+        const responseComplete = String(responseData || '').trimEnd().endsWith('F');
 
         let latestSaleAt = null;
         const tickets = new Map();
@@ -1299,6 +1305,7 @@ class ScaleBridge {
         });
 
         let stored = 0;
+        let confirmedTickets = 0;
         if (ticketsToSend.length > 0) {
             const apiPostStartedAt = Date.now();
             this.logTicketLatency('bridge_api_post_sales_start', {
@@ -1313,6 +1320,7 @@ class ScaleBridge {
                 tickets: ticketsToSend,
             });
             stored = Number(apiResult?.itemsUpserted || 0);
+            confirmedTickets = Number(apiResult?.ticketsUpserted || 0);
             this.logTicketLatency('bridge_api_post_sales_done', {
                 elapsedMs: elapsedMs(apiPostStartedAt),
                 tickets: ticketsToSend.length,
@@ -1360,7 +1368,12 @@ class ScaleBridge {
         // siguiente pulso encuentra la balanza vacia y fn32 no vuelve a correr
         // hasta la proxima venta nueva. NUNCA con lectura parcial: cerrar
         // perderia el registro que no pudimos parsear.
-        if (closeAfter && ticketsToSend.length > 0 && stored > 0 && !partialRead) {
+        // HUECO A: solo vaciamos si el API confirmo TODOS los tickets enviados (es
+        // decir, los archivo en scale_sales_log). Antes alcanzaba con stored>0 (al
+        // menos un item guardado): si un ticket del lote se descartaba o no se podia
+        // archivar, fn32 igual borraba TODA la memoria de la balanza y ese ticket se
+        // perdia. Ahora exigimos confirmedTickets === ticketsToSend.length.
+        if (closeAfter && ticketsToSend.length > 0 && confirmedTickets === ticketsToSend.length && !partialRead && responseComplete) {
             const close = await this.scale.send(32, '', {
                 timeoutMs: 60000,
                 // fn32 responde "I" (inicio) y un ACK final: hay que esperar el ACK
@@ -1384,6 +1397,8 @@ class ScaleBridge {
             // de leer DEBE respetar esto: cerrar tras una lectura parcial pierde
             // los registros no leidos. Ver flushSalesMemory / runClearSalesMemory.
             partialRead,
+            responseComplete,
+            confirmedTickets,
             latestSaleAt: latestSaleAt ? latestSaleAt.toISOString() : null,
         };
         if (trace || ticketsToSend.length > 0) {

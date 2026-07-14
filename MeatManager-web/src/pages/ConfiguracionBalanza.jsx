@@ -3,6 +3,7 @@ import { CheckCircle2, Cpu, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { fetchTable, getRemoteSetting, saveTableRecord, upsertRemoteSetting } from '../utils/apiClient';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import ConciliacionBalanzaTab from './ConciliacionBalanzaTab';
+import DetalleVentasBalanzaTab from './DetalleVentasBalanzaTab';
 import BridgeStatusCard from '../components/BridgeStatusCard';
 import './ConfiguracionBalanza.css';
 
@@ -271,9 +272,17 @@ const ConfiguracionBalanza = () => {
                 >
                     Conciliación
                 </button>
+                <button
+                    className={`scale-page-tab ${activeTab === 'detalle' ? 'active' : ''}`}
+                    onClick={() => setActiveTab('detalle')}
+                >
+                    Detalle de Ventas
+                </button>
             </div>
 
             {activeTab === 'conciliacion' && <ConciliacionBalanzaTab />}
+
+            {activeTab === 'detalle' && <DetalleVentasBalanzaTab />}
 
             {activeTab === 'configuracion' && <>
             <BridgeStatusCard isAdmin={isAdmin} />

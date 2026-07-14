@@ -3038,6 +3038,40 @@ async function ensureOperationalTenantIsolation() {
             }
             await dropIndexIfExists(conn, 'scale_bridge_sales_item', 'ux_scale_sale_line');
 
+            // Registro PERMANENTE de tickets de balanza (append-only). A diferencia
+            // de scale_bridge_ticket_map / scale_bridge_sales_item (tablas OPERATIVAS
+            // que cambian de estado y que _clean_bridge_tables.js borra por completo),
+            // esta tabla es el archivo historico que alimenta la solapa "Detalle de
+            // Ventas": se escribe una vez cuando llega el ticket y NO se borra nunca.
+            // Guarda el ticket CONGELADO (cabecera + renglones con nombre de producto
+            // ya resuelto) para poder reimprimirlo identico aunque despues cambie el
+            // catalogo o se vacie la balanza. Es lo que permite activar el vaciado de
+            // la balanza (fn32) sin perder el reporte del dia.
+            await conn.query(`
+                CREATE TABLE IF NOT EXISTS \`${OPERATIONAL_DB_NAME}\`.scale_sales_log (
+                    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+                    tenant_id BIGINT NOT NULL,
+                    branch_id BIGINT NULL,
+                    device_id VARCHAR(64) NOT NULL,
+                    scale_address INT NULL,
+                    ticket_id VARCHAR(32) NOT NULL,
+                    ticket_barcode VARCHAR(64) NOT NULL,
+                    printed_ticket_barcode VARCHAR(32) NULL,
+                    vendor_code VARCHAR(16) NULL,
+                    vendor_name VARCHAR(100) NULL,
+                    sale_at DATETIME NOT NULL,
+                    total_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+                    item_count INT NOT NULL DEFAULT 0,
+                    lines_json JSON NOT NULL,
+                    header_json JSON NULL,
+                    captured_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY ux_sales_log_barcode (tenant_id, ticket_barcode),
+                    KEY ix_sales_log_branch_date (tenant_id, branch_id, sale_at),
+                    KEY ix_sales_log_printed (tenant_id, printed_ticket_barcode)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            `);
+
             await ensureColumn(conn, 'prices', 'product_ref_id', '`product_ref_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
             await ensureColumn(conn, 'product_prices', 'branch_id', '`branch_id` INT NULL AFTER `tenant_id`');
@@ -12621,6 +12655,89 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
     );
 }
 
+// Archiva un ticket de balanza en scale_sales_log (registro PERMANENTE append-only
+// que alimenta la solapa "Detalle de Ventas"). Congela los renglones con el nombre
+// de producto YA resuelto (mismo criterio que la conciliacion: mapa PLU->producto
+// del bridge, y si no products.plu), para poder reimprimir el ticket identico a como
+// salio aunque despues cambie el catalogo o se vacie la balanza. Idempotente por
+// (tenant_id, ticket_barcode): una re-lectura del mismo ticket refresca el snapshot,
+// no duplica; y NUNCA pisa un snapshot mas completo con uno parcial (guard por
+// item_count). Lanza si no pudo archivar (el caller NO cuenta el ticket → el bridge
+// no vacia la balanza sin registro).
+async function storeScaleSalesLog(pool, ctx) {
+    const {
+        tenantId, branchId, deviceId, scaleAddress,
+        ticketId, ticketBarcode, printedTicketBarcode,
+        vendorCode, vendorName, saleAt, totalAmount, itemCount,
+    } = ctx;
+
+    const [lines] = await pool.query(`
+        SELECT
+            i.line_no, i.plu_code, i.sector_code, i.vendor_code, i.vendor_name,
+            i.units, i.grams, i.drained_grams, i.amount,
+            i.item_quantity, i.item_quantity_unit, i.sale_at,
+            COALESCE(
+                (SELECT p.name FROM scale_bridge_product_map m
+                 JOIN products p ON p.id = m.product_id AND p.tenant_id = m.tenant_id
+                 WHERE m.tenant_id = i.tenant_id AND m.device_id = i.device_id
+                   AND CAST(m.plu_code AS CHAR) = CAST(i.plu_code AS CHAR)
+                 LIMIT 1),
+                (SELECT p.name FROM products p
+                 WHERE p.tenant_id = i.tenant_id
+                   AND (
+                       CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                       OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
+                   )
+                 ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                 LIMIT 1)
+            ) AS product_name
+        FROM scale_bridge_sales_item i
+        WHERE i.tenant_id = ?
+          AND i.ticket_barcode = ?
+        ORDER BY i.line_no
+    `, [tenantId, ticketBarcode]);
+
+    const linesJson = JSON.stringify(lines.map((l) => ({
+        lineNo: l.line_no,
+        pluCode: l.plu_code,
+        productName: l.product_name || null,
+        sectorCode: l.sector_code,
+        vendorCode: l.vendor_code,
+        vendorName: l.vendor_name,
+        units: l.units,
+        grams: l.grams,
+        drainedGrams: l.drained_grams,
+        amount: l.amount,
+        itemQuantity: l.item_quantity,
+        itemQuantityUnit: l.item_quantity_unit,
+        saleAt: toIsoSafe(l.sale_at),
+    })));
+
+    await pool.query(`
+        INSERT INTO scale_sales_log
+            (tenant_id, branch_id, device_id, scale_address, ticket_id, ticket_barcode,
+             printed_ticket_barcode, vendor_code, vendor_name, sale_at, total_amount,
+             item_count, lines_json, captured_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+        ON DUPLICATE KEY UPDATE
+            branch_id              = VALUES(branch_id),
+            scale_address          = VALUES(scale_address),
+            ticket_id              = VALUES(ticket_id),
+            printed_ticket_barcode = VALUES(printed_ticket_barcode),
+            vendor_code            = VALUES(vendor_code),
+            vendor_name            = VALUES(vendor_name),
+            sale_at                = VALUES(sale_at),
+            total_amount           = IF(VALUES(item_count) >= item_count, VALUES(total_amount), total_amount),
+            lines_json             = IF(VALUES(item_count) >= item_count, VALUES(lines_json), lines_json),
+            item_count             = GREATEST(item_count, VALUES(item_count))
+    `, [
+        tenantId, branchId, deviceId, scaleAddress, ticketId, ticketBarcode,
+        printedTicketBarcode, vendorCode, vendorName, saleAt, totalAmount,
+        itemCount, linesJson,
+    ]);
+    return true;
+}
+
 app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
     const bridgeRequestStartedAt = Date.now();
     try {
@@ -12722,8 +12839,6 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                 [ticketBarcode, printedTicketBarcode, vendorName, deviceId, tenantId, branchId, branchId, ticketId, saleAt]
             );
 
-            ticketsUpserted += 1;
-
             const lines = Array.isArray(ticket?.lines) ? ticket.lines : [];
             if (lines.length > 0) {
                 await pool.query(
@@ -12808,6 +12923,24 @@ app.post('/api/bridge/sales', verifyBridgeDeviceToken, async (req, res) => {
                 totalAmount,
                 itemCount,
             });
+
+            // Archivo permanente para la solapa "Detalle de Ventas". El ticket cuenta
+            // como confirmado (ticketsUpserted) SOLO si quedo archivado aca: asi, si no
+            // pudimos guardar el registro historico, el bridge NO vacia la balanza y el
+            // ticket sigue disponible para el proximo pulso (no se pierde nada).
+            try {
+                await storeScaleSalesLog(pool, {
+                    tenantId, branchId, deviceId, scaleAddress: effectiveScaleAddress,
+                    ticketId, ticketBarcode, printedTicketBarcode,
+                    vendorCode, vendorName, saleAt, totalAmount, itemCount,
+                });
+                ticketsUpserted += 1;
+            } catch (logErr) {
+                appendScaleLatencyLog('sales_log_archive_error', {
+                    tenantId, branchId, deviceId, ticketId, ticketBarcode,
+                    error: logErr?.message || String(logErr),
+                });
+            }
         }
 
         const normalizationStartedAt = Date.now();
@@ -13663,6 +13796,117 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
         return res.json({ tickets: tickets.map(t => ({ ...t, items: itemsByBarcode[t.ticket_barcode] || [] })) });
     } catch (err) {
         console.error('[GET /api/conciliacion/balanza ERROR]', err.message);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ── RUTA: GET /api/scale/detalle-ventas ───────────────────────────────────
+// Registro PERMANENTE de tickets de balanza (scale_sales_log) para la solapa
+// "Detalle de Ventas". A diferencia de la conciliacion (que muestra solo tickets sin
+// cobrar), aca se ven TODOS los tickets del dia tal cual salieron de la balanza — es
+// para control (la clienta busca tickets que "desaparecen"). Sobrevive al vaciado de
+// la balanza (fn32) y a las limpiezas de las tablas operativas del bridge.
+app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+
+        const { dateFrom, dateTo } = req.query;
+        const params = [tenantId];
+
+        // Mismo scope por sucursal que la conciliacion: cada balanza sube con su
+        // branch_id; sin este filtro se mezclarian los tickets de todas las sucursales.
+        let branchFilter = '';
+        const scopedBranchId = Number(
+            accessContext?.activeBranch?.id
+            ?? accessContext?.user?.branchRecordId
+            ?? accessContext?.user?.branchId
+        );
+        if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+            branchFilter = ' AND l.branch_id = ?';
+            params.push(scopedBranchId);
+        }
+
+        // sale_at guarda la hora local de la balanza (ART), igual que la conciliacion;
+        // por eso filtramos por DATE(sale_at) directo, sin conversion de zona horaria.
+        let dateFilter = '';
+        if (dateFrom && dateTo) {
+            dateFilter = ' AND DATE(l.sale_at) BETWEEN ? AND ?';
+            params.push(dateFrom, dateTo);
+        } else if (dateFrom) {
+            dateFilter = ' AND DATE(l.sale_at) >= ?';
+            params.push(dateFrom);
+        } else if (dateTo) {
+            dateFilter = ' AND DATE(l.sale_at) <= ?';
+            params.push(dateTo);
+        }
+
+        const [rows] = await pool.query(`
+            SELECT
+                l.id,
+                l.ticket_id,
+                l.ticket_barcode,
+                l.printed_ticket_barcode,
+                l.vendor_code,
+                l.vendor_name,
+                l.sale_at,
+                l.total_amount,
+                l.item_count,
+                l.lines_json,
+                l.captured_at,
+                t.ticket_status,
+                t.charged_sale_id,
+                t.voided_sale_id
+            FROM scale_sales_log l
+            LEFT JOIN scale_bridge_ticket_map t
+                   ON t.tenant_id = l.tenant_id
+                  AND t.ticket_barcode = l.ticket_barcode
+            WHERE l.tenant_id = ?${branchFilter}${dateFilter}
+            ORDER BY l.sale_at DESC, l.id DESC
+        `, params);
+
+        const tickets = rows.map((r) => {
+            let items = [];
+            try {
+                items = typeof r.lines_json === 'string' ? JSON.parse(r.lines_json) : (r.lines_json || []);
+            } catch {
+                items = [];
+            }
+            // Estado best-effort desde la tabla operativa (puede faltar si se limpio):
+            // cobrado / anulado / pendiente. Sirve para el control de la clienta.
+            let status = 'pendiente';
+            if (r.voided_sale_id) status = 'anulado';
+            else if (r.charged_sale_id || r.ticket_status === 'charged') status = 'cobrado';
+
+            return {
+                id: r.id,
+                ticket_id: r.ticket_id,
+                ticket_barcode: r.ticket_barcode,
+                printed_ticket_barcode: r.printed_ticket_barcode,
+                vendor_code: r.vendor_code,
+                vendor_name: r.vendor_name,
+                sale_at: r.sale_at,
+                total_amount: r.total_amount,
+                item_count: r.item_count,
+                captured_at: r.captured_at,
+                status,
+                items: Array.isArray(items) ? items : [],
+            };
+        });
+
+        return res.json({ tickets });
+    } catch (err) {
+        console.error('[GET /api/scale/detalle-ventas ERROR]', err.message);
         res.status(500).json({ error: err.message });
     }
 });
