@@ -12707,6 +12707,17 @@ async function storeScaleSalesLog(pool, ctx) {
                        OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
                    )
                  ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                 LIMIT 1),
+                -- Los PLU de promo (rango 1000+, product_id<0 en el mapa) no estan en
+                -- products; su nombre vive en promotions.promo_plu. Sin esto las lineas
+                -- de promo salian con "-".
+                (SELECT COALESCE(NULLIF(pr.product_name, ''), pr.promo_name) FROM promotions pr
+                 WHERE pr.tenant_id = i.tenant_id
+                   AND (
+                       CAST(pr.promo_plu AS CHAR) = CAST(i.plu_code AS CHAR)
+                       OR CAST(pr.promo_plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
+                   )
+                 ORDER BY CASE WHEN pr.branch_id IS NULL THEN 1 ELSE 0 END, pr.active DESC, pr.id DESC
                  LIMIT 1)
             ) AS product_name
         FROM scale_bridge_sales_item i
