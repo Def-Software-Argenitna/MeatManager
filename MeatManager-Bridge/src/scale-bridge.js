@@ -147,11 +147,21 @@ class ScaleBridge {
     }
 
     // fn28/fn16: el reloj de la balanza es la fuente de sale_at (identidad del
-    // ticket y reportes); si deriva, ensucia los datos. Chequeamos cada 12h y
-    // solo escribimos si el desvio supera el umbral.
-    async syncScaleClock({ maxDriftMs = 60_000, checkIntervalMs = 12 * 60 * 60 * 1000 } = {}) {
+    // ticket y reportes); si deriva, ensucia los datos. Chequeamos cada 1h (y
+    // SIEMPRE en el primer ciclo del proceso, para que un reinicio corrija al
+    // instante) y solo escribimos si el desvio supera el umbral.
+    async syncScaleClock({ maxDriftMs = 60_000, checkIntervalMs = 60 * 60 * 1000, force = false } = {}) {
+        // Un desvio "grande" (> 1 dia) no es deriva del cristal: es un reset del
+        // reloj (tipico: pila RTC agotada o corte prolongado -> 01/01/2023). Los
+        // tickets en memoria quedaron sellados con el ano equivocado y nuestras
+        // ventanas de consulta (ancladas al ano real) no los ven, por eso la
+        // balanza "no toma ningun ticket". Antes de mover el reloj al ano actual
+        // hay que RESCATAR esos tickets: si corregimos primero, quedan huerfanos
+        // en un ano que nunca volvemos a consultar.
+        const RESET_THRESHOLD_MS = 24 * 60 * 60 * 1000;
+        const forceCheck = force || !this._clockCheckedThisProcess;
         const lastCheck = this.state.lastClockSyncCheckAt ? new Date(this.state.lastClockSyncCheckAt).getTime() : 0;
-        if (lastCheck && (Date.now() - lastCheck) < checkIntervalMs) {
+        if (!forceCheck && lastCheck && (Date.now() - lastCheck) < checkIntervalMs) {
             return { ok: true, skipped: true, reason: 'recent' };
         }
 
@@ -160,12 +170,58 @@ class ScaleBridge {
         const scaleClock = parseClock28(readResponse.data);
         if (!scaleClock) throw new Error(`Respuesta de funcion 28 no parseable: ${String(readResponse.data || '').slice(0, 40)}`);
 
+        this._clockCheckedThisProcess = true;
         const driftMs = scaleClock.getTime() - Date.now();
         this.state.lastClockSyncCheckAt = new Date().toISOString();
 
         if (Math.abs(driftMs) <= maxDriftMs) {
             this.stateStore.save(this.state);
             return { ok: true, skipped: true, reason: 'in_sync', driftMs };
+        }
+
+        // Reset detectado: rescatar el ano que reporta la balanza ANTES de corregir.
+        const looksReset = Math.abs(driftMs) > RESET_THRESHOLD_MS
+            && scaleClock.getFullYear() !== new Date().getFullYear();
+        if (looksReset) {
+            const scaleYear = scaleClock.getFullYear();
+            const rescueFrom = new Date(scaleYear, 0, 1, 0, 0, 0);
+            const rescueTo = new Date(scaleYear, 11, 31, 23, 59, 59);
+            this.logger.warn('Reloj de balanza con desvio grande: posible reset. Rescatando ventas del ano reportado antes de corregir', {
+                scaleClock: scaleClock.toISOString(),
+                scaleYear,
+                driftMs,
+            });
+            let rescue;
+            try {
+                rescue = await this.pullSales({
+                    fromDate: rescueFrom,
+                    toDate: rescueTo,
+                    closeAfter: this.config.closeSalesAfterPull,
+                });
+            } catch (error) {
+                // Si el rescate falla NO corregimos el reloj: preferimos reintentar
+                // el proximo ciclo antes que dejar los tickets huerfanos en 2023.
+                this.logger.error('Fallo el rescate de ventas del ano de la balanza; NO se corrige el reloj este ciclo', { error: error.message });
+                this.stateStore.save(this.state);
+                return { ok: false, rescued: false, error: error.message, driftMs };
+            }
+            // Lectura truncada/incompleta => quedan registros sin transmitir. No
+            // corregimos todavia; los HUECOS A/B tampoco vaciaron, asi que el
+            // proximo ciclo reintenta sobre la memoria intacta.
+            if (rescue && (rescue.partialRead || rescue.responseComplete === false)) {
+                this.logger.warn('Rescate con lectura parcial/incompleta; NO se corrige el reloj hasta drenar la memoria', {
+                    fetched: rescue.fetched,
+                    partialRead: rescue.partialRead,
+                    responseComplete: rescue.responseComplete,
+                });
+                this.stateStore.save(this.state);
+                return { ok: false, rescued: false, partial: true, driftMs };
+            }
+            this.logger.info('Rescate de ventas previo a corregir reloj completado', {
+                fetched: rescue?.fetched,
+                tickets: rescue?.tickets,
+                newTickets: rescue?.newTickets,
+            });
         }
 
         const setResponse = await this.scale.send(16, buildClock16Payload(new Date()));
@@ -177,8 +233,9 @@ class ScaleBridge {
         this.logger.info('Reloj de balanza corregido', {
             driftMs,
             scaleClock: scaleClock.toISOString(),
+            rescued: looksReset,
         });
-        return { ok: true, adjusted: true, driftMs };
+        return { ok: true, adjusted: true, rescued: looksReset, driftMs };
     }
 
     async ping() {
