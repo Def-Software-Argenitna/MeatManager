@@ -10261,6 +10261,157 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// Revierte una venta DENTRO de una transacción YA ABIERTA (conn en beginTransaction):
+// revierte promos, restaura stock, ajusta saldo cta cte, registra el contramovimiento
+// de caja (devolución), deja rastro en deleted_sales_history, marca el ticket de balanza
+// como anulado (limpiando charged_sale_id) y borra la venta. Es la MISMA lógica que
+// usaba DELETE /api/ventas; se extrajo para reusarla al anular un ticket YA cobrado desde
+// conciliación, y garantizar que el reverso de plata pase siempre por un único camino auditado.
+// `ticketBarcode` permite indicar el ticket a anular cuando la venta no guarda ticket_barcode
+// (p. ej. las ventas por cobro-manual de conciliación).
+async function reverseSaleTx(conn, { tenantId, saleId, venta, items, ticketBarcode = null, deletedBy = null, deletedByUsername = 'Sistema' }) {
+    // 0. Revertir el consumo de promociones aplicado por esta venta
+    const promoUsageToRevert = new Map();
+    for (const item of items) {
+        const promoId = item?.promo_id != null ? Number(item.promo_id) : null;
+        const promoKg = item?.promo_kg_applied != null ? parseFloat(item.promo_kg_applied) : 0;
+        if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKg) && promoKg > 0) {
+            promoUsageToRevert.set(promoId, (promoUsageToRevert.get(promoId) || 0) + promoKg);
+        }
+    }
+    for (const [promoId, usedKg] of promoUsageToRevert.entries()) {
+        await conn.query(
+            `UPDATE promotions SET used_kg = GREATEST(used_kg - ?, 0) WHERE tenant_id = ? AND id = ?`,
+            [usedKg, tenantId, promoId]
+        );
+    }
+
+    // 1. Restaurar stock (movimiento por cada item)
+    for (const item of items) {
+        let productId = item.product_id || null;
+        if (!productId && item.product_name) {
+            const [[prod]] = await conn.query(
+                `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
+                [tenantId, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
+            );
+            if (prod) productId = prod.id;
+        }
+        await conn.query(
+            `INSERT INTO stock (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                tenantId, venta.branch_id || null, productId,
+                String(item.product_name || '').trim(),
+                'venta', parseFloat(item.quantity) || 0,
+                String(item.unit || 'kg').trim(), `anulacion_venta_${saleId}`,
+            ]
+        );
+    }
+
+    const ventaBreakdown = (() => {
+        try {
+            if (!venta.payment_breakdown) return null;
+            return typeof venta.payment_breakdown === 'string'
+                ? JSON.parse(venta.payment_breakdown)
+                : venta.payment_breakdown;
+        } catch {
+            return null;
+        }
+    })();
+
+    // 2. Revertir balance cliente (solo cta cte)
+    if (venta.clientId) {
+        const currentAccountAmount = getCurrentAccountAmountFromSale({
+            paymentMethod: venta.payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: ventaBreakdown,
+            totalAmount: venta.total,
+        });
+        if (currentAccountAmount > 0) {
+            await applyClientBalanceDelta(conn, {
+                tenantId,
+                clientId: venta.clientId,
+                branchId: venta.branch_id || null,
+                delta: currentAccountAmount,
+            });
+        }
+    }
+
+    // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
+    const reversalParts = buildCajaPartsFromSale({
+        paymentMethod: venta.payment_method,
+        paymentMethodType: null,
+        paymentBreakdown: ventaBreakdown,
+        totalAmount: venta.total,
+    });
+    if (reversalParts.length > 0) {
+        const saleReceiptLabel = venta.receipt_code || (venta.receipt_number ? `Ticket ${venta.receipt_number}` : `Venta #${saleId}`);
+        for (const part of reversalParts) {
+            await conn.query(
+                `INSERT INTO caja_movimientos
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                 VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?, 'sale_reversal', 'ventas', ?, CONCAT('sale_', ?))`,
+                [
+                    tenantId,
+                    parseFloat(part.amount) || 0,
+                    `Anulación ${saleReceiptLabel}`,
+                    part.methodName,
+                    part.methodType || inferPaymentTypeByName(part.methodName),
+                    venta.clientId || null,
+                    venta.branch_id || null,
+                    venta.receipt_number || null,
+                    venta.receipt_code || null,
+                    saleId,
+                    saleId,
+                    saleId,
+                ]
+            );
+        }
+    }
+
+    // 4. Registrar en historial de eliminaciones
+    await conn.query(
+        `INSERT INTO deleted_sales_history
+         (tenant_id, sale_id, receipt_number, receipt_code, sale_date,
+          deleted_at, deleted_by_user_id, deleted_by_username,
+          payment_method, clientId, total, source,
+          authorization_verified, sale_snapshot, items_snapshot)
+         VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [
+            tenantId, saleId,
+            venta.receipt_number || null,
+            venta.receipt_code || null,
+            venta.date || null,
+            deletedBy, deletedByUsername,
+            venta.payment_method || '',
+            venta.clientId || null,
+            parseFloat(venta.total) || 0,
+            venta.source || 'manual',
+            JSON.stringify(venta),
+            JSON.stringify(items),
+        ]
+    );
+
+    // 5. Eliminar items, marcar ticket anulado (limpiando el cobro) y borrar la venta
+    await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
+    const barcodeForTicket = ticketBarcode || venta.ticket_barcode;
+    if (barcodeForTicket) {
+        await conn.query(
+            `UPDATE scale_bridge_ticket_map
+             SET ticket_status = 'voided',
+                 voided_sale_id = ?,
+                 voided_at = NOW(),
+                 voided_by_user_id = ?,
+                 voided_by_username = ?,
+                 charged_sale_id = NULL,
+                 charged_at = NULL
+             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
+            [saleId, deletedBy, deletedByUsername, tenantId, String(barcodeForTicket)]
+        );
+    }
+    await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
+}
+
 // ── RUTA: DELETE /api/ventas/:id ───────────────────────────────────────────
 // Anula una venta de forma ATÓMICA: restaura stock + ajusta balance cta cte
 // + registra deleted_sales_history + elimina ventas_items y ventas.
@@ -10295,153 +10446,17 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
             [tenantId, saleId]
         );
 
-        // 0. Revertir el consumo de promociones aplicado por esta venta
-        const promoUsageToRevert = new Map();
-        for (const item of items) {
-            const promoId = item?.promo_id != null ? Number(item.promo_id) : null;
-            const promoKg = item?.promo_kg_applied != null ? parseFloat(item.promo_kg_applied) : 0;
-            if (Number.isFinite(promoId) && promoId > 0 && Number.isFinite(promoKg) && promoKg > 0) {
-                promoUsageToRevert.set(promoId, (promoUsageToRevert.get(promoId) || 0) + promoKg);
-            }
-        }
-        for (const [promoId, usedKg] of promoUsageToRevert.entries()) {
-            await conn.query(
-                `UPDATE promotions
-                 SET used_kg = GREATEST(used_kg - ?, 0)
-                 WHERE tenant_id = ? AND id = ?`,
-                [usedKg, tenantId, promoId]
-            );
-        }
-
-        // 1. Restaurar stock (movimiento positivo por cada item)
-        for (const item of items) {
-            let productId = item.product_id || null;
-            if (!productId && item.product_name) {
-                const [[prod]] = await conn.query(
-                    `SELECT id FROM products WHERE tenant_id = ? AND canonical_key = ? LIMIT 1`,
-                    [tenantId, item.product_name.trim().toLowerCase().replace(/\s+/g, '_')]
-                );
-                if (prod) productId = prod.id;
-            }
-            await conn.query(
-                `INSERT INTO stock (tenant_id, branch_id, product_id, name, \`usage\`, quantity, unit, reference)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [
-                    tenantId,
-                    venta.branch_id || null,
-                    productId,
-                    String(item.product_name || '').trim(),
-                    'venta',
-                    parseFloat(item.quantity) || 0,
-                    String(item.unit || 'kg').trim(),
-                    `anulacion_venta_${saleId}`,
-                ]
-            );
-        }
-
-        const ventaBreakdown = (() => {
-            try {
-                if (!venta.payment_breakdown) return null;
-                return typeof venta.payment_breakdown === 'string'
-                    ? JSON.parse(venta.payment_breakdown)
-                    : venta.payment_breakdown;
-            } catch {
-                return null;
-            }
-        })();
-
-        // 2. Revertir balance cliente (solo cta cte)
-        if (venta.clientId) {
-            const currentAccountAmount = getCurrentAccountAmountFromSale({
-                paymentMethod: venta.payment_method,
-                paymentMethodType: null,
-                paymentBreakdown: ventaBreakdown,
-                totalAmount: venta.total,
-            });
-            if (currentAccountAmount > 0) {
-                await applyClientBalanceDelta(conn, {
-                    tenantId,
-                    clientId: venta.clientId,
-                    branchId: venta.branch_id || null,
-                    delta: currentAccountAmount,
-                });
-            }
-        }
-
-        // 3. Registrar contramovimiento de caja (devolución) por la venta anulada
-        const reversalParts = buildCajaPartsFromSale({
-            paymentMethod: venta.payment_method,
-            paymentMethodType: null,
-            paymentBreakdown: ventaBreakdown,
-            totalAmount: venta.total,
-        });
-        if (reversalParts.length > 0) {
-            const saleReceiptLabel = venta.receipt_code || (venta.receipt_number ? `Ticket ${venta.receipt_number}` : `Venta #${saleId}`);
-            for (const part of reversalParts) {
-                await conn.query(
-                    `INSERT INTO caja_movimientos
-                     (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
-                     VALUES (?, 'anulacion_venta', ?, 'Anulación venta', ?, ?, ?, 'principal', NOW(), ?, ?, ?, ?, ?, 'sale_reversal', 'ventas', ?, CONCAT('sale_', ?))`,
-                    [
-                        tenantId,
-                        parseFloat(part.amount) || 0,
-                        `Anulación ${saleReceiptLabel}`,
-                        part.methodName,
-                        part.methodType || inferPaymentTypeByName(part.methodName),
-                        venta.clientId || null,
-                        venta.branch_id || null,
-                        venta.receipt_number || null,
-                        venta.receipt_code || null,
-                        saleId,
-                        saleId,
-                        saleId,
-                    ]
-                );
-            }
-        }
-
-        // 4. Registrar en historial de eliminaciones
         const deletedByRaw = req.body?.deleted_by_user_id;
         const deletedByParsed = Number.parseInt(deletedByRaw, 10);
         const deletedBy = Number.isFinite(deletedByParsed) && deletedByParsed > 0
             ? deletedByParsed
             : null;
         const deletedByUsername = req.body?.deleted_by_username || 'Sistema';
-        await conn.query(
-            `INSERT INTO deleted_sales_history
-             (tenant_id, sale_id, receipt_number, receipt_code, sale_date,
-              deleted_at, deleted_by_user_id, deleted_by_username,
-              payment_method, clientId, total, source,
-              authorization_verified, sale_snapshot, items_snapshot)
-             VALUES (?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
-            [
-                tenantId, saleId,
-                venta.receipt_number || null,
-                venta.receipt_code || null,
-                venta.date || null,
-                deletedBy, deletedByUsername,
-                venta.payment_method || '',
-                venta.clientId || null,
-                parseFloat(venta.total) || 0,
-                venta.source || 'manual',
-                JSON.stringify(venta),
-                JSON.stringify(items),
-            ]
-        );
 
-        // 5. Eliminar items y venta
-        await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
-        if (venta.ticket_barcode) {
-            await conn.query(
-                `UPDATE scale_bridge_ticket_map
-                 SET ticket_status = 'voided',
-                     voided_sale_id = ?,
-                     voided_at = NOW()
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
-                [saleId, tenantId, String(venta.ticket_barcode)]
-            );
-        }
-        await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
+        await reverseSaleTx(conn, {
+            tenantId, saleId, venta, items,
+            deletedBy, deletedByUsername,
+        });
 
         await conn.commit();
         conn.release();
@@ -13653,11 +13668,19 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
 
         await conn.beginTransaction();
         try {
-            // Insertar venta con la fecha del ticket y su sucursal
+            // Insertar venta con la fecha del ticket y su sucursal.
+            // Guardamos tambien el desglose de pago (un solo medio) para que las
+            // pantallas de "como se pago" no salgan vacias: antes cobro-manual solo
+            // guardaba payment_method y el detalle que lee payment_breakdown no mostraba nada.
+            const paymentBreakdown = [{
+                method_name: pmName,
+                method_type: inferPaymentTypeByName(pmName),
+                amount_charged: total,
+            }];
             const [ventaResult] = await conn.query(
-                `INSERT INTO ventas (tenant_id, branch_id, date, subtotal, total, payment_method, payment_method_id, source, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, 'conciliacion_manual', NOW())`,
-                [tenantId, branchId, saleDate, total, total, pmName, pmId || null]
+                `INSERT INTO ventas (tenant_id, branch_id, date, subtotal, total, payment_method, payment_method_id, payment_breakdown, source, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'conciliacion_manual', NOW())`,
+                [tenantId, branchId, saleDate, total, total, pmName, pmId || null, JSON.stringify(paymentBreakdown)]
             );
             const saleId = ventaResult.insertId;
 
@@ -14069,7 +14092,7 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
         try {
             for (const barcode of barcodes) {
                 const [[ticket]] = await conn.query(
-                    `SELECT ticket_status FROM scale_bridge_ticket_map
+                    `SELECT ticket_status, charged_sale_id FROM scale_bridge_ticket_map
                      WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
                     [tenantId, barcode]
                 );
@@ -14077,10 +14100,56 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
                     skipped.push({ ticket_barcode: barcode, reason: 'no_encontrado' });
                     continue;
                 }
-                if (String(ticket.ticket_status || '').toLowerCase() !== 'open') {
-                    skipped.push({ ticket_barcode: barcode, reason: `estado_${ticket.ticket_status}` });
+                const st = String(ticket.ticket_status || '').toLowerCase();
+
+                if (st === 'voided') {
+                    skipped.push({ ticket_barcode: barcode, reason: 'ya_anulado' });
                     continue;
                 }
+
+                // Ticket YA cobrado: anular = revertir la venta por el camino auditado
+                // (caja, stock, saldo, historial). Antes esta ruta lo salteaba en silencio
+                // y el ticket quedaba figurando "cobrado" pese a estar anulado.
+                if (st === 'charged') {
+                    const chargedSaleId = ticket.charged_sale_id ? Number(ticket.charged_sale_id) : null;
+                    if (chargedSaleId) {
+                        const [[venta]] = await conn.query(
+                            `SELECT * FROM ventas WHERE tenant_id = ? AND id = ? LIMIT 1`,
+                            [tenantId, chargedSaleId]
+                        );
+                        if (venta) {
+                            const [saleItems] = await conn.query(
+                                `SELECT * FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`,
+                                [tenantId, chargedSaleId]
+                            );
+                            await reverseSaleTx(conn, {
+                                tenantId, saleId: chargedSaleId, venta, items: saleItems,
+                                ticketBarcode: barcode,
+                                deletedBy: voidedByUserId, deletedByUsername: voidedByUsername,
+                            });
+                            anulados.push(barcode);
+                            continue;
+                        }
+                    }
+                    // charged_sale_id colgado (la venta ya no existe): no hay plata que revertir,
+                    // solo limpiamos el cobro fantasma y marcamos el ticket como anulado.
+                    await conn.query(
+                        `UPDATE scale_bridge_ticket_map
+                         SET ticket_status = 'voided',
+                             voided_at = NOW(),
+                             voided_by_user_id = ?,
+                             voided_by_username = ?,
+                             voided_reason = ?,
+                             charged_sale_id = NULL,
+                             charged_at = NULL
+                         WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?`,
+                        [voidedByUserId, voidedByUsername, voidedReason, tenantId, barcode]
+                    );
+                    anulados.push(barcode);
+                    continue;
+                }
+
+                // Ticket pendiente (open): anulación simple, no mueve plata ni stock.
                 await conn.query(
                     `UPDATE scale_bridge_ticket_map
                      SET ticket_status = 'voided',
@@ -14317,12 +14386,18 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 l.captured_at,
                 t.ticket_status,
                 t.charged_sale_id,
-                t.voided_sale_id
+                t.voided_sale_id,
+                cv.id AS charged_venta_id
             FROM scale_sales_log l
             LEFT JOIN scale_bridge_ticket_map t
                    ON t.device_id = l.device_id
                   AND t.ticket_id = l.ticket_id
                   AND t.sale_at   = l.sale_at
+            -- Verifica que la venta del cobro siga existiendo: si se anulo/borro,
+            -- charged_sale_id queda colgado y el ticket NO debe figurar "cobrado".
+            LEFT JOIN ventas cv
+                   ON cv.tenant_id = l.tenant_id
+                  AND cv.id = t.charged_sale_id
             WHERE l.tenant_id = ?${branchFilter}${dateFilter}
             ORDER BY l.sale_at DESC, l.id DESC
         `, params);
@@ -14336,9 +14411,12 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             }
             // Estado best-effort desde la tabla operativa (puede faltar si se limpio):
             // cobrado / anulado / pendiente. Sirve para el control de la clienta.
+            // "cobrado" exige que la venta asociada exista de verdad: un charged_sale_id
+            // colgado (venta ya anulada) vuelve a contar como pendiente, no como cobrado.
+            const chargedSaleExists = r.charged_venta_id != null;
             let status = 'pendiente';
-            if (r.voided_sale_id) status = 'anulado';
-            else if (r.charged_sale_id || r.ticket_status === 'charged') status = 'cobrado';
+            if (r.voided_sale_id || r.ticket_status === 'voided') status = 'anulado';
+            else if ((r.charged_sale_id || r.ticket_status === 'charged') && chargedSaleExists) status = 'cobrado';
 
             return {
                 id: r.id,
