@@ -810,9 +810,21 @@
 
 .clients-history-table th,
 .clients-history-table td {
-    padding: 0.75rem 0.85rem;
+    padding: 0.7rem 0.6rem;
     text-align: left;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Columnas de importe (Debe / Haber / Saldo): compactas, alineadas a la derecha
+   y sin partir el número. El comprobante (2ª col) SÍ envuelve para no ensanchar
+   la tabla y que el saldo no quede cortado en un modal angosto. */
+.clients-history-table th:nth-child(3),
+.clients-history-table th:nth-child(4),
+.clients-history-table th:nth-child(5),
+.clients-history-table td:nth-child(3),
+.clients-history-table td:nth-child(4),
+.clients-history-table td:nth-child(5) {
+    text-align: right;
     white-space: nowrap;
 }
 
