@@ -36,6 +36,18 @@ const StatusBadge = ({ status }) => {
     );
 };
 
+const OriginBadge = ({ origin }) => {
+    const isManual = origin === 'manual';
+    return (
+        <span style={{
+            display: 'inline-block', marginLeft: '6px', padding: '1px 6px', borderRadius: '5px',
+            fontSize: '0.62rem', fontWeight: 700, letterSpacing: '0.03em', verticalAlign: 'middle',
+            background: isManual ? 'rgba(59,130,246,0.15)' : 'rgba(148,163,184,0.15)',
+            color: isManual ? '#3b82f6' : '#94a3b8',
+        }}>{isManual ? 'MANUAL' : 'BALANZA'}</span>
+    );
+};
+
 const cantidadLinea = (item) => {
     const qty = Number(item.itemQuantity || 0);
     const unit = item.itemQuantityUnit || (Number(item.grams) > 0 ? 'kg' : 'un');
@@ -176,7 +188,7 @@ export default function DetalleVentasBalanzaTab() {
                     {filtered.length === 0 ? (
                         <div className="concil-empty">
                             <ShoppingBag size={40} style={{ opacity: 0.2 }} />
-                            <p>No hay ventas de balanza registradas en ese período.</p>
+                            <p>No hay ventas registradas en ese período.</p>
                         </div>
                     ) : (
                         <>
@@ -207,7 +219,7 @@ export default function DetalleVentasBalanzaTab() {
                                         {filtered.map(t => (
                                             <tr key={t.id} onClick={() => setDetail(t)} style={{ cursor: 'pointer' }}>
                                                 <td className="concil-cell-date">{fmtDateTime(t.sale_at)}</td>
-                                                <td className="concil-cell-ticket">{t.printed_ticket_barcode || t.ticket_id}</td>
+                                                <td className="concil-cell-ticket">{t.printed_ticket_barcode || t.ticket_id}<OriginBadge origin={t.origin} /></td>
                                                 <td>{t.vendor_name || '—'}</td>
                                                 <td className="concil-cell-center">{t.item_count}</td>
                                                 <td className="concil-cell-amount">{fmt(t.total_amount)}</td>

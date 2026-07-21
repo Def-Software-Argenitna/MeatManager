@@ -14327,7 +14327,7 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             ORDER BY l.sale_at DESC, l.id DESC
         `, params);
 
-        const tickets = rows.map((r) => {
+        const scaleTickets = rows.map((r) => {
             let items = [];
             try {
                 items = typeof r.lines_json === 'string' ? JSON.parse(r.lines_json) : (r.lines_json || []);
@@ -14352,9 +14352,99 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 item_count: r.item_count,
                 captured_at: r.captured_at,
                 status,
+                origin: 'balanza',
                 items: Array.isArray(items) ? items : [],
             };
         });
+
+        // ── Ventas MANUALES (cargadas a mano, sin ticket de balanza) ──────────
+        // El Detalle de Ventas es el control de TODO lo vendido, no solo de la
+        // balanza. Las ventas manuales se guardan en `ventas`/`ventas_items` y
+        // nunca pasan por `scale_sales_log`, asi que las sumamos aca.
+        // Dedup: las ventas originadas en balanza SIEMPRE llevan ticket_barcode
+        // (y ya salen arriba desde scale_sales_log); las manuales lo tienen NULL.
+        const manualParams = [tenantId];
+        let manualBranchFilter = '';
+        if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
+            manualBranchFilter = ' AND v.branch_id = ?';
+            manualParams.push(scopedBranchId);
+        }
+        let manualDateFilter = '';
+        if (dateFrom && dateTo) {
+            manualDateFilter = ' AND v.date BETWEEN ? AND ?';
+            manualParams.push(`${dateFrom} 00:00:00`, `${dateTo} 23:59:59`);
+        } else if (dateFrom) {
+            manualDateFilter = ' AND v.date >= ?';
+            manualParams.push(`${dateFrom} 00:00:00`);
+        } else if (dateTo) {
+            manualDateFilter = ' AND v.date <= ?';
+            manualParams.push(`${dateTo} 23:59:59`);
+        }
+
+        const [ventaRows] = await pool.query(`
+            SELECT v.id, v.date, v.total, v.receipt_number, v.receipt_code, v.source
+            FROM ventas v
+            WHERE v.tenant_id = ?
+              AND (v.ticket_barcode IS NULL OR v.ticket_barcode = '')
+              ${manualBranchFilter}${manualDateFilter}
+            ORDER BY v.date DESC, v.id DESC
+        `, manualParams);
+
+        const itemsByVenta = new Map();
+        if (ventaRows.length > 0) {
+            const ventaIds = ventaRows.map((v) => v.id);
+            const inList = ventaIds.map(() => '?').join(',');
+            const [itemRows] = await pool.query(`
+                SELECT vi.venta_id, vi.product_name, vi.quantity, vi.price, vi.subtotal,
+                       p.plu AS product_plu, COALESCE(p.unit, 'un') AS product_unit
+                FROM ventas_items vi
+                LEFT JOIN products p
+                       ON p.tenant_id = vi.tenant_id AND p.id = vi.product_id
+                WHERE vi.tenant_id = ? AND vi.venta_id IN (${inList})
+                ORDER BY vi.venta_id, vi.id
+            `, [tenantId, ...ventaIds]);
+            for (const it of itemRows) {
+                if (!itemsByVenta.has(it.venta_id)) itemsByVenta.set(it.venta_id, []);
+                const arr = itemsByVenta.get(it.venta_id);
+                arr.push({
+                    lineNo: arr.length + 1,
+                    pluCode: it.product_plu || null,
+                    productName: it.product_name || null,
+                    sectorCode: null,
+                    vendorCode: null,
+                    vendorName: null,
+                    units: null,
+                    grams: null,
+                    drainedGrams: null,
+                    amount: it.subtotal,
+                    itemQuantity: it.quantity,
+                    itemQuantityUnit: it.product_unit || 'un',
+                });
+            }
+        }
+
+        const manualTickets = ventaRows.map((v) => {
+            const items = itemsByVenta.get(v.id) || [];
+            return {
+                id: `v${v.id}`,               // prefijo para no chocar con los IDs de balanza
+                ticket_id: v.receipt_number || v.receipt_code || `Manual #${v.id}`,
+                ticket_barcode: null,
+                printed_ticket_barcode: null,
+                vendor_code: null,
+                vendor_name: null,
+                sale_at: v.date,
+                total_amount: v.total,
+                item_count: items.length,
+                captured_at: v.date,
+                status: 'cobrado',            // una venta manual registrada es una venta concretada
+                origin: 'manual',
+                items,
+            };
+        });
+
+        const tickets = [...scaleTickets, ...manualTickets].sort(
+            (a, b) => new Date(b.sale_at) - new Date(a.sale_at)
+        );
 
         return res.json({ tickets });
     } catch (err) {
