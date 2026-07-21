@@ -12,8 +12,11 @@ import {
     ArrowRightLeft,
     ArrowDownUp,
     Receipt,
+    ClipboardCheck,
+    CheckCircle,
+    X,
 } from 'lucide-react';
-import { createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
+import { closeCaja, createCashboxTransfer, fetchCajaSummary, fetchTable, saveCashboxOpening, saveTableRecord } from '../utils/apiClient';
 import { EmptyState } from '../components/ui';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import DirectionalReveal from '../components/DirectionalReveal';
@@ -162,6 +165,10 @@ const CierreCaja = () => {
     const [transferDesc, setTransferDesc] = useState('');
     const [transferSubmitting, setTransferSubmitting] = useState(false);
     const [openingSubmitting, setOpeningSubmitting] = useState(false);
+    const [showClosureModal, setShowClosureModal] = useState(false);
+    const [countedCashInput, setCountedCashInput] = useState('');
+    const [closureNotes, setClosureNotes] = useState('');
+    const [closureSubmitting, setClosureSubmitting] = useState(false);
 
     const [allMovements, setAllMovements] = useState([]);
     const [paymentMethods, setPaymentMethods] = useState(null);
@@ -656,6 +663,37 @@ const CierreCaja = () => {
         return { ...parts, available, deductions, reason };
     }, [cashInDrawer, cashPaymentMethods, summaryByMethod, openingMovements, cashSales, cashReversals, totalIncomes, totalExpenses, totalTransfersIn, totalTransfersOut]);
 
+    // Efectivo ESPERADO del día (modelo diario, sin arrastre) para la cuenta
+    // seleccionada. Valor AUTORITATIVO del backend (cashByAccount.expectedToday):
+    // coincide exacto con lo que recalcula el cierre. Si un backend viejo no lo
+    // envía, se deriva de los totales del summary por método (mismo cálculo).
+    const cashDetailForAccount = useMemo(() => {
+        const bucket = cashSummary?.cashByAccount?.[selectedCashAccount];
+        if (bucket) return bucket;
+        return {
+            expectedToday: selectedCashSummary.dailyNet,
+            accumulated: selectedCashSummary.accumulated,
+            opening: selectedCashSummary.opening,
+            sales: selectedCashSummary.sales,
+            incomes: selectedCashSummary.manualIncomes,
+            expenses: selectedCashSummary.manualExpenses,
+            reversals: selectedCashSummary.reversals,
+            netSales: selectedCashSummary.sales - selectedCashSummary.reversals,
+        };
+    }, [cashSummary, selectedCashAccount, selectedCashSummary]);
+
+    const dailyCashExpected = toNumber(cashDetailForAccount.expectedToday);
+    const dailyCashNetSales = toNumber(cashDetailForAccount.netSales ?? (toNumber(cashDetailForAccount.sales) - toNumber(cashDetailForAccount.reversals)));
+
+    // Cierre YA registrado para el día + cuenta seleccionados (si existe).
+    const todayClosure = useMemo(() => {
+        const list = Array.isArray(cashSummary?.closures) ? cashSummary.closures : [];
+        return list.find((row) => normalizeCashAccount(row.cash_account) === selectedCashAccount) || null;
+    }, [cashSummary, selectedCashAccount]);
+
+    const countedCashNumber = parseFloat(countedCashInput);
+    const closureDifferencePreview = Number.isFinite(countedCashNumber) ? countedCashNumber - dailyCashExpected : null;
+
     const buildOpeningDraft = useCallback((source = {}) => {
         const next = {};
 
@@ -786,6 +824,51 @@ const CierreCaja = () => {
         }
         await loadData();
         setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
+    };
+
+    const openClosureModal = () => {
+        setCountedCashInput('');
+        setClosureNotes('');
+        setFeedback(null);
+        setShowClosureModal(true);
+    };
+
+    const handleConfirmClosure = async (e) => {
+        e?.preventDefault?.();
+        if (closureSubmitting) return;
+
+        if (requiresCashboxBranch && (!Number.isFinite(activeBranchId) || activeBranchId <= 0)) {
+            setFeedback({ type: 'warning', text: 'Seleccioná una sucursal activa antes de cerrar la caja.' });
+            return;
+        }
+
+        const counted = parseFloat(countedCashInput);
+        if (!Number.isFinite(counted) || counted < 0) {
+            setFeedback({ type: 'warning', text: 'Ingresá el efectivo contado (un número igual o mayor a cero).' });
+            return;
+        }
+
+        try {
+            setClosureSubmitting(true);
+            await closeCaja({
+                date: selectedDate,
+                cashAccount: selectedCashAccount,
+                countedCash: counted,
+                notes: closureNotes,
+                branchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+                activeBranchId: Number.isFinite(activeBranchId) && activeBranchId > 0 ? activeBranchId : null,
+            });
+        } catch (error) {
+            console.error('[CierreCaja] closure error', error);
+            setFeedback({ type: 'error', text: error.message || 'No se pudo registrar el cierre de caja.' });
+            setClosureSubmitting(false);
+            return;
+        }
+
+        setClosureSubmitting(false);
+        setShowClosureModal(false);
+        await loadData();
+        setFeedback({ type: 'success', text: 'Cierre de caja registrado correctamente.' });
     };
 
     const handleTransferSubmit = (e) => {
@@ -968,10 +1051,31 @@ const CierreCaja = () => {
             )}
 
             <DirectionalReveal className="cash-overview-grid" from="left" delay={0.1}>
+                <div
+                    className={`stat-box result cash-expected ${dailyCashExpected < 0 ? 'negative' : dailyCashExpected > 0 ? 'positive' : 'neutral'}`}
+                    style={{ borderColor: 'rgba(34, 197, 94, 0.55)', boxShadow: '0 0 0 1px rgba(34, 197, 94, 0.25) inset' }}
+                >
+                    <span className="label">Efectivo esperado del día ({selectedCashAccountLabel})</span>
+                    <span className="val">{formatCurrency(dailyCashExpected)}</span>
+                    <span className="cash-result-reason">
+                        Apertura + ventas en efectivo − gastos del día. Es lo que debería haber en la caja al cerrar (sin arrastre de días anteriores).
+                    </span>
+                    <div className="cash-result-breakdown">
+                        <span>Apertura: {formatCurrency(cashDetailForAccount.opening)}</span>
+                        <span>Ventas efectivo: {formatCurrency(dailyCashNetSales)}</span>
+                        <span>Ingresos: {formatCurrency(cashDetailForAccount.incomes)}</span>
+                        <span>Retiros/gastos: -{formatCurrency(cashDetailForAccount.expenses)}</span>
+                    </div>
+                    {todayClosure ? (
+                        <span className="cash-result-reason" style={{ color: '#22c55e', fontWeight: 700 }}>
+                            Caja cerrada · Contado {formatCurrency(todayClosure.counted_cash)} · Diferencia {toNumber(todayClosure.difference) === 0 ? 'sin diferencia' : `${toNumber(todayClosure.difference) > 0 ? '+' : ''}${formatCurrency(todayClosure.difference)}`}
+                        </span>
+                    ) : null}
+                </div>
                 <div className={`stat-box result cash-accumulator ${cashInDrawer < 0 ? 'negative' : cashInDrawer > 0 ? 'positive' : 'neutral'}`}>
                     <span className="label">Efectivo acumulado ({selectedCashAccountLabel})</span>
                     <span className="val">${cashInDrawer.toLocaleString('es-AR')}</span>
-                    <span className="cash-result-reason">{cashBalanceExplanation.reason}</span>
+                    <span className="cash-result-reason">Incluye el arrastre de días anteriores. {cashBalanceExplanation.reason}</span>
                     <div className="cash-result-breakdown">
                         <span>Disponible: {formatCurrency(cashBalanceExplanation.available)}</span>
                         <span>Salidas: {formatCurrency(cashBalanceExplanation.deductions)}</span>
@@ -1014,6 +1118,77 @@ const CierreCaja = () => {
                 <div className="stat-box">
                     <span className="label">Ventas mixtas del día</span>
                     <span className="val">{mixedSalesCount}</span>
+                </div>
+            </DirectionalReveal>
+
+            <DirectionalReveal className="cierre-arqueo" from="up" delay={0.13}>
+                <div
+                    className="neo-card"
+                    style={{
+                        display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between',
+                        gap: '1rem', padding: '1.1rem 1.3rem', marginBottom: '1.1rem',
+                        border: todayClosure ? '1px solid rgba(34, 197, 94, 0.4)' : '1px solid var(--glass-border)',
+                    }}
+                >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.9rem', minWidth: '260px' }}>
+                        {todayClosure
+                            ? <CheckCircle size={30} color="#22c55e" />
+                            : <ClipboardCheck size={30} color="var(--color-primary)" />}
+                        <div>
+                            <div style={{ fontWeight: 800, fontSize: '1.1rem' }}>
+                                {todayClosure ? 'Caja cerrada' : 'Cierre de caja'} · {selectedCashAccountLabel}
+                            </div>
+                            <div style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                                {todayClosure
+                                    ? 'Ya se registró el arqueo de esta caja para el día seleccionado.'
+                                    : 'Contá el efectivo físico y verificá que coincida con el esperado del día.'}
+                            </div>
+                        </div>
+                    </div>
+
+                    {todayClosure ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1.4rem', flexWrap: 'wrap' }}>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Esperado</div>
+                                <div style={{ fontWeight: 700 }}>{formatCurrency(todayClosure.theoretical_cash)}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Contado</div>
+                                <div style={{ fontWeight: 700 }}>{formatCurrency(todayClosure.counted_cash)}</div>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Diferencia</div>
+                                <div style={{
+                                    fontWeight: 800,
+                                    color: toNumber(todayClosure.difference) === 0 ? '#22c55e' : (toNumber(todayClosure.difference) > 0 ? '#38bdf8' : '#ef4444'),
+                                }}>
+                                    {toNumber(todayClosure.difference) > 0 ? '+' : ''}{formatCurrency(todayClosure.difference)}
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                className="cierre-add-btn"
+                                onClick={openClosureModal}
+                            >
+                                Rehacer cierre
+                            </button>
+                        </div>
+                    ) : (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '1.2rem', flexWrap: 'wrap' }}>
+                            <div style={{ textAlign: 'right' }}>
+                                <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>Esperado en caja</div>
+                                <div style={{ fontWeight: 800, fontSize: '1.15rem' }}>{formatCurrency(dailyCashExpected)}</div>
+                            </div>
+                            <button
+                                type="button"
+                                className="save-btn"
+                                onClick={openClosureModal}
+                                style={{ whiteSpace: 'nowrap' }}
+                            >
+                                <ClipboardCheck size={16} /> Cerrar caja y contar
+                            </button>
+                        </div>
+                    )}
                 </div>
             </DirectionalReveal>
 
@@ -1534,6 +1709,129 @@ const CierreCaja = () => {
                 <AlertCircle size={20} />
                 <p><strong>Tip de conciliación:</strong> la caja acumulada por medio te muestra cuánto debería haber disponible hoy, sumando aperturas, ventas y movimientos manuales, y restando retiros o gastos.</p>
             </DirectionalReveal>
+
+            {showClosureModal && (
+                <div
+                    style={{
+                        position: 'fixed', inset: 0, zIndex: 99990,
+                        backgroundColor: 'rgba(0,0,0,0.72)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        padding: '1rem',
+                    }}
+                    onClick={() => { if (!closureSubmitting) setShowClosureModal(false); }}
+                >
+                    <div
+                        className="neo-card"
+                        onClick={(e) => e.stopPropagation()}
+                        style={{
+                            width: 'min(480px, 96vw)',
+                            borderRadius: '16px',
+                            border: '1px solid rgba(34, 197, 94, 0.4)',
+                            background: 'rgba(13, 18, 24, 0.98)',
+                            boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
+                            padding: '1.5rem 1.5rem 1.3rem',
+                        }}
+                    >
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                                <ClipboardCheck size={22} color="#22c55e" />
+                                <span style={{ fontWeight: 800, fontSize: '1.2rem' }}>Cerrar caja · {selectedCashAccountLabel}</span>
+                            </div>
+                            <button
+                                type="button"
+                                onClick={() => { if (!closureSubmitting) setShowClosureModal(false); }}
+                                style={{ background: 'transparent', border: 'none', color: 'var(--color-text-muted)', cursor: 'pointer' }}
+                                aria-label="Cerrar"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleConfirmClosure}>
+                            <div
+                                style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                    padding: '0.8rem 1rem', borderRadius: '12px', marginBottom: '1rem',
+                                    background: 'rgba(34, 197, 94, 0.1)', border: '1px solid rgba(34, 197, 94, 0.25)',
+                                }}
+                            >
+                                <div>
+                                    <div style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Efectivo esperado del día</div>
+                                    <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
+                                        Apertura {formatCurrency(cashDetailForAccount.opening)} + ventas {formatCurrency(dailyCashNetSales)} − gastos {formatCurrency(cashDetailForAccount.expenses)}
+                                    </div>
+                                </div>
+                                <div style={{ fontWeight: 800, fontSize: '1.25rem' }}>{formatCurrency(dailyCashExpected)}</div>
+                            </div>
+
+                            <div className="form-group full" style={{ marginBottom: '0.9rem' }}>
+                                <label>Efectivo contado en la caja</label>
+                                <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={countedCashInput}
+                                    onChange={(e) => setCountedCashInput(e.target.value)}
+                                    placeholder="Ej: 142300"
+                                    className="neo-input"
+                                    autoFocus
+                                    required
+                                />
+                            </div>
+
+                            {closureDifferencePreview !== null && (
+                                <div
+                                    style={{
+                                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                        padding: '0.7rem 1rem', borderRadius: '12px', marginBottom: '0.9rem',
+                                        background: Math.abs(closureDifferencePreview) < 0.005 ? 'rgba(34, 197, 94, 0.12)' : 'rgba(239, 68, 68, 0.12)',
+                                        border: `1px solid ${Math.abs(closureDifferencePreview) < 0.005 ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+                                    }}
+                                >
+                                    <span style={{ fontWeight: 700 }}>Diferencia</span>
+                                    <span style={{
+                                        fontWeight: 800, fontSize: '1.1rem',
+                                        color: Math.abs(closureDifferencePreview) < 0.005 ? '#22c55e' : (closureDifferencePreview > 0 ? '#38bdf8' : '#ef4444'),
+                                    }}>
+                                        {Math.abs(closureDifferencePreview) < 0.005
+                                            ? 'Sin diferencia ✓'
+                                            : `${closureDifferencePreview > 0 ? 'Sobra +' : 'Falta -'}${formatCurrency(Math.abs(closureDifferencePreview))}`}
+                                    </span>
+                                </div>
+                            )}
+
+                            <div className="form-group full" style={{ marginBottom: '1.1rem' }}>
+                                <label>Nota / observación (opcional)</label>
+                                <input
+                                    type="text"
+                                    value={closureNotes}
+                                    onChange={(e) => setClosureNotes(e.target.value)}
+                                    placeholder="Ej: faltaron $200 en monedas, se ajusta mañana"
+                                    className="neo-input"
+                                />
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.7rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                <button
+                                    type="button"
+                                    onClick={() => { if (!closureSubmitting) setShowClosureModal(false); }}
+                                    disabled={closureSubmitting}
+                                    style={{
+                                        padding: '0.7rem 1.5rem', borderRadius: '10px',
+                                        border: '1px solid var(--glass-border)', background: 'transparent',
+                                        color: 'var(--color-text-main)', fontWeight: 700, cursor: 'pointer', fontSize: '0.95rem',
+                                    }}
+                                >
+                                    Cancelar
+                                </button>
+                                <button type="submit" className="save-btn" disabled={closureSubmitting}>
+                                    <CheckCircle size={16} /> {closureSubmitting ? 'Guardando...' : 'Confirmar cierre'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

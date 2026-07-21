@@ -3213,6 +3213,7 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'caja_movimientos', 'branch_id', '`branch_id` INT NULL AFTER `client_id`');
             await ensureColumn(conn, 'pedidos', 'branch_id', '`branch_id` INT NULL AFTER `customer_id`');
             await ensureColumn(conn, 'cash_closures', 'branch_id', '`branch_id` INT NULL AFTER `closure_date`');
+            await ensureColumn(conn, 'cash_closures', 'cash_account', "`cash_account` VARCHAR(20) NOT NULL DEFAULT 'principal' AFTER `branch_id`");
             await ensureColumn(conn, 'cash_closures', 'created_by_user_id', '`created_by_user_id` BIGINT NULL');
             await ensureColumn(conn, 'cash_closures', 'created_by_username', '`created_by_username` VARCHAR(150) NULL');
             await ensureColumn(conn, 'cash_closures', 'created_by_email', '`created_by_email` VARCHAR(150) NULL');
@@ -7004,6 +7005,61 @@ const emptyCashAccountBalances = () => ({
     secondary: 0,
 });
 
+// Redondeo a 2 decimales para montos de caja (evita basura de coma flotante
+// en el teorico/contado/diferencia del cierre).
+const roundCash2 = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+// Efectivo ESPERADO del dia (modelo diario, sin arrastre): apertura + ventas en
+// efectivo + ingresos - gastos/retiros - anulaciones, acotado a un solo dia y a
+// una sola cuenta de caja, contando SOLO metodos de tipo efectivo. Es la misma
+// definicion que usa /api/caja/summary por metodo (suma de daily_net de filas
+// cash), por eso el numero que ve el usuario coincide exacto con el que guarda el
+// cierre. Incluye las patas de transferencia que caen en efectivo (ingreso/retiro)
+// porque afectan realmente lo que hay en el cajon. Excluye cuenta corriente
+// (nunca es efectivo fisico).
+const fetchCajaDailyCash = async (pool, { tenantId, selectedDate, branchId, cashAccount }) => {
+    const start = `${selectedDate} 00:00:00`;
+    const end = `${selectedDate} 23:59:59`;
+    const account = normalizeCashAccountToken(cashAccount);
+    const where = [
+        '`tenant_id` = ?',
+        '`date` IS NOT NULL',
+        '`date` >= ?',
+        '`date` <= ?',
+        "LOWER(COALESCE(NULLIF(TRIM(payment_method_type), ''), 'cash')) = 'cash'",
+        `CASE
+            WHEN LOWER(COALESCE(cash_account, 'principal')) IN ('secundaria', 'secondary', 'caja_secundaria') THEN 'secondary'
+            ELSE 'principal'
+        END = ?`,
+    ];
+    const params = [tenantId, start, end, account];
+    if (Number.isFinite(branchId) && branchId > 0) {
+        where.push('`branch_id` = ?');
+        params.push(branchId);
+    }
+
+    const [rows] = await pool.query(
+        `SELECT
+            SUM(CASE WHEN type = 'apertura' THEN COALESCE(amount, 0) ELSE 0 END) AS opening,
+            SUM(CASE WHEN type = 'venta' THEN COALESCE(amount, 0) ELSE 0 END) AS sales,
+            SUM(CASE WHEN type = 'ingreso' THEN COALESCE(amount, 0) ELSE 0 END) AS incomes,
+            SUM(CASE WHEN type IN ('egreso', 'retiro') THEN COALESCE(amount, 0) ELSE 0 END) AS expenses,
+            SUM(CASE WHEN type = 'anulacion_venta' THEN COALESCE(amount, 0) ELSE 0 END) AS reversals
+         FROM caja_movimientos
+         WHERE ${where.join(' AND ')}`,
+        params
+    );
+
+    const r = rows[0] || {};
+    const opening = Number(r.opening || 0);
+    const sales = Number(r.sales || 0);
+    const incomes = Number(r.incomes || 0);
+    const expenses = Number(r.expenses || 0);
+    const reversals = Number(r.reversals || 0);
+    const expected = opening + sales + incomes - expenses - reversals;
+    return { opening, sales, incomes, expenses, reversals, expected };
+};
+
 // Resumen contable de caja: el saldo sale del backend y no de la lista paginada.
 app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
     try {
@@ -7186,6 +7242,69 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
         const totals = emptyCashSummaryTotals();
         Object.values(byCashAccount).forEach((cashTotals) => addCashSummaryTotals(totals, cashTotals));
 
+        // Efectivo por cuenta de caja (SOLO metodos cash). expectedToday es el
+        // efectivo esperado del dia (modelo diario, sin arrastre) = apertura +
+        // ventas efectivo + ingresos - gastos - anulaciones. accumulated es el
+        // saldo arrastrado + hoy. Es lo que consume la pantalla de cierre para
+        // mostrar y para pre-cargar el modal de conteo; coincide exacto con lo que
+        // recalcula POST /api/caja/closure (misma definicion de "cash").
+        const cashByAccount = {};
+        byPaymentMethod.forEach((method) => {
+            if (String(method.type || '').trim().toLowerCase() !== 'cash') return;
+            const account = normalizeCashAccountToken(method.cashAccount);
+            if (!cashByAccount[account]) {
+                cashByAccount[account] = {
+                    expectedToday: 0,
+                    accumulated: 0,
+                    opening: 0,
+                    sales: 0,
+                    incomes: 0,
+                    expenses: 0,
+                    reversals: 0,
+                };
+            }
+            const bucket = cashByAccount[account];
+            bucket.expectedToday += Number(method.dailyNet || 0);
+            bucket.accumulated += Number(method.accumulated || 0);
+            bucket.opening += Number(method.opening || 0);
+            bucket.sales += Number(method.sales || 0);
+            bucket.incomes += Number(method.manualIncomes || 0);
+            bucket.expenses += Number(method.manualExpenses || 0);
+            bucket.reversals += Number(method.reversals || 0);
+        });
+        Object.values(cashByAccount).forEach((bucket) => {
+            bucket.expectedToday = roundCash2(bucket.expectedToday);
+            bucket.accumulated = roundCash2(bucket.accumulated);
+            bucket.opening = roundCash2(bucket.opening);
+            bucket.sales = roundCash2(bucket.sales);
+            bucket.incomes = roundCash2(bucket.incomes);
+            bucket.expenses = roundCash2(bucket.expenses);
+            bucket.reversals = roundCash2(bucket.reversals);
+            bucket.netSales = roundCash2(bucket.sales - bucket.reversals);
+        });
+
+        // Cierres YA registrados para el dia seleccionado (uno por cuenta de caja).
+        // El frontend usa esto para saber si la caja ya se cerro y mostrar el
+        // arqueo (teorico/contado/diferencia) en vez del boton de cerrar.
+        const closureWhere = ['`tenant_id` = ?', '`closure_date` = ?'];
+        const closureParams = [tenantId, selectedDate];
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            closureWhere.push('`branch_id` = ?');
+            closureParams.push(resolvedBranchId);
+        }
+        let closures = [];
+        try {
+            const [closureRows] = await pool.query(
+                `SELECT * FROM cash_closures WHERE ${closureWhere.join(' AND ')} ORDER BY id DESC`,
+                closureParams
+            );
+            closures = isAdminAccessContext(accessContext)
+                ? closureRows
+                : stripCajaCreatorFields(closureRows);
+        } catch (closureErr) {
+            console.warn('[CAJA SUMMARY] no se pudieron leer cierres:', closureErr?.message || closureErr);
+        }
+
         return res.json({
             ok: true,
             date: selectedDate,
@@ -7202,6 +7321,8 @@ app.get('/api/caja/summary', verifyFirebaseToken, async (req, res) => {
                 net: totals.dailyNet,
             },
             byCashAccount,
+            cashByAccount,
+            closures,
             byPaymentMethod,
         });
     } catch (err) {
@@ -7513,6 +7634,151 @@ app.post('/api/caja/opening', verifyFirebaseToken, async (req, res) => {
         console.error('[CAJA OPENING] error', error);
         return res.status(error.statusCode || 500).json({
             error: error.message || 'No se pudo guardar la apertura de caja',
+            code: error.code || null,
+        });
+    } finally {
+        if (conn) conn.release();
+    }
+});
+
+// Cierre de caja con arqueo (modelo diario): recalcula el efectivo ESPERADO del
+// dia de forma autoritativa (nunca confia en el teorico del cliente), lo compara
+// contra el efectivo CONTADO fisicamente y guarda el resultado en cash_closures.
+// Es idempotente por (dia, sucursal, cuenta de caja): re-cerrar el mismo dia
+// reemplaza el cierre anterior en vez de duplicar. NO borra ni resetea
+// movimientos: el arqueo es por dia y no destruye nada.
+app.post('/api/caja/closure', verifyFirebaseToken, async (req, res) => {
+    let conn;
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const tenantPool = getTenantPool(dbName);
+        conn = await tenantPool.getConnection();
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+
+        const selectedDate = normalizeCashSummaryDate(req.body?.date);
+        const selectedCashAccount = normalizeCashAccountToken(req.body?.cashAccount || req.body?.cash_account);
+        const countedCash = Number(req.body?.countedCash ?? req.body?.counted_cash);
+        if (!Number.isFinite(countedCash) || countedCash < 0) {
+            return res.status(400).json({ error: 'Ingresá el efectivo contado (un número igual o mayor a cero).' });
+        }
+        const notes = String(req.body?.notes || '').slice(0, 2000);
+
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({
+                pool: tenantPool,
+                tenantId,
+                accessContext,
+                record: {
+                    branch_id: req.body?.branch_id,
+                    branchId: req.body?.branchId,
+                    activeBranchId: req.body?.activeBranchId,
+                },
+            })
+            : null;
+        const branchId = Number.isFinite(resolvedBranchId) && resolvedBranchId > 0 ? resolvedBranchId : null;
+
+        const activeBranches = accessContext?.client?.id ? await listClientBranches(accessContext.client.id) : [];
+        if (activeBranches.length > 1 && !branchId) {
+            return res.status(400).json({
+                error: 'Debe especificar branch_id para cerrar caja',
+                code: 'BRANCH_REQUIRED',
+                activeBranches: activeBranches.map((branch) => ({ id: branch.id, name: branch.name })),
+            });
+        }
+
+        const daily = await fetchCajaDailyCash(tenantPool, {
+            tenantId,
+            selectedDate,
+            branchId,
+            cashAccount: selectedCashAccount,
+        });
+
+        const theoretical = roundCash2(daily.expected);
+        const counted = roundCash2(countedCash);
+        const difference = roundCash2(counted - theoretical);
+        const totalSales = roundCash2(daily.sales - daily.reversals);
+        const totalIncomes = roundCash2(daily.incomes);
+        const totalExpenses = roundCash2(daily.expenses);
+
+        // closed_at queda dentro del dia cerrado (no toISOString): si se cierra un
+        // dia pasado, igual se agrupa en su fecha. Misma tecnica que los movimientos.
+        const stamp = new Date();
+        const pad = (value) => String(value).padStart(2, '0');
+        const closedAt = `${selectedDate} ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+
+        const snapshot = JSON.stringify({
+            cashAccount: selectedCashAccount,
+            opening: roundCash2(daily.opening),
+            cashSales: roundCash2(daily.sales),
+            incomes: roundCash2(daily.incomes),
+            expenses: roundCash2(daily.expenses),
+            reversals: roundCash2(daily.reversals),
+            expected: theoretical,
+            counted,
+            difference,
+        });
+
+        await conn.beginTransaction();
+        const branchScopeSql = branchId ? 'AND branch_id = ?' : 'AND branch_id IS NULL';
+        const branchScopeParams = branchId ? [branchId] : [];
+        await conn.query(
+            `DELETE FROM cash_closures
+             WHERE tenant_id = ?
+               AND closure_date = ?
+               AND cash_account = ?
+               ${branchScopeSql}`,
+            [tenantId, selectedDate, selectedCashAccount, ...branchScopeParams]
+        );
+
+        const creator = resolveCajaCreator(accessContext, req);
+        const [insertResult] = await conn.query('INSERT INTO cash_closures SET ?', [{
+            tenant_id: tenantId,
+            closure_date: selectedDate,
+            branch_id: branchId,
+            cash_account: selectedCashAccount,
+            closed_at: closedAt,
+            theoretical_cash: theoretical,
+            counted_cash: counted,
+            difference,
+            total_sales: totalSales,
+            total_incomes: totalIncomes,
+            total_expenses: totalExpenses,
+            notes: notes || null,
+            snapshot,
+            ...creator,
+        }]);
+        await conn.commit();
+
+        return res.json({
+            ok: true,
+            closure: {
+                id: insertResult.insertId,
+                closure_date: selectedDate,
+                cash_account: selectedCashAccount,
+                branch_id: branchId,
+                closed_at: closedAt,
+                theoretical_cash: theoretical,
+                counted_cash: counted,
+                difference,
+                total_sales: totalSales,
+                total_incomes: totalIncomes,
+                total_expenses: totalExpenses,
+            },
+        });
+    } catch (error) {
+        if (conn) await conn.rollback().catch(() => {});
+        console.error('[CAJA CLOSURE] error', error);
+        return res.status(error.statusCode || 500).json({
+            error: error.message || 'No se pudo registrar el cierre de caja',
             code: error.code || null,
         });
     } finally {
