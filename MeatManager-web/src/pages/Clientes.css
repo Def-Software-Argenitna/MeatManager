@@ -792,7 +792,9 @@
 .clients-history-table-wrap {
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    overflow: hidden;
+    /* overflow-x auto (no hidden): si la tabla es mas ancha que el modal, se
+       scrollea en vez de cortar los importes de la derecha. */
+    overflow-x: auto;
     background: var(--color-bg-card);
 }
 
@@ -811,6 +813,7 @@
     padding: 0.75rem 0.85rem;
     text-align: left;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    white-space: nowrap;
 }
 
 .clients-history-table th {
@@ -833,6 +836,8 @@
 
 .clients-history-row-detail td {
     background: rgba(255, 255, 255, 0.02);
+    /* el detalle SÍ puede envolver texto (nombres largos de producto) */
+    white-space: normal;
 }
 
 .clients-history-items {
@@ -846,6 +851,7 @@
     justify-content: space-between;
     align-items: center;
     gap: 1rem;
+    flex-wrap: wrap;
     font-size: 0.85rem;
     color: var(--color-text-main);
 }
@@ -853,6 +859,8 @@
 .clients-history-item-line span:last-child {
     color: var(--color-text-muted);
     text-align: right;
+    /* el importe (cantidad x precio = subtotal) nunca se parte a mitad de número */
+    white-space: nowrap;
 }
 
 @media (max-width: 640px) {
