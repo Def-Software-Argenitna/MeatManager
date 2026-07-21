@@ -130,6 +130,16 @@ const getDayBounds = (selectedDate) => {
     };
 };
 
+// Datetime local "plano" (YYYY-MM-DD HH:MM:SS) anclado al dia seleccionado.
+// NO usar toISOString(): el backend inserta la conversion a UTC y corre el dia
+// (ej: 22:00 ART -> dia siguiente), dejando el movimiento fuera de la ventana
+// diaria del resumen. El string plano mantiene la fecha exacta a cualquier hora.
+const buildLocalMovementDate = (selectedDate) => {
+    const stamp = new Date();
+    const pad = (value) => String(value).padStart(2, '0');
+    return `${selectedDate} ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+};
+
 const formatCurrency = (value) => `$${toNumber(value).toLocaleString('es-AR', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -777,13 +787,8 @@ const CierreCaja = () => {
         }
 
         // El movimiento debe quedar en el dia seleccionado (selectedDate), no en
-        // el de hoy. Usamos un datetime local "plano" (YYYY-MM-DD HH:MM:SS) igual
-        // que la apertura (openingDate). NO usar toISOString(): /api/data inserta
-        // el string crudo y la conversion a UTC corre el dia (ej: 22:00 ART -> dia
-        // siguiente). El string plano mantiene la fecha exacta a cualquier hora.
-        const stamp = new Date();
-        const pad = (value) => String(value).padStart(2, '0');
-        const movementDate = `${selectedDate} ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+        // el de hoy. Usamos un datetime local "plano" (ver buildLocalMovementDate).
+        const movementDate = buildLocalMovementDate(selectedDate);
 
         try {
             await saveTableRecord('caja_movimientos', 'insert', {
@@ -922,7 +927,7 @@ const CierreCaja = () => {
                 toPaymentMethodType: toType,
                 description: transferDesc,
                 transferGroupId,
-                date: new Date().toISOString(),
+                date: buildLocalMovementDate(selectedDate),
                 ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
             });
 
@@ -977,7 +982,7 @@ const CierreCaja = () => {
                 paymentMethodType: 'cash',
                 description: transferDesc,
                 transferGroupId,
-                date: new Date().toISOString(),
+                date: buildLocalMovementDate(selectedDate),
                 ...(Number.isFinite(transferBranchId) && transferBranchId > 0 ? { branchId: transferBranchId, activeBranchId: transferBranchId } : {}),
             });
 
