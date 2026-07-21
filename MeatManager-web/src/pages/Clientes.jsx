@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil, FileText } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches, fetchClientCurrentAccount } from '../utils/apiClient';
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import { Button, EmptyState, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
@@ -145,15 +145,6 @@ const getCurrentAccountAmountFromVenta = (venta) => {
         : 0;
 };
 
-const isCustomerPaymentMovement = (movement, clientName) => {
-    const kind = cleanValue(movement?.money_flow_kind).toLowerCase();
-    if (kind === 'customer_payment') return true;
-
-    return cleanValue(movement?.type).toLowerCase() === 'ingreso'
-        && cleanValue(movement?.category).toLowerCase() === 'cobro pendientes'
-        && String(movement?.description || '').toLowerCase().includes(`cliente: ${clientName.toLowerCase()}`);
-};
-
 const getClientLedgerPaymentMethod = (row) => {
     if (!row) return '-';
     if (Number(row.debe || 0) > 0) return 'Cuenta Corriente';
@@ -214,12 +205,13 @@ const Clientes = () => {
         const start = new Date(year, month - 1, 1).getTime();
         const end = new Date(year, month, 1).getTime();
         const clientId = Number(clientRef.id);
-        const clientName = getClientFullName(clientRef);
-        const [ventas, movimientos, ventasItems] = await Promise.all([
-            fetchTable('ventas', { limit: 10000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('caja_movimientos', { limit: 10000, orderBy: 'date', direction: 'ASC' }),
-            fetchTable('ventas_items', { limit: 20000, orderBy: 'id', direction: 'ASC' })
-        ]);
+        // Endpoint dedicado: trae SOLO la cuenta corriente de este cliente (todas
+        // sus ventas + cobros + items), sin el tope de 1000 filas que dejaba afuera
+        // ventas recientes y sus detalles.
+        const ledgerData = await fetchClientCurrentAccount(clientId);
+        const ventas = Array.isArray(ledgerData?.ventas) ? ledgerData.ventas : [];
+        const movimientos = Array.isArray(ledgerData?.movimientos) ? ledgerData.movimientos : [];
+        const ventasItems = Array.isArray(ledgerData?.ventas_items) ? ledgerData.ventas_items : [];
 
         const saleRows = ventas
             .filter((venta) => {
@@ -240,12 +232,10 @@ const Clientes = () => {
             });
             });
 
+        // El backend ya acota los movimientos a los cobros de este cliente
+        // (customer_payment / 'Cobro Pendientes' por client_id), así que se mapean
+        // directo: re-filtrar por descripción descartaba cobros válidos.
         const paymentRows = movimientos
-            .filter((mov) => isCustomerPaymentMovement(mov, clientName))
-            .filter((mov) =>
-                Number(mov.client_id) === clientId
-                || String(mov.description || '').includes(`cliente: ${clientName}`)
-            )
             .map((mov) => ({
                 id: `payment-${mov.id}`,
                 timestamp: new Date(mov.date).getTime(),

@@ -7786,6 +7786,82 @@ app.post('/api/caja/closure', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// Cuenta corriente de UN cliente puntual: ventas + cobros + items de esas
+// ventas, TODO del cliente (sin tope de filas y sin filtrar por sucursal: la
+// cuenta corriente es del cliente, no de una caja). Reemplaza el patron viejo
+// que bajaba las tablas completas al navegador con /api/table (que corta en 1000
+// filas ordenadas de mas viejo a mas nuevo -> faltaban ventas recientes y sus
+// detalles). El calculo de saldos sigue en el frontend, anclado al saldo real.
+app.get('/api/clientes/:clientId/cuenta-corriente', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) assertClientAccess(accessContext);
+
+        const clientId = Number(req.params.clientId);
+        if (!Number.isFinite(clientId) || clientId <= 0) {
+            return res.status(400).json({ error: 'clientId inválido' });
+        }
+
+        // Ventas del cliente (todas). payment_breakdown se devuelve ya parseado
+        // para que el frontend detecte la parte de cuenta corriente.
+        const [ventas] = await pool.query(
+            `SELECT * FROM ventas
+             WHERE tenant_id = ? AND clientId = ?
+             ORDER BY date ASC, id ASC`,
+            [tenantId, clientId]
+        );
+        ventas.forEach((venta) => {
+            venta.payment_breakdown = parseJsonMaybe(venta.payment_breakdown);
+        });
+
+        // Items de esas ventas (para el detalle expandible).
+        const saleIds = ventas.map((venta) => venta.id).filter((id) => Number.isFinite(Number(id)));
+        let ventasItems = [];
+        if (saleIds.length) {
+            const placeholders = saleIds.map(() => '?').join(',');
+            const [items] = await pool.query(
+                `SELECT * FROM ventas_items
+                 WHERE tenant_id = ? AND venta_id IN (${placeholders})`,
+                [tenantId, ...saleIds]
+            );
+            ventasItems = items;
+        }
+
+        // Cobros del cliente: mismos criterios que la reconciliacion de saldos
+        // (money_flow_kind='customer_payment' o ingreso 'Cobro Pendientes'), por
+        // client_id -> coincide exacto con lo que alimenta el saldo guardado.
+        const [movimientos] = await pool.query(
+            `SELECT * FROM caja_movimientos
+             WHERE tenant_id = ? AND client_id = ?
+               AND (
+                    money_flow_kind = 'customer_payment'
+                    OR (type = 'ingreso' AND category = 'Cobro Pendientes')
+               )
+             ORDER BY date ASC, id ASC`,
+            [tenantId, clientId]
+        );
+
+        return res.json({
+            ok: true,
+            clientId,
+            ventas,
+            movimientos,
+            ventas_items: ventasItems,
+        });
+    } catch (err) {
+        const statusCode = err?.statusCode || 500;
+        console.error('[CTA CTE CLIENTE ERROR]', err.message);
+        return res.status(statusCode).json({ error: err.message || 'No se pudo cargar la cuenta corriente del cliente' });
+    }
+});
+
 app.post('/api/caja/transfer', verifyFirebaseToken, async (req, res) => {
     let conn;
     try {

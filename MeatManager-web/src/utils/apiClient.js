@@ -377,6 +377,15 @@ export const saveCashboxOpening = async (payload = {}) => {
     return res.json();
 };
 
+export const fetchClientCurrentAccount = async (clientId) => {
+    const res = await apiFetch(`/api/clientes/${encodeURIComponent(clientId)}/cuenta-corriente`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo cargar la cuenta corriente del cliente');
+    }
+    return res.json();
+};
+
 export const closeCaja = async (payload = {}) => {
     const res = await apiFetch('/api/caja/closure', {
         method: 'POST',
