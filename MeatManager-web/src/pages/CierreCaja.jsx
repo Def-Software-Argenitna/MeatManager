@@ -541,6 +541,27 @@ const CierreCaja = () => {
         return totals;
     }, [activePaymentMethods, manualMovements]);
 
+    // Neto de transferencias ENTRE MEDIOS por medio de pago (ingreso +, salida -).
+    // El acumulado del backend ya las incluye, pero no se veian en el desglose del
+    // medio (ej: al pasar de Efectivo a Posnet, el total de Posnet subia sin una
+    // linea que lo explicara). Esta linea las hace trazables en cada tarjeta.
+    const methodTransferNetByMethod = useMemo(() => {
+        const totals = {};
+        activePaymentMethods.forEach((method) => {
+            totals[method.name] = 0;
+        });
+
+        manualMovements
+            .filter((movement) => isMethodTransferMovement(movement))
+            .forEach((movement) => {
+                const methodName = movement.payment_method || 'Efectivo';
+                const sign = movement.type === 'egreso' || movement.type === 'retiro' ? -1 : 1;
+                totals[methodName] = (totals[methodName] || 0) + (toNumber(movement.amount) * sign);
+            });
+
+        return totals;
+    }, [activePaymentMethods, manualMovements]);
+
     // Cobros de cuenta corriente (customer_payment) por medio de pago: cantidad y suma.
     // Se muestran en su propia linea; no se incluyen en "Mov. manuales" para no duplicar.
     const cobrosByMethod = useMemo(() => {
@@ -575,9 +596,10 @@ const CierreCaja = () => {
             cobrosCount: cobrosByMethod[method.name]?.count || 0,
             cobrosAmount: cobrosByMethod[method.name]?.amount || 0,
             manualNet: dailyManualNetByMethod[method.name] || 0,
+            methodTransferNet: methodTransferNetByMethod[method.name] || 0,
             accumulated: accumulatedByMethod[method.name] || 0,
         }))
-    ), [activePaymentMethods, accumulatedByMethod, cobrosByMethod, dailyManualNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
+    ), [activePaymentMethods, accumulatedByMethod, cobrosByMethod, dailyManualNetByMethod, methodTransferNetByMethod, hiddenDigitalPaymentsOnly, openingByMethod, salesCountByMethod, summaryByMethod]);
 
     const salesDetails = useMemo(() => {
         const groups = new Map();
@@ -1219,6 +1241,9 @@ const CierreCaja = () => {
                                                 <span>Brutas: ${item.sales.toLocaleString('es-AR')} · Anuladas: ${item.reversals.toLocaleString('es-AR')}</span>
                                                 <span>Cobros: {item.cobrosCount}{item.cobrosCount ? ` · ${item.cobrosAmount >= 0 ? '+' : '-'}$${Math.abs(item.cobrosAmount).toLocaleString('es-AR')}` : ''}</span>
                                                 <span>Mov. manuales: {(item.manualNet >= 0 ? '+' : '-')}${Math.abs(item.manualNet).toLocaleString('es-AR')}</span>
+                                                {item.methodTransferNet !== 0 && (
+                                                    <span>Transf. entre medios: {(item.methodTransferNet >= 0 ? '+' : '-')}${Math.abs(item.methodTransferNet).toLocaleString('es-AR')}</span>
+                                                )}
                                             </div>
                                         </div>
                                     </div>
