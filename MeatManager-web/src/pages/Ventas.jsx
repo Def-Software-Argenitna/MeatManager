@@ -1770,6 +1770,33 @@ const Ventas = () => {
     };
 
     const removeFromCart = (id) => {
+        // Un ticket de balanza se cobra COMPLETO. Si el renglón que se quiere quitar
+        // pertenece a un ticket con varios renglones, se quita el ticket ENTERO (no un
+        // renglón suelto): así no se puede cobrar un ticket parcial dejando plata sin
+        // cobrar y el ticket marcado como cobrado (caso picada+bondiola). El backend
+        // ademas rechaza cobrar de menos como red de seguridad.
+        const target = cart.find(item => item.id === id);
+        const tag = target?.scaleTicketBarcode || null;
+        if (tag) {
+            const groupIds = cart.filter(item => item.scaleTicketBarcode === tag).map(item => item.id);
+            if (groupIds.length > 1) {
+                if (!window.confirm('Este renglón es parte de un ticket de balanza, que se cobra completo. Se quitará el TICKET ENTERO del carrito. ¿Continuar?')) {
+                    return;
+                }
+                const next = cart.filter(item => item.scaleTicketBarcode !== tag);
+                setCart(next);
+                // Desvinculamos ese ticket para que la venta no intente cobrarlo.
+                // Si el carrito queda vacio, cortamos todos los vinculos.
+                if (next.length === 0) {
+                    setActiveScaleTicketBarcode(null);
+                    setPendingTicketBarcodes([]);
+                } else {
+                    setActiveScaleTicketBarcode(a => (a === tag ? null : a));
+                    setPendingTicketBarcodes(list => list.filter(b => b !== tag));
+                }
+                return;
+            }
+        }
         setCart(prev => {
             const next = prev.filter(item => item.id !== id);
             // Si el carrito queda vacio, cortamos el vinculo con el ticket de
@@ -2168,7 +2195,14 @@ const Ventas = () => {
             setTimeout(() => barcodeInputRef.current?.focus(), 100);
         } catch (error) {
             console.error('Error crítico al guardar la venta:', error);
-            showToast('❌ Hubo un fallo al guardar la venta en la base de datos: ' + error.message, 'error');
+            const msg = String(error?.message || '');
+            // Rechazo de validación (p. ej. cobro parcial de un ticket de balanza):
+            // no es un fallo de base de datos, mostramos el mensaje tal cual como aviso.
+            if (/ticket de balanza/i.test(msg)) {
+                showToast('⚠️ ' + msg, 'warning');
+            } else {
+                showToast('❌ Hubo un fallo al guardar la venta en la base de datos: ' + msg, 'error');
+            }
         } finally {
             processingRef.current = false;
             setIsProcessing(false);
@@ -4035,7 +4069,15 @@ const Ventas = () => {
                         <button
                             onClick={() => {
                                 const toAdd = ticketPreviewItems.filter(i => i.priceRecord && i.product);
-                                toAdd.forEach(i => addToCart(buildCartProductFromPriceRecord(i.product, i.priceRecord), i.weight));
+                                // Etiquetamos cada renglón con el código del ticket de balanza
+                                // que lo originó, para poder tratarlo como bloque atómico en el
+                                // carrito: un ticket de balanza se cobra completo, así que quitar
+                                // un renglón quita el ticket entero (ver removeFromCart).
+                                const ticketBarcodeTag = activeScaleTicketBarcode || null;
+                                toAdd.forEach(i => addToCart(
+                                    { ...buildCartProductFromPriceRecord(i.product, i.priceRecord), scaleTicketBarcode: ticketBarcodeTag },
+                                    i.weight
+                                ));
                                 setShowTicketPreview(false);
                                 setTicketQuickAddForms({});
                                 setTicketPreviewBranchId(null);

@@ -10040,7 +10040,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         if (ticketBarcodes.length > 0) {
             const inList = ticketBarcodes.map(() => '?').join(',');
             const [ticketRows] = await conn.query(
-                `SELECT ticket_barcode, ticket_status, sale_at
+                `SELECT ticket_barcode, ticket_status, sale_at, total_amount
                  FROM scale_bridge_ticket_map
                  WHERE tenant_id = ? AND (UPPER(ticket_barcode) IN (${inList})
                      OR UPPER(printed_ticket_barcode) IN (${inList}))`,
@@ -10057,6 +10057,44 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 conn.release();
                 return res.status(409).json({ error: 'Uno o más tickets ya fueron cobrados o anulados' });
             }
+
+            // RED DE SEGURIDAD: un ticket de balanza se cobra ENTERO. Si el cajero borró
+            // un renglón del carrito (o el producto no estaba configurado y se descartó),
+            // el total de la venta queda por debajo del total del ticket y ANTES el ticket
+            // igual se marcaba 'charged' por su importe completo -> se perdía plata en
+            // silencio (caso picada+bondiola: se borró la bondiola y quedó "cobrado" el
+            // total con solo la picada vendida). Acá exigimos que lo que se está cobrando
+            // cubra al menos el total de los tickets matcheados por su código INTERNO (el
+            // único que matchea sin verificar importe; el impreso ya exige importe+fecha).
+            // Sumar de más (extras cargados a mano) está permitido; cobrar de menos, no.
+            const wantedUpper = new Set(ticketBarcodes.map((b) => String(b).toUpperCase()));
+            const internalMatched = ticketRows.filter(
+                (r) => wantedUpper.has(String(r.ticket_barcode || '').toUpperCase())
+            );
+            const expectedTicketsTotal = internalMatched.reduce(
+                (acc, r) => acc + (parseFloat(r.total_amount) || 0), 0
+            );
+            if (expectedTicketsTotal > 0) {
+                const itemsSubtotalSum = items.reduce((acc, it) => {
+                    const sub = parseFloat(it.subtotal);
+                    const line = Number.isFinite(sub)
+                        ? sub
+                        : (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 0);
+                    return acc + (Number.isFinite(line) ? line : 0);
+                }, 0);
+                // Tolerancia de $1 por redondeos de precio unitario.
+                if (itemsSubtotalSum + 1 < expectedTicketsTotal) {
+                    await conn.rollback();
+                    conn.release();
+                    return res.status(409).json({
+                        error: `El importe a cobrar ($${itemsSubtotalSum.toFixed(2)}) es menor al del ticket de balanza ($${expectedTicketsTotal.toFixed(2)}). `
+                            + 'Un ticket de balanza se cobra completo: no borres renglones sueltos. '
+                            + 'Si un producto no está configurado, cargalo en Stock; si querés descartar el ticket, quitalo entero del carrito.',
+                        code: 'SCALE_TICKET_PARTIAL_CHARGE',
+                    });
+                }
+            }
+
             const earliest = ticketRows.sort((a, b) => new Date(a.sale_at) - new Date(b.sale_at))[0];
             if (earliest?.sale_at) ticketDate = new Date(earliest.sale_at);
         }

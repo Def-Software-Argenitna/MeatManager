@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft } from 'lucide-react';
-import { apiFetch } from '../utils/apiClient';
+import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft, Ban } from 'lucide-react';
+import { apiFetch, anularConciliacionTickets } from '../utils/apiClient';
 import { useUser } from '../context/UserContext';
 import './ConciliacionBalanzaTab.css';
 
@@ -105,7 +105,7 @@ const imprimirTicket = (t) => {
 };
 
 export default function DetalleVentasBalanzaTab() {
-    const { activeBranch } = useUser();
+    const { activeBranch, currentUser } = useUser();
     const branchId = Number(activeBranch?.id ?? 0);
     const [dateFrom, setDateFrom] = useState(todayStr);
     const [dateTo, setDateTo] = useState(todayStr);
@@ -114,6 +114,7 @@ export default function DetalleVentasBalanzaTab() {
     const [tickets, setTickets] = useState([]);
     const [filterText, setFilterText] = useState('');
     const [detail, setDetail] = useState(null);
+    const [anulando, setAnulando] = useState(false);
 
     const buscar = useCallback(async () => {
         setLoading(true);
@@ -137,6 +138,44 @@ export default function DetalleVentasBalanzaTab() {
     // tickets de la otra sucursal (el endpoint ya filtra por branch, esto ademas
     // refresca la vista al cambiar el selector Pilar/Fatima sin quedar datos viejos).
     useEffect(() => { buscar(); }, [branchId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Anula un ticket de balanza desde el Detalle de Ventas. Si estaba COBRADO,
+    // el backend revierte la venta completa (caja + stock + saldo) por el camino
+    // auditado (reverseSaleTx) y el ticket queda 'voided'. Esto cubre el caso en
+    // que se cobró un ticket con un renglón de menos (p. ej. se borró la bondiola):
+    // se anula el cobro erróneo y después se carga la venta correcta a mano.
+    const anularTicket = useCallback(async (t) => {
+        if (!t?.ticket_barcode) {
+            setError('Este registro no tiene código de ticket de balanza para anular.');
+            return;
+        }
+        const cobrado = t.status === 'cobrado';
+        const confirmMsg = cobrado
+            ? 'Este ticket figura COBRADO. Anularlo va a REVERTIR la venta (caja, stock y saldo). ¿Continuar?'
+            : '¿Anular este ticket? Quedará registrado como anulado.';
+        if (!window.confirm(confirmMsg)) return;
+        const reason = window.prompt('Motivo (opcional):', '') ?? '';
+        setAnulando(true);
+        setError(null);
+        try {
+            const data = await anularConciliacionTickets([t.ticket_barcode], {
+                anulado_by_user_id: currentUser?.id ?? null,
+                anulado_by_username: currentUser?.username || 'Usuario desconocido',
+                reason: reason.trim() || null,
+            });
+            const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
+            if (skipped > 0 && (!data?.anulados || data.anulados.length === 0)) {
+                setError('No se pudo anular el ticket (no encontrado o ya anulado).');
+            } else {
+                setDetail(null);
+                await buscar();
+            }
+        } catch (e) {
+            setError(e.message || 'Error al anular el ticket');
+        } finally {
+            setAnulando(false);
+        }
+    }, [currentUser, buscar]);
 
     const filtered = useMemo(() => {
         const q = filterText.trim().toLowerCase();
@@ -260,6 +299,16 @@ export default function DetalleVentasBalanzaTab() {
                             <button className="concil-action-btn primary" onClick={() => imprimirTicket(detail)}>
                                 <Printer size={15} /> Imprimir
                             </button>
+                            {detail.origin === 'balanza' && (detail.status === 'cobrado' || detail.status === 'pendiente') && (
+                                <button
+                                    className="concil-action-btn danger"
+                                    onClick={() => anularTicket(detail)}
+                                    disabled={anulando}
+                                    title={detail.status === 'cobrado' ? 'Anular y revertir la venta' : 'Anular ticket'}
+                                >
+                                    <Ban size={15} /> {anulando ? 'Anulando…' : (detail.status === 'cobrado' ? 'Anular y revertir venta' : 'Anular')}
+                                </button>
+                            )}
                         </div>
                     </div>
 
