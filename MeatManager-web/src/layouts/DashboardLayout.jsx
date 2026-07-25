@@ -52,11 +52,11 @@ const isNarrowViewport = () =>
         : false;
 
 const DashboardLayout = () => {
-    // En pantallas chicas el drawer arranca cerrado para no tapar el contenido;
-    // en desktop se mantiene el comportamiento de siempre (sidebar visible).
+    const [isMobile, setIsMobile] = useState(isNarrowViewport);
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(isNarrowViewport);
     const { isBlocked, installationId, machineId, supportNumber } = useLicense();
     const location = useLocation();
+    const isSidebarOpen = !isSidebarCollapsed;
 
     const toggleSidebar = () => {
         setIsSidebarCollapsed((prev) => !prev);
@@ -64,10 +64,32 @@ const DashboardLayout = () => {
 
     // Al navegar en mobile, cerrar el drawer (en desktop no aplica).
     useEffect(() => {
-        if (isNarrowViewport()) {
+        if (isMobile) {
             setIsSidebarCollapsed(true);
         }
-    }, [location.pathname]);
+    }, [isMobile, location.pathname]);
+
+    useEffect(() => {
+        const mediaQuery = window.matchMedia(MOBILE_QUERY);
+        const handleViewportChange = (event) => {
+            setIsMobile(event.matches);
+            setIsSidebarCollapsed(event.matches);
+        };
+
+        mediaQuery.addEventListener('change', handleViewportChange);
+        return () => mediaQuery.removeEventListener('change', handleViewportChange);
+    }, []);
+
+    useEffect(() => {
+        if (!isMobile || !isSidebarOpen) return undefined;
+
+        const handleKeyDown = (event) => {
+            if (event.key === 'Escape') setIsSidebarCollapsed(true);
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isMobile, isSidebarOpen]);
 
     if (isBlocked) {
         return <BlockedScreen installationId={installationId} machineId={machineId} supportNumber={supportNumber} />;
@@ -75,10 +97,14 @@ const DashboardLayout = () => {
 
     return (
         <div className="layout-wrapper">
-            <TopBar onToggleSidebar={toggleSidebar} isSidebarCollapsed={isSidebarCollapsed} />
-            <div className={`dashboard-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-                <Sidebar isCollapsed={isSidebarCollapsed} />
-                {!isSidebarCollapsed && (
+            <TopBar
+                onToggleSidebar={toggleSidebar}
+                isSidebarOpen={isSidebarOpen}
+                isMobile={isMobile}
+            />
+            <div className={`dashboard-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''} ${isMobile ? 'mobile-layout' : ''}`}>
+                <Sidebar isCollapsed={isSidebarCollapsed} isMobile={isMobile} />
+                {isMobile && isSidebarOpen && (
                     <button
                         type="button"
                         className="sidebar-backdrop"

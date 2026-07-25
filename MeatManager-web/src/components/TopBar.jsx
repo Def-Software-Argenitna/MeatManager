@@ -3,7 +3,7 @@ import { useLocation } from "react-router-dom";
 import { Beef } from "lucide-react";
 import "./TopBar.css";
 
-const TopBar = ({ onToggleSidebar }) => {
+const TopBar = ({ onToggleSidebar, isSidebarOpen = false, isMobile = false }) => {
     const location = useLocation();
 
     const getModuleNameParts = () => {
@@ -65,10 +65,19 @@ const TopBar = ({ onToggleSidebar }) => {
     return (
         <header className="top-bar">
             <div className="top-bar-left">
-                <button className="sidebar-toggle" onClick={onToggleSidebar} style={{ display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', justifyContent: 'center' }}>
-                    <div style={{ width: '20px', height: '2px', backgroundColor: '#fff', borderRadius: '2px' }}></div>
-                    <div style={{ width: '20px', height: '2px', backgroundColor: '#fff', borderRadius: '2px' }}></div>
-                    <div style={{ width: '20px', height: '2px', backgroundColor: '#fff', borderRadius: '2px' }}></div>
+                <button
+                    type="button"
+                    className={`sidebar-toggle ${isMobile && isSidebarOpen ? 'menu-open' : ''}`}
+                    onClick={onToggleSidebar}
+                    aria-label={isMobile ? (isSidebarOpen ? 'Cerrar menú principal' : 'Abrir menú principal') : 'Alternar menú lateral'}
+                    aria-controls="app-sidebar"
+                    aria-expanded={isSidebarOpen}
+                >
+                    <span className="hamburger-icon" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                    </span>
                 </button>
             </div>
             <div className="top-bar-center">

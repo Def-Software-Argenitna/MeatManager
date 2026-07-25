@@ -42,7 +42,7 @@ import { useTenant } from '../context/TenantContext';
 import { getRemoteSetting, fetchClientBranches } from '../utils/apiClient';
 import './Sidebar.css';
 
-const Sidebar = ({ isCollapsed }) => {
+const Sidebar = ({ isCollapsed, isMobile = false }) => {
   const navigate = useNavigate();
   const location = useLocation();
   const { isPro, hasModule } = useLicense();
@@ -296,7 +296,12 @@ const Sidebar = ({ isCollapsed }) => {
   };
 
   return (
-    <div className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}>
+    <aside
+      id="app-sidebar"
+      className={`sidebar ${isCollapsed ? 'collapsed' : ''}`}
+      aria-label="Menú principal"
+      aria-hidden={isMobile && isCollapsed}
+    >
       <div className={`sidebar-header ${(isPro || isMasterNode) ? 'premium' : ''}`}>
         <div className="sidebar-brand-row">
           <Beef className="logo-icon" />
@@ -406,7 +411,7 @@ const Sidebar = ({ isCollapsed }) => {
           </div>
         )}
       </div>
-    </div>
+    </aside>
   );
 };
 

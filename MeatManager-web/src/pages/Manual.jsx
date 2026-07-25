@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
     HelpCircle,
     Printer,
@@ -25,11 +26,23 @@ import {
     Calculator,
     DownloadCloud,
     Database,
-    ArrowLeftRight
+    ArrowLeftRight,
+    Search,
+    X,
+    BookOpen,
+    ExternalLink,
+    ChevronDown,
+    Percent,
+    ReceiptText
 } from 'lucide-react';
 import './Manual.css';
 
 const Manual = () => {
+    const navigate = useNavigate();
+    const [query, setQuery] = useState('');
+    const [activeArea, setActiveArea] = useState('Todos');
+    const [openSections, setOpenSections] = useState(() => new Set(['inicio']));
+
     const sections = [
         {
             id: 'inicio',
@@ -99,6 +112,78 @@ const Manual = () => {
                         'Controlá diferencias entre lo físico y el sistema.',
                         'Cerrá caja solo cuando todos los movimientos estén conciliados.',
                         'Usá los reportes de cierre para auditoría interna.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'informes-caja',
+            title: 'Informes de Caja',
+            icon: <ReceiptText size={24} />,
+            color: '#fb923c',
+            content: [
+                {
+                    subtitle: 'Auditoría de movimientos',
+                    steps: [
+                        'Elegí la fecha y la sucursal que querés analizar.',
+                        'Revisá aperturas, ventas, cobros, ingresos, egresos, retiros y transferencias por medio de pago.',
+                        'Compará el acumulado esperado con el dinero contado para detectar diferencias.',
+                        'Usá el detalle de movimientos para identificar el origen de cada importe.',
+                        'Exportá o imprimí el informe cuando necesites respaldar el cierre.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'kilos-vendidos',
+            title: 'Informe de Kilos Vendidos',
+            icon: <Scale size={24} />,
+            color: '#38bdf8',
+            content: [
+                {
+                    subtitle: 'Control de balanza y cortes',
+                    steps: [
+                        'Seleccioná el período y la sucursal para limitar el análisis.',
+                        'Compará los kilos pesados en balanza con los kilos efectivamente cobrados.',
+                        'Abrí la solapa Ranking de Cortes para ordenar productos por kilos vendidos.',
+                        'Filtrá por especie y por día para encontrar los cortes con mayor rotación.',
+                        'Investigá diferencias importantes: pueden indicar tickets pendientes, anulados o carga manual.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'informes-descuentos',
+            title: 'Informe de Descuentos',
+            icon: <Percent size={24} />,
+            color: '#f472b6',
+            content: [
+                {
+                    subtitle: 'Seguimiento de descuentos aplicados',
+                    steps: [
+                        'Elegí fecha y sucursal antes de consultar.',
+                        'El informe muestra descuentos asociados a operaciones de cuenta corriente.',
+                        'Revisá cliente, venta, importe original y descuento para validar cada caso.',
+                        'Usá el total del período como control comercial y de autorización.',
+                        'Si no aparecen resultados, verificá que existan descuentos en la sucursal y período seleccionados.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'detalle-ventas-balanza',
+            title: 'Detalle de Ventas de Balanza',
+            icon: <Scale size={24} />,
+            color: '#a78bfa',
+            content: [
+                {
+                    subtitle: 'Trazabilidad de tickets',
+                    steps: [
+                        'Ingresá desde Configuración de Balanza y abrí Detalle de Ventas.',
+                        'Filtrá por fecha, estado o sucursal para encontrar un ticket.',
+                        'Diferenciá ventas originadas en balanza de las ventas cargadas manualmente.',
+                        'Abrí un ticket para revisar artículos, kilos, vendedor, total y estado de cobro.',
+                        'Anulá únicamente cuando corresponda: si ya estaba cobrado, el sistema revierte la venta relacionada.'
                     ]
                 }
             ]
@@ -467,6 +552,66 @@ const Manual = () => {
         }
     ];
 
+    const sectionMeta = {
+        inicio: { area: 'Primeros pasos' },
+        dashboard: { area: 'Operación', path: '/' },
+        ventas: { area: 'Operación', path: '/ventas' },
+        caja: { area: 'Operación', path: '/caja' },
+        'informes-caja': { area: 'Informes', path: '/informes-caja' },
+        'kilos-vendidos': { area: 'Informes', path: '/informes-kilos' },
+        'informes-descuentos': { area: 'Informes', path: '/informes-descuentos' },
+        'detalle-ventas-balanza': { area: 'Informes', path: '/config/balanza' },
+        compras: { area: 'Operación', path: '/compras' },
+        stock: { area: 'Operación', path: '/stock' },
+        clientes: { area: 'Comercial', path: '/clientes' },
+        pedidos: { area: 'Comercial', path: '/pedidos' },
+        logistica: { area: 'Comercial', path: '/logistica' },
+        sucursales: { area: 'Comercial', path: '/sucursales' },
+        'menu-digital': { area: 'Comercial', path: '/menu-digital' },
+        preelaborados: { area: 'Producción', path: '/alimentos' },
+        'otros-items': { area: 'Producción', path: '/otros' },
+        despostada: { area: 'Producción', path: '/despostada/vaca' },
+        'rendimiento-pro': { area: 'Producción', path: '/informes-pro' },
+        'config-pagos': { area: 'Configuración', path: '/config/pagos' },
+        'config-categorias': { area: 'Configuración', path: '/config/categorias' },
+        'config-articulos': { area: 'Configuración', path: '/config/productos-compra' },
+        'config-promociones': { area: 'Configuración', path: '/config/promociones' },
+        'config-whatsapp': { area: 'Configuración', path: '/config/whatsapp-marketing' },
+        'config-proveedores': { area: 'Configuración', path: '/config/proveedores' },
+        'config-precio': { area: 'Configuración', path: '/config/precio' },
+        'config-transferencias': { area: 'Configuración', path: '/config/sucursales-transfer' },
+        'config-balanza': { area: 'Configuración', path: '/config/balanza' },
+        seguridad: { area: 'Configuración', path: '/config/seguridad' }
+    };
+
+    const areas = ['Todos', 'Primeros pasos', 'Operación', 'Comercial', 'Producción', 'Informes', 'Configuración'];
+    const normalizedQuery = query.trim().toLocaleLowerCase('es');
+    const filteredSections = sections.filter((section) => {
+        const area = sectionMeta[section.id]?.area || 'Otros';
+        const matchesArea = activeArea === 'Todos' || area === activeArea;
+        const searchableText = [
+            section.title,
+            area,
+            ...section.content.flatMap((block) => [block.subtitle, ...block.steps])
+        ].join(' ').toLocaleLowerCase('es');
+        return matchesArea && (!normalizedQuery || searchableText.includes(normalizedQuery));
+    });
+
+    const toggleSection = (sectionId) => {
+        setOpenSections((current) => {
+            const next = new Set(current);
+            if (next.has(sectionId)) next.delete(sectionId);
+            else next.add(sectionId);
+            return next;
+        });
+    };
+
+    const openAllResults = () => setOpenSections(new Set(filteredSections.map((section) => section.id)));
+    const clearFilters = () => {
+        setQuery('');
+        setActiveArea('Todos');
+    };
+
     const handlePrint = () => {
         window.print();
     };
@@ -475,10 +620,10 @@ const Manual = () => {
         <div className="manual-page animate-fade-in no-print-bg">
             <header className="manual-header">
                 <div className="header-left">
-                    <HelpCircle size={42} className="header-icon" />
+                    <BookOpen size={42} className="header-icon" />
                     <div>
-                        <h1>Manual de Usuario Premium</h1>
-                        <p>MeatManager PRO - Gestión Integral de Carnicerías</p>
+                        <h1>Centro de ayuda</h1>
+                        <p>Encontrá respuestas y aprendé a usar cada módulo de MeatManager.</p>
                     </div>
                 </div>
                 <button className="print-btn" onClick={handlePrint}>
@@ -486,14 +631,56 @@ const Manual = () => {
                 </button>
             </header>
 
+            <section className="manual-search-panel no-print" aria-label="Buscar en el manual">
+                <div className="manual-search-box">
+                    <Search size={22} />
+                    <input
+                        type="search"
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Buscá un tema: anular ticket, cierre de caja, balanza..."
+                        aria-label="Buscar temas en el manual"
+                        autoComplete="off"
+                    />
+                    {query && (
+                        <button type="button" className="manual-clear-search" onClick={() => setQuery('')} aria-label="Limpiar búsqueda">
+                            <X size={18} />
+                        </button>
+                    )}
+                </div>
+                <div className="manual-area-filters" aria-label="Filtrar por área">
+                    {areas.map((area) => (
+                        <button
+                            key={area}
+                            type="button"
+                            className={activeArea === area ? 'active' : ''}
+                            onClick={() => setActiveArea(area)}
+                        >
+                            {area}
+                        </button>
+                    ))}
+                </div>
+            </section>
+
             <div className="manual-layout">
                 <aside className="manual-side-nav no-print">
-                    <h3>Tabla de Contenidos</h3>
-                    {sections.map(s => (
-                        <a key={s.id} href={`#${s.id}`} className="nav-link">
-                            <span className="nav-dot" style={{ background: s.color }}></span>
-                            {s.title}
-                        </a>
+                    <div className="manual-nav-heading">
+                        <h3>Temas encontrados</h3>
+                        <span>{filteredSections.length}</span>
+                    </div>
+                    {filteredSections.map((section) => (
+                        <button
+                            type="button"
+                            key={section.id}
+                            className="nav-link"
+                            onClick={() => {
+                                setOpenSections((current) => new Set(current).add(section.id));
+                                requestAnimationFrame(() => document.getElementById(section.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+                            }}
+                        >
+                            <span className="nav-dot" style={{ background: section.color }} />
+                            <span>{section.title}</span>
+                        </button>
                     ))}
                     <div className="support-card-manual">
                         <ShieldCheck size={20} />
@@ -506,21 +693,50 @@ const Manual = () => {
 
                 <main className="manual-content-rich">
                     <div className="welcome-banner">
-                        <h2>¡Hola de nuevo!</h2>
-                        <p>Esta guía está diseñada para que saques el máximo provecho a <strong>MeatManager</strong>.
-                            Desde el mostrador hasta el desposte, acá tenés todo para profesionalizar tu carnicería.</p>
+                        <div>
+                            <span className="welcome-eyebrow">Manual interactivo</span>
+                            <h2>{normalizedQuery ? `Resultados para “${query.trim()}”` : '¿Qué necesitás hacer?'}</h2>
+                            <p>{filteredSections.length} {filteredSections.length === 1 ? 'tema disponible' : 'temas disponibles'} en esta selección.</p>
+                        </div>
+                        {filteredSections.length > 0 && (
+                            <button type="button" className="manual-expand-all no-print" onClick={openAllResults}>
+                                Ver todas las respuestas
+                            </button>
+                        )}
                     </div>
 
-                    {sections.map(section => (
-                        <section key={section.id} id={section.id} className="manual-section rich-card">
-                            <div className="section-header" style={{ borderLeft: `6px solid ${section.color}` }}>
+                    {filteredSections.length === 0 && (
+                        <div className="manual-empty-state">
+                            <Search size={36} />
+                            <h2>No encontramos ese tema</h2>
+                            <p>Probá con otra palabra, por ejemplo “ticket”, “stock”, “cliente” o “balanza”.</p>
+                            <button type="button" onClick={clearFilters}>Ver todos los temas</button>
+                        </div>
+                    )}
+
+                    {filteredSections.map((section) => {
+                        const isOpen = openSections.has(section.id) || Boolean(normalizedQuery);
+                        const meta = sectionMeta[section.id] || {};
+                        return (
+                        <section key={section.id} id={section.id} className={`manual-section rich-card ${isOpen ? 'open' : ''}`}>
+                            <button
+                                type="button"
+                                className="section-header"
+                                style={{ borderLeftColor: section.color }}
+                                onClick={() => toggleSection(section.id)}
+                                aria-expanded={isOpen}
+                            >
                                 <div className="section-icon" style={{ background: `${section.color}20`, color: section.color }}>
                                     {section.icon}
                                 </div>
-                                <h2>{section.title}</h2>
-                            </div>
+                                <div className="section-heading-copy">
+                                    <span>{meta.area}</span>
+                                    <h2>{section.title}</h2>
+                                </div>
+                                <ChevronDown className="section-chevron" size={22} />
+                            </button>
 
-                            <div className="section-body">
+                            {isOpen && <div className="section-body">
                                 {section.content.map((block, i) => (
                                     <div key={i} className="content-block">
                                         <h3><ChevronRight size={18} /> {block.subtitle}</h3>
@@ -534,41 +750,14 @@ const Manual = () => {
                                         </ul>
                                     </div>
                                 ))}
-
-                                {/* Visual Mockup per Section */}
-                                {section.id === 'ventas' && (
-                                    <div className="ui-mockup pos-mockup">
-                                        <div className="mockup-btn green">COBRAR TICKET (F12)</div>
-                                        <div className="mockup-search">🔍 Buscar...</div>
-                                    </div>
+                                {meta.path && (
+                                    <button type="button" className="manual-module-link no-print" onClick={() => navigate(meta.path)}>
+                                        Ir al módulo <ExternalLink size={16} />
+                                    </button>
                                 )}
-                                {section.id === 'config-balanza' && (
-                                    <div className="ui-mockup balance-mockup">
-                                        <div className="mockup-label">SYSTEL CUORA MAX</div>
-                                        <div className="mockup-display">0.525 kg</div>
-                                        <div className="mockup-btn blue">Importar PLUs</div>
-                                    </div>
-                                )}
-                                {section.id === 'menu-digital' && (
-                                    <div className="ui-mockup phone-mockup-mini">
-                                        <div className="mockup-phone-header">🥩 Carnicería PRO</div>
-                                        <div className="mockup-whatsapp-bubble">"Hola! Quiero 2kg de Asado..."</div>
-                                        <div className="mockup-btn primary">Importar Pedido</div>
-                                    </div>
-                                )}
-                                {section.id === 'seguridad' && (
-                                    <div className="ui-mockup backup-mockup">
-                                        <div className="mockup-label">SEGURIDAD DE DATOS</div>
-                                        <div style={{ display: 'flex', gap: '0.5rem', width: '100%' }}>
-                                            <div className="mockup-btn blue" style={{ flex: 1 }}>📥 Exportar</div>
-                                            <div className="mockup-btn primary" style={{ flex: 1, background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-main)' }}>📤 Importar</div>
-                                        </div>
-                                        <div className="mockup-status-cloud">☁️ Nube Sincronizada (Modo PRO)</div>
-                                    </div>
-                                )}
-                            </div>
+                            </div>}
                         </section>
-                    ))}
+                    )})}
 
                     <footer className="manual-footer no-print">
                         <p>© 2026 MeatManager Premium Software. Todos los derechos reservados.</p>

@@ -66,6 +66,11 @@
     background-color: var(--color-primary);
 }
 
+.sidebar-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+}
+
 .top-bar-right {
     justify-content: flex-end;
 }
@@ -131,5 +136,28 @@
     .logo-main {
         font-size: 0.9rem;
         letter-spacing: 0.05rem;
+        max-width: calc(100vw - 120px);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        display: block;
+    }
+
+    .top-bar-left,
+    .top-bar-right {
+        flex: 0 0 44px;
+    }
+
+    .sidebar-toggle.menu-open .hamburger-icon span:first-child {
+        transform: translateY(5px) rotate(45deg);
+    }
+
+    .sidebar-toggle.menu-open .hamburger-icon span:nth-child(2) {
+        opacity: 0;
+        transform: scaleX(0);
+    }
+
+    .sidebar-toggle.menu-open .hamburger-icon span:last-child {
+        transform: translateY(-5px) rotate(-45deg);
     }
 }
