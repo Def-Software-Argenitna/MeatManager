@@ -109,23 +109,31 @@
         position: fixed;
         top: 0;
         left: 0;
-        height: 100%;
-        width: 280px;
+        height: 100dvh;
+        width: min(86vw, 320px);
         z-index: 1200;
         box-shadow: 0 0 60px rgba(0, 0, 0, 0.6);
-        transition: left 0.32s cubic-bezier(0.4, 0, 0.2, 1);
+        transition:
+            transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+            visibility 0.28s;
     }
 
     /* Colapsada en mobile = drawer escondido (no el riel angosto de desktop) */
     .dashboard-layout.sidebar-collapsed .sidebar {
-        left: -320px;
-        width: 280px;
+        width: min(86vw, 320px);
         padding: 1.5rem 1rem;
+        transform: translateX(-105%);
+        visibility: hidden;
+        pointer-events: none;
     }
 
     /* El contenido ocupa todo el ancho: la sidebar queda fuera del flujo */
     .dashboard-layout .main-content {
         width: 100%;
+    }
+
+    .route-shell {
+        padding: 0.85rem;
     }
 
     /* Backdrop oscuro detrás del drawer abierto */
