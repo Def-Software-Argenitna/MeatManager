@@ -344,12 +344,12 @@ const Manual = () => {
         },
         {
             id: 'despostada',
-            title: 'Módulo Despostada (Vaca/Cerdo/Pollo/Pescado)',
+            title: 'Módulo Despostada',
             icon: <Beef size={24} />,
             color: '#c0392b',
             content: [
                 {
-                    subtitle: 'Rendimiento por especie',
+                    subtitle: 'Rendimiento de Vaca, Cerdo, Pollo y Pescado',
                     steps: [
                         'Ingresá peso inicial del lote/canal.',
                         'Distribuí kilos en cortes resultantes.',
