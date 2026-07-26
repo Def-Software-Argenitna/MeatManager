@@ -3009,7 +3009,7 @@ async function ensureOperationalTenantIsolation() {
                     synced_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY ux_scale_ticket_device_at (device_id, ticket_id, sale_at),
-                    UNIQUE KEY ux_scale_ticket_barcode (ticket_barcode),
+                    KEY ix_scale_ticket_barcode (ticket_barcode),
                     KEY ix_scale_ticket_addr (tenant_id, scale_address, sale_at),
                     KEY ix_scale_ticket_tenant_date (tenant_id, branch_id, sale_at)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -3030,6 +3030,22 @@ async function ensureOperationalTenantIsolation() {
                 );
             }
             await dropIndexIfExists(conn, 'scale_bridge_ticket_map', 'ux_scale_ticket_device');
+            // El ticket_barcode NO es unico de verdad: se arma con precision de MINUTO
+            // y un checksum que se trunca cuando el ticket_id es largo (ver
+            // Bridge/helpers.js formatTicketBarcode + slice(0,32)). Como la numeracion
+            // se reinicia a 000000001 tras cada cierre (fn32), dos ventas distintas del
+            // mismo minuto con el mismo ticket_id generan el MISMO barcode. Con
+            // UNIQUE(ticket_barcode), el upsert de la segunda colisionaba y PISABA a la
+            // primera (una sola fila) → el ticket desaparecia de Conciliacion y no se
+            // podia anular. La identidad correcta ya la cubre ux_scale_ticket_device_at;
+            // dejamos el barcode como indice NO unico (se sigue usando para buscar).
+            await dropIndexIfExists(conn, 'scale_bridge_ticket_map', 'ux_scale_ticket_barcode');
+            if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_bridge_ticket_map', 'ix_scale_ticket_barcode'))) {
+                await conn.query(
+                    `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_bridge_ticket_map
+                     ADD KEY ix_scale_ticket_barcode (ticket_barcode)`
+                );
+            }
             if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'scale_bridge_sales_item', 'ux_scale_sale_line_at'))) {
                 await conn.query(
                     `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.scale_bridge_sales_item
@@ -10037,10 +10053,14 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
 
         await ensureScaleTicketLifecycleColumns(conn);
         let ticketDate = null;
+        // `id` de las filas a marcar 'charged' por codigo interno, resueltos en el
+        // primer bloque y usados en el segundo (el del UPDATE). Se declara aca para
+        // que viva en ambos scopes.
+        let internalChargeIds = [];
         if (ticketBarcodes.length > 0) {
             const inList = ticketBarcodes.map(() => '?').join(',');
             const [ticketRows] = await conn.query(
-                `SELECT ticket_barcode, ticket_status, sale_at, total_amount
+                `SELECT id, ticket_barcode, ticket_status, sale_at, total_amount
                  FROM scale_bridge_ticket_map
                  WHERE tenant_id = ? AND (UPPER(ticket_barcode) IN (${inList})
                      OR UPPER(printed_ticket_barcode) IN (${inList}))`,
@@ -10058,6 +10078,24 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 return res.status(409).json({ error: 'Uno o más tickets ya fueron cobrados o anulados' });
             }
 
+            // El ticket_barcode INTERNO ya no es unico: dos tickets del mismo minuto
+            // con el ticket_id reiniciado pueden compartirlo. Resolvemos UNA fila open
+            // por cada barcode pedido (la mas antigua, deterministico) y de ahi salen
+            // los `id` exactos a cobrar, para no marcar 'charged' de golpe los dos
+            // tickets colisionados ni contar dos veces su importe.
+            const internalResolved = [];
+            const usedRowIds = new Set();
+            for (const b of ticketBarcodes) {
+                const bu = String(b).toUpperCase();
+                const pick = ticketRows
+                    .filter(r => !usedRowIds.has(r.id)
+                        && String(r.ticket_status || '').toLowerCase() === 'open'
+                        && String(r.ticket_barcode || '').toUpperCase() === bu)
+                    .sort((a, c) => new Date(a.sale_at) - new Date(c.sale_at))[0];
+                if (pick) { internalResolved.push(pick); usedRowIds.add(pick.id); }
+            }
+            internalChargeIds = internalResolved.map(r => r.id);
+
             // RED DE SEGURIDAD: un ticket de balanza se cobra ENTERO. Si el cajero borró
             // un renglón del carrito (o el producto no estaba configurado y se descartó),
             // el total de la venta queda por debajo del total del ticket y ANTES el ticket
@@ -10067,11 +10105,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             // cubra al menos el total de los tickets matcheados por su código INTERNO (el
             // único que matchea sin verificar importe; el impreso ya exige importe+fecha).
             // Sumar de más (extras cargados a mano) está permitido; cobrar de menos, no.
-            const wantedUpper = new Set(ticketBarcodes.map((b) => String(b).toUpperCase()));
-            const internalMatched = ticketRows.filter(
-                (r) => wantedUpper.has(String(r.ticket_barcode || '').toUpperCase())
-            );
-            const expectedTicketsTotal = internalMatched.reduce(
+            const expectedTicketsTotal = internalResolved.reduce(
                 (acc, r) => acc + (parseFloat(r.total_amount) || 0), 0
             );
             if (expectedTicketsTotal > 0) {
@@ -10134,21 +10168,26 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             // del impreso, exigimos ademas mismo importe y fecha cercana. El codigo interno
             // si es unico, asi que matchea sin restriccion.
             const inList = ticketBarcodes.map(() => '?').join(',');
+            // Rama INTERNA: por los `id` exactos resueltos arriba (no por barcode, que
+            // podria pisar dos filas). Rama IMPRESA: igual que antes (el impreso no es
+            // unico por diseño, por eso exige mismo importe y fecha cercana).
+            const chargeConds = [];
+            const chargeParams = [saleId, tenantId];
+            if (internalChargeIds.length > 0) {
+                chargeConds.push(`id IN (${internalChargeIds.map(() => '?').join(',')})`);
+                chargeParams.push(...internalChargeIds);
+            }
+            chargeConds.push(
+                `(UPPER(printed_ticket_barcode) IN (${inList}) AND ABS(total_amount - ?) < 0.01 AND ABS(DATEDIFF(sale_at, ?)) <= 1)`
+            );
+            chargeParams.push(...ticketBarcodes, safeTotal, saleDate);
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged',
                      charged_sale_id = ?,
                      charged_at = NOW()
-                 WHERE tenant_id = ?
-                   AND (
-                        UPPER(ticket_barcode) IN (${inList})
-                        OR (
-                            UPPER(printed_ticket_barcode) IN (${inList})
-                            AND ABS(total_amount - ?) < 0.01
-                            AND ABS(DATEDIFF(sale_at, ?)) <= 1
-                        )
-                   )`,
-                [saleId, tenantId, ...ticketBarcodes, ...ticketBarcodes, safeTotal, saleDate]
+                 WHERE tenant_id = ? AND (${chargeConds.join(' OR ')})`,
+                chargeParams
             );
         }
 
@@ -10430,23 +10469,24 @@ async function reverseSaleTx(conn, { tenantId, saleId, venta, items, ticketBarco
         ]
     );
 
-    // 5. Eliminar items, marcar ticket anulado (limpiando el cobro) y borrar la venta
+    // 5. Eliminar items, marcar ticket anulado (limpiando el cobro) y borrar la venta.
+    // Anulamos por charged_sale_id = esta venta (link exacto ticket↔venta), NO por
+    // ticket_barcode: el barcode no es unico y podria anular otro ticket que lo
+    // comparta; ademas el cobro-manual no guarda ticket_barcode en la venta, con lo
+    // que el match por barcode ni siquiera encontraba su ticket.
     await conn.query(`DELETE FROM ventas_items WHERE tenant_id = ? AND venta_id = ?`, [tenantId, saleId]);
-    const barcodeForTicket = ticketBarcode || venta.ticket_barcode;
-    if (barcodeForTicket) {
-        await conn.query(
-            `UPDATE scale_bridge_ticket_map
-             SET ticket_status = 'voided',
-                 voided_sale_id = ?,
-                 voided_at = NOW(),
-                 voided_by_user_id = ?,
-                 voided_by_username = ?,
-                 charged_sale_id = NULL,
-                 charged_at = NULL
-             WHERE tenant_id = ? AND UPPER(ticket_barcode) = UPPER(?)`,
-            [saleId, deletedBy, deletedByUsername, tenantId, String(barcodeForTicket)]
-        );
-    }
+    await conn.query(
+        `UPDATE scale_bridge_ticket_map
+         SET ticket_status = 'voided',
+             voided_sale_id = ?,
+             voided_at = NOW(),
+             voided_by_user_id = ?,
+             voided_by_username = ?,
+             charged_sale_id = NULL,
+             charged_at = NULL
+         WHERE tenant_id = ? AND charged_sale_id = ?`,
+        [saleId, deletedBy, deletedByUsername, tenantId, saleId]
+    );
     await conn.query(`DELETE FROM ventas WHERE tenant_id = ? AND id = ?`, [tenantId, saleId]);
 }
 
@@ -13104,8 +13144,10 @@ async function runBridgeSalesNormalization({ pool, deviceId, tenantId, branchId 
 // de producto YA resuelto (mismo criterio que la conciliacion: mapa PLU->producto
 // del bridge, y si no products.plu), para poder reimprimir el ticket identico a como
 // salio aunque despues cambie el catalogo o se vacie la balanza. Idempotente por
-// (tenant_id, ticket_barcode): una re-lectura del mismo ticket refresca el snapshot,
-// no duplica; y NUNCA pisa un snapshot mas completo con uno parcial (guard por
+// (device_id, ticket_id, sale_at) — la unique key real de scale_sales_log; una
+// re-lectura del mismo ticket refresca el snapshot y toma sus renglones por esa
+// misma identidad (no por ticket_barcode, que no es unico y mezclaria renglones de
+// dos tickets colisionados). NUNCA pisa un snapshot mas completo con uno parcial (guard por
 // item_count). Lanza si no pudo archivar (el caller NO cuenta el ticket → el bridge
 // no vacia la balanza sin registro).
 async function storeScaleSalesLog(pool, ctx) {
@@ -13148,9 +13190,11 @@ async function storeScaleSalesLog(pool, ctx) {
             ) AS product_name
         FROM scale_bridge_sales_item i
         WHERE i.tenant_id = ?
-          AND i.ticket_barcode = ?
+          AND i.device_id = ?
+          AND i.ticket_id = ?
+          AND i.sale_at = ?
         ORDER BY i.line_no
-    `, [tenantId, ticketBarcode]);
+    `, [tenantId, deviceId, ticketId, saleAt]);
 
     const linesJson = JSON.stringify(lines.map((l) => ({
         lineNo: l.line_no,
@@ -13666,9 +13710,13 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
         if (!ticket_barcode) return res.status(400).json({ error: 'ticket_barcode es requerido' });
         const barcode = String(ticket_barcode).trim().toUpperCase();
 
-        // Verificar que el ticket existe y está open
+        // Verificar que el ticket existe y está open. El ticket_barcode NO es unico:
+        // resolvemos a UNA fila con orden deterministico y de ahi en mas operamos por
+        // su identidad real (device_id, ticket_id, sale_at) / su `id`, no por barcode,
+        // para no mezclar ni cobrar dos tickets que comparten barcode.
         const [[ticket]] = await conn.query(
-            `SELECT * FROM scale_bridge_ticket_map WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
+            `SELECT * FROM scale_bridge_ticket_map WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?
+             ORDER BY sale_at DESC, id DESC LIMIT 1`,
             [tenantId, barcode]
         );
         if (!ticket) return res.status(404).json({ error: 'Ticket no encontrado' });
@@ -13676,14 +13724,15 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
             return res.status(409).json({ error: `El ticket ya fue procesado (estado: ${ticket.ticket_status})` });
         }
 
-        // Obtener items
+        // Obtener items del ticket por su identidad compuesta (no por barcode, que
+        // podria traer renglones de otro ticket colisionado).
         const [items] = await conn.query(
             `SELECT i.*, p.name AS product_name, p.id AS product_db_id
              FROM scale_bridge_sales_item i
              LEFT JOIN products p ON p.tenant_id = ? AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR) AND p.inactive != 1
-             WHERE i.tenant_id = ? AND UPPER(i.ticket_barcode) = ?
+             WHERE i.tenant_id = ? AND i.device_id = ? AND i.ticket_id = ? AND i.sale_at = ?
              ORDER BY i.line_no`,
-            [tenantId, tenantId, barcode]
+            [tenantId, tenantId, ticket.device_id, ticket.ticket_id, ticket.sale_at]
         );
 
         // Resolver método de pago
@@ -13767,12 +13816,12 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
                 );
             }
 
-            // Marcar ticket como cobrado
+            // Marcar ticket como cobrado (por id de la fila resuelta, no por barcode)
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged', charged_sale_id = ?, charged_at = NOW()
-                 WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?`,
-                [saleId, tenantId, barcode]
+                 WHERE tenant_id = ? AND id = ?`,
+                [saleId, tenantId, ticket.id]
             );
 
             await conn.commit();
@@ -13815,7 +13864,10 @@ app.get('/api/informes/kilos', verifyFirebaseToken, async (req, res) => {
                     ROUND(SUM(CASE WHEN s.item_quantity_unit = 'kg' THEN s.item_quantity ELSE 0 END), 3) AS kg
              FROM scale_bridge_ticket_map m
              JOIN scale_bridge_sales_item s
-               ON s.tenant_id = m.tenant_id AND UPPER(s.ticket_barcode) = UPPER(m.ticket_barcode)
+               ON s.tenant_id = m.tenant_id
+              AND s.device_id = m.device_id
+              AND s.ticket_id = m.ticket_id
+              AND s.sale_at   = m.sale_at
              WHERE m.tenant_id = ? AND m.sale_at BETWEEN ? AND ?
              GROUP BY DATE(m.sale_at), m.branch_id`,
             [tenantId, fromDt, toDt]
@@ -14129,15 +14181,21 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
         await conn.beginTransaction();
         try {
             for (const barcode of barcodes) {
+                // El ticket_barcode NO es unico (dos ventas del mismo minuto con el
+                // ticket_id reiniciado pueden compartirlo). Resolvemos a UNA fila
+                // concreta con orden deterministico y operamos por su `id`, para no
+                // anular de golpe los dos tickets que comparten barcode.
                 const [[ticket]] = await conn.query(
-                    `SELECT ticket_status, charged_sale_id FROM scale_bridge_ticket_map
-                     WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? LIMIT 1`,
+                    `SELECT id, ticket_status, charged_sale_id FROM scale_bridge_ticket_map
+                     WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?
+                     ORDER BY sale_at DESC, id DESC LIMIT 1`,
                     [tenantId, barcode]
                 );
                 if (!ticket) {
                     skipped.push({ ticket_barcode: barcode, reason: 'no_encontrado' });
                     continue;
                 }
+                const ticketRowId = ticket.id;
                 const st = String(ticket.ticket_status || '').toLowerCase();
 
                 if (st === 'voided') {
@@ -14180,8 +14238,8 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
                              voided_reason = ?,
                              charged_sale_id = NULL,
                              charged_at = NULL
-                         WHERE tenant_id = ? AND UPPER(ticket_barcode) = ?`,
-                        [voidedByUserId, voidedByUsername, voidedReason, tenantId, barcode]
+                         WHERE tenant_id = ? AND id = ?`,
+                        [voidedByUserId, voidedByUsername, voidedReason, tenantId, ticketRowId]
                     );
                     anulados.push(barcode);
                     continue;
@@ -14195,8 +14253,8 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
                          voided_by_user_id = ?,
                          voided_by_username = ?,
                          voided_reason = ?
-                     WHERE tenant_id = ? AND UPPER(ticket_barcode) = ? AND ticket_status = 'open'`,
-                    [voidedByUserId, voidedByUsername, voidedReason, tenantId, barcode]
+                     WHERE tenant_id = ? AND id = ? AND ticket_status = 'open'`,
+                    [voidedByUserId, voidedByUsername, voidedReason, tenantId, ticketRowId]
                 );
                 anulados.push(barcode);
             }
@@ -14287,8 +14345,19 @@ app.get('/api/conciliacion/balanza', verifyFirebaseToken, async (req, res) => {
                   WHERE v.tenant_id = t.tenant_id
                     AND v.ticket_barcode IS NOT NULL
                     AND (
-                        -- Match por codigo interno (MM...): es unico, siempre seguro.
-                        UPPER(v.ticket_barcode) = UPPER(t.ticket_barcode)
+                        -- Match por codigo interno (MM...). YA NO es unico: dos tickets
+                        -- del mismo minuto con el ticket_id reiniciado pueden compartirlo,
+                        -- asi que una venta que cobro al ticket A escondia al ticket B
+                        -- (open, nunca cobrado) de conciliacion. Igual que en la rama del
+                        -- impreso, exigimos ademas mismo importe y fecha cercana: para un
+                        -- ticket realmente cobrado la venta coincide en importe+fecha (se
+                        -- sigue excluyendo bien); para el ticket B colisionado no coincide
+                        -- y por lo tanto vuelve a figurar pendiente.
+                        (
+                            UPPER(v.ticket_barcode) = UPPER(t.ticket_barcode)
+                            AND ABS(COALESCE(v.total, 0) - COALESCE(t.total_amount, 0)) < 0.01
+                            AND ABS(DATEDIFF(v.date, t.sale_at)) <= 1
+                        )
                         OR (
                             -- Match por codigo IMPRESO (resumen). OJO: el codigo
                             -- impreso NO es unico — solo codifica balanza + importe,
