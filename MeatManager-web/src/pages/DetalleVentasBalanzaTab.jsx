@@ -57,6 +57,23 @@ const cantidadLinea = (item) => {
     return '—';
 };
 
+// Importe a mostrar/sumar de un ticket de balanza:
+// - COBRADO: lo REALMENTE cobrado (charged_amount). Si es null (histórico cobrado
+//   entero, antes de esta función) cae al total impreso.
+// - pendiente/anulado: el total impreso del ticket.
+// Así el importe y el "Total del período" reflejan la plata que entró de verdad,
+// incluso cuando se cobró parcial (se sacó un renglón). El renglón sacado queda
+// como "pesado no cobrado" en el informe de kilos.
+const importeTicket = (t) => {
+    if (t.status === 'cobrado' && t.charged_amount != null) return Number(t.charged_amount);
+    return Number(t.total_amount || 0);
+};
+// ¿Se cobró parcial? (cobrado por menos que el total impreso).
+const esCobroParcial = (t) => (
+    t.status === 'cobrado' && t.charged_amount != null
+    && Number(t.charged_amount) + 0.005 < Number(t.total_amount || 0)
+);
+
 // Imprime el ticket tal cual salió de la balanza, en una ventana con formato de
 // comprobante angosto (58/80mm). Los datos vienen del archivo permanente, así que
 // se puede reimprimir aunque la balanza ya se haya vaciado.
@@ -96,7 +113,7 @@ const imprimirTicket = (t) => {
         <hr/>
         <table><tbody>${lineas || '<tr><td>Sin renglones</td></tr>'}</tbody></table>
         <hr/>
-        <div class="total"><span>TOTAL</span><span>${fmt(t.total_amount)}</span></div>
+        <div class="total"><span>TOTAL</span><span>${fmt(importeTicket(t))}</span></div>
         <div class="foot">${t.item_count} ítem(s) · ${(t.status || '').toUpperCase()}</div>
     </body></html>`);
     win.document.close();
@@ -188,7 +205,7 @@ export default function DetalleVentasBalanzaTab() {
     }, [tickets, filterText]);
 
     const totalDia = useMemo(() => filtered.reduce((acc, t) => (
-        t.status === 'anulado' ? acc : acc + Number(t.total_amount || 0)
+        t.status === 'anulado' ? acc : acc + importeTicket(t)
     ), 0), [filtered]);
 
     return (
@@ -263,7 +280,15 @@ export default function DetalleVentasBalanzaTab() {
                                                 <td className="concil-cell-ticket">{t.printed_ticket_barcode || t.ticket_id}<OriginBadge origin={t.origin} /></td>
                                                 <td>{t.vendor_name || '—'}</td>
                                                 <td className="concil-cell-center">{t.item_count}</td>
-                                                <td className="concil-cell-amount">{fmt(t.total_amount)}</td>
+                                                <td className="concil-cell-amount">
+                                                    {fmt(importeTicket(t))}
+                                                    {esCobroParcial(t) && (
+                                                        <span title={`Cobro parcial. Total impreso del ticket: ${fmt(t.total_amount)}`}
+                                                              style={{ marginLeft: 6, fontSize: '0.62rem', fontWeight: 700, color: '#f59e0b' }}>
+                                                            PARCIAL
+                                                        </span>
+                                                    )}
+                                                </td>
                                                 <td className="concil-cell-center"><StatusBadge status={t.status} /></td>
                                                 <td onClick={e => e.stopPropagation()}>
                                                     <button className="concil-detail-btn" onClick={() => imprimirTicket(t)} title="Imprimir ticket">
@@ -319,7 +344,13 @@ export default function DetalleVentasBalanzaTab() {
                         <div className="concil-info-row"><span>Barcode interno</span><code>{detail.ticket_barcode}</code></div>
                         <div className="concil-info-row"><span>Registrado</span><span>{fmtDateTime(detail.captured_at)}</span></div>
                         <div className="concil-info-row"><span>Estado</span><StatusBadge status={detail.status} /></div>
-                        <div className="concil-info-row total"><span>Total</span><span>{fmt(detail.total_amount)}</span></div>
+                        {esCobroParcial(detail) && (
+                            <div className="concil-info-row"><span>Total impreso (pesado)</span><span>{fmt(detail.total_amount)}</span></div>
+                        )}
+                        <div className="concil-info-row total">
+                            <span>{esCobroParcial(detail) ? 'Cobrado (parcial)' : 'Total'}</span>
+                            <span>{fmt(importeTicket(detail))}</span>
+                        </div>
                     </div>
 
                     {detail.items?.length > 0 && (

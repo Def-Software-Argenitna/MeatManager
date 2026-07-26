@@ -52,6 +52,9 @@ export default function ConciliacionBalanzaTab() {
     const [manualNotes, setManualNotes] = useState('');
     const [manualSaving, setManualSaving] = useState(false);
     const [manualSuccess, setManualSuccess] = useState(null);
+    // Cobro parcial: line_no de los renglones DESMARCADOS (que NO se cobran). Vacío =
+    // se cobra el ticket entero. Se resetea al buscar un ticket nuevo.
+    const [manualExcludedLines, setManualExcludedLines] = useState(() => new Set());
 
     // ── Cargar métodos de pago ────────────────────────────────────────────────
     useEffect(() => {
@@ -159,6 +162,7 @@ export default function ConciliacionBalanzaTab() {
         setManualTicket(null);
         setManualError(null);
         setManualSuccess(null);
+        setManualExcludedLines(new Set());
         try {
             const data = await apiFetchJson(`/api/scale/tickets/by-barcode/${encodeURIComponent(code)}`);
             setManualTicket(data);
@@ -169,9 +173,20 @@ export default function ConciliacionBalanzaTab() {
         }
     };
 
+    // line_no de un renglón del ticket manual (viene de by-barcode como lineNo).
+    const manualLineNo = (item, idx) => (item?.lineNo != null ? Number(item.lineNo) : idx);
+    // Renglones que SÍ se cobran (no desmarcados) y total resultante.
+    const manualItems = manualTicket?.items || [];
+    const manualSelectedItems = manualItems.filter((it, i) => !manualExcludedLines.has(manualLineNo(it, i)));
+    const manualIsPartial = manualSelectedItems.length > 0 && manualSelectedItems.length < manualItems.length;
+    const manualChargeTotal = manualIsPartial
+        ? manualSelectedItems.reduce((acc, it) => acc + (Number(it.amount) || 0), 0)
+        : Number(manualTicket?.ticket?.total_amount || 0);
+
     // ── Carga manual: registrar cobro ─────────────────────────────────────────
     const registrarCobro = async () => {
         if (!manualTicket?.ticket) return;
+        if (manualSelectedItems.length === 0) { setManualError('Marcá al menos un renglón para cobrar.'); return; }
         const pm = paymentMethods.find(m => String(m.id) === String(manualPaymentId));
         setManualSaving(true);
         setManualError(null);
@@ -183,6 +198,11 @@ export default function ConciliacionBalanzaTab() {
                     payment_method_id: pm?.id ?? null,
                     payment_method_name: pm?.name ?? '',
                     notes: manualNotes.trim() || null,
+                    // Cobro parcial: mandamos los line_no a cobrar solo si se desmarcó
+                    // alguno. Si van todos, el backend cobra el ticket entero.
+                    charge_line_nos: manualIsPartial
+                        ? manualSelectedItems.map((it, i) => manualLineNo(it, i))
+                        : null,
                 }),
             });
             setManualSuccess({ saleId: data.sale_id, total: data.total });
@@ -568,12 +588,15 @@ export default function ConciliacionBalanzaTab() {
                                         </div>
                                     )}
 
-                                    {/* Items */}
+                                    {/* Items. Con el ticket SIN cobrar se puede desmarcar
+                                        un renglón para cobrar parcial (ítem no configurado
+                                        o que el cliente no se llevó). */}
                                     {manualTicket.items?.length > 0 && (
                                         <div className="concil-items-table-wrap" style={{ marginTop: '0.75rem' }}>
                                             <table className="concil-table concil-items-table">
                                                 <thead>
                                                     <tr>
+                                                        {!ticketAlreadyCharged && <th style={{ width: '40px' }}>Cobrar</th>}
                                                         <th>PLU</th>
                                                         <th>Producto</th>
                                                         <th>Cantidad</th>
@@ -581,22 +604,45 @@ export default function ConciliacionBalanzaTab() {
                                                     </tr>
                                                 </thead>
                                                 <tbody>
-                                                    {manualTicket.items.map((item, i) => (
-                                                        <tr key={i}>
-                                                            <td><code>{item.plu_code || item.plu}</code></td>
-                                                            <td>{item.product?.name || item.name || '—'}</td>
-                                                            <td>{Number(item.item_quantity || item.quantity || 0).toFixed(3)} {item.item_quantity_unit || item.unit || 'kg'}</td>
-                                                            <td className="concil-cell-amount">{fmt(item.amount)}</td>
-                                                        </tr>
-                                                    ))}
+                                                    {manualTicket.items.map((item, i) => {
+                                                        const ln = manualLineNo(item, i);
+                                                        const excluded = manualExcludedLines.has(ln);
+                                                        return (
+                                                            <tr key={i} style={excluded ? { opacity: 0.45, textDecoration: 'line-through' } : undefined}>
+                                                                {!ticketAlreadyCharged && (
+                                                                    <td className="concil-cell-center">
+                                                                        <input
+                                                                            type="checkbox"
+                                                                            checked={!excluded}
+                                                                            onChange={() => setManualExcludedLines(prev => {
+                                                                                const next = new Set(prev);
+                                                                                if (next.has(ln)) next.delete(ln); else next.add(ln);
+                                                                                return next;
+                                                                            })}
+                                                                        />
+                                                                    </td>
+                                                                )}
+                                                                <td><code>{item.plu_code || item.plu}</code></td>
+                                                                <td>{item.product?.name || item.name || '—'}</td>
+                                                                <td>{Number(item.item_quantity || item.quantity || 0).toFixed(3)} {item.item_quantity_unit || item.unit || 'kg'}</td>
+                                                                <td className="concil-cell-amount">{fmt(item.amount)}</td>
+                                                            </tr>
+                                                        );
+                                                    })}
                                                 </tbody>
                                             </table>
                                         </div>
                                     )}
 
-                                    <div className="concil-info-row total" style={{ marginTop: '0.5rem', borderRadius: '8px' }}>
-                                        <span>Total del ticket</span>
-                                        <span>{fmt(manualTicket.ticket.total_amount)}</span>
+                                    {manualIsPartial && (
+                                        <div className="concil-info-row" style={{ marginTop: '0.5rem' }}>
+                                            <span>Total impreso del ticket</span>
+                                            <span>{fmt(manualTicket.ticket.total_amount)}</span>
+                                        </div>
+                                    )}
+                                    <div className="concil-info-row total" style={{ marginTop: manualIsPartial ? 0 : '0.5rem', borderRadius: '8px' }}>
+                                        <span>{manualIsPartial ? 'A cobrar (parcial)' : 'Total del ticket'}</span>
+                                        <span>{fmt(manualChargeTotal)}</span>
                                     </div>
 
                                     {/* Form de cobro */}
@@ -688,7 +734,7 @@ export default function ConciliacionBalanzaTab() {
                                                         <td className="concil-cell-date">{fmtDate(t.voided_at)}</td>
                                                         <td className="concil-cell-ticket">{t.printed_ticket_barcode || t.ticket_barcode?.slice(-10)}</td>
                                                         <td>{t.vendor_name || '—'}</td>
-                                                        <td className="concil-cell-amount">{fmt(t.total_amount)}</td>
+                                                        <td className="concil-cell-amount">{fmt(t.charged_amount != null ? t.charged_amount : t.total_amount)}</td>
                                                         <td>{t.voided_reason || '—'}</td>
                                                         <td>{t.voided_by_username || '—'}</td>
                                                     </tr>

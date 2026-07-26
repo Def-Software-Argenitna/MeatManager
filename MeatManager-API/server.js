@@ -3003,6 +3003,7 @@ async function ensureOperationalTenantIsolation() {
                     ticket_status VARCHAR(16) NOT NULL DEFAULT 'open',
                     charged_sale_id BIGINT NULL,
                     charged_at DATETIME NULL,
+                    charged_amount DECIMAL(12,2) NULL,
                     voided_sale_id BIGINT NULL,
                     voided_at DATETIME NULL,
                     fingerprint VARCHAR(128) NOT NULL,
@@ -8742,6 +8743,10 @@ async function ensureScaleTicketLifecycleColumns(conn) {
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'ticket_status', '`ticket_status` VARCHAR(16) NOT NULL DEFAULT \'open\' AFTER `item_count`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_sale_id', '`charged_sale_id` BIGINT NULL AFTER `ticket_status`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_at', '`charged_at` DATETIME NULL AFTER `charged_sale_id`');
+    // charged_amount: cuanto se cobro DE VERDAD del ticket. NULL = se cobro entero
+    // (historicos y cobros completos) -> los reportes caen a total_amount. Un valor
+    // menor a total_amount indica cobro PARCIAL (se saco algun renglon del carrito).
+    await ensureColumn(conn, 'scale_bridge_ticket_map', 'charged_amount', '`charged_amount` DECIMAL(12,2) NULL AFTER `charged_at`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_sale_id', '`voided_sale_id` BIGINT NULL AFTER `charged_at`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_at', '`voided_at` DATETIME NULL AFTER `voided_sale_id`');
     await ensureColumn(conn, 'scale_bridge_ticket_map', 'voided_by_user_id', '`voided_by_user_id` BIGINT NULL AFTER `voided_at`');
@@ -9094,7 +9099,7 @@ app.get('/api/scale/tickets/by-barcode/:barcode', verifyFirebaseToken, async (re
                         if (saleCheck.length === 0) {
                             await pool.query(
                                 `UPDATE scale_bridge_ticket_map
-                                 SET ticket_status = 'open', charged_sale_id = NULL, charged_at = NULL
+                                 SET ticket_status = 'open', charged_sale_id = NULL, charged_at = NULL, charged_amount = NULL
                                  WHERE tenant_id = ? AND id = ?`,
                                 [tenantId, nonOpenRow.id]
                             );
@@ -10057,6 +10062,11 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         // primer bloque y usados en el segundo (el del UPDATE). Se declara aca para
         // que viva en ambos scopes.
         let internalChargeIds = [];
+        // COBRO PARCIAL: cuanto se cobra DE VERDAD de cada ticket interno (por id de
+        // fila). Sale de la suma de subtotales de los items del carrito etiquetados
+        // con ese ticket (item.scale_ticket_barcode). Si el carrito no trae etiquetas
+        // (cliente viejo/offline) queda null -> el ticket se cobra ENTERO como antes.
+        let internalChargedAmountById = new Map();
         if (ticketBarcodes.length > 0) {
             const inList = ticketBarcodes.map(() => '?').join(',');
             const [ticketRows] = await conn.query(
@@ -10094,38 +10104,68 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                     .sort((a, c) => new Date(a.sale_at) - new Date(c.sale_at))[0];
                 if (pick) { internalResolved.push(pick); usedRowIds.add(pick.id); }
             }
-            internalChargeIds = internalResolved.map(r => r.id);
 
-            // RED DE SEGURIDAD: un ticket de balanza se cobra ENTERO. Si el cajero borró
-            // un renglón del carrito (o el producto no estaba configurado y se descartó),
-            // el total de la venta queda por debajo del total del ticket y ANTES el ticket
-            // igual se marcaba 'charged' por su importe completo -> se perdía plata en
-            // silencio (caso picada+bondiola: se borró la bondiola y quedó "cobrado" el
-            // total con solo la picada vendida). Acá exigimos que lo que se está cobrando
-            // cubra al menos el total de los tickets matcheados por su código INTERNO (el
-            // único que matchea sin verificar importe; el impreso ya exige importe+fecha).
-            // Sumar de más (extras cargados a mano) está permitido; cobrar de menos, no.
-            const expectedTicketsTotal = internalResolved.reduce(
-                (acc, r) => acc + (parseFloat(r.total_amount) || 0), 0
-            );
-            if (expectedTicketsTotal > 0) {
-                const itemsSubtotalSum = items.reduce((acc, it) => {
-                    const sub = parseFloat(it.subtotal);
-                    const line = Number.isFinite(sub)
-                        ? sub
-                        : (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 0);
-                    return acc + (Number.isFinite(line) ? line : 0);
-                }, 0);
-                // Tolerancia de $1 por redondeos de precio unitario.
-                if (itemsSubtotalSum + 1 < expectedTicketsTotal) {
-                    await conn.rollback();
-                    conn.release();
-                    return res.status(409).json({
-                        error: `El importe a cobrar ($${itemsSubtotalSum.toFixed(2)}) es menor al del ticket de balanza ($${expectedTicketsTotal.toFixed(2)}). `
-                            + 'Un ticket de balanza se cobra completo: no borres renglones sueltos. '
-                            + 'Si un producto no está configurado, cargalo en Stock; si querés descartar el ticket, quitalo entero del carrito.',
-                        code: 'SCALE_TICKET_PARTIAL_CHARGE',
-                    });
+            // Subtotal de un renglón del carrito (con fallback precio*cantidad).
+            const lineSubtotal = (it) => {
+                const sub = parseFloat(it.subtotal);
+                if (Number.isFinite(sub)) return sub;
+                return (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 0);
+            };
+
+            // COBRO PARCIAL: el frontend etiqueta cada renglón con el ticket al que
+            // pertenece (item.scale_ticket_barcode). Sumamos por ticket lo que quedó en
+            // el carrito -> ese es el importe REAL a cobrar de cada ticket. Si el cajero
+            // sacó un renglón, el ticket se cobra por menos y `charged_amount` lo registra;
+            // los reportes leen ese valor, así que NO se pierde plata en silencio (el caso
+            // picada+bondiola: sacar la bondiola cobra solo la picada, y así queda asentado).
+            const itemsHaveTags = items.some(it => it && it.scale_ticket_barcode);
+            const chargedByBarcode = new Map(); // BU -> suma subtotales en el carrito
+            if (itemsHaveTags) {
+                for (const it of items) {
+                    const tag = it && it.scale_ticket_barcode
+                        ? String(it.scale_ticket_barcode).toUpperCase() : null;
+                    if (!tag) continue;
+                    chargedByBarcode.set(tag, (chargedByBarcode.get(tag) || 0) + lineSubtotal(it));
+                }
+            }
+
+            if (itemsHaveTags) {
+                // Un ticket cuyos renglones se sacaron TODOS (importe ~0) no se cobra:
+                // no lo marcamos charged (el frontend además ya lo desvincula al vaciarlo).
+                const toCharge = internalResolved.filter(r => {
+                    const amt = chargedByBarcode.get(String(r.ticket_barcode || '').toUpperCase()) || 0;
+                    return amt > 0.005;
+                });
+                internalChargeIds = toCharge.map(r => r.id);
+                for (const r of toCharge) {
+                    const amt = chargedByBarcode.get(String(r.ticket_barcode || '').toUpperCase()) || 0;
+                    internalChargedAmountById.set(r.id, Math.round(amt * 100) / 100);
+                }
+            } else {
+                // BACKWARD-COMPAT (carrito sin etiquetas: cliente viejo / venta offline
+                // reencolada): no podemos atribuir por ticket, así que mantenemos la red
+                // de seguridad vieja — un ticket se cobra ENTERO. Si la venta cubre menos
+                // que la suma de los tickets internos, se rechaza (se perdería plata).
+                internalChargeIds = internalResolved.map(r => r.id);
+                for (const r of internalResolved) {
+                    internalChargedAmountById.set(r.id, parseFloat(r.total_amount) || 0);
+                }
+                const expectedTicketsTotal = internalResolved.reduce(
+                    (acc, r) => acc + (parseFloat(r.total_amount) || 0), 0
+                );
+                if (expectedTicketsTotal > 0) {
+                    const itemsSubtotalSum = items.reduce((acc, it) => acc + lineSubtotal(it), 0);
+                    // Tolerancia de $1 por redondeos de precio unitario.
+                    if (itemsSubtotalSum + 1 < expectedTicketsTotal) {
+                        await conn.rollback();
+                        conn.release();
+                        return res.status(409).json({
+                            error: `El importe a cobrar ($${itemsSubtotalSum.toFixed(2)}) es menor al del ticket de balanza ($${expectedTicketsTotal.toFixed(2)}). `
+                                + 'Un ticket de balanza se cobra completo: no borres renglones sueltos. '
+                                + 'Si un producto no está configurado, cargalo en Stock; si querés descartar el ticket, quitalo entero del carrito.',
+                            code: 'SCALE_TICKET_PARTIAL_CHARGE',
+                        });
+                    }
                 }
             }
 
@@ -10169,25 +10209,37 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             // si es unico, asi que matchea sin restriccion.
             const inList = ticketBarcodes.map(() => '?').join(',');
             // Rama INTERNA: por los `id` exactos resueltos arriba (no por barcode, que
-            // podria pisar dos filas). Rama IMPRESA: igual que antes (el impreso no es
-            // unico por diseño, por eso exige mismo importe y fecha cercana).
-            const chargeConds = [];
-            const chargeParams = [saleId, tenantId];
-            if (internalChargeIds.length > 0) {
-                chargeConds.push(`id IN (${internalChargeIds.map(() => '?').join(',')})`);
-                chargeParams.push(...internalChargeIds);
+            // podria pisar dos filas), y CADA UNO con su charged_amount (cobro parcial).
+            // Rama IMPRESA: igual que antes (el impreso no es unico por diseño, por eso
+            // exige mismo importe y fecha cercana); siempre entera -> charged_amount = total.
+            for (const rowId of internalChargeIds) {
+                const amt = internalChargedAmountById.has(rowId)
+                    ? internalChargedAmountById.get(rowId)
+                    : null;
+                await conn.query(
+                    `UPDATE scale_bridge_ticket_map
+                     SET ticket_status = 'charged',
+                         charged_sale_id = ?,
+                         charged_at = NOW(),
+                         charged_amount = ?
+                     WHERE tenant_id = ? AND id = ?`,
+                    [saleId, amt, tenantId, rowId]
+                );
             }
-            chargeConds.push(
-                `(UPPER(printed_ticket_barcode) IN (${inList}) AND ABS(total_amount - ?) < 0.01 AND ABS(DATEDIFF(sale_at, ?)) <= 1)`
-            );
-            chargeParams.push(...ticketBarcodes, safeTotal, saleDate);
+            // Rama IMPRESA (offline sincronizado): matchea por importe+fecha, así que
+            // siempre es el ticket ENTERO -> charged_amount = total_amount de la fila.
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
                  SET ticket_status = 'charged',
                      charged_sale_id = ?,
-                     charged_at = NOW()
-                 WHERE tenant_id = ? AND (${chargeConds.join(' OR ')})`,
-                chargeParams
+                     charged_at = NOW(),
+                     charged_amount = total_amount
+                 WHERE tenant_id = ?
+                   AND ticket_status = 'open'
+                   AND UPPER(printed_ticket_barcode) IN (${inList})
+                   AND ABS(total_amount - ?) < 0.01
+                   AND ABS(DATEDIFF(sale_at, ?)) <= 1`,
+                [saleId, tenantId, ...ticketBarcodes, safeTotal, saleDate]
             );
         }
 
@@ -13706,9 +13758,15 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
         conn = await pool.getConnection();
         await ensureScaleTicketLifecycleColumns(conn);
 
-        const { ticket_barcode, payment_method_id, payment_method_name, notes } = req.body;
+        const { ticket_barcode, payment_method_id, payment_method_name, notes, charge_line_nos } = req.body;
         if (!ticket_barcode) return res.status(400).json({ error: 'ticket_barcode es requerido' });
         const barcode = String(ticket_barcode).trim().toUpperCase();
+        // COBRO PARCIAL (opcional): line_nos a cobrar. Si no viene, se cobra el ticket
+        // ENTERO (backward-compat). Permite descartar renglones (ítem no configurado, o
+        // que el cliente no se llevó) sin cobrar de más.
+        const selectedLineNos = Array.isArray(charge_line_nos)
+            ? charge_line_nos.map(n => Number(n)).filter(n => Number.isFinite(n))
+            : null;
 
         // Verificar que el ticket existe y está open. El ticket_barcode NO es unico:
         // resolvemos a UNA fila con orden deterministico y de ahi en mas operamos por
@@ -13726,7 +13784,7 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
 
         // Obtener items del ticket por su identidad compuesta (no por barcode, que
         // podria traer renglones de otro ticket colisionado).
-        const [items] = await conn.query(
+        const [allItems] = await conn.query(
             `SELECT i.*, p.name AS product_name, p.id AS product_db_id
              FROM scale_bridge_sales_item i
              LEFT JOIN products p ON p.tenant_id = ? AND CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR) AND p.inactive != 1
@@ -13734,6 +13792,17 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
              ORDER BY i.line_no`,
             [tenantId, tenantId, ticket.device_id, ticket.ticket_id, ticket.sale_at]
         );
+
+        // Si hay selección de renglones, cobramos SOLO esos (cobro parcial). Si no,
+        // el ticket entero. Un line_no pedido que no exista se ignora.
+        const isPartial = Array.isArray(selectedLineNos) && selectedLineNos.length > 0
+            && selectedLineNos.length < allItems.length;
+        const items = (Array.isArray(selectedLineNos) && selectedLineNos.length > 0)
+            ? allItems.filter(it => selectedLineNos.includes(Number(it.line_no)))
+            : allItems;
+        if (items.length === 0) {
+            return res.status(400).json({ error: 'No quedaron renglones para cobrar en el ticket.' });
+        }
 
         // Resolver método de pago
         let pmId = payment_method_id ? Number(payment_method_id) : null;
@@ -13746,7 +13815,14 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
             if (pm) pmName = pm.name;
         }
 
-        const total = Number(ticket.total_amount || 0);
+        // Total a cobrar: si es parcial, suma de los renglones elegidos; si es entero,
+        // el total de cabecera del ticket (que el lookup ya validó == suma de ítems).
+        const total = isPartial
+            ? Number(items.reduce((acc, it) => acc + (Number(it.amount) || 0), 0).toFixed(2))
+            : Number(ticket.total_amount || 0);
+        // charged_amount registra lo REALMENTE cobrado. En cobro entero lo dejamos igual
+        // al total (no null) para que los reportes muestren exactamente lo que entró.
+        const chargedAmount = total;
         // La venta y la caja se fechan con la fecha REAL del ticket (sale_at), no
         // con la de hoy, y se imputan a la sucursal del ticket. Asi conciliar un
         // ticket viejo impacta en la caja del dia que corresponde.
@@ -13816,12 +13892,13 @@ app.post('/api/conciliacion/balanza/cobro-manual', verifyFirebaseToken, async (r
                 );
             }
 
-            // Marcar ticket como cobrado (por id de la fila resuelta, no por barcode)
+            // Marcar ticket como cobrado (por id de la fila resuelta, no por barcode).
+            // charged_amount = lo realmente cobrado (parcial o entero) para los reportes.
             await conn.query(
                 `UPDATE scale_bridge_ticket_map
-                 SET ticket_status = 'charged', charged_sale_id = ?, charged_at = NOW()
+                 SET ticket_status = 'charged', charged_sale_id = ?, charged_at = NOW(), charged_amount = ?
                  WHERE tenant_id = ? AND id = ?`,
-                [saleId, tenantId, ticket.id]
+                [saleId, chargedAmount, tenantId, ticket.id]
             );
 
             await conn.commit();
@@ -14493,6 +14570,7 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 l.captured_at,
                 t.ticket_status,
                 t.charged_sale_id,
+                t.charged_amount,
                 t.voided_sale_id,
                 cv.id AS charged_venta_id
             FROM scale_sales_log l
@@ -14525,6 +14603,12 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             if (r.voided_sale_id || r.ticket_status === 'voided') status = 'anulado';
             else if ((r.charged_sale_id || r.ticket_status === 'charged') && chargedSaleExists) status = 'cobrado';
 
+            // total_amount = total IMPRESO del ticket (lo pesado). charged_amount = lo
+            // realmente cobrado (< impreso si se sacó algún renglón; NULL en históricos
+            // cobrados enteros). El frontend muestra/suma charged_amount cuando el ticket
+            // está cobrado, así el "Total del período" refleja lo que entró de verdad.
+            const chargedAmount = r.charged_amount != null ? Number(r.charged_amount) : null;
+
             return {
                 id: r.id,
                 ticket_id: r.ticket_id,
@@ -14534,6 +14618,7 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 vendor_name: r.vendor_name,
                 sale_at: r.sale_at,
                 total_amount: r.total_amount,
+                charged_amount: chargedAmount,
                 item_count: r.item_count,
                 captured_at: r.captured_at,
                 status,
@@ -14695,6 +14780,7 @@ app.get('/api/conciliacion/balanza/anulados', verifyFirebaseToken, async (req, r
                 t.vendor_name,
                 t.sale_at,
                 t.total_amount,
+                t.charged_amount,
                 t.item_count,
                 t.ticket_status,
                 t.scale_address,

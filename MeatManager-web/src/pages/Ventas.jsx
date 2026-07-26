@@ -1058,6 +1058,9 @@ const Ventas = () => {
                 unit: 'kg',
                 price,
                 plu,
+                // Etiqueta del ticket para el cobro parcial (el ítem viene del preview
+                // de un ticket de balanza): así el importe se atribuye al ticket correcto.
+                scaleTicketBarcode: item.ticketBarcode || activeScaleTicketBarcode || null,
             };
             addToCart(cartProduct, item.weight);
 
@@ -1253,10 +1256,12 @@ const Ventas = () => {
                     return true;
                 }
 
-                setTicketPreviewItems(previewItems);
+                const newBarcode = String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null;
+                // Etiquetamos cada renglón con SU ticket (acá, uno solo) para que el
+                // cobro parcial atribuya el importe al ticket correcto en el backend.
+                setTicketPreviewItems(previewItems.map(it => ({ ...it, ticketBarcode: newBarcode })));
                 setShowTicketPreview(true);
                 setTicketPreviewBranchId(payload?.ticket?.branch_id ?? null);
-                const newBarcode = String(payload?.ticket?.internalBarcode || payload?.ticket?.barcode || barcodeValue).trim() || null;
                 if (newBarcode && activeScaleTicketBarcode && activeScaleTicketBarcode !== newBarcode) {
                     setPendingTicketBarcodes(prev => {
                         const existing = new Set(prev);
@@ -1770,39 +1775,28 @@ const Ventas = () => {
     };
 
     const removeFromCart = (id) => {
-        // Un ticket de balanza se cobra COMPLETO. Si el renglón que se quiere quitar
-        // pertenece a un ticket con varios renglones, se quita el ticket ENTERO (no un
-        // renglón suelto): así no se puede cobrar un ticket parcial dejando plata sin
-        // cobrar y el ticket marcado como cobrado (caso picada+bondiola). El backend
-        // ademas rechaza cobrar de menos como red de seguridad.
         const target = cart.find(item => item.id === id);
         const tag = target?.scaleTicketBarcode || null;
         if (tag) {
-            const groupIds = cart.filter(item => item.scaleTicketBarcode === tag).map(item => item.id);
-            if (groupIds.length > 1) {
-                if (!window.confirm('Este renglón es parte de un ticket de balanza, que se cobra completo. Se quitará el TICKET ENTERO del carrito. ¿Continuar?')) {
-                    return;
-                }
-                const next = cart.filter(item => item.scaleTicketBarcode !== tag);
-                setCart(next);
-                // Desvinculamos ese ticket para que la venta no intente cobrarlo.
-                // Si el carrito queda vacio, cortamos todos los vinculos.
-                if (next.length === 0) {
-                    setActiveScaleTicketBarcode(null);
-                    setPendingTicketBarcodes([]);
-                } else {
-                    setActiveScaleTicketBarcode(a => (a === tag ? null : a));
-                    setPendingTicketBarcodes(list => list.filter(b => b !== tag));
-                }
+            const groupCount = cart.filter(item => item.scaleTicketBarcode === tag).length;
+            // Sacar un renglón de un ticket de balanza multi-renglón = COBRO PARCIAL:
+            // se cobra el ticket SIN ese ítem. El backend graba charged_amount = lo que
+            // quedó, así que NO se pierde plata en silencio: el reporte muestra lo
+            // realmente cobrado y el ítem sacado figura como "pesado no cobrado" en el
+            // informe de kilos. Confirmamos para que sea a propósito, no un descuido.
+            if (groupCount > 1 && !window.confirm('Este renglón es de un ticket de balanza. Se va a cobrar el ticket SIN este ítem (cobro parcial). ¿Continuar?')) {
                 return;
             }
         }
         setCart(prev => {
             const next = prev.filter(item => item.id !== id);
-            // Si el carrito queda vacio, cortamos el vinculo con el ticket de
-            // balanza escaneado. De lo contrario ese barcode queda "pegado" y la
-            // proxima venta (otro comprador) lo consumiria por error, marcando el
-            // ticket como cobrado e impidiendo volver a escanearlo.
+            // Si al ticket de balanza ya no le quedan renglones en el carrito,
+            // desvinculamos su barcode para que la venta no intente cobrar un ticket
+            // vacío ni deje el barcode "pegado" (que otra venta lo consumiría por error).
+            if (tag && !next.some(item => item.scaleTicketBarcode === tag)) {
+                setActiveScaleTicketBarcode(a => (a === tag ? null : a));
+                setPendingTicketBarcodes(list => list.filter(b => b !== tag));
+            }
             if (next.length === 0) {
                 setActiveScaleTicketBarcode(null);
                 setPendingTicketBarcodes([]);
@@ -2066,7 +2060,9 @@ const Ventas = () => {
                         lockedSource: 'conciliacion',
                         ticketAmount: lineAmount,
                     };
-                    allPreviewItems.push({ plu: pluRaw || pluNorm, weight: quantity || 1, amount: lineAmount, priceRecord, product });
+                    // ticketBarcode: CADA renglón lleva SU ticket (no el primero), para
+                    // que el cobro parcial atribuya bien el importe por ticket en el backend.
+                    allPreviewItems.push({ plu: pluRaw || pluNorm, weight: quantity || 1, amount: lineAmount, priceRecord, product, ticketBarcode: barcode });
                 }
             }
             if (allPreviewItems.length === 0) {
@@ -2158,6 +2154,9 @@ const Ventas = () => {
                     product_id: i.productId || null,
                     product_name: i.name,
                     is_scale_offline_ticket: Boolean(i.isScaleOfflineTicket),
+                    // Ticket de balanza al que pertenece el renglón (para cobro parcial:
+                    // el backend suma por ticket lo que quedó en el carrito -> charged_amount).
+                    scale_ticket_barcode: i.scaleTicketBarcode || null,
                     quantity: i.quantity,
                     price: i.price,
                     subtotal: line?.subtotal ?? (i.price * i.quantity),
@@ -4070,12 +4069,12 @@ const Ventas = () => {
                             onClick={() => {
                                 const toAdd = ticketPreviewItems.filter(i => i.priceRecord && i.product);
                                 // Etiquetamos cada renglón con el código del ticket de balanza
-                                // que lo originó, para poder tratarlo como bloque atómico en el
-                                // carrito: un ticket de balanza se cobra completo, así que quitar
-                                // un renglón quita el ticket entero (ver removeFromCart).
-                                const ticketBarcodeTag = activeScaleTicketBarcode || null;
+                                // que lo originó (i.ticketBarcode). El backend usa ese tag para
+                                // atribuir el importe cobrado a CADA ticket por separado y así
+                                // soportar el cobro parcial (sacar un renglón cobra el resto).
+                                // Fallback al ticket activo por compatibilidad.
                                 toAdd.forEach(i => addToCart(
-                                    { ...buildCartProductFromPriceRecord(i.product, i.priceRecord), scaleTicketBarcode: ticketBarcodeTag },
+                                    { ...buildCartProductFromPriceRecord(i.product, i.priceRecord), scaleTicketBarcode: i.ticketBarcode || activeScaleTicketBarcode || null },
                                     i.weight
                                 ));
                                 setShowTicketPreview(false);
