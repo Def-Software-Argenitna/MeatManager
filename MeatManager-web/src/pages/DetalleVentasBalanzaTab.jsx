@@ -187,7 +187,9 @@ export default function DetalleVentasBalanzaTab() {
         ));
     }, [tickets, filterText]);
 
-    const totalDia = useMemo(() => filtered.reduce((acc, t) => acc + Number(t.total_amount || 0), 0), [filtered]);
+    const totalDia = useMemo(() => filtered.reduce((acc, t) => (
+        t.status === 'anulado' ? acc : acc + Number(t.total_amount || 0)
+    ), 0), [filtered]);
 
     return (
         <div className="concil-wrap">
