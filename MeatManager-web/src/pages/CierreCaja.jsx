@@ -850,7 +850,12 @@ const CierreCaja = () => {
             await saveTableRecord('caja_movimientos', 'delete', null, movementId);
         }
         await loadData();
-        setFeedback({ type: 'success', text: 'Movimiento eliminado de la caja.' });
+        setFeedback({
+            type: 'success',
+            text: isCustomerPayment(movement)
+                ? 'Cobro anulado: se quitó de la caja y se le devolvió el saldo al cliente en la cuenta corriente.'
+                : 'Movimiento eliminado de la caja.',
+        });
     };
 
     const openClosureModal = () => {

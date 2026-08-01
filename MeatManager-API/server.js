@@ -6942,6 +6942,52 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                 await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
                 return res.json({ ok: true, archived: Number(result?.affectedRows || 0) > 0 });
             }
+            // Anular un COBRO de cuenta corriente (customer_payment / 'Cobro
+            // Pendientes') tiene que DEVOLVERLE el saldo al cliente: el alta del
+            // cobro le SUMA al balance (ver Clientes.handlePayment), asi que el
+            // borrado debe RESTAR ese mismo monto. Antes solo se borraba la fila
+            // de caja y el saldo del cliente quedaba inflado -> "lo anule en caja
+            // pero en la CC quedo en positivo". Se hace en una transaccion para
+            // que saldo y caja no puedan quedar desincronizados.
+            if (table === 'caja_movimientos') {
+                const [movRows] = await pool.query(
+                    `SELECT amount, client_id, branch_id, money_flow_kind, type, category
+                     FROM \`${table}\`
+                     WHERE id = ? AND ${scope.sql}${strictBranchSql}
+                     LIMIT 1`,
+                    [numId, ...scope.params, ...strictBranchParams]
+                );
+                const mov = movRows?.[0] || null;
+                const isCustomerPayment = mov && (
+                    String(mov.money_flow_kind || '').trim().toLowerCase() === 'customer_payment'
+                    || (String(mov.type || '').trim().toLowerCase() === 'ingreso'
+                        && String(mov.category || '').trim() === 'Cobro Pendientes')
+                );
+                const paymentAmount = Number(mov?.amount || 0);
+                if (isCustomerPayment && Number(mov?.client_id) > 0 && Math.abs(paymentAmount) > 0.0001) {
+                    const conn = await pool.getConnection();
+                    try {
+                        await conn.beginTransaction();
+                        await applyClientBalanceDelta(conn, {
+                            tenantId,
+                            clientId: Number(mov.client_id),
+                            branchId: Number(mov.branch_id) || null,
+                            delta: -paymentAmount,
+                        });
+                        await conn.query(
+                            `DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}${strictBranchSql}`,
+                            [numId, ...scope.params, ...strictBranchParams]
+                        );
+                        await conn.commit();
+                    } catch (txErr) {
+                        await conn.rollback().catch(() => {});
+                        throw txErr;
+                    } finally {
+                        conn.release();
+                    }
+                    return res.json({ ok: true, balanceReverted: true });
+                }
+            }
             await pool.query(`DELETE FROM \`${table}\` WHERE id = ? AND ${scope.sql}${strictBranchSql}`, [numId, ...scope.params, ...strictBranchParams]);
             await queueScaleProductSyncIfNeeded({ pool, tenantId, table, operation, record: {}, id: numId });
             return res.json({ ok: true });
