@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft, Ban } from 'lucide-react';
-import { apiFetch, anularConciliacionTickets } from '../utils/apiClient';
+import { apiFetch, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
 import { useUser } from '../context/UserContext';
 import './ConciliacionBalanzaTab.css';
 
@@ -175,11 +175,23 @@ export default function DetalleVentasBalanzaTab() {
         setAnulando(true);
         setError(null);
         try {
-            const data = await anularConciliacionTickets([t.ticket_barcode], {
+            const baseFields = {
                 anulado_by_user_id: currentUser?.id ?? null,
                 anulado_by_username: currentUser?.username || 'Usuario desconocido',
                 reason: reason.trim() || null,
-            });
+            };
+            let data;
+            try {
+                // El backend decide: admin anula directo; el resto recibe 403.
+                data = await anularConciliacionTickets([t.ticket_barcode], baseFields);
+            } catch (e) {
+                if (e.code !== 'ANULAR_TICKET_NEEDS_AUTH') throw e;
+                // Sin permiso directo: se pide un código de autorización al dueño.
+                const auth = await requestAnularAuthorization([t.ticket_barcode]);
+                const code = window.prompt(`Se envió un código de autorización a ${auth.recipient}. Pedíselo al administrador e ingresalo para anular:`);
+                if (!code || !code.trim()) return;
+                data = await anularConciliacionTickets([t.ticket_barcode], { ...baseFields, authorization_id: auth.authorizationId, authorization_code: code.trim() });
+            }
             const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
             if (skipped > 0 && (!data?.anulados || data.anulados.length === 0)) {
                 setError('No se pudo anular el ticket (no encontrado o ya anulado).');

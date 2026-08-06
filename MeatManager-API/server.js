@@ -6164,6 +6164,229 @@ async function verifyCashWithdrawalAuthorization({
     };
 }
 
+// ── Autorización para anular tickets de balanza ────────────────────────────
+// Mismo mecanismo que el retiro de socios (código de 6 dígitos por email al
+// dueño, TTL corto), pero para que un cajero pueda anular tickets: el código se
+// vincula al conjunto EXACTO de tickets, así no se reutiliza para otros.
+function hashBarcodeSet(barcodes) {
+    const norm = [...new Set((barcodes || []).map(b => String(b).trim().toUpperCase()).filter(Boolean))].sort();
+    return hashSensitiveCode(norm.join('|'));
+}
+
+async function sendTicketAnulacionAuthorizationEmail({
+    recipientEmail,
+    code,
+    ticketCount,
+    barcodes,
+    requestedBy,
+    businessName,
+    expiresAt,
+}) {
+    const transport = getSmtpTransport();
+    if (!transport) {
+        throw new Error('SMTP no configurado en la API');
+    }
+
+    const barcodeList = (barcodes || []).slice(0, 10).join(', ') + ((barcodes || []).length > 10 ? '…' : '');
+    const subject = `Codigo para anular tickets - ${businessName || 'MeatManager'}`;
+    const text = [
+        `Un usuario solicito anular ${ticketCount} ticket(s) de balanza.`,
+        '',
+        `Empresa: ${businessName || 'MeatManager'}`,
+        `Solicitado por: ${requestedBy || 'Usuario web'}`,
+        `Tickets: ${barcodeList || 'Sin detalle'}`,
+        `Codigo: ${code}`,
+        `Vence: ${new Date(expiresAt).toLocaleString('es-AR')}`,
+        '',
+        'Entregale este codigo a la persona solo si autorizas la anulacion.',
+        'Anular revierte la venta, la caja y el stock. Si no reconoces esta solicitud, ignora este mensaje.',
+    ].join('\n');
+
+    const html = `
+        <div style="font-family:Arial,sans-serif;background:#0f1117;color:#f5f5f5;padding:24px;">
+            <div style="max-width:640px;margin:0 auto;background:#171922;border:1px solid #2a2f3a;border-radius:16px;padding:24px;">
+                <h2 style="margin:0 0 12px;color:#ef4444;">Autorizacion para anular tickets</h2>
+                <p style="margin:0 0 16px;color:#cbd5e1;">Un usuario solicito anular ${ticketCount} ticket(s) de balanza. Anular revierte la venta, la caja y el stock.</p>
+                <table style="width:100%;border-collapse:collapse;margin-bottom:20px;">
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Empresa</td><td style="padding:6px 0;text-align:right;">${businessName || 'MeatManager'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Solicitado por</td><td style="padding:6px 0;text-align:right;">${requestedBy || 'Usuario web'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Tickets</td><td style="padding:6px 0;text-align:right;">${barcodeList || 'Sin detalle'}</td></tr>
+                    <tr><td style="padding:6px 0;color:#94a3b8;">Vence</td><td style="padding:6px 0;text-align:right;">${new Date(expiresAt).toLocaleString('es-AR')}</td></tr>
+                </table>
+                <div style="text-align:center;margin:24px 0;">
+                    <div style="display:inline-block;padding:14px 22px;border-radius:14px;background:#ef4444;color:#111827;font-size:30px;font-weight:800;letter-spacing:8px;">
+                        ${code}
+                    </div>
+                </div>
+                <p style="margin:0;color:#94a3b8;font-size:13px;">Entregale este codigo solo si autorizas la anulacion. Si no reconoces esta solicitud, ignora este mensaje.</p>
+            </div>
+        </div>
+    `;
+
+    await transport.sendMail({
+        from: getSmtpFromAddress(),
+        to: recipientEmail,
+        subject,
+        text,
+        html,
+    });
+}
+
+async function createTicketAnulacionAuthorization({ tenantInfo, accessContext, barcodes }) {
+    // El código NO debe caer en el email del solicitante (el cajero se
+    // autoautorizaría): solo al email de autorización o, en su defecto, el de
+    // facturación del dueño.
+    const recipientEmail = String(
+        accessContext?.client?.cashAuthorizationEmail
+        || accessContext?.client?.billingEmail
+        || ''
+    ).trim().toLowerCase();
+
+    if (!recipientEmail) {
+        const error = new Error('El cliente no tiene email de autorizacion configurado (Configuración → email de autorización de caja)');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (!hasSmtpConfig()) {
+        const error = new Error('La API no tiene SMTP configurado para enviar autorizaciones');
+        error.statusCode = 500;
+        throw error;
+    }
+
+    const normBarcodes = [...new Set((barcodes || []).map(b => String(b).trim().toUpperCase()).filter(Boolean))];
+    if (normBarcodes.length === 0) {
+        const error = new Error('No hay tickets para autorizar la anulacion');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    const code = generateNumericCode(6);
+    const codeHash = hashSensitiveCode(code);
+    const barcodeHash = hashBarcodeSet(normBarcodes);
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + (CASH_WITHDRAWAL_CODE_TTL_MINUTES * 60 * 1000));
+    const pool = getTenantPool(tenantInfo.dbName);
+
+    await pool.query(
+        `UPDATE cash_withdrawal_authorizations
+            SET status = 'cancelled'
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND authorization_type = 'ticket_anulacion'
+            AND status = 'pending'
+            AND requested_by_user_id = ?`,
+        [tenantInfo.tenantId, accessContext.user.id]
+    );
+
+    const description = `Anulacion de ${normBarcodes.length} ticket(s)`.slice(0, 255);
+    const [result] = await pool.query(
+        `INSERT INTO cash_withdrawal_authorizations
+            (\`${TENANT_COLUMN}\`, authorization_type, requested_amount, payment_method, category, description, recipient_email, requested_by_user_id, requested_by_email, code_hash, status, expires_at)
+         VALUES (?, 'ticket_anulacion', ?, NULL, ?, ?, ?, ?, ?, ?, 'pending', ?)`,
+        [
+            tenantInfo.tenantId,
+            normBarcodes.length,
+            barcodeHash,
+            description,
+            recipientEmail,
+            accessContext.user.id || null,
+            accessContext.user.email || null,
+            codeHash,
+            expiresAt,
+        ]
+    );
+
+    try {
+        await sendTicketAnulacionAuthorizationEmail({
+            recipientEmail,
+            code,
+            ticketCount: normBarcodes.length,
+            barcodes: normBarcodes,
+            requestedBy: [accessContext.user?.name, accessContext.user?.lastname].filter(Boolean).join(' ') || accessContext.user?.email || 'Usuario',
+            businessName: accessContext.client?.businessName,
+            expiresAt,
+        });
+    } catch (error) {
+        await pool.query(
+            `UPDATE cash_withdrawal_authorizations
+                SET status = 'cancelled'
+              WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+            [tenantInfo.tenantId, result.insertId]
+        );
+        throw error;
+    }
+
+    return {
+        authorizationId: result.insertId,
+        expiresAt: expiresAt.toISOString(),
+        recipientEmail,
+    };
+}
+
+async function verifyTicketAnulacionAuthorization({ tenantInfo, authorizationId, code, barcodes }) {
+    const pool = getTenantPool(tenantInfo.dbName);
+    const [rows] = await pool.query(
+        `SELECT *
+           FROM cash_withdrawal_authorizations
+          WHERE \`${TENANT_COLUMN}\` = ?
+            AND id = ?
+            AND authorization_type = 'ticket_anulacion'
+          LIMIT 1`,
+        [tenantInfo.tenantId, authorizationId]
+    );
+
+    const record = rows[0];
+    if (!record) {
+        const error = new Error('No se encontro la autorizacion solicitada');
+        error.statusCode = 404;
+        throw error;
+    }
+
+    if (String(record.status) !== 'pending') {
+        const error = new Error('La autorizacion ya no esta disponible (usada o cancelada)');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (new Date(record.expires_at).getTime() < Date.now()) {
+        await pool.query(
+            `UPDATE cash_withdrawal_authorizations
+                SET status = 'expired'
+              WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+            [tenantInfo.tenantId, authorizationId]
+        );
+        const error = new Error('El codigo ya vencio');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    if (hashSensitiveCode(code) !== record.code_hash) {
+        const error = new Error('Codigo incorrecto');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    // El código está atado al conjunto EXACTO de tickets solicitados.
+    if (hashBarcodeSet(barcodes) !== String(record.category || '')) {
+        const error = new Error('Los tickets a anular no coinciden con los del codigo');
+        error.statusCode = 400;
+        throw error;
+    }
+
+    await pool.query(
+        `UPDATE cash_withdrawal_authorizations
+            SET status = 'used', used_at = NOW()
+          WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+        [tenantInfo.tenantId, authorizationId]
+    );
+
+    return {
+        authorizationId: record.id,
+        recipientEmail: record.recipient_email,
+        usedAt: new Date().toISOString(),
+    };
+}
+
 async function getTableColumns(pool, dbName, table) {
     const key = `${dbName}.${table}`;
     if (tableColCache.has(key)) return tableColCache.get(key);
@@ -12040,6 +12263,44 @@ app.post('/api/cash/withdrawals/verify-authorization', cashWithdrawalVerifyLimit
     }
 });
 
+// ── RUTA: POST /api/conciliacion/balanza/anular/request-authorization ──────
+// Un usuario sin rol admin solicita anular tickets: se envía un código al dueño
+// (por email) atado a esos tickets. Luego se ingresa ese código al anular.
+app.post('/api/conciliacion/balanza/anular/request-authorization', cashWithdrawalRequestLimiter, verifyFirebaseToken, async (req, res) => {
+    try {
+        const { ticket_barcode, ticket_barcodes } = req.body || {};
+        const rawList = Array.isArray(ticket_barcodes) && ticket_barcodes.length > 0
+            ? ticket_barcodes
+            : (ticket_barcode ? [ticket_barcode] : []);
+        const barcodes = [...new Set(rawList.map(b => String(b).trim().toUpperCase()).filter(Boolean))];
+        if (barcodes.length === 0) {
+            return res.status(400).json({ error: 'ticket_barcode(s) es requerido' });
+        }
+
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        assertClientAccess(accessContext);
+        const tenantInfo = await getTenantInfo(req.firebaseUser);
+
+        const result = await createTicketAnulacionAuthorization({ tenantInfo, accessContext, barcodes });
+
+        return res.json({
+            ok: true,
+            authorizationId: result.authorizationId,
+            expiresAt: result.expiresAt,
+            recipient: maskEmailAddress(result.recipientEmail),
+        });
+    } catch (err) {
+        console.error('[ANULAR AUTH REQUEST ERROR]', err.message);
+        const statusCode = err.statusCode || 500;
+        return res.status(statusCode).json({ error: err.message || 'No se pudo enviar el codigo de autorizacion' });
+    }
+});
+
 // ── RUTA: GET /api/delivery/me ────────────────────────────────────────────
 app.get('/api/delivery/me', verifyFirebaseToken, async (req, res) => {
     try {
@@ -14281,10 +14542,17 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
     try {
         const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
         const pool = getTenantPool(dbName);
-        conn = await pool.getConnection();
-        await ensureScaleTicketLifecycleColumns(conn);
 
-        const { ticket_barcode, ticket_barcodes, anulado_by_user_id, anulado_by_username, reason } = req.body;
+        // Anular es una operación sensible (reversa venta / caja / stock).
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) assertClientAccess(accessContext);
+
+        const { ticket_barcode, ticket_barcodes, anulado_by_user_id, anulado_by_username, reason, authorization_id, authorization_code } = req.body;
         const rawList = Array.isArray(ticket_barcodes) && ticket_barcodes.length > 0
             ? ticket_barcodes
             : (ticket_barcode ? [ticket_barcode] : []);
@@ -14293,9 +14561,43 @@ app.post('/api/conciliacion/balanza/anular', verifyFirebaseToken, async (req, re
             return res.status(400).json({ error: 'ticket_barcode(s) es requerido' });
         }
 
-        const userIdParsed = Number.parseInt(anulado_by_user_id, 10);
-        const voidedByUserId = Number.isFinite(userIdParsed) && userIdParsed > 0 ? userIdParsed : null;
-        const voidedByUsername = (anulado_by_username && String(anulado_by_username).trim()) || 'Sistema';
+        // Los administradores anulan directo; el resto necesita un código de
+        // autorización enviado al dueño y atado a este conjunto de tickets.
+        if (!isAdminAccessContext(accessContext)) {
+            if (!authorization_id || !authorization_code) {
+                return res.status(403).json({
+                    code: 'ANULAR_TICKET_NEEDS_AUTH',
+                    error: 'Se requiere un código de autorización para anular tickets',
+                });
+            }
+            try {
+                await verifyTicketAnulacionAuthorization({
+                    tenantInfo: { dbName, tenantId },
+                    authorizationId: Number(authorization_id),
+                    code: String(authorization_code).trim(),
+                    barcodes,
+                });
+            } catch (authErr) {
+                return res.status(authErr.statusCode || 400).json({
+                    code: 'ANULAR_TICKET_AUTH_INVALID',
+                    error: authErr.message || 'Código de autorización inválido',
+                });
+            }
+        }
+
+        conn = await pool.getConnection();
+        await ensureScaleTicketLifecycleColumns(conn);
+
+        // La identidad de quién anula sale del token (no del body, que es falsificable).
+        const ctxUserId = Number.parseInt(accessContext?.user?.id, 10);
+        const bodyUserId = Number.parseInt(anulado_by_user_id, 10);
+        const voidedByUserId = Number.isFinite(ctxUserId) && ctxUserId > 0
+            ? ctxUserId
+            : (Number.isFinite(bodyUserId) && bodyUserId > 0 ? bodyUserId : null);
+        const voidedByUsername = (accessContext?.user?.name && String(accessContext.user.name).trim())
+            || (accessContext?.user?.email && String(accessContext.user.email).trim())
+            || (anulado_by_username && String(anulado_by_username).trim())
+            || 'Sistema';
         const voidedReason = (reason && String(reason).trim()) ? String(reason).trim().slice(0, 255) : null;
 
         const anulados = [];

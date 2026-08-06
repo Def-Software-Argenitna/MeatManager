@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, ArrowUpDown, ArrowUp, ArrowDown, ShoppingBag, AlertTriangle, CheckSquare, Square, ChevronRight, PlusCircle, Hash, CreditCard, CheckCircle2, Ban } from 'lucide-react';
-import { apiFetch, anularConciliacionTickets } from '../utils/apiClient';
+import { apiFetch, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
 import { useUser } from '../context/UserContext';
 import './ConciliacionBalanzaTab.css';
 
@@ -137,11 +137,23 @@ export default function ConciliacionBalanzaTab() {
         setAnulando(true);
         setError(null);
         try {
-            const data = await anularConciliacionTickets(list, {
+            const baseFields = {
                 anulado_by_user_id: currentUser?.id ?? null,
                 anulado_by_username: currentUser?.username || 'Usuario desconocido',
                 reason: reason.trim() || null,
-            });
+            };
+            let data;
+            try {
+                // El backend decide: admin anula directo; el resto recibe 403.
+                data = await anularConciliacionTickets(list, baseFields);
+            } catch (e) {
+                if (e.code !== 'ANULAR_TICKET_NEEDS_AUTH') throw e;
+                // Sin permiso directo: se pide un código de autorización al dueño.
+                const auth = await requestAnularAuthorization(list);
+                const code = window.prompt(`Se envió un código de autorización a ${auth.recipient}. Pedíselo al administrador e ingresalo para anular:`);
+                if (!code || !code.trim()) return;
+                data = await anularConciliacionTickets(list, { ...baseFields, authorization_id: auth.authorizationId, authorization_code: code.trim() });
+            }
             const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
             setSelectedIds(new Set());
             await buscar();

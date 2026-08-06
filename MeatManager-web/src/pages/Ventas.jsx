@@ -5,7 +5,7 @@ import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
-import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode, anularConciliacionTickets } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, findProductByPlu, findPromotionByPlu, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
@@ -2729,16 +2729,30 @@ const Ventas = () => {
                                 ? pendingTicketBarcodes
                                 : (activeScaleTicketBarcode ? [activeScaleTicketBarcode] : []);
 
-                            // Ticket de balanza cargado → anularlo en el sistema (queda registrado)
+                            // Ticket de balanza cargado → anularlo en el sistema (queda registrado).
+                            // El admin anula directo; el cajero necesita un código de autorización
+                            // que se envía al dueño y queda atado a este ticket.
                             if (scaleBarcodes.length > 0) {
                                 if (!window.confirm('¿Anular este ticket de balanza? Quedará registrado como anulado y no se podrá cobrar.')) return;
                                 const reason = window.prompt('Motivo (opcional):', '') ?? '';
                                 try {
-                                    const data = await anularConciliacionTickets(scaleBarcodes, {
+                                    const baseFields = {
                                         anulado_by_user_id: currentUser?.id ?? null,
                                         anulado_by_username: currentUser?.username || 'Usuario desconocido',
                                         reason: reason.trim() || null,
-                                    });
+                                    };
+                                    let data;
+                                    try {
+                                        // El backend decide: admin anula directo; el resto recibe 403.
+                                        data = await anularConciliacionTickets(scaleBarcodes, baseFields);
+                                    } catch (err) {
+                                        if (err.code !== 'ANULAR_TICKET_NEEDS_AUTH') throw err;
+                                        // Sin permiso directo: se pide un código de autorización al dueño.
+                                        const auth = await requestAnularAuthorization(scaleBarcodes);
+                                        const code = window.prompt(`Se envió un código de autorización a ${auth.recipient}. Pedíselo al administrador e ingresalo para anular:`);
+                                        if (!code || !code.trim()) return;
+                                        data = await anularConciliacionTickets(scaleBarcodes, { ...baseFields, authorization_id: auth.authorizationId, authorization_code: code.trim() });
+                                    }
                                     const skipped = Array.isArray(data?.skipped) ? data.skipped.length : 0;
                                     setCart([]);
                                     setActiveScaleTicketBarcode(null);

@@ -784,15 +784,32 @@ export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username 
 
 // Anula tickets de balanza PENDIENTES (no cobrados). Solo cambia el estado a
 // 'voided' — no mueve plata ni stock. Acepta un barcode o un array.
-export const anularConciliacionTickets = async (ticket_barcodes, { anulado_by_user_id, anulado_by_username, reason } = {}) => {
+export const anularConciliacionTickets = async (ticket_barcodes, { anulado_by_user_id, anulado_by_username, reason, authorization_id, authorization_code } = {}) => {
     const list = Array.isArray(ticket_barcodes) ? ticket_barcodes : [ticket_barcodes];
     const res = await apiFetch('/api/conciliacion/balanza/anular', {
         method: 'POST',
-        body: JSON.stringify({ ticket_barcodes: list, anulado_by_user_id, anulado_by_username, reason }),
+        body: JSON.stringify({ ticket_barcodes: list, anulado_by_user_id, anulado_by_username, reason, authorization_id, authorization_code }),
     });
     if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Error al anular el ticket');
+        const error = new Error(err.error || 'Error al anular el ticket');
+        error.code = err.code || null;
+        throw error;
+    }
+    return res.json();
+};
+
+// Solicita un código de autorización (enviado al dueño por email) para que un
+// usuario sin rol admin pueda anular un conjunto de tickets de balanza.
+export const requestAnularAuthorization = async (ticket_barcodes) => {
+    const list = Array.isArray(ticket_barcodes) ? ticket_barcodes : [ticket_barcodes];
+    const res = await apiFetch('/api/conciliacion/balanza/anular/request-authorization', {
+        method: 'POST',
+        body: JSON.stringify({ ticket_barcodes: list }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo enviar el código de autorización');
     }
     return res.json();
 };
