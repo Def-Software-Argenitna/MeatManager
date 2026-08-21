@@ -3,7 +3,7 @@ import { Plus, Search, Edit2, Trash2, ShieldCheck, ChevronDown, ChevronRight } f
 import { useNavigate } from 'react-router-dom';
 import { useLicense } from '../context/LicenseContext';
 import { fetchTable, saveTableRecord } from '../utils/apiClient';
-import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, findProductByPlu, findPromotionByPlu } from '../utils/productCatalog';
+import { assertUniqueProductPluLocal, ensureUnifiedProduct, fetchProductsSafe, findProductByIdentity, findProductByPlu, findPromotionByPlu, normalizeProductName } from '../utils/productCatalog';
 import { useAsyncGuard } from '../hooks/useAsyncGuard';
 import { useUser } from '../context/UserContext';
 import { Button, Modal, EmptyState, useToast } from '../components/ui';
@@ -123,11 +123,22 @@ const ProductosCompra = () => {
         if (!plu) return null;
         const excludeId = editingItem?.product_id || null;
         const product = findProductByPlu(products, plu, excludeId);
-        if (product) return { kind: 'producto', name: product.name };
+        if (product) {
+            // Si el producto que "usa" el PLU tiene el MISMO nombre que el que se
+            // está dando de alta/editando, NO es conflicto real: es un products
+            // huérfano (existe en el catálogo de ventas pero sin purchase_item
+            // visible en esta pantalla) que el guardado va a re-vincular vía
+            // findProductByIdentity. Sin esto, dar de alta el producto que
+            // legítimamente es dueño del PLU quedaba trabado (botón deshabilitado).
+            // Solo alertamos cuando el PLU choca con un producto de OTRO nombre.
+            const sameName = !!formData.name
+                && normalizeProductName(product.name) === normalizeProductName(formData.name);
+            if (!sameName) return { kind: 'producto', name: product.name };
+        }
         const promo = findPromotionByPlu(promotions, plu);
         if (promo) return { kind: 'promo', name: promo.promo_name || promo.product_name };
         return null;
-    }, [formData.sale_plu, products, promotions, editingItem]);
+    }, [formData.sale_plu, formData.name, products, promotions, editingItem]);
 
     useEffect(() => {
         if (!saleCategoryOptions.length) return;
