@@ -121,17 +121,33 @@ jobs:
           #
           # OJO: `nginx -s reload` valida TODA la config de NPM. Si OTRO sitio
           # detras del mismo NPM (no MeatManager) tiene un upstream caido, el
-          # reload aborta con exit 1 y hacia fallar este deploy aunque el stack
-          # de MeatManager ya este sano. No frenamos el deploy por un proxy host
-          # ajeno: intentamos el reload y, si falla, avisamos con el detalle.
+          # reload aborta con exit 1. Eso es GRAVE aca: tras --force-recreate el
+          # container de api-main cambia de IP y, si nginx no recarga, NPM sigue
+          # sirviendo el IP viejo → 502 en TODO el API de MeatManager. Por eso el
+          # reload TIENE que concretarse. Si un proxy host ajeno (ya caido, ya
+          # dando 502) bloquea el reload, lo deshabilitamos temporalmente para
+          # poder recargar y re-resolver el upstream de MeatManager.
           set +e
-          out="$(docker exec nginx-proxy-manager nginx -s reload 2>&1)"
-          rc=$?
-          echo "$out"
+          for i in $(seq 1 10); do
+            out="$(docker exec nginx-proxy-manager nginx -s reload 2>&1)"
+            rc=$?
+            [ "$rc" -eq 0 ] && break
+            echo "Reload falló (intento $i):"
+            echo "$out"
+            # Ubicar la conf del proxy host que rompe la validacion.
+            bad="$(docker exec nginx-proxy-manager sh -c 'nginx -t 2>&1' \
+              | grep -oiE '/data/nginx/[a-z_]+/[0-9]+\.conf' | head -1)"
+            if [ -z "$bad" ]; then
+              echo "No se pudo identificar la conf culpable; corto el reintento."
+              break
+            fi
+            echo "::warning::Deshabilitando temporalmente proxy host ajeno con upstream caido: $bad (daba 502 igual). Corregir/eliminar ese host en NPM."
+            docker exec nginx-proxy-manager sh -c "mv '$bad' '$bad.disabled-by-deploy' 2>/dev/null"
+          done
           if [ "$rc" -eq 0 ]; then
             echo "nginx-proxy-manager recargado OK"
           else
-            echo "::warning::No se pudo recargar nginx-proxy-manager (exit $rc). El stack de MeatManager ya esta desplegado y sano; esto suele deberse a un upstream de OTRO sitio detras de NPM (ver detalle arriba). Revisar ese proxy host / contenedor."
+            echo "::error::No se pudo recargar nginx-proxy-manager (exit $rc). MeatManager puede quedar 502."
           fi
           exit 0
 
