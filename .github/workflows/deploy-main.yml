@@ -118,7 +118,22 @@ jobs:
           # indefinida y queda sirviendo 502s al IP viejo. Reload graceful
           # (~50ms, sin downtime) re-resuelve los upstream sin afectar a
           # BarManager/KioskManager/admin/portainer que tambien estan detras.
-          docker exec nginx-proxy-manager nginx -s reload
+          #
+          # OJO: `nginx -s reload` valida TODA la config de NPM. Si OTRO sitio
+          # detras del mismo NPM (no MeatManager) tiene un upstream caido, el
+          # reload aborta con exit 1 y hacia fallar este deploy aunque el stack
+          # de MeatManager ya este sano. No frenamos el deploy por un proxy host
+          # ajeno: intentamos el reload y, si falla, avisamos con el detalle.
+          set +e
+          out="$(docker exec nginx-proxy-manager nginx -s reload 2>&1)"
+          rc=$?
+          echo "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "nginx-proxy-manager recargado OK"
+          else
+            echo "::warning::No se pudo recargar nginx-proxy-manager (exit $rc). El stack de MeatManager ya esta desplegado y sano; esto suele deberse a un upstream de OTRO sitio detras de NPM (ver detalle arriba). Revisar ese proxy host / contenedor."
+          fi
+          exit 0
 
       - name: Post-deploy diagnostics
         if: always()
