@@ -5450,6 +5450,25 @@ function getSchemaTables() {
             UNIQUE KEY uniq_deleted_sales_history_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_deleted_sales_history_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS sale_payment_method_changes (
+            id                       INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            sale_id                  INT,
+            branch_id                INT,
+            changed_at               DATETIME,
+            changed_by_user_id       INT,
+            changed_by_username      VARCHAR(100),
+            old_payment_method       VARCHAR(100),
+            old_payment_method_type  VARCHAR(50),
+            new_payment_method       VARCHAR(100),
+            new_payment_method_type  VARCHAR(50),
+            amount                   DECIMAL(12,2),
+            client_id                INT,
+            reason                   VARCHAR(255),
+            UNIQUE KEY uniq_sale_payment_method_changes_tenant_id (\`${TENANT_COLUMN}\`, id),
+            INDEX idx_sale_payment_method_changes_tenant (\`${TENANT_COLUMN}\`),
+            INDEX idx_sale_payment_method_changes_sale (\`${TENANT_COLUMN}\`, sale_id)
+        )`,
         `CREATE TABLE IF NOT EXISTS branch_stock_snapshots (
             id              INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -10869,6 +10888,301 @@ app.delete('/api/ventas/:id', verifyFirebaseToken, async (req, res) => {
     }
 });
 
+// ── RUTA: POST /api/ventas/:id/cambiar-medio-pago ──────────────────────────
+// Cambia el MEDIO DE PAGO de una venta ya registrada, SIN borrarla ni recargar
+// los items a mano. Conceptualmente: revierte el efecto en plata del medio viejo
+// y aplica el del medio nuevo, todo en una sola transacción auditada. Reusa los
+// mismos helpers que POST venta y reverseSaleTx (buildCajaPartsFromSale /
+// getCurrentAccountAmountFromSale / applyClientBalanceDelta), de modo que el
+// arqueo del día se ajusta solo (baja un medio, sube el otro) sin cálculos nuevos.
+//
+// Un ticket con pago MIXTO se pasa a un ÚNICO medio (se revierte todo el desglose
+// y se aplica el medio nuevo).
+//
+// Restricciones de seguridad:
+//   - Solo administradores (isAdminAccessContext); se valida en el servidor.
+//   - Solo si la caja del día de la venta sigue ABIERTA (sin fila en cash_closures
+//     para esa fecha/sucursal); cambiar un día ya cerrado descuadraría un arqueo
+//     histórico ya conciliado.
+//
+// Los dos movimientos de caja (reversa + nuevo cobro) se fechan en el día de la
+// venta, así el cambio queda contenido en el arqueo de ESE día y no toca ningún otro.
+//
+// Body: { payment_method, payment_method_id?, client_id?, reason? }
+app.post('/api/ventas/:id/cambiar-medio-pago', verifyFirebaseToken, async (req, res) => {
+    const saleId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(saleId) || saleId <= 0) {
+        return res.status(400).json({ error: 'id inválido' });
+    }
+    const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+    const pool = getTenantPool(dbName);
+    const conn = await pool.getConnection();
+    try {
+        await conn.beginTransaction();
+
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) assertClientAccess(accessContext);
+
+        // Operación sensible (reescribe caja / saldo de cliente): SOLO administradores.
+        if (!isAdminAccessContext(accessContext)) {
+            await conn.rollback();
+            conn.release();
+            return res.status(403).json({
+                code: 'CAMBIO_MEDIO_NEEDS_ADMIN',
+                error: 'Solo un administrador puede cambiar el medio de pago de una venta.',
+            });
+        }
+
+        const newMethodNameRaw = String(req.body?.payment_method || '').trim();
+        if (!newMethodNameRaw) {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'payment_method es requerido' });
+        }
+        const bodyMethodId = Number.parseInt(req.body?.payment_method_id, 10);
+        const requestedClientId = Number.parseInt(req.body?.client_id, 10);
+        const reason = (req.body?.reason && String(req.body.reason).trim())
+            ? String(req.body.reason).trim().slice(0, 255)
+            : null;
+
+        // 1. Cargar la venta
+        const [[venta]] = await conn.query(
+            `SELECT * FROM ventas WHERE tenant_id = ? AND id = ? LIMIT 1`,
+            [tenantId, saleId]
+        );
+        if (!venta) {
+            await conn.rollback();
+            conn.release();
+            return res.status(404).json({ error: 'Venta no encontrada' });
+        }
+
+        // 2. Resolver el medio NUEVO (nombre + tipo canónico). Si vino
+        //    payment_method_id, tomamos su nombre/tipo del catálogo; si no,
+        //    inferimos el tipo por el nombre (mismo criterio que el resto de la app).
+        let newMethodName = newMethodNameRaw;
+        let newMethodType = null;
+        let newMethodId = Number.isFinite(bodyMethodId) && bodyMethodId > 0 ? bodyMethodId : null;
+        if (newMethodId) {
+            const [[pm]] = await conn.query(
+                `SELECT id, name, type FROM payment_methods WHERE tenant_id = ? AND id = ? LIMIT 1`,
+                [tenantId, newMethodId]
+            );
+            if (pm) {
+                newMethodName = String(pm.name || newMethodNameRaw).trim();
+                newMethodType = pm.type ? String(pm.type).trim() : null;
+            }
+        }
+        if (!newMethodType) newMethodType = inferPaymentTypeByName(newMethodName);
+
+        // 3. Medio VIEJO (desglose actual de la venta)
+        const oldBreakdown = (() => {
+            try {
+                if (!venta.payment_breakdown) return null;
+                return typeof venta.payment_breakdown === 'string'
+                    ? JSON.parse(venta.payment_breakdown)
+                    : venta.payment_breakdown;
+            } catch { return null; }
+        })();
+        const oldMethodName = String(venta.payment_method || '').trim();
+        const oldMethodType = inferPaymentTypeByName(oldMethodName);
+
+        // No-op: mismo medio (por nombre) y sin desglose mixto -> nada que cambiar.
+        const sameName = oldMethodName.toLowerCase() === newMethodName.toLowerCase();
+        const isMixed = Array.isArray(oldBreakdown) && oldBreakdown.length > 1;
+        if (sameName && !isMixed) {
+            await conn.rollback();
+            conn.release();
+            return res.status(400).json({ error: 'La venta ya está registrada con ese medio de pago.' });
+        }
+
+        // 4. Guardia de CAJA ABIERTA: si el día de la venta ya fue cerrado, no se toca.
+        //    (fail-closed: cualquier cierre de esa fecha/sucursal bloquea el cambio).
+        const saleDateStr = normalizeCashSummaryDate(venta.date);
+        const branchScopeSql = venta.branch_id ? 'AND branch_id = ?' : 'AND branch_id IS NULL';
+        const branchScopeParams = venta.branch_id ? [venta.branch_id] : [];
+        const [[closure]] = await conn.query(
+            `SELECT id FROM cash_closures
+             WHERE tenant_id = ? AND closure_date = ? ${branchScopeSql}
+             LIMIT 1`,
+            [tenantId, saleDateStr, ...branchScopeParams]
+        );
+        if (closure) {
+            await conn.rollback();
+            conn.release();
+            return res.status(409).json({
+                code: 'CAJA_CERRADA',
+                error: 'La caja de ese día ya fue cerrada; no se puede cambiar el medio de pago.',
+            });
+        }
+
+        const saleTotal = parseFloat(venta.total) || 0;
+        const newIsCurrentAccount = isCurrentAccountPayment(newMethodName, newMethodType);
+        // Fecha de los movimientos de caja: la de la venta, para que el cambio quede
+        // contenido en el arqueo de ese mismo día (no en el de hoy si difieren).
+        const cajaDate = venta.date || new Date();
+        const saleReceiptLabel = venta.receipt_code
+            || (venta.receipt_number ? `Ticket ${venta.receipt_number}` : `Venta #${saleId}`);
+
+        // Cliente destino si el nuevo medio es cuenta corriente.
+        let targetClientId = null;
+        if (newIsCurrentAccount) {
+            targetClientId = Number.isFinite(requestedClientId) && requestedClientId > 0
+                ? requestedClientId
+                : (venta.clientId ? Number(venta.clientId) : null);
+            if (!targetClientId) {
+                await conn.rollback();
+                conn.release();
+                return res.status(409).json({
+                    code: 'CC_NEEDS_CLIENT',
+                    error: 'Para pasar a Cuenta Corriente hay que indicar el cliente.',
+                });
+            }
+            await assertClientBelongsToBranch(conn, {
+                tenantId,
+                clientId: targetClientId,
+                branchId: venta.branch_id || null,
+                label: 'cliente de cuenta corriente',
+            });
+        }
+
+        // ── Reversa del medio VIEJO ────────────────────────────────────────────
+        // a) Contramovimiento de caja por cada parte que tocaba caja (no cta cte).
+        const reversalParts = buildCajaPartsFromSale({
+            paymentMethod: venta.payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: oldBreakdown,
+            totalAmount: saleTotal,
+        });
+        for (const part of reversalParts) {
+            await conn.query(
+                `INSERT INTO caja_movimientos
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                 VALUES (?, 'anulacion_venta', ?, 'Cambio medio de pago', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?, 'sale_reversal', 'ventas', ?, CONCAT('sale_', ?))`,
+                [
+                    tenantId,
+                    parseFloat(part.amount) || 0,
+                    `Reversa (cambio de medio) ${saleReceiptLabel}`,
+                    part.methodName,
+                    part.methodType || inferPaymentTypeByName(part.methodName),
+                    cajaDate,
+                    venta.clientId || null,
+                    venta.branch_id || null,
+                    venta.receipt_number || null,
+                    venta.receipt_code || null,
+                    saleId,
+                    saleId,
+                    saleId,
+                ]
+            );
+        }
+        // b) Revertir saldo de cta cte del medio viejo (si el viejo era cuenta corriente).
+        const oldCurrentAccountAmount = getCurrentAccountAmountFromSale({
+            paymentMethod: venta.payment_method,
+            paymentMethodType: null,
+            paymentBreakdown: oldBreakdown,
+            totalAmount: saleTotal,
+        });
+        if (oldCurrentAccountAmount > 0 && venta.clientId) {
+            await applyClientBalanceDelta(conn, {
+                tenantId,
+                clientId: venta.clientId,
+                branchId: venta.branch_id || null,
+                delta: oldCurrentAccountAmount,   // devuelve el saldo que había generado la venta
+            });
+        }
+
+        // ── Aplicación del medio NUEVO (único, sin desglose mixto) ──────────────
+        const newParts = buildCajaPartsFromSale({
+            paymentMethod: newMethodName,
+            paymentMethodType: newMethodType,
+            paymentBreakdown: null,
+            totalAmount: saleTotal,
+        });
+        for (const part of newParts) {
+            await conn.query(
+                `INSERT INTO caja_movimientos
+                 (tenant_id, type, amount, category, description, payment_method, payment_method_type, cash_account, date, client_id, branch_id, receipt_number, receipt_code, sale_id, money_flow_kind, origin_table, origin_id, origin_group_id)
+                 VALUES (?, 'venta', ?, 'Cambio medio de pago', ?, ?, ?, 'principal', ?, ?, ?, ?, ?, ?, 'sale_collection', 'ventas', ?, CONCAT('sale_', ?))`,
+                [
+                    tenantId,
+                    parseFloat(part.amount) || 0,
+                    `Cobro (cambio de medio) ${saleReceiptLabel}`,
+                    part.methodName,
+                    part.methodType || inferPaymentTypeByName(part.methodName),
+                    cajaDate,
+                    (newIsCurrentAccount ? targetClientId : venta.clientId) || null,
+                    venta.branch_id || null,
+                    venta.receipt_number || null,
+                    venta.receipt_code || null,
+                    saleId,
+                    saleId,
+                    saleId,
+                ]
+            );
+        }
+        // Nuevo saldo de cta cte (si el nuevo medio es cuenta corriente).
+        if (newIsCurrentAccount) {
+            await applyClientBalanceDelta(conn, {
+                tenantId,
+                clientId: targetClientId,
+                branchId: venta.branch_id || null,
+                delta: -saleTotal,
+            });
+        }
+
+        // ── Actualizar la venta ────────────────────────────────────────────────
+        // Pasa a un único medio: payment_breakdown = NULL. clientId: si el nuevo medio
+        // es cta cte apunta al cliente destino; si no, se conserva el que tenía.
+        const newClientIdForSale = newIsCurrentAccount ? targetClientId : (venta.clientId || null);
+        await conn.query(
+            `UPDATE ventas
+             SET payment_method = ?, payment_method_id = ?, payment_breakdown = NULL, clientId = ?
+             WHERE tenant_id = ? AND id = ?`,
+            [newMethodName, newMethodId, newClientIdForSale, tenantId, saleId]
+        );
+
+        // ── Auditoría (quién, cuándo, de qué medio a qué medio, por cuánto) ─────
+        const changedByUserId = Number.parseInt(accessContext?.user?.id, 10);
+        const changedByUsername = (accessContext?.user?.name && String(accessContext.user.name).trim())
+            || (accessContext?.user?.email && String(accessContext.user.email).trim())
+            || 'Sistema';
+        await conn.query(
+            `INSERT INTO sale_payment_method_changes
+             (tenant_id, sale_id, branch_id, changed_at, changed_by_user_id, changed_by_username,
+              old_payment_method, old_payment_method_type, new_payment_method, new_payment_method_type,
+              amount, client_id, reason)
+             VALUES (?, ?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [
+                tenantId, saleId, venta.branch_id || null,
+                Number.isFinite(changedByUserId) && changedByUserId > 0 ? changedByUserId : null,
+                changedByUsername,
+                oldMethodName || null, oldMethodType,
+                newMethodName, newMethodType,
+                saleTotal, newClientIdForSale, reason,
+            ]
+        );
+
+        await conn.commit();
+        conn.release();
+        return res.json({
+            ok: true,
+            sale_id: saleId,
+            old_payment_method: oldMethodName,
+            new_payment_method: newMethodName,
+        });
+    } catch (err) {
+        try { await conn.rollback(); } catch (_) {}
+        conn.release();
+        console.error('[POST /api/ventas/:id/cambiar-medio-pago ERROR]', err.message);
+        return res.status(err.statusCode || 500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: GET /api/users ───────────────────────────────────────────────────
 // Devuelve usuarios y permisos en un solo payload para login/seguridad.
 app.get('/api/users', verifyFirebaseToken, async (req, res) => {
@@ -14920,7 +15234,9 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 t.charged_sale_id,
                 t.charged_amount,
                 t.voided_sale_id,
-                cv.id AS charged_venta_id
+                cv.id AS charged_venta_id,
+                cv.payment_method AS charged_payment_method,
+                cv.clientId AS charged_client_id
             FROM scale_sales_log l
             LEFT JOIN scale_bridge_ticket_map t
                    ON t.device_id = l.device_id
@@ -14971,6 +15287,11 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 captured_at: r.captured_at,
                 status,
                 origin: 'balanza',
+                // sale_id / payment_method: solo cuando la venta del cobro existe.
+                // Habilitan "cambiar medio de pago" desde el Detalle de Ventas.
+                sale_id: chargedSaleExists ? r.charged_venta_id : null,
+                payment_method: chargedSaleExists ? (r.charged_payment_method || null) : null,
+                client_id: chargedSaleExists ? (r.charged_client_id || null) : null,
                 items: Array.isArray(items) ? items : [],
             };
         });
@@ -15000,7 +15321,8 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
         }
 
         const [ventaRows] = await pool.query(`
-            SELECT v.id, v.date, v.total, v.receipt_number, v.receipt_code, v.source
+            SELECT v.id, v.date, v.total, v.receipt_number, v.receipt_code, v.source,
+                   v.payment_method, v.clientId
             FROM ventas v
             WHERE v.tenant_id = ?
               AND (v.ticket_barcode IS NULL OR v.ticket_barcode = '')
@@ -15056,6 +15378,9 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 captured_at: v.date,
                 status: 'cobrado',            // una venta manual registrada es una venta concretada
                 origin: 'manual',
+                sale_id: v.id,
+                payment_method: v.payment_method || null,
+                client_id: v.clientId || null,
                 items,
             };
         });

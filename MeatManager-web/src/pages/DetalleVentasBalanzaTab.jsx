@@ -1,7 +1,8 @@
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft, Ban } from 'lucide-react';
+import { Search, AlertTriangle, ShoppingBag, ChevronRight, Printer, ArrowLeft, Ban, CreditCard } from 'lucide-react';
 import { apiFetch, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
-import { useUser } from '../context/UserContext';
+import { isEffectiveAdminUser, useUser } from '../context/UserContext';
+import CambiarMedioPagoModal from '../components/CambiarMedioPagoModal';
 import './ConciliacionBalanzaTab.css';
 
 const fmt = (n) => new Intl.NumberFormat('es-AR', { style: 'currency', currency: 'ARS', maximumFractionDigits: 0 }).format(n || 0);
@@ -122,8 +123,11 @@ const imprimirTicket = (t) => {
 };
 
 export default function DetalleVentasBalanzaTab() {
-    const { activeBranch, currentUser } = useUser();
+    const { activeBranch, currentUser, accessProfile } = useUser();
+    const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const branchId = Number(activeBranch?.id ?? 0);
+    // Venta cuyo medio de pago se está por cambiar (abre el modal). Solo admin.
+    const [changeMethodSale, setChangeMethodSale] = useState(null);
     const [dateFrom, setDateFrom] = useState(todayStr);
     const [dateTo, setDateTo] = useState(todayStr);
     const [loading, setLoading] = useState(false);
@@ -338,6 +342,20 @@ export default function DetalleVentasBalanzaTab() {
                             <button className="concil-action-btn primary" onClick={() => imprimirTicket(detail)}>
                                 <Printer size={15} /> Imprimir
                             </button>
+                            {isAdmin && detail.status === 'cobrado' && detail.sale_id && (
+                                <button
+                                    className="concil-action-btn"
+                                    onClick={() => setChangeMethodSale({
+                                        id: detail.sale_id,
+                                        total: importeTicket(detail),
+                                        payment_method: detail.payment_method,
+                                        clientId: detail.client_id,
+                                    })}
+                                    title="Cambiar medio de pago"
+                                >
+                                    <CreditCard size={15} /> Cambiar medio
+                                </button>
+                            )}
                             {detail.origin === 'balanza' && (detail.status === 'cobrado' || detail.status === 'pendiente') && (
                                 <button
                                     className="concil-action-btn danger"
@@ -394,6 +412,17 @@ export default function DetalleVentasBalanzaTab() {
                         </div>
                     )}
                 </div>
+            )}
+
+            {changeMethodSale && (
+                <CambiarMedioPagoModal
+                    sale={changeMethodSale}
+                    onClose={() => setChangeMethodSale(null)}
+                    onDone={async () => {
+                        setChangeMethodSale(null);
+                        await buscar();
+                    }}
+                />
             )}
         </div>
     );

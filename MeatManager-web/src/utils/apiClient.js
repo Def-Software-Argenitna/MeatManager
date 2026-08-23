@@ -782,6 +782,24 @@ export const deleteVenta = async (id, { deleted_by_user_id, deleted_by_username 
     return res.json();
 };
 
+// Cambia el medio de pago de una venta YA registrada, sin borrarla ni recargar
+// items. El servidor revierte el efecto en plata del medio viejo y aplica el del
+// nuevo en una sola transacción (caja + saldo cta cte). Solo administradores y
+// solo con la caja del día abierta (el backend valida ambas cosas).
+export const changeSalePaymentMethod = async (saleId, { payment_method, payment_method_id, client_id, reason } = {}) => {
+    const res = await apiFetch(`/api/ventas/${encodeURIComponent(saleId)}/cambiar-medio-pago`, {
+        method: 'POST',
+        body: JSON.stringify({ payment_method, payment_method_id, client_id, reason }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const error = new Error(err.error || 'No se pudo cambiar el medio de pago');
+        error.code = err.code || null;
+        throw error;
+    }
+    return res.json();
+};
+
 // Anula tickets de balanza PENDIENTES (no cobrados). Solo cambia el estado a
 // 'voided' — no mueve plata ni stock. Acepta un barcode o un array.
 export const anularConciliacionTickets = async (ticket_barcodes, { anulado_by_user_id, anulado_by_username, reason, authorization_id, authorization_code } = {}) => {

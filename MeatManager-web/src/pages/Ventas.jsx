@@ -11,6 +11,7 @@ import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, findProductByPlu, findPromotionByPlu, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
 import { buildCartPricing, normalizePluCode, normalizePromotions } from '../utils/promotions';
 import PaymentMethodIcon from '../components/PaymentMethodIcon';
+import CambiarMedioPagoModal from '../components/CambiarMedioPagoModal';
 import { isDigitalPaymentMethodLike, saleUsesOnlyDigitalPayments, useHiddenDigitalPaymentFilter } from '../hooks/useHiddenDigitalPayments';
 import { scaleService } from '../utils/SerialScaleService';
 import { CERDO_CUTS, PESCADO_CUTS, POLLO_CUTS, VACA_CUTS } from './despostadaData';
@@ -168,6 +169,8 @@ const Ventas = () => {
     const [deleteAuthorizationCode, setDeleteAuthorizationCode] = useState('');
     const [deleteCodeConfigured, setDeleteCodeConfigured] = useState(false);
     const [deletingTicketId, setDeletingTicketId] = useState(null);
+    // Venta cuyo medio de pago se está por cambiar (abre el modal). Solo admin.
+    const [changeMethodSale, setChangeMethodSale] = useState(null);
     const [deleteModalRefreshTick, setDeleteModalRefreshTick] = useState(0);
     const [showTicketPreview, setShowTicketPreview] = useState(false);
     const [ticketPreviewItems, setTicketPreviewItems] = useState([]);
@@ -3890,18 +3893,39 @@ const Ventas = () => {
                                         </button>
                                     </form>
                                 ) : (
-                                    (deleteCodeConfigured || isAdmin) && (
-                                        <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
-                                            style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem', flexShrink: 0 }}>
-                                            <Trash2 size={15} />
-                                        </button>
-                                    )
+                                    <div style={{ display: 'flex', gap: '0.4rem', flexShrink: 0 }}>
+                                        {isAdmin && (
+                                            <button onClick={() => setChangeMethodSale(s)} title="Cambiar medio de pago"
+                                                style={{ background: 'none', border: '1px solid rgba(59,130,246,0.35)', borderRadius: '6px', color: '#3b82f6', cursor: 'pointer', padding: '0.3rem 0.55rem' }}>
+                                                <CreditCard size={15} />
+                                            </button>
+                                        )}
+                                        {(deleteCodeConfigured || isAdmin) && (
+                                            <button onClick={() => { setConfirmDeleteTicketId(s.id); setDeleteAuthorizationCode(''); }} title="Eliminar ticket"
+                                                style={{ background: 'none', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '6px', color: '#ef4444', cursor: 'pointer', padding: '0.3rem 0.55rem' }}>
+                                                <Trash2 size={15} />
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         ))}
                     </div>
                 </div>
             </div>
+        )}
+
+        {/* ─── MODAL CAMBIAR MEDIO DE PAGO (solo admin) ───────────────────── */}
+        {changeMethodSale && (
+            <CambiarMedioPagoModal
+                sale={changeMethodSale}
+                onClose={() => setChangeMethodSale(null)}
+                onDone={async (result) => {
+                    setChangeMethodSale(null);
+                    await refreshVentasData();
+                    showToast(`✅ Medio de pago cambiado a ${result?.new_payment_method || 'nuevo medio'}.`, 'success');
+                }}
+            />
         )}
 
         {/* ─── MODAL PREVIEW TICKET MULTI-ITEM (balanza) ──────────────────── */}
