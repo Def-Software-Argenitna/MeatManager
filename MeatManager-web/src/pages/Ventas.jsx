@@ -2725,7 +2725,7 @@ const Ventas = () => {
                             variant="secondary"
                             onClick={() => { setShowDeleteTicketModal(true); setDeleteTicketSearch(''); setConfirmDeleteTicketId(null); }}
                         >
-                            ELIMINAR TICKET
+                            TICKETS DEL DÍA
                         </Button>
                         <Button variant="danger" onClick={async () => {
                             const scaleBarcodes = pendingTicketBarcodes.length > 0
@@ -3765,9 +3765,9 @@ const Ventas = () => {
                     {/* Header */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>🗑️ Eliminar Ticket</h2>
+                            <h2 style={{ margin: 0, fontSize: '1.1rem' }}>🧾 Tickets del día</h2>
                             <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>
-                                Tickets del día — {todayRecentSales.length} registrados
+                                {todayRecentSales.length} registrados — 💳 cambiar medio de pago · 🗑️ eliminar
                             </p>
                         </div>
                         <button
