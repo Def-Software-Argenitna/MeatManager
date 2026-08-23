@@ -130,9 +130,10 @@ export default function CambiarMedioPagoModal({ sale, onClose, onDone }) {
 
     return (
         <div
+            className="app-modal-overlay"
             onClick={onClose}
             style={{
-                position: 'fixed', inset: 0, zIndex: 10000,
+                position: 'fixed', inset: 0,
                 background: 'rgba(0,0,0,0.6)',
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
                 padding: '1rem',
