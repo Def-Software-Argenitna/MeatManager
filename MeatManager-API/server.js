@@ -14847,6 +14847,119 @@ app.get('/api/informes/cortes-ranking', verifyFirebaseToken, async (req, res) =>
     }
 });
 
+// ── RUTA: GET /api/informes/preelaborados-ranking ────────────────────────
+// Ranking de PRE-ELABORADOS vendidos por producto (milanesas, hamburguesas,
+// chorizos, salchichas, etc.). Existe porque "cortes-ranking" filtra solo
+// vaca/cerdo/pollo y deja los pre-elaborados afuera a proposito; asi la
+// milanesa de pollo (que es categoria pre_elaborados) no aparecia en ningun
+// ranking por producto.
+//
+// Cuidado con las unidades: la columna ventas_items.quantity guarda kg o
+// unidades segun products.unit, y NO trae unidad propia. Por eso sumamos los
+// kilos SOLO de items por peso (unit='kg' o NULL) y contamos aparte los
+// vendidos por unidad, para no mezclar kg con unidades ni inflar el total.
+app.get('/api/informes/preelaborados-ranking', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: { branch_id: req.query.branch_id } })
+            : null;
+
+        // Filtro por año, mes y día (mismo criterio exacto que cortes-ranking)
+        const now = new Date();
+        const year = parseInt(req.query.year) || now.getFullYear();
+        const month = parseInt(req.query.month);
+        const day = parseInt(req.query.day);
+        let startDate, endDate;
+        if (Number.isFinite(month) && month >= 1 && month <= 12) {
+            if (Number.isFinite(day) && day >= 1 && day <= 31) {
+                startDate = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                const d = new Date(year, month - 1, day + 1);
+                endDate = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            } else {
+                startDate = `${year}-${String(month).padStart(2, '0')}-01`;
+                const nextMonth = month === 12 ? 1 : month + 1;
+                const nextYear = month === 12 ? year + 1 : year;
+                endDate = `${nextYear}-${String(nextMonth).padStart(2, '0')}-01`;
+            }
+        } else {
+            startDate = `${year}-01-01`;
+            endDate = `${year + 1}-01-01`;
+        }
+
+        const saleDate = 'COALESCE(v.date, v.created_at)';
+        const where = ['vi.tenant_id = ?', `${saleDate} >= ?`, `${saleDate} < ?`];
+        const params = [tenantId, startDate, endDate];
+
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            where.push('v.branch_id = ?');
+            params.push(resolvedBranchId);
+        }
+
+        // Solo categoria pre_elaborados. Matcheo si CUALQUIERA de los dos
+        // campos de categoria lo dice: el codigo (pc.code via category_id) o el
+        // texto (p.category, que es lo que usa la pantalla de Stock para
+        // agrupar). Uso OR y no COALESCE para no perder la milanesa si esos dos
+        // campos quedaran desincronizados. Normalizo sacando guiones y guiones
+        // bajos para tolerar 'pre_elaborados', 'pre-elaborado', 'Pre-elaborados'.
+        const normCat = (col) => `REPLACE(REPLACE(LOWER(TRIM(COALESCE(${col}, ''))), '-', ''), '_', '')`;
+        where.push(`(${normCat('pc.code')} IN ('preelaborados', 'preelaborado') OR ${normCat('p.category')} IN ('preelaborados', 'preelaborado'))`);
+
+        const [rows] = await pool.query(`
+            SELECT
+                vi.product_name AS producto,
+                ROUND(SUM(CASE WHEN COALESCE(p.unit, 'kg') = 'kg' THEN vi.quantity ELSE 0 END), 3) AS total_kg,
+                ROUND(SUM(CASE WHEN COALESCE(p.unit, 'kg') <> 'kg' THEN vi.quantity ELSE 0 END), 3) AS total_unidades,
+                ROUND(SUM(vi.subtotal), 2) AS total_vendido,
+                COUNT(DISTINCT vi.venta_id) AS veces_vendido
+            FROM ventas_items vi
+            JOIN ventas v ON v.tenant_id = vi.tenant_id AND v.id = vi.venta_id
+            JOIN products p ON p.tenant_id = vi.tenant_id AND p.id = vi.product_id
+            LEFT JOIN product_categories pc ON pc.tenant_id = p.tenant_id AND pc.id = p.category_id
+            WHERE ${where.join(' AND ')}
+            GROUP BY vi.product_name
+            ORDER BY total_kg DESC, total_vendido DESC
+        `, params);
+
+        const ranking = (Array.isArray(rows) ? rows : []).map((r) => ({
+            producto: r.producto,
+            total_kg: Number(r.total_kg) || 0,
+            total_unidades: Number(r.total_unidades) || 0,
+            total_vendido: Number(r.total_vendido) || 0,
+            veces_vendido: Number(r.veces_vendido) || 0,
+        }));
+
+        const totales = ranking.reduce((acc, r) => {
+            acc.total_kg += r.total_kg;
+            acc.total_unidades += r.total_unidades;
+            acc.total_vendido += r.total_vendido;
+            return acc;
+        }, { total_kg: 0, total_unidades: 0, total_vendido: 0 });
+
+        res.json({
+            year,
+            month: Number.isFinite(month) ? month : null,
+            day: Number.isFinite(day) ? day : null,
+            ranking,
+            totales,
+        });
+    } catch (err) {
+        console.error('[PREELABORADOS-RANKING ERROR]', err.message);
+        res.status(500).json({ error: err.message || 'Error al obtener ranking de pre-elaborados' });
+    }
+});
+
 // ── RUTA: POST /api/conciliacion/balanza/anular ──────────────────────────
 // Anula tickets de balanza PENDIENTES (estado 'open') que nunca se cobraron.
 // No mueve plata ni stock — el ticket nunca generó venta. Solo cambia el estado
