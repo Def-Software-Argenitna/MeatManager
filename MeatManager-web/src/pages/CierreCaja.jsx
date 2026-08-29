@@ -242,7 +242,13 @@ const CierreCaja = () => {
     const loadData = useCallback(async () => {
         try {
             const [movRows, pmRows, summaryRows] = await Promise.all([
-                fetchTable('caja_movimientos', { limit: 5000, orderBy: 'id', direction: 'DESC' }),
+                // Traemos SOLO los movimientos del dia seleccionado (filtro server-side).
+                // Antes se pedian "las ultimas 5000" (el servidor capa a 1000) y se
+                // filtraba por dia en memoria: en cajas con volumen, los dias viejos del
+                // mes caian fuera de la ventana y el detalle salia vacio (se veian los
+                // ultimos ~12 dias pero no el inicio del mes). El summary/acumulado sigue
+                // viniendo de /api/caja/summary, asi que el arrastre no se ve afectado.
+                fetchTable('caja_movimientos', { limit: 1000, orderBy: 'id', direction: 'DESC', date: selectedDate }),
                 fetchTable('payment_methods', { limit: 200, orderBy: 'id', direction: 'ASC' }),
                 fetchCajaSummary({
                     date: selectedDate,

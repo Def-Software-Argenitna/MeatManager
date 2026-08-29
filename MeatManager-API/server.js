@@ -8882,6 +8882,32 @@ app.get('/api/table/:table', verifyFirebaseToken, async (req, res) => {
             }
         }
 
+        // Filtro opcional por fecha para tablas con columna `date` (datetime).
+        // Sin esto, el front traia "las ultimas N filas" (cap del servidor = 1000)
+        // y filtraba por dia en memoria: en tablas con mucho volumen como
+        // caja_movimientos los dias viejos del mes quedaban fuera de la ventana
+        // (ej: se veian 18→29 pero no 1→17). Filtrando por dia en el servidor,
+        // el front trae exactamente el dia pedido sin importar el volumen total.
+        if (validCols.includes('date')) {
+            const dayRe = /^\d{4}-\d{2}-\d{2}$/;
+            const dayParam = String(req.query.date || '').trim();
+            const fromParam = String(req.query.date_from || '').trim();
+            const toParam = String(req.query.date_to || '').trim();
+            if (dayRe.test(dayParam)) {
+                extraWhere.push('`date` >= ? AND `date` <= ?');
+                extraParams.push(`${dayParam} 00:00:00`, `${dayParam} 23:59:59`);
+            } else {
+                if (dayRe.test(fromParam)) {
+                    extraWhere.push('`date` >= ?');
+                    extraParams.push(`${fromParam} 00:00:00`);
+                }
+                if (dayRe.test(toParam)) {
+                    extraWhere.push('`date` <= ?');
+                    extraParams.push(`${toParam} 23:59:59`);
+                }
+            }
+        }
+
         const whereSql = extraWhere.length > 0
             ? `${scope.sql} AND ${extraWhere.join(' AND ')}`
             : scope.sql;

@@ -319,6 +319,9 @@ export const fetchTable = async (table, options = {}) => {
     if (options.includeInactive) query.set('include_inactive', '1');
     if (options.adminGlobal) query.set('admin_global', '1');
     if (options.activeBranchId) query.set('activeBranchId', String(options.activeBranchId));
+    if (options.date) query.set('date', String(options.date));
+    if (options.dateFrom) query.set('date_from', String(options.dateFrom));
+    if (options.dateTo) query.set('date_to', String(options.dateTo));
 
     const suffix = query.toString() ? `?${query.toString()}` : '';
     const res = await apiFetch(`/api/table/${table}${suffix}`);
