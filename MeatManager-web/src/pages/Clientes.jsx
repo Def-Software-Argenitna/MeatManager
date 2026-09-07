@@ -2,11 +2,29 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Users, Search, Phone, X, UserPlus, History, ChevronLeft, ChevronRight, Check, Printer, Pencil, FileText } from 'lucide-react';
 import DirectionalReveal from '../components/DirectionalReveal';
-import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches, fetchClientCurrentAccount } from '../utils/apiClient';
+import { fetchTable, getNextRemoteReceiptData, saveTableRecord, fetchClientBranches, fetchClientCurrentAccount, fetchCajaSummary } from '../utils/apiClient';
 import { useUser, isEffectiveAdminUser } from '../context/UserContext';
 import { printCurrentAccountA4 } from '../utils/printCurrentAccountA4';
 import { Button, EmptyState, Skeleton, SkeletonLine, SkeletonCard, useToast } from '../components/ui';
 import './Clientes.css';
+
+// Fecha local YYYY-MM-DD del dia de hoy (sin corrimiento de zona horaria).
+const todayLocalStr = () => {
+    const d = new Date();
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+};
+
+// Datetime local "plano" (YYYY-MM-DD HH:MM:SS) anclado al dia elegido para el cobro.
+// Mismo criterio que CierreCaja: NO usar toISOString(), porque la conversion a UTC
+// puede correr el movimiento de dia (ej: 22:00 ART -> dia siguiente) y sacarlo de la
+// ventana diaria de la caja. Con la fecha elegida + hora actual el cobro cae en el dia
+// que la clienta indica (ej: el viernes que le pagaron, aunque lo cargue el lunes).
+const buildLocalMovementDate = (dateStr) => {
+    const stamp = new Date();
+    const pad = (v) => String(v).padStart(2, '0');
+    return `${dateStr} ${pad(stamp.getHours())}:${pad(stamp.getMinutes())}:${pad(stamp.getSeconds())}`;
+};
 
 const currentMonth = () => {
     const n = new Date();
@@ -165,6 +183,8 @@ const Clientes = () => {
     const [payInput, setPayInput] = useState('');
     const [payLoading, setPayLoading] = useState(false);
     const [paymentMethodId, setPaymentMethodId] = useState('');
+    const [payDate, setPayDate] = useState(() => todayLocalStr());
+    const [payDateClosed, setPayDateClosed] = useState(false);
     const [paymentQuickMode, setPaymentQuickMode] = useState(false);
     const [expandedLedgerRowId, setExpandedLedgerRowId] = useState(null);
     const [newClient, setNewClient] = useState(emptyClientForm);
@@ -321,9 +341,31 @@ const Clientes = () => {
         setHistoryMonth(currentMonth());
         setPayInput('');
         setPaymentMethodId('');
+        setPayDate(todayLocalStr());
+        setPayDateClosed(false);
         setExpandedLedgerRowId(null);
         setPaymentQuickMode(Boolean(options.openPayment));
     };
+
+    // Avisa si la fecha elegida para el cobro cae en un dia con la caja ya cerrada.
+    // No bloquea (la clienta decide), pero al Cobrar pedimos confirmacion (ver handlePayment).
+    useEffect(() => {
+        if (!historyClient || !payDate) { setPayDateClosed(false); return; }
+        let cancelled = false;
+        (async () => {
+            try {
+                const summary = await fetchCajaSummary({
+                    date: payDate,
+                    ...(currentBranchId ? { branchId: currentBranchId } : {}),
+                });
+                const closures = Array.isArray(summary?.closures) ? summary.closures : [];
+                if (!cancelled) setPayDateClosed(closures.length > 0);
+            } catch {
+                if (!cancelled) setPayDateClosed(false);
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [payDate, historyClient, currentBranchId]);
 
     useEffect(() => {
         if (!historyClient || !paymentQuickMode) return;
@@ -459,7 +501,17 @@ const Clientes = () => {
     const handlePayment = async () => {
         const payAmount = parseFloat(payInput);
         const selectedPaymentMethod = paymentMethods?.find((method) => String(method.id) === String(paymentMethodId));
-        if (isNaN(payAmount) || payAmount <= 0 || !historyClient || !selectedPaymentMethod) return;
+        if (isNaN(payAmount) || payAmount <= 0 || !historyClient || !selectedPaymentMethod || !payDate) return;
+        // Aviso: si el dia elegido ya tiene la caja cerrada, el cobro le va a mover el
+        // arqueo de ese dia. No lo bloqueamos, pero pedimos confirmacion explicita.
+        if (payDateClosed) {
+            const proceed = window.confirm(
+                `La caja del ${payDate} ya esta cerrada.\n\n`
+                + `Si registras el cobro con esa fecha, va a modificar el arqueo de ese dia.\n\n`
+                + `Registrar el cobro igual?`
+            );
+            if (!proceed) return;
+        }
         setPayLoading(true);
         try {
             const client = clients.find((item) => Number(item.id) === Number(historyClient.id));
@@ -484,7 +536,7 @@ const Clientes = () => {
                 payment_method: selectedPaymentMethod.name,
                 payment_method_id: selectedPaymentMethod.id,
                 description: `Cobro ${paymentReceiptCode} de cliente: ${client.name} (${selectedPaymentMethod.name})`,
-                date: new Date().toISOString(),
+                date: buildLocalMovementDate(payDate),
                 synced: 0
             });
             setPayInput('');
@@ -900,6 +952,25 @@ const Clientes = () => {
                                         <option key={method.id} value={method.id}>{method.name}</option>
                                     ))}
                                 </select>
+                            </div>
+                            <div style={{ marginBottom: '0.75rem' }}>
+                                <label style={{ display: 'block', fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.25rem' }}>
+                                    Fecha del cobro
+                                </label>
+                                <input
+                                    type="date"
+                                    className="neo-input"
+                                    style={{ marginBottom: 0 }}
+                                    value={payDate}
+                                    max={todayLocalStr()}
+                                    onChange={(e) => setPayDate(e.target.value)}
+                                />
+                                {payDateClosed && (
+                                    <div style={{ marginTop: '0.35rem', fontSize: '0.75rem', color: '#f59e0b', display: 'flex', alignItems: 'flex-start', gap: '0.35rem', lineHeight: 1.3 }}>
+                                        <span>⚠️</span>
+                                        <span>La caja de ese día ya está cerrada. Si cobrás con esta fecha, se modifica el arqueo de ese día.</span>
+                                    </div>
+                                )}
                             </div>
                             <div className="clients-pay-box__row">
                                 <div className="clients-pay-box__input-wrap">
