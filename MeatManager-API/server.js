@@ -15435,12 +15435,25 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             };
         });
 
-        // ── Ventas MANUALES (cargadas a mano, sin ticket de balanza) ──────────
-        // El Detalle de Ventas es el control de TODO lo vendido, no solo de la
-        // balanza. Las ventas manuales se guardan en `ventas`/`ventas_items` y
-        // nunca pasan por `scale_sales_log`, asi que las sumamos aca.
-        // Dedup: las ventas originadas en balanza SIEMPRE llevan ticket_barcode
-        // (y ya salen arriba desde scale_sales_log); las manuales lo tienen NULL.
+        // ── Ventas de `ventas` que faltan arriba ──────────────────────────────
+        // El Detalle de Ventas es el control de TODO lo vendido. Sumamos desde
+        // `ventas`/`ventas_items`:
+        //   • ventas MANUALES (sin ticket de balanza, ticket_barcode NULL), y
+        //   • ventas de BALANZA "huerfanas": cobros que quedaron en `ventas` pero
+        //     cuyo ticket NO tiene fila en scale_sales_log (la captura en vivo del
+        //     bridge fallo y el reconcile no llego a repoblarlo). Sin esto, esa
+        //     venta existe en "Tickets del dia" pero DESAPARECE de aca y ni siquiera
+        //     se le puede cambiar el medio de pago (el sintoma que reporta la clienta).
+        // Dedup por sale_id: si el cobro ya salio arriba (scaleTickets con sale_id
+        // seteado desde scale_sales_log), no lo repetimos; el resto de `ventas` del
+        // rango se recupera y se muestra igual.
+        const shownSaleIds = new Set(
+            scaleTickets
+                .map((t) => t.sale_id)
+                .filter((v) => v != null)
+                .map((v) => Number(v))
+        );
+
         const manualParams = [tenantId];
         let manualBranchFilter = '';
         if (Number.isFinite(scopedBranchId) && scopedBranchId > 0) {
@@ -15461,17 +15474,20 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
 
         const [ventaRows] = await pool.query(`
             SELECT v.id, v.date, v.total, v.receipt_number, v.receipt_code, v.source,
-                   v.payment_method, v.clientId
+                   v.payment_method, v.clientId, v.ticket_barcode
             FROM ventas v
             WHERE v.tenant_id = ?
-              AND (v.ticket_barcode IS NULL OR v.ticket_barcode = '')
               ${manualBranchFilter}${manualDateFilter}
             ORDER BY v.date DESC, v.id DESC
         `, manualParams);
 
+        // Excluye las ventas que ya salieron arriba desde scale_sales_log (dedup por id).
+        // Lo que queda: ventas manuales + ventas de balanza sin fila en el log.
+        const recoveredRows = ventaRows.filter((v) => !shownSaleIds.has(Number(v.id)));
+
         const itemsByVenta = new Map();
-        if (ventaRows.length > 0) {
-            const ventaIds = ventaRows.map((v) => v.id);
+        if (recoveredRows.length > 0) {
+            const ventaIds = recoveredRows.map((v) => v.id);
             const inList = ventaIds.map(() => '?').join(',');
             const [itemRows] = await pool.query(`
                 SELECT vi.venta_id, vi.product_name, vi.quantity, vi.price, vi.subtotal,
@@ -15502,21 +15518,23 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             }
         }
 
-        const manualTickets = ventaRows.map((v) => {
+        const manualTickets = recoveredRows.map((v) => {
             const items = itemsByVenta.get(v.id) || [];
+            const hasBarcode = v.ticket_barcode != null && String(v.ticket_barcode).trim() !== '';
             return {
                 id: `v${v.id}`,               // prefijo para no chocar con los IDs de balanza
-                ticket_id: v.receipt_number || v.receipt_code || `Manual #${v.id}`,
-                ticket_barcode: null,
-                printed_ticket_barcode: null,
+                ticket_id: v.receipt_number || v.receipt_code || (hasBarcode ? String(v.ticket_barcode) : `Manual #${v.id}`),
+                ticket_barcode: hasBarcode ? v.ticket_barcode : null,
+                printed_ticket_barcode: hasBarcode ? v.ticket_barcode : null,
                 vendor_code: null,
                 vendor_name: null,
                 sale_at: v.date,
                 total_amount: v.total,
                 item_count: items.length,
                 captured_at: v.date,
-                status: 'cobrado',            // una venta manual registrada es una venta concretada
-                origin: 'manual',
+                status: 'cobrado',            // una venta registrada en `ventas` es una venta concretada
+                // origin balanza = recuperada porque faltaba en scale_sales_log; manual = cargada a mano
+                origin: hasBarcode ? 'balanza' : 'manual',
                 sale_id: v.id,
                 payment_method: v.payment_method || null,
                 client_id: v.clientId || null,
