@@ -213,11 +213,18 @@ export default function DetalleVentasBalanzaTab() {
     const filtered = useMemo(() => {
         const q = filterText.trim().toLowerCase();
         if (!q) return tickets;
-        return tickets.filter((t) => (
-            String(t.printed_ticket_barcode || '').toLowerCase().includes(q)
-            || String(t.ticket_id || '').toLowerCase().includes(q)
-            || String(t.vendor_name || '').toLowerCase().includes(q)
-        ));
+        // qDigits: la clienta busca por IMPORTE escribiendo "19" (por $19.xxx). El
+        // filtro tambien matchea contra el importe mostrado, ignorando separadores.
+        const qDigits = q.replace(/[^\d]/g, '');
+        return tickets.filter((t) => {
+            const amountStr = String(Math.round(importeTicket(t) || 0));
+            return (
+                String(t.printed_ticket_barcode || '').toLowerCase().includes(q)
+                || String(t.ticket_id || '').toLowerCase().includes(q)
+                || String(t.vendor_name || '').toLowerCase().includes(q)
+                || (qDigits !== '' && amountStr.includes(qDigits))
+            );
+        });
     }, [tickets, filterText]);
 
     const totalDia = useMemo(() => filtered.reduce((acc, t) => (
