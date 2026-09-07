@@ -10443,7 +10443,29 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 }
             }
 
-            if (itemsHaveTags) {
+            // RED DE SEGURIDAD anti-"lumping" (etiquetas corruptas): un cliente con el
+            // bundle web viejo/cacheado puede etiquetar TODOS los renglones con el primer
+            // ticket (barcodes[0]); entonces ese ticket quedaria charged por MAS que su
+            // total impreso y el/los otros open sin cobrar (bug reportado 2026-09-07:
+            // dos tickets $9.225 + $9.405, el primero cobrado por $18.630 y el segundo
+            // pegado). En un cobro parcial LEGITIMO se sacan renglones, asi que un ticket
+            // SIEMPRE se cobra <= su total_amount. Si algun ticket resuelto quedaria por
+            // ENCIMA de su total, las etiquetas no son confiables: caemos a cobrar cada
+            // ticket por su propio total_amount (todos charged, ninguno pegado). No se
+            // pierde ni se duplica plata: la venta ya cubre la suma de los totales.
+            const tagsLumpOverTotal = itemsHaveTags && internalResolved.some(r => {
+                const amt = chargedByBarcode.get(String(r.ticket_barcode || '').toUpperCase()) || 0;
+                return amt > (parseFloat(r.total_amount) || 0) + 1;
+            });
+            if (tagsLumpOverTotal) {
+                console.warn('[POST /api/ventas] etiquetas de ticket incoherentes (lumping): '
+                    + 'un ticket supera su total impreso; cobrando cada ticket por su total_amount. '
+                    + `tenant=${tenantId} barcodes=${ticketBarcodes.join(',')}`);
+                internalChargeIds = internalResolved.map(r => r.id);
+                for (const r of internalResolved) {
+                    internalChargedAmountById.set(r.id, parseFloat(r.total_amount) || 0);
+                }
+            } else if (itemsHaveTags) {
                 // Un ticket cuyos renglones se sacaron TODOS (importe ~0) no se cobra:
                 // no lo marcamos charged (el frontend además ya lo desvincula al vaciarlo).
                 const toCharge = internalResolved.filter(r => {
