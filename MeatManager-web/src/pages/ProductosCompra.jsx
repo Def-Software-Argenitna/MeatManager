@@ -190,8 +190,11 @@ const ProductosCompra = () => {
             return;
         }
 
-        let purchaseItemId = editingItem?.id || null;
-        if (editingItem) {
+        // Una fila "solo venta" no tiene purchase_item real todavía: hay que
+        // crearlo (insert), no actualizar por un id inexistente.
+        const editingRealItem = editingItem && !editingItem.isSaleOnly;
+        let purchaseItemId = editingRealItem ? editingItem.id : null;
+        if (editingRealItem) {
             await saveTableRecord('purchase_items', 'update', {
                 name: nameTrimmed,
                 product_id: existingProductCandidate?.id || editingItem?.product_id || null,
@@ -343,12 +346,72 @@ const ProductosCompra = () => {
         });
     }, [items, products]);
 
+    // Productos que existen en el catálogo de ventas (tienen precio/PLU, se
+    // venden en la balanza) pero NO tienen fila en purchase_items, por lo que
+    // no aparecían en esta pantalla. Ej: cortes de despostada como el vacío.
+    // Los mostramos como filas "solo venta" para poder encontrarlos y editarles
+    // el precio sin tener que recrearlos.
+    const orphanSaleProducts = React.useMemo(() => {
+        const usedProductIds = new Set();
+        const usedNameKeys = new Set();
+        (Array.isArray(items) ? items : []).forEach((it) => {
+            if (it?.product_id) usedProductIds.add(Number(it.product_id));
+            usedNameKeys.add(normalizeProductName(it?.name));
+        });
+
+        // Nombre de categoría -> id, para agrupar los "solo venta" junto a los
+        // artículos de compra de la misma categoría (ej. VACA).
+        const categoryIdByName = new Map();
+        (Array.isArray(categories) ? categories : []).forEach((cat) => {
+            const key = normalizeProductName(cat?.name);
+            if (key && !categoryIdByName.has(key)) categoryIdByName.set(key, cat.id);
+        });
+
+        return (Array.isArray(products) ? products : [])
+            .filter((product) => {
+                const pid = Number(product?.id);
+                if (!Number.isFinite(pid) || pid <= 0) return false;
+                if (usedProductIds.has(pid)) return false;
+                const name = String(product?.name || '').trim();
+                if (!name) return false;
+                if (/_p\d+$/i.test(name)) return false;
+                if (usedNameKeys.has(normalizeProductName(name))) return false;
+                // Solo los que están configurados para venta (precio o PLU),
+                // para no inundar la lista con registros legacy/basura.
+                const hasSaleData = String(product?.plu || '').trim() !== '' || Number(product?.current_price) > 0;
+                if (!hasSaleData) return false;
+                return true;
+            })
+            .map((product) => {
+                const saleCatKey = normalizeProductName(product?.category);
+                const matchedCategoryId = categoryIdByName.get(saleCatKey) || null;
+                return {
+                    id: `product:${product.id}`,
+                    product_id: product.id,
+                    name: product.name,
+                    unit: product.unit || 'kg',
+                    type: 'directo',
+                    category_id: matchedCategoryId,
+                    default_iva_rate: product.default_iva_rate ?? 10.5,
+                    current_price: product.current_price ?? null,
+                    plu: product.plu ?? '',
+                    species: product.despostada_species || null,
+                    use_for_despostada: Number(product.use_for_despostada || 0) === 1 ? 1 : 0,
+                    isSaleOnly: true,
+                };
+            });
+    }, [items, products, categories]);
+
+    const catalogRows = React.useMemo(() => (
+        [...(Array.isArray(itemsWithSaleData) ? itemsWithSaleData : []), ...orphanSaleProducts]
+    ), [itemsWithSaleData, orphanSaleProducts]);
+
     const filteredItems = React.useMemo(() => {
         const term = String(searchTerm || '').trim().toLowerCase();
-        const source = Array.isArray(itemsWithSaleData) ? itemsWithSaleData : [];
+        const source = Array.isArray(catalogRows) ? catalogRows : [];
         if (!term) return source;
         return source.filter((item) => String(item?.name || '').toLowerCase().includes(term));
-    }, [itemsWithSaleData, searchTerm]);
+    }, [catalogRows, searchTerm]);
 
     const groupedItems = React.useMemo(() => {
         const groups = new Map();
@@ -523,7 +586,12 @@ const ProductosCompra = () => {
                                 <tbody>
                                 {group.items.map(item => (
                                     <tr key={item.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
-                                        <td style={{ padding: '0.45rem 0.6rem', fontWeight: 600, color: 'var(--color-text-main)' }}>{item.name}</td>
+                                        <td style={{ padding: '0.45rem 0.6rem', fontWeight: 600, color: 'var(--color-text-main)' }}>
+                                            {item.name}
+                                            {item.isSaleOnly && (
+                                                <span style={{ marginLeft: '0.5rem', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#93c5fd', background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', padding: '0.1rem 0.4rem', borderRadius: '999px', whiteSpace: 'nowrap' }} title="Producto de venta sin artículo de compra. Podés editarle el precio igual.">solo venta</span>
+                                            )}
+                                        </td>
                                         <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)' }}>{item.unit}</td>
                                         <td style={{ padding: '0.45rem 0.6rem' }}>
                                             <span style={{ background: 'rgba(59,130,246,0.12)', color: '#93c5fd', padding: '0.15rem 0.45rem', borderRadius: '999px', fontSize: '0.75rem', fontWeight: 700, border: '1px solid rgba(59,130,246,0.25)', whiteSpace: 'nowrap' }}>
@@ -546,7 +614,9 @@ const ProductosCompra = () => {
                                         <td style={{ padding: '0.45rem 0.6rem' }}>
                                             <div style={{ display: 'flex', gap: '0.25rem', justifyContent: 'flex-end' }}>
                                                 <Button variant="ghost" size="sm" icon={<Edit2 size={15} color="#3b82f6" />} onClick={() => openEdit(item)} />
-                                                <Button variant="ghost" size="sm" icon={<Trash2 size={15} color="#ef4444" />} onClick={() => handleDelete(item.id)} />
+                                                {!item.isSaleOnly && (
+                                                    <Button variant="ghost" size="sm" icon={<Trash2 size={15} color="#ef4444" />} onClick={() => handleDelete(item.id)} />
+                                                )}
                                             </div>
                                         </td>
                                     </tr>
