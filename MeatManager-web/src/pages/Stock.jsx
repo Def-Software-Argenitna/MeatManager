@@ -37,6 +37,7 @@ const Stock = () => {
     const [isLoading, setIsLoading] = useState(true);
     const [searchTerm, setSearchTerm] = useState('');
     const [filterType, setFilterType] = useState('all');
+    const [showZeroStock, setShowZeroStock] = useState(false);
     const [isImporting, setIsImporting] = useState(false);
     const [importStatus, setImportStatus] = useState(null);
     const [diagLogs, setDiagLogs] = useState([]);
@@ -199,9 +200,49 @@ const Stock = () => {
             .sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
     }, [animalLots]);
 
+    // Productos del catálogo que quedaron sin stock (cantidad 0) y por eso no
+    // aparecen en el listado consolidado. Se muestran solo con el toggle activo
+    // para poder editarles el precio sin tener que inventar stock.
+    const zeroStockCatalogProducts = React.useMemo(() => {
+        if (!showZeroStock) return [];
+
+        const presentProductIds = new Set();
+        const presentNameKeys = new Set();
+        (Array.isArray(consolidatedStock) ? consolidatedStock : []).forEach((item) => {
+            if (item?.product_id) presentProductIds.add(Number(item.product_id));
+            presentNameKeys.add(normalizeProductKey(item?.name));
+        });
+
+        return (Array.isArray(products) ? products : [])
+            .filter((product) => {
+                const pid = Number(product?.id);
+                if (!Number.isFinite(pid) || pid <= 0) return false;
+                if (presentProductIds.has(pid)) return false;
+                const name = String(product?.name || '').trim();
+                if (!name) return false;
+                if (/_p\d+$/i.test(name)) return false;
+                if (presentNameKeys.has(normalizeProductKey(name))) return false;
+                return true;
+            })
+            .map((product) => ({
+                id: `catalog:${product.id}`,
+                product_id: product.id,
+                price_record_id: product.id,
+                name: product.name,
+                type: normalizeStockType(product.category),
+                unit: product.unit || 'kg',
+                quantity: 0,
+                price: getProductCurrentPrice(product),
+                plu: product.plu || '',
+                updated_at: product.updated_at,
+                isZeroStock: true,
+            }))
+            .sort((a, b) => a.name.localeCompare(b.name, 'es', { sensitivity: 'base' }));
+    }, [showZeroStock, products, consolidatedStock]);
+
     const inventoryStock = React.useMemo(() => (
-        [...consolidatedStock, ...pendingDespostadaStock]
-    ), [consolidatedStock, pendingDespostadaStock]);
+        [...consolidatedStock, ...zeroStockCatalogProducts, ...pendingDespostadaStock]
+    ), [consolidatedStock, zeroStockCatalogProducts, pendingDespostadaStock]);
 
     // Filtrar stock consolidado
     const filteredStock = inventoryStock.filter(item => {
@@ -709,6 +750,21 @@ const Stock = () => {
                         </button>
                     ))}
                 </div>
+
+                <button
+                    type="button"
+                    className={`type-filter-btn ${showZeroStock ? 'active' : ''}`}
+                    onClick={() => setShowZeroStock((prev) => !prev)}
+                    title="Incluir productos del catálogo que quedaron sin stock, para poder editarles el precio"
+                    style={{
+                        borderColor: showZeroStock ? '#3b82f6' : 'var(--color-border)',
+                        backgroundColor: showZeroStock ? '#3b82f615' : 'transparent',
+                        color: showZeroStock ? '#3b82f6' : 'var(--color-text-main)',
+                    }}
+                >
+                    <span>{showZeroStock ? '☑' : '☐'}</span>
+                    <span>Mostrar sin stock</span>
+                </button>
             </DirectionalReveal>
 
             {/* Stock List */}
@@ -743,7 +799,7 @@ const Stock = () => {
                                         </thead>
                                         <tbody>
                                         {items.map(item => (
-                                            <tr key={item.id} className={Number(item.quantity || 0) < 0 ? 'stock-row-negative' : ''}>
+                                            <tr key={item.id} className={Number(item.quantity || 0) < 0 ? 'stock-row-negative' : ''} style={item.isZeroStock ? { opacity: 0.6 } : undefined}>
                                                 <td className="stock-col-name">{item.name}</td>
                                                 <td className="stock-col-plu">
                                                     {item.isDespostadaPending
