@@ -15647,7 +15647,8 @@ app.get('/api/conciliacion/balanza/anulados', verifyFirebaseToken, async (req, r
             ORDER BY t.voided_at DESC
         `, params);
 
-        if (tickets.length === 0) return res.json({ tickets: [] });
+        // light=1: sin renglones (la comparación de meses solo necesita cabeceras).
+        if (tickets.length === 0 || req.query.light === '1') return res.json({ tickets });
 
         const barcodes = tickets.map(t => t.ticket_barcode);
         const [items] = await pool.query(`

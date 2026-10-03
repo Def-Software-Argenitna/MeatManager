@@ -11,6 +11,45 @@ const fmtKg = (n) => n ? `${(n / 1000).toFixed(3)} kg` : '-';
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
 
+// 'YYYY-MM' del mes actual + offset (ej. -1 = mes pasado)
+const monthStr = (offset = 0) => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + offset);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+};
+const monthRange = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    const last = new Date(y, m, 0).getDate();
+    return { from: `${ym}-01`, to: `${ym}-${String(last).padStart(2, '0')}` };
+};
+const monthLabel = (ym) => {
+    const [y, m] = ym.split('-').map(Number);
+    const s = new Date(y, m - 1, 1).toLocaleDateString('es-AR', { month: 'long', year: 'numeric' });
+    return s.charAt(0).toUpperCase() + s.slice(1);
+};
+const ticketAmount = (t) => Number(t.charged_amount != null ? t.charged_amount : t.total_amount) || 0;
+const summarizeAnulados = (tickets) => {
+    const byVendor = {};
+    let total = 0;
+    for (const t of tickets) {
+        const amount = ticketAmount(t);
+        const v = t.vendor_name || '—';
+        if (!byVendor[v]) byVendor[v] = { count: 0, amount: 0 };
+        byVendor[v].count += 1;
+        byVendor[v].amount += amount;
+        total += amount;
+    }
+    return { count: tickets.length, amount: total, byVendor };
+};
+const fmtDiff = (a, b, money) => {
+    const d = b - a;
+    const sign = d > 0 ? '+' : d < 0 ? '-' : '';
+    const abs = money ? fmt(Math.abs(d)) : Math.abs(d);
+    const pct = a > 0 ? ` (${d > 0 ? '+' : d < 0 ? '-' : ''}${Math.abs(Math.round((d / a) * 100))}%)` : '';
+    return `${sign}${abs}${pct}`;
+};
+
 const apiFetchJson = async (path, options) => {
     const res = await apiFetch(path, options);
     if (!res.ok) {
@@ -41,6 +80,12 @@ export default function ConciliacionBalanzaTab() {
     const [anulados, setAnulados] = useState([]);
     const [anuladosLoading, setAnuladosLoading] = useState(false);
     const [anulando, setAnulando] = useState(false);
+    const [anuladosView, setAnuladosView] = useState('listado'); // 'listado' | 'comparar'
+    const [mesA, setMesA] = useState(() => monthStr(-1));
+    const [mesB, setMesB] = useState(() => monthStr(0));
+    const [compare, setCompare] = useState(null); // { a: {...}, b: {...} }
+    const [compareLoading, setCompareLoading] = useState(false);
+    const [compareError, setCompareError] = useState(null);
 
     // ── Carga manual ─────────────────────────────────────────────────────────
     const [paymentMethods, setPaymentMethods] = useState([]);
@@ -109,6 +154,32 @@ export default function ConciliacionBalanzaTab() {
     }, [dateFrom, dateTo]);
 
     useEffect(() => { if (subTab === 'anulados') buscarAnulados(); }, [subTab, buscarAnulados]);
+
+    // ── Comparar anulados entre dos meses ─────────────────────────────────────
+    const compararMeses = useCallback(async () => {
+        if (!mesA || !mesB) return;
+        setCompareLoading(true);
+        setCompareError(null);
+        try {
+            const load = async (ym) => {
+                const { from, to } = monthRange(ym);
+                const params = new URLSearchParams({ dateFrom: from, dateTo: to, light: '1' });
+                const data = await apiFetchJson(`/api/conciliacion/balanza/anulados?${params.toString()}`);
+                return summarizeAnulados(data.tickets || []);
+            };
+            const [a, b] = await Promise.all([load(mesA), load(mesB)]);
+            setCompare({ a, b, mesA, mesB });
+        } catch (e) {
+            setCompare(null);
+            setCompareError(e.message || 'Error al comparar');
+        } finally {
+            setCompareLoading(false);
+        }
+    }, [mesA, mesB]);
+
+    useEffect(() => {
+        if (subTab === 'anulados' && anuladosView === 'comparar' && !compare) compararMeses();
+    }, [subTab, anuladosView, compare, compararMeses]);
 
     // ── Auto-refresco ──────────────────────────────────────────────────────────
     // Al volver a la ventana/pestaña (ej. tras cobrar en el POS), refresca la
@@ -718,7 +789,91 @@ export default function ConciliacionBalanzaTab() {
                     {/* ── ANULADOS ───────────────────────────────────────────── */}
                     {subTab === 'anulados' && (
                         <>
-                            {anuladosLoading ? (
+                            <div className="concil-subtabs" style={{ marginBottom: '0.75rem' }}>
+                                <button
+                                    className={`concil-subtab ${anuladosView === 'listado' ? 'active' : ''}`}
+                                    onClick={() => setAnuladosView('listado')}
+                                >
+                                    Listado
+                                </button>
+                                <button
+                                    className={`concil-subtab ${anuladosView === 'comparar' ? 'active' : ''}`}
+                                    onClick={() => setAnuladosView('comparar')}
+                                >
+                                    Comparar meses
+                                </button>
+                            </div>
+
+                            {anuladosView === 'comparar' && (
+                                <>
+                                    <div className="concil-filters">
+                                        <div className="concil-filter-group">
+                                            <label>Mes A</label>
+                                            <input type="month" value={mesA} onChange={e => setMesA(e.target.value)} />
+                                        </div>
+                                        <div className="concil-filter-group">
+                                            <label>Mes B</label>
+                                            <input type="month" value={mesB} onChange={e => setMesB(e.target.value)} />
+                                        </div>
+                                        <button className="concil-buscar-btn" onClick={compararMeses} disabled={compareLoading || !mesA || !mesB}>
+                                            {compareLoading ? 'Comparando…' : <><Search size={15} /> Comparar</>}
+                                        </button>
+                                    </div>
+                                    {compareError && (
+                                        <div className="concil-error"><AlertTriangle size={16} /> {compareError}</div>
+                                    )}
+                                    {compare && !compareLoading && (() => {
+                                        const { a, b } = compare;
+                                        const vendors = Array.from(new Set([...Object.keys(a.byVendor), ...Object.keys(b.byVendor)]))
+                                            .sort((x, y) => ((b.byVendor[y]?.count || 0) + (a.byVendor[y]?.count || 0)) - ((b.byVendor[x]?.count || 0) + (a.byVendor[x]?.count || 0)));
+                                        return (
+                                            <div className="concil-table-wrap">
+                                                <table className="concil-table">
+                                                    <thead>
+                                                        <tr>
+                                                            <th></th>
+                                                            <th style={{ textAlign: 'right' }}>{monthLabel(compare.mesA)}</th>
+                                                            <th style={{ textAlign: 'right' }}>{monthLabel(compare.mesB)}</th>
+                                                            <th style={{ textAlign: 'right' }}>Diferencia</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr style={{ fontWeight: 700 }}>
+                                                            <td>Tickets anulados</td>
+                                                            <td style={{ textAlign: 'right' }}>{a.count}</td>
+                                                            <td style={{ textAlign: 'right' }}>{b.count}</td>
+                                                            <td style={{ textAlign: 'right' }}>{fmtDiff(a.count, b.count, false)}</td>
+                                                        </tr>
+                                                        <tr style={{ fontWeight: 700 }}>
+                                                            <td>Importe anulado</td>
+                                                            <td style={{ textAlign: 'right' }}>{fmt(a.amount)}</td>
+                                                            <td style={{ textAlign: 'right' }}>{fmt(b.amount)}</td>
+                                                            <td style={{ textAlign: 'right' }}>{fmtDiff(a.amount, b.amount, true)}</td>
+                                                        </tr>
+                                                        {vendors.length > 0 && (
+                                                            <tr><td colSpan={4} style={{ opacity: 0.6, paddingTop: '1rem' }}>Por vendedor (cantidad · importe)</td></tr>
+                                                        )}
+                                                        {vendors.map(v => {
+                                                            const va = a.byVendor[v] || { count: 0, amount: 0 };
+                                                            const vb = b.byVendor[v] || { count: 0, amount: 0 };
+                                                            return (
+                                                                <tr key={v}>
+                                                                    <td>{v}</td>
+                                                                    <td style={{ textAlign: 'right' }}>{va.count} · {fmt(va.amount)}</td>
+                                                                    <td style={{ textAlign: 'right' }}>{vb.count} · {fmt(vb.amount)}</td>
+                                                                    <td style={{ textAlign: 'right' }}>{fmtDiff(va.count, vb.count, false)}</td>
+                                                                </tr>
+                                                            );
+                                                        })}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        );
+                                    })()}
+                                </>
+                            )}
+
+                            {anuladosView === 'listado' && (anuladosLoading ? (
                                 <div className="concil-empty"><p>Cargando anulados…</p></div>
                             ) : anulados.length === 0 ? (
                                 <div className="concil-empty">
@@ -755,7 +910,7 @@ export default function ConciliacionBalanzaTab() {
                                         </table>
                                     </div>
                                 </>
-                            )}
+                            ))}
                         </>
                     )}
                 </>
