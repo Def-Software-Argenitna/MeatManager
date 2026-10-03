@@ -27,18 +27,21 @@
     letter-spacing: 0.06em;
 }
 
-.concil-filter-group input[type="date"] {
+.concil-filter-group input[type="date"],
+.concil-filter-group input[type="month"] {
     background: rgba(255,255,255,0.05);
     border: 1px solid var(--color-border);
     border-radius: 10px;
     color: var(--color-text-main);
+    color-scheme: dark;
     font-size: 0.9rem;
     padding: 0.55rem 0.85rem;
     outline: none;
     transition: border-color 0.15s;
 }
 
-.concil-filter-group input[type="date"]:focus {
+.concil-filter-group input[type="date"]:focus,
+.concil-filter-group input[type="month"]:focus {
     border-color: var(--color-primary);
 }
 
