@@ -5,7 +5,7 @@ import mpLogoText from '../assets/mercado-pago-text.svg';
 import DirectionalReveal from '../components/DirectionalReveal';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 import { formatPrice } from '../utils/priceFormat';
-import { fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
+import { fetchSpecialDiscounts, fetchTable, getNextRemoteReceiptData, getRemoteSetting, saveTableRecord, createVenta, deleteVenta, fetchScaleTicketByBarcode, anularConciliacionTickets, requestAnularAuthorization } from '../utils/apiClient';
 import { useOfflineQueue } from '../hooks/useOfflineQueue';
 import { useRenderLoopGuard } from '../hooks/useRenderLoopGuard';
 import { assertUniqueProductPluLocal, buildLegacyPriceProductId, ensureUnifiedProduct, fetchProductsSafe, findLegacyPriceRecord, findProductByIdentity, findProductByPlu, findPromotionByPlu, getProductCurrentPrice, normalizeProductKey, reconcileLegacyProductConflicts, syncLegacyProductsToCatalog } from '../utils/productCatalog';
@@ -181,6 +181,15 @@ const Ventas = () => {
     const [promotions, setPromotions] = useState([]);
     const [clients, setClients] = useState([]);
     const [dbPaymentMethods, setDbPaymentMethods] = useState([]);
+    // Descuentos especiales (jubilados, etc.). Siempre arranca en "Ninguno" (null) y
+    // vuelve a null despues de cada cobro, para no descontarle a todos por error.
+    const [specialDiscounts, setSpecialDiscounts] = useState([]);
+    const [selectedSpecialDiscountId, setSelectedSpecialDiscountId] = useState(null);
+    // Si el carrito se vacia (cobro, "vaciar", cancelar), el descuento vuelve a "Ninguno".
+    const cartIsEmpty = cart.length === 0;
+    React.useEffect(() => {
+        if (cartIsEmpty) setSelectedSpecialDiscountId(null);
+    }, [cartIsEmpty]);
     const [shopInfo, setShopInfo] = useState({ name: 'Nuestra Carnicería', address: '', phone: '' });
     const [todayOpeningMovements, setTodayOpeningMovements] = useState([]);
     const [recentSales, setRecentSales] = useState([]);
@@ -230,6 +239,7 @@ const Ventas = () => {
             salesRows,
             salesItemsRows,
             movementsRows,
+            specialDiscountRows,
         ] = await Promise.all([
             fetchTable('stock').catch(() => []),
             fetchProductsSafe().catch(() => []),
@@ -244,6 +254,7 @@ const Ventas = () => {
             fetchTable('ventas', { orderBy: 'date', direction: 'DESC', limit: 150 }).catch(() => []),
             fetchTable('ventas_items').catch(() => []),
             fetchTable('caja_movimientos').catch(() => []),
+            fetchSpecialDiscounts().catch(() => null),
         ]);
 
         try {
@@ -285,6 +296,8 @@ const Ventas = () => {
         setProductsCatalog(Array.isArray(refreshedProducts) ? refreshedProducts : []);
         setPromotions(normalizePromotions((Array.isArray(promotionRows) ? promotionRows : []).filter(branchMatches), { currentBranchId }));
         setClients(normalizedClients);
+        // null = fallo de red (offline): conservamos la lista que ya teniamos.
+        if (Array.isArray(specialDiscountRows)) setSpecialDiscounts(specialDiscountRows);
         setDbPaymentMethods(normalizedPaymentMethods.filter((method) => method.type !== 'mixed'));
         setPriceFormat(String(remotePriceFormat || '').trim().toLowerCase() === '6d' ? '6d' : '4d2d');
         setShopInfo({
@@ -1867,8 +1880,16 @@ const Ventas = () => {
     const cartTotal = cartPricing.subtotal;
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientEmployeeDiscountPct = getClientEmployeeDiscountPct(selectedClient);
-    const employeeDiscountAmount = selectedClientEmployeeDiscountPct > 0
-        ? (cartTotal * selectedClientEmployeeDiscountPct) / 100
+    const selectedSpecialDiscount = specialDiscounts.find((d) => Number(d.id) === Number(selectedSpecialDiscountId)) || null;
+    const specialDiscountPct = selectedSpecialDiscount
+        ? Math.max(0, Math.min(100, Number(selectedSpecialDiscount.percentage) || 0))
+        : 0;
+    // Un solo descuento por venta: gana el de mayor porcentaje (misma regla que el server).
+    const specialDiscountWins = specialDiscountPct > 0 && specialDiscountPct >= selectedClientEmployeeDiscountPct;
+    const appliedDiscountPct = specialDiscountWins ? specialDiscountPct : selectedClientEmployeeDiscountPct;
+    const appliedDiscountLabel = specialDiscountWins ? String(selectedSpecialDiscount.name || '').toUpperCase() : 'EMPLEADO';
+    const employeeDiscountAmount = appliedDiscountPct > 0
+        ? (cartTotal * appliedDiscountPct) / 100
         : 0;
     const payableSubtotal = Math.max(0, cartTotal - employeeDiscountAmount);
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
@@ -2143,8 +2164,9 @@ const Ventas = () => {
                 payment_breakdown: paymentBreakdown,
                 clientId: shouldLinkClientToCurrentAccount ? numericClientId : null,
                 discount_client_id: numericClientId || null,
-                client_discount_pct: selectedClientEmployeeDiscountPct,
+                client_discount_pct: appliedDiscountPct,
                 client_discount_amount: employeeDiscountAmount,
+                special_discount_id: specialDiscountWins ? Number(selectedSpecialDiscount.id) : null,
                 ...(() => {
                     const allScaleBarcodes = [...new Set([...pendingTicketBarcodes, ...(activeScaleTicketBarcode ? [activeScaleTicketBarcode] : [])])];
                     if (allScaleBarcodes.length > 1) return { ticket_barcodes: allScaleBarcodes, source: 'conciliacion_balanza' };
@@ -2192,6 +2214,7 @@ const Ventas = () => {
             // Resetear todo y devolver el foco al scanner sin abrir la confirmacion de impresion
             setCart([]);
             setSelectedClientId(null);
+            setSelectedSpecialDiscountId(null);
             setClientSearch('');
             resetPaymentState();
             setTimeout(() => barcodeInputRef.current?.focus(), 100);
@@ -2200,7 +2223,12 @@ const Ventas = () => {
             const msg = String(error?.message || '');
             // Rechazo de validación (p. ej. cobro parcial de un ticket de balanza):
             // no es un fallo de base de datos, mostramos el mensaje tal cual como aviso.
-            if (/ticket de balanza/i.test(msg)) {
+            if (/descuento especial/i.test(msg)) {
+                // El descuento se desactivo/borro mientras la cajera lo tenia elegido.
+                setSelectedSpecialDiscountId(null);
+                setSpecialDiscounts((prev) => prev.filter((d) => Number(d.id) !== Number(selectedSpecialDiscountId)));
+                showToast('⚠️ ' + msg, 'warning');
+            } else if (/ticket de balanza/i.test(msg)) {
                 showToast('⚠️ ' + msg, 'warning');
             } else {
                 showToast('❌ Hubo un fallo al guardar la venta en la base de datos: ' + msg, 'error');
@@ -2674,7 +2702,7 @@ const Ventas = () => {
                         {employeeDiscountAmount > 0 ? (
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
                                 <span style={{ fontSize: '0.72rem', fontWeight: '700', color: '#86efac' }}>
-                                    DESCUENTO EMPLEADO ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%)
+                                    DESCUENTO {appliedDiscountLabel} ({formatNumericLocale(appliedDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%)
                                 </span>
                                 <span style={{ fontSize: '0.9rem', fontWeight: '800', color: '#86efac' }}>
                                     -${formatPrice(employeeDiscountAmount, priceFormat)}
@@ -2686,6 +2714,55 @@ const Ventas = () => {
                             <span style={{ fontSize: '2.5rem', fontWeight: '950', color: 'var(--color-primary)', textShadow: '0 0 15px var(--color-primary-glow)' }}>${formatPrice(payableSubtotal, priceFormat)}</span>
                         </div>
                     </div>
+
+                    {specialDiscounts.length > 0 && (
+                        <div style={{
+                            marginBottom: '0.75rem',
+                            padding: '0.6rem 0.8rem',
+                            borderRadius: '12px',
+                            background: selectedSpecialDiscount ? 'rgba(245,158,11,0.15)' : 'rgba(255,255,255,0.04)',
+                            border: selectedSpecialDiscount ? '1px solid rgba(245,158,11,0.65)' : '1px solid rgba(255,255,255,0.08)',
+                        }}>
+                            <div style={{ fontSize: '0.7rem', fontWeight: '800', letterSpacing: '0.04em', color: selectedSpecialDiscount ? '#fbbf24' : 'var(--color-text-muted)', marginBottom: '0.4rem' }}>
+                                {selectedSpecialDiscount ? `DESCUENTO ESPECIAL ACTIVO: ${String(selectedSpecialDiscount.name).toUpperCase()}` : 'DESCUENTO ESPECIAL'}
+                            </div>
+                            <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                {[{ id: null, name: 'Ninguno' }, ...specialDiscounts].map((option) => {
+                                    const isActive = option.id == null
+                                        ? !selectedSpecialDiscount
+                                        : Number(option.id) === Number(selectedSpecialDiscountId);
+                                    return (
+                                        <button
+                                            key={option.id ?? 'none'}
+                                            type="button"
+                                            onClick={() => {
+                                                setSelectedSpecialDiscountId(option.id);
+                                                // Devuelve el foco al scanner: si quedara en el boton, el Enter del lector lo volveria a apretar.
+                                                setTimeout(() => barcodeInputRef.current?.focus(), 0);
+                                            }}
+                                            style={{
+                                                padding: '0.35rem 0.75rem',
+                                                borderRadius: '999px',
+                                                cursor: 'pointer',
+                                                fontSize: '0.78rem',
+                                                fontWeight: '800',
+                                                color: isActive ? (option.id == null ? '#fff' : '#1c1917') : 'var(--color-text-muted)',
+                                                background: isActive ? (option.id == null ? 'rgba(255,255,255,0.18)' : '#fbbf24') : 'transparent',
+                                                border: isActive ? '1px solid transparent' : '1px solid rgba(255,255,255,0.15)',
+                                            }}
+                                        >
+                                            {option.id == null ? option.name : `${option.name} ${formatNumericLocale(option.percentage, 'es-AR', { maximumFractionDigits: 2 })}%`}
+                                        </button>
+                                    );
+                                })}
+                            </div>
+                            {selectedSpecialDiscount && !specialDiscountWins && (
+                                <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)', marginTop: '0.4rem' }}>
+                                    Se aplica el descuento de empleado del cliente porque es mayor (un solo descuento por venta).
+                                </div>
+                            )}
+                        </div>
+                    )}
 
                     <div style={{ marginBottom: '1rem' }}>
                         {selectedClient && (
@@ -2968,7 +3045,7 @@ const Ventas = () => {
                             {employeeDiscountAmount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                     <span style={{ color: 'var(--color-text-muted)' }}>
-                                        Desc. empleado ({formatNumericLocale(selectedClientEmployeeDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%):
+                                        Desc. {specialDiscountWins ? selectedSpecialDiscount.name : 'empleado'} ({formatNumericLocale(appliedDiscountPct, 'es-AR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}%):
                                     </span>
                                     <span style={{ color: '#22c55e' }}>
                                         -${formatNumericLocale(employeeDiscountAmount)}

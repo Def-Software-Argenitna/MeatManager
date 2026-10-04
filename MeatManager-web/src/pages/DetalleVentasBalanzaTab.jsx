@@ -66,8 +66,22 @@ const cantidadLinea = (item) => {
 // incluso cuando se cobró parcial (se sacó un renglón). El renglón sacado queda
 // como "pesado no cobrado" en el informe de kilos.
 const importeTicket = (t) => {
-    if (t.status === 'cobrado' && t.charged_amount != null) return Number(t.charged_amount);
-    return Number(t.total_amount || 0);
+    const base = (t.status === 'cobrado' && t.charged_amount != null)
+        ? Number(t.charged_amount)
+        : Number(t.total_amount || 0);
+    // Si se cobro con descuento (jubilados, empleado...), lo que entro es el neto.
+    // Las filas recuperadas de `ventas` ya traen el descuento restado en total_amount.
+    return base - (descuentoTicket(t) && !t.discount_in_total ? descuentoTicket(t) : 0);
+};
+// Descuento aplicado al cobrar el ticket (0 si no hubo o si el ticket no esta cobrado).
+const descuentoTicket = (t) => (
+    t.status === 'cobrado' && Number(t.discount_amount) > 0 ? Number(t.discount_amount) : 0
+);
+// Texto del aviso: "JUBILADOS 10%" / "DESCUENTO 10%".
+const etiquetaDescuento = (t) => {
+    const pct = Number(t.discount_pct) || 0;
+    const nombre = String(t.discount_name || 'Descuento').toUpperCase();
+    return pct > 0 ? `${nombre} ${pct.toLocaleString('es-AR', { maximumFractionDigits: 2 })}%` : nombre;
 };
 // ¿Se cobró parcial? (cobrado por menos que el total impreso).
 const esCobroParcial = (t) => (
@@ -114,6 +128,7 @@ const imprimirTicket = (t) => {
         <hr/>
         <table><tbody>${lineas || '<tr><td>Sin renglones</td></tr>'}</tbody></table>
         <hr/>
+        ${descuentoTicket(t) > 0 ? `<div class="total" style="font-size:12px;font-weight:normal"><span>DESC. ${etiquetaDescuento(t)}</span><span>-${fmt(descuentoTicket(t))}</span></div>` : ''}
         <div class="total"><span>TOTAL</span><span>${fmt(importeTicket(t))}</span></div>
         <div class="foot">${t.item_count} ítem(s) · ${(t.status || '').toUpperCase()}</div>
     </body></html>`);
@@ -231,6 +246,13 @@ export default function DetalleVentasBalanzaTab() {
         t.status === 'anulado' ? acc : acc + importeTicket(t)
     ), 0), [filtered]);
 
+    // Aviso de descuentos: cuantos tickets del filtro se cobraron con descuento y
+    // cuanto se bonifico en total (explica la diferencia contra lo pesado).
+    const descuentosDia = useMemo(() => filtered.reduce((acc, t) => {
+        const d = descuentoTicket(t);
+        return d > 0 ? { tickets: acc.tickets + 1, monto: acc.monto + d } : acc;
+    }, { tickets: 0, monto: 0 }), [filtered]);
+
     return (
         <div className="concil-wrap">
             <div className="concil-filters">
@@ -264,6 +286,14 @@ export default function DetalleVentasBalanzaTab() {
                             <span className="concil-chip-label">Total del período</span>
                             <span className="concil-chip-value">{fmt(totalDia)}</span>
                         </div>
+                        {descuentosDia.tickets > 0 && (
+                            <div className="concil-chip" title="Tickets cobrados con descuento (jubilados, empleado...). Lo cobrado es menos que lo pesado por esta diferencia.">
+                                <span className="concil-chip-label">Con descuento</span>
+                                <span className="concil-chip-value" style={{ color: '#f59e0b' }}>
+                                    {descuentosDia.tickets} · −{fmt(descuentosDia.monto)}
+                                </span>
+                            </div>
+                        )}
                     </div>
 
                     {filtered.length === 0 ? (
@@ -309,6 +339,12 @@ export default function DetalleVentasBalanzaTab() {
                                                         <span title={`Cobro parcial. Total impreso del ticket: ${fmt(t.total_amount)}`}
                                                               style={{ marginLeft: 6, fontSize: '0.62rem', fontWeight: 700, color: '#f59e0b' }}>
                                                             PARCIAL
+                                                        </span>
+                                                    )}
+                                                    {descuentoTicket(t) > 0 && (
+                                                        <span title={`Se cobró con descuento: ${etiquetaDescuento(t)} (-${fmt(descuentoTicket(t))}). Por eso lo cobrado es menos que lo pesado en la balanza.`}
+                                                              style={{ display: 'inline-block', marginLeft: 6, padding: '1px 6px', borderRadius: 5, fontSize: '0.62rem', fontWeight: 700, background: 'rgba(245,158,11,0.15)', color: '#f59e0b', whiteSpace: 'nowrap' }}>
+                                                            DESC. {etiquetaDescuento(t)} −{fmt(descuentoTicket(t))}
                                                         </span>
                                                     )}
                                                 </td>
@@ -384,8 +420,14 @@ export default function DetalleVentasBalanzaTab() {
                         {esCobroParcial(detail) && (
                             <div className="concil-info-row"><span>Total impreso (pesado)</span><span>{fmt(detail.total_amount)}</span></div>
                         )}
+                        {descuentoTicket(detail) > 0 && (
+                            <div className="concil-info-row" style={{ color: '#f59e0b' }}>
+                                <span>Descuento aplicado ({etiquetaDescuento(detail)})</span>
+                                <span>−{fmt(descuentoTicket(detail))}</span>
+                            </div>
+                        )}
                         <div className="concil-info-row total">
-                            <span>{esCobroParcial(detail) ? 'Cobrado (parcial)' : 'Total'}</span>
+                            <span>{esCobroParcial(detail) ? 'Cobrado (parcial)' : (descuentoTicket(detail) > 0 ? 'Cobrado (con descuento)' : 'Total')}</span>
                             <span>{fmt(importeTicket(detail))}</span>
                         </div>
                     </div>

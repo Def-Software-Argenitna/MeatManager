@@ -3211,6 +3211,8 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'ventas', 'discount_client_id', '`discount_client_id` INT NULL AFTER `clientId`');
             await ensureColumn(conn, 'ventas', 'client_discount_pct', '`client_discount_pct` DECIMAL(5,2) NOT NULL DEFAULT 0 AFTER `discount_client_id`');
             await ensureColumn(conn, 'ventas', 'client_discount_amount', '`client_discount_amount` DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER `client_discount_pct`');
+            await ensureColumn(conn, 'ventas', 'special_discount_id', '`special_discount_id` INT NULL AFTER `client_discount_amount`');
+            await ensureColumn(conn, 'ventas', 'special_discount_name', '`special_discount_name` VARCHAR(100) NULL AFTER `special_discount_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_id', '`promo_id` INT NULL AFTER `subtotal`');
             await ensureColumn(conn, 'ventas_items', 'promo_kg_applied', '`promo_kg_applied` DECIMAL(12,3) NULL AFTER `promo_id`');
             await ensureColumn(conn, 'ventas_items', 'promo_payload', '`promo_payload` JSON NULL AFTER `promo_kg_applied`');
@@ -4933,6 +4935,18 @@ function getSchemaTables() {
             UNIQUE KEY uniq_payment_methods_tenant_id (\`${TENANT_COLUMN}\`, id),
             INDEX idx_payment_methods_tenant (\`${TENANT_COLUMN}\`)
         )`,
+        `CREATE TABLE IF NOT EXISTS special_discounts (
+            id          INT AUTO_INCREMENT PRIMARY KEY,
+            \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
+            name        VARCHAR(100) NOT NULL,
+            percentage  DECIMAL(5,2) NOT NULL DEFAULT 0,
+            active      TINYINT(1) NOT NULL DEFAULT 1,
+            created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uniq_special_discounts_tenant_id (\`${TENANT_COLUMN}\`, id),
+            UNIQUE KEY uniq_special_discounts_tenant_name (\`${TENANT_COLUMN}\`, name),
+            INDEX idx_special_discounts_tenant (\`${TENANT_COLUMN}\`)
+        )`,
         `CREATE TABLE IF NOT EXISTS categories (
             id          INT AUTO_INCREMENT PRIMARY KEY,
             \`${TENANT_COLUMN}\` BIGINT NOT NULL DEFAULT ${DEFAULT_OPERATIONAL_TENANT_ID},
@@ -5089,6 +5103,8 @@ function getSchemaTables() {
             discount_client_id  INT,
             client_discount_pct DECIMAL(5,2) NOT NULL DEFAULT 0,
             client_discount_amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+            special_discount_id INT,
+            special_discount_name VARCHAR(100),
             branch_id           INT,
             payment_breakdown   JSON,
             receipt_number      INT,
@@ -10243,6 +10259,122 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
     return parts;
 };
 
+// ── DESCUENTOS ESPECIALES (jubilados, etc.) ────────────────────────────────
+// Tipos de descuento por porcentaje, a nivel comercio (tenant). El POS elige uno
+// al cobrar; el server toma el % de esta tabla (nunca del navegador) y guarda en
+// la venta el id + el nombre/porcentaje vigentes. Lectura: cualquier usuario del
+// comercio (el POS la necesita). Alta/edicion/baja: solo admin.
+async function resolveSpecialDiscountsContext(req) {
+    const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+    const pool = getTenantPool(dbName);
+    const accessContext = await getClientAccessContext({
+        uid: req.firebaseUser.uid,
+        email: req.firebaseUser.email,
+        _internalAdmin: req.firebaseUser?._internalAdmin || null,
+        _supportClientId: req.firebaseUser?._supportClientId || null,
+    });
+    if (accessContext) assertClientAccess(accessContext);
+    const canWrite = !accessContext || isAdminAccessContext(accessContext);
+    return { pool, tenantId, canWrite };
+}
+
+function parseSpecialDiscountBody(body) {
+    const name = String(body?.name || '').trim().slice(0, 100);
+    const percentage = Math.round((Number.parseFloat(body?.percentage) || 0) * 100) / 100;
+    if (!name) return { error: 'El nombre es obligatorio.' };
+    if (!(percentage > 0) || percentage > 100) return { error: 'El porcentaje debe ser mayor a 0 y hasta 100.' };
+    return { name, percentage, active: body?.active === false || body?.active === 0 ? 0 : 1 };
+}
+
+app.get('/api/special-discounts', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { pool, tenantId } = await resolveSpecialDiscountsContext(req);
+        const onlyActive = String(req.query.all || '') !== '1';
+        const [rows] = await pool.query(
+            `SELECT id, name, percentage, active
+             FROM special_discounts
+             WHERE \`${TENANT_COLUMN}\` = ?${onlyActive ? ' AND active = 1' : ''}
+             ORDER BY name ASC`,
+            [tenantId]
+        );
+        return res.json({
+            discounts: rows.map((r) => ({
+                id: Number(r.id), name: r.name, percentage: Number(r.percentage), active: Number(r.active) === 1,
+            })),
+        });
+    } catch (err) {
+        console.error('[GET /api/special-discounts ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/special-discounts', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { pool, tenantId, canWrite } = await resolveSpecialDiscountsContext(req);
+        if (!canWrite) return res.status(403).json({ error: 'Solo un administrador puede crear descuentos especiales.' });
+        const parsed = parseSpecialDiscountBody(req.body);
+        if (parsed.error) return res.status(400).json({ error: parsed.error });
+        try {
+            const [result] = await pool.query(
+                `INSERT INTO special_discounts (\`${TENANT_COLUMN}\`, name, percentage, active) VALUES (?, ?, ?, ?)`,
+                [tenantId, parsed.name, parsed.percentage, parsed.active]
+            );
+            return res.status(201).json({ id: result.insertId });
+        } catch (e) {
+            if (e?.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe un descuento con ese nombre.' });
+            throw e;
+        }
+    } catch (err) {
+        console.error('[POST /api/special-discounts ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/special-discounts/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { pool, tenantId, canWrite } = await resolveSpecialDiscountsContext(req);
+        if (!canWrite) return res.status(403).json({ error: 'Solo un administrador puede editar descuentos especiales.' });
+        const id = Number.parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id invalido' });
+        const parsed = parseSpecialDiscountBody(req.body);
+        if (parsed.error) return res.status(400).json({ error: parsed.error });
+        try {
+            const [result] = await pool.query(
+                `UPDATE special_discounts SET name = ?, percentage = ?, active = ?
+                 WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+                [parsed.name, parsed.percentage, parsed.active, tenantId, id]
+            );
+            if (!result.affectedRows) return res.status(404).json({ error: 'Descuento no encontrado.' });
+            return res.json({ ok: true });
+        } catch (e) {
+            if (e?.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Ya existe un descuento con ese nombre.' });
+            throw e;
+        }
+    } catch (err) {
+        console.error('[PUT /api/special-discounts ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/special-discounts/:id', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { pool, tenantId, canWrite } = await resolveSpecialDiscountsContext(req);
+        if (!canWrite) return res.status(403).json({ error: 'Solo un administrador puede eliminar descuentos especiales.' });
+        const id = Number.parseInt(req.params.id, 10);
+        if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'id invalido' });
+        // Las ventas ya hechas conservan el nombre y el % guardados: borrar no las toca.
+        const [result] = await pool.query(
+            `DELETE FROM special_discounts WHERE \`${TENANT_COLUMN}\` = ? AND id = ?`,
+            [tenantId, id]
+        );
+        if (!result.affectedRows) return res.status(404).json({ error: 'Descuento no encontrado.' });
+        return res.json({ ok: true });
+    } catch (err) {
+        console.error('[DELETE /api/special-discounts ERROR]', err.message);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
 // ── RUTA: POST /api/ventas ─────────────────────────────────────────────────
 // Registra una venta de forma ATÓMICA: ventas + ventas_items + stock (descuento)
 // + ajuste de balance de cliente (cta cte) — todo en una sola transacción MySQL.
@@ -10253,6 +10385,7 @@ const buildCajaPartsFromSale = ({ paymentMethod, paymentMethodType, paymentBreak
 //   payment_breakdown?,    // array para pago mixto
 //   clientId?,             // cliente para cuenta corriente
 //   discount_client_id?, client_discount_pct?, client_discount_amount?,
+//   special_discount_id?,  // descuento especial (jubilados...): el server valida y toma el %
 //   qendra_ticket_id?, ticket_barcode?, source?,
 //   items: [{ product_id?, product_name, quantity, price, subtotal, category?, unit? }]
 // }
@@ -10282,6 +10415,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             discount_client_id,
             client_discount_pct,
             client_discount_amount,
+            special_discount_id,
             qendra_ticket_id, ticket_barcode, source,
             items,
         } = req.body;
@@ -10361,6 +10495,38 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         }
         if (safeDiscountClientId && safeClientDiscountAmount === 0 && Number.isFinite(requestedDiscountAmount) && requestedDiscountAmount > 0) {
             safeClientDiscountAmount = Math.round(requestedDiscountAmount * 100) / 100;
+        }
+
+        // Descuento especial (jubilados, etc.): el % sale de la tabla, no del cliente
+        // HTTP. Un solo descuento por venta: si el cliente ya tiene descuento de
+        // empleado, gana el de mayor porcentaje (el POS aplica la misma regla).
+        let safeSpecialDiscountId = null;
+        let safeSpecialDiscountName = null;
+        const requestedSpecialDiscountId = Number.parseInt(special_discount_id, 10);
+        if (Number.isFinite(requestedSpecialDiscountId) && requestedSpecialDiscountId > 0) {
+            const [[specialDiscount]] = await conn.query(
+                `SELECT id, name, percentage
+                 FROM special_discounts
+                 WHERE \`${TENANT_COLUMN}\` = ? AND id = ? AND active = 1
+                 LIMIT 1`,
+                [tenantId, requestedSpecialDiscountId]
+            );
+            if (!specialDiscount) {
+                await conn.rollback();
+                conn.release();
+                return res.status(409).json({
+                    error: 'El descuento especial elegido ya no está disponible. Elegí otro o "Ninguno".',
+                    code: 'SPECIAL_DISCOUNT_UNAVAILABLE',
+                });
+            }
+            const specialPct = clampDiscountPct(specialDiscount.percentage);
+            if (specialPct > 0 && specialPct >= safeClientDiscountPct) {
+                safeSpecialDiscountId = Number(specialDiscount.id);
+                safeSpecialDiscountName = String(specialDiscount.name || '').slice(0, 100);
+                safeDiscountClientId = null;
+                safeClientDiscountPct = specialPct;
+                safeClientDiscountAmount = Math.round(((safeSubtotal * specialPct) / 100) * 100) / 100;
+            }
         }
         const now = date ? new Date(date) : new Date();
         const ticketBarcode = String(ticket_barcode || '').trim() || null;
@@ -10517,8 +10683,9 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                receipt_number, receipt_code,
                payment_method, payment_method_id, payment_breakdown,
                clientId, discount_client_id, client_discount_pct, client_discount_amount,
+               special_discount_id, special_discount_name,
                qendra_ticket_id, ticket_barcode, source)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 tenantId, resolvedBranchId, saleDate, safeSubtotal, safeAdj, safeTotal,
                 receipt_number || null, receipt_code || null,
@@ -10528,6 +10695,8 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 safeDiscountClientId,
                 safeClientDiscountPct,
                 safeClientDiscountAmount,
+                safeSpecialDiscountId,
+                safeSpecialDiscountName,
                 qendra_ticket_id || null, primaryBarcode, source || 'manual',
             ]
         );
@@ -14716,8 +14885,14 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
         );
 
         const [porEmpleado] = await conn.query(
-            `SELECT v.discount_client_id AS empleado_id,
-                    c.name AS empleado,
+            // Agrupa por descuento especial (jubilados...) o, si no hay, por el cliente
+            // con descuento de empleado. El nombre sale de la venta (queda aunque el
+            // descuento se renombre o se borre despues).
+            `SELECT CASE WHEN v.special_discount_id IS NOT NULL
+                         THEN CONCAT('s', v.special_discount_id)
+                         ELSE CONCAT('c', COALESCE(v.discount_client_id, 0)) END AS grupo_key,
+                    MAX(CASE WHEN v.special_discount_id IS NOT NULL THEN 'especial' ELSE 'cliente' END) AS tipo,
+                    MAX(COALESCE(v.special_discount_name, c.name)) AS empleado,
                     COUNT(*) AS tickets,
                     ROUND(SUM(v.subtotal), 2) AS bruto,
                     ROUND(SUM(v.client_discount_amount), 2) AS descuento,
@@ -14725,7 +14900,7 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
              FROM ventas v
              LEFT JOIN clients c ON c.tenant_id = v.tenant_id AND c.id = v.discount_client_id
              WHERE ${whereDto}
-             GROUP BY v.discount_client_id, c.name`,
+             GROUP BY grupo_key`,
             whereParams
         );
 
@@ -14749,7 +14924,8 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
             neto: Number(r.neto || 0),
         }));
         const normEmpleado = (rows) => (Array.isArray(rows) ? rows : []).map((r) => ({
-            empleado_id: r.empleado_id == null ? null : Number(r.empleado_id),
+            empleado_id: r.grupo_key,
+            tipo: r.tipo === 'especial' ? 'especial' : 'cliente',
             empleado: r.empleado || 'Sin asignar',
             tickets: Number(r.tickets || 0),
             bruto: Number(r.bruto || 0),
@@ -15392,7 +15568,11 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 t.voided_sale_id,
                 cv.id AS charged_venta_id,
                 cv.payment_method AS charged_payment_method,
-                cv.clientId AS charged_client_id
+                cv.clientId AS charged_client_id,
+                cv.client_discount_amount AS charged_discount_amount,
+                cv.client_discount_pct AS charged_discount_pct,
+                cv.subtotal AS charged_sale_subtotal,
+                COALESCE(cv.special_discount_name, dc.name) AS charged_discount_name
             FROM scale_sales_log l
             LEFT JOIN scale_bridge_ticket_map t
                    ON t.device_id = l.device_id
@@ -15403,6 +15583,9 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
             LEFT JOIN ventas cv
                    ON cv.tenant_id = l.tenant_id
                   AND cv.id = t.charged_sale_id
+            LEFT JOIN clients dc
+                   ON dc.tenant_id = cv.tenant_id
+                  AND dc.id = cv.discount_client_id
             WHERE l.tenant_id = ?${branchFilter}${dateFilter}
             ORDER BY l.sale_at DESC, l.id DESC
         `, params);
@@ -15448,6 +15631,22 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 sale_id: chargedSaleExists ? r.charged_venta_id : null,
                 payment_method: chargedSaleExists ? (r.charged_payment_method || null) : null,
                 client_id: chargedSaleExists ? (r.charged_client_id || null) : null,
+                // Descuento aplicado al cobrar (jubilados, empleado...). Avisa en el
+                // Detalle de Ventas por que lo cobrado es menos que lo pesado.
+                // Una venta puede cobrar varios tickets juntos ("Combinar y cargar"): el
+                // descuento es de la venta entera, asi que se reparte en proporcion al
+                // importe de cada ticket (si no, cada uno mostraria el descuento completo).
+                ...(chargedSaleExists && Number(r.charged_discount_amount) > 0 ? (() => {
+                    const saleDiscount = Number(r.charged_discount_amount);
+                    const saleSubtotal = Number(r.charged_sale_subtotal) || 0;
+                    const ticketBase = chargedAmount != null ? chargedAmount : (Number(r.total_amount) || 0);
+                    const ratio = saleSubtotal > 0 ? Math.min(1, ticketBase / saleSubtotal) : 1;
+                    return {
+                        discount_amount: Math.round(saleDiscount * ratio * 100) / 100,
+                        discount_pct: Number(r.charged_discount_pct) || 0,
+                        discount_name: r.charged_discount_name || null,
+                    };
+                })() : {}),
                 items: Array.isArray(items) ? items : [],
             };
         });
@@ -15491,8 +15690,13 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
 
         const [ventaRows] = await pool.query(`
             SELECT v.id, v.date, v.total, v.receipt_number, v.receipt_code, v.source,
-                   v.payment_method, v.clientId, v.ticket_barcode
+                   v.payment_method, v.clientId, v.ticket_barcode,
+                   v.client_discount_amount, v.client_discount_pct,
+                   COALESCE(v.special_discount_name, dc.name) AS discount_name
             FROM ventas v
+            LEFT JOIN clients dc
+                   ON dc.tenant_id = v.tenant_id
+                  AND dc.id = v.discount_client_id
             WHERE v.tenant_id = ?
               ${manualBranchFilter}${manualDateFilter}
             ORDER BY v.date DESC, v.id DESC
@@ -15555,6 +15759,13 @@ app.get('/api/scale/detalle-ventas', verifyFirebaseToken, async (req, res) => {
                 sale_id: v.id,
                 payment_method: v.payment_method || null,
                 client_id: v.clientId || null,
+                ...(Number(v.client_discount_amount) > 0 ? {
+                    discount_amount: Number(v.client_discount_amount),
+                    discount_pct: Number(v.client_discount_pct) || 0,
+                    discount_name: v.discount_name || null,
+                    // total_amount sale de ventas.total, que ya viene con el descuento restado.
+                    discount_in_total: true,
+                } : {}),
                 items,
             };
         });

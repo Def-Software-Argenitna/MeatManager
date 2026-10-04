@@ -162,10 +162,37 @@ const Manual = () => {
                     subtitle: 'Seguimiento de descuentos aplicados',
                     steps: [
                         'Elegí fecha y sucursal antes de consultar.',
-                        'El informe muestra los descuentos de cliente (empleados, jubilados, etc.) de todas las ventas, sin importar el medio de pago.',
-                        'Revisá cliente, venta, importe original y descuento para validar cada caso.',
+                        'El informe muestra los descuentos aplicados (especiales como Jubilados y de empleado) de todas las ventas, sin importar el medio de pago.',
+                        'La tabla "Por tipo de descuento" agrupa tickets, bruto, descuento y neto por cada descuento (por ejemplo Jubilados).',
                         'Usá el total del período como control comercial y de autorización.',
                         'Si no aparecen resultados, verificá que existan descuentos en la sucursal y período seleccionados.'
+                    ]
+                }
+            ]
+        },
+        {
+            id: 'descuentos-especiales',
+            title: 'Descuentos Especiales',
+            icon: <Percent size={24} />,
+            color: '#f59e0b',
+            content: [
+                {
+                    subtitle: 'Crear descuentos por porcentaje (jubilados, etc.)',
+                    steps: [
+                        'Entrá a Comercial > Descuentos Especiales. Solo un administrador puede crear, editar o eliminar.',
+                        'Tocá "Nuevo descuento", poné el nombre (por ejemplo Jubilados) y el porcentaje, y guardá.',
+                        'Podés desactivar un descuento para que deje de aparecer en Ventas sin borrarlo.',
+                        'No hace falta crear un cliente con cuenta corriente para dar un descuento.'
+                    ]
+                },
+                {
+                    subtitle: 'Aplicarlo al cobrar en Ventas',
+                    steps: [
+                        'En el ticket de Ventas, elegí el descuento en "Descuento especial" (arranca siempre en "Ninguno").',
+                        'Mientras esté elegido se ve un cartel naranja y el descuento aparece en el total y en "Finalizar Venta".',
+                        'Al cobrar, o al vaciar el carrito, vuelve solo a "Ninguno" para no descontarle a todos por error.',
+                        'Se aplica un solo descuento por venta: si el cliente tiene descuento de empleado, gana el de mayor porcentaje.',
+                        'En el Detalle de Ventas de Balanza, los tickets cobrados con descuento muestran una etiqueta con el descuento y el monto.'
                     ]
                 }
             ]
@@ -564,6 +591,7 @@ const Manual = () => {
         compras: { area: 'Operación', path: '/compras' },
         stock: { area: 'Operación', path: '/stock' },
         clientes: { area: 'Comercial', path: '/clientes' },
+        'descuentos-especiales': { area: 'Comercial', path: '/descuentos-especiales' },
         pedidos: { area: 'Comercial', path: '/pedidos' },
         logistica: { area: 'Comercial', path: '/logistica' },
         sucursales: { area: 'Comercial', path: '/sucursales' },

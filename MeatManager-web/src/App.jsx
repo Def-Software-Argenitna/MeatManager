@@ -55,6 +55,7 @@ const InformesPro = lazyWithRecovery(() => import('./pages/InformesPro'));
 const InformesCaja = lazyWithRecovery(() => import('./pages/InformesCaja'));
 const InformesKilos = lazyWithRecovery(() => import('./pages/InformesKilos'));
 const InformesDescuentos = lazyWithRecovery(() => import('./pages/InformesDescuentos'));
+const DescuentosEspeciales = lazyWithRecovery(() => import('./pages/DescuentosEspeciales'));
 const Pedidos = lazyWithRecovery(() => import('./pages/Pedidos'));
 const MenuDigital = lazyWithRecovery(() => import('./pages/MenuDigital'));
 const CustomerPortal = lazyWithRecovery(() => import('./pages/CustomerPortal'));
@@ -220,6 +221,7 @@ function AppRoutes() {
                 <Route path="compras" element={protect('/compras', lazyElement(Compras))} />
                 <Route path="stock" element={protect('/stock', lazyElement(Stock))} />
                 <Route path="clientes" element={protect('/clientes', lazyElement(Clientes))} />
+                <Route path="descuentos-especiales" element={protect('/clientes', lazyElement(DescuentosEspeciales))} />
                 <Route path="config/categorias" element={protect('/config/categorias', lazyElement(Categorias))} />
                 <Route path="config/productos-compra" element={protect('/config/productos-compra', lazyElement(ProductosCompra))} />
                 <Route path="config/proveedores" element={protect('/config/proveedores', lazyElement(Proveedores))} />

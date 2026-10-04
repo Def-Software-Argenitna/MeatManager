@@ -147,6 +147,7 @@ const Sidebar = ({ isCollapsed, isMobile = false }) => {
 
   const commercialItems = [
     { title: 'Clientes', path: '/clientes', icon: Users },
+    { title: 'Descuentos Especiales', path: '/descuentos-especiales', icon: Percent, permissionPath: '/clientes' },
     { title: 'Pedidos', path: '/pedidos', icon: ShoppingBag },
     { title: 'Logística', path: '/logistica', icon: MapPin, module: 'logistica' },
     { title: 'Sucursales', path: '/sucursales', icon: ArrowLeftRight },

@@ -61,8 +61,8 @@ const InformesDescuentos = () => {
         });
         lines.push(['TOTAL', tickets, bruto.toFixed(2), descuento.toFixed(2), neto.toFixed(2)].join(';'));
         lines.push('');
-        lines.push(['Detalle por cliente'].join(';'));
-        lines.push(['Cliente', 'Tickets', 'Bruto (balanza)', 'Descuento', '% prom.', 'Neto (caja)'].join(';'));
+        lines.push(['Detalle por tipo de descuento'].join(';'));
+        lines.push(['Descuento / cliente', 'Tickets', 'Bruto (balanza)', 'Descuento', '% prom.', 'Neto (caja)'].join(';'));
         empleados.forEach((r) => {
             lines.push([r.empleado, r.tickets, r.bruto.toFixed(2), r.descuento.toFixed(2), pctOf(r.descuento, r.bruto).toFixed(1), r.neto.toFixed(2)].join(';'));
         });
@@ -94,7 +94,7 @@ const InformesDescuentos = () => {
                         <Percent size={26} /> Informes de Descuentos
                     </h1>
                     <p style={{ margin: '0.3rem 0 0', color: 'var(--color-text-muted)', maxWidth: 720 }}>
-                        Descuentos de cliente (empleados, jubilados, etc.) aplicados en ventas, con <strong>cualquier medio de pago</strong>.
+                        Descuentos aplicados en ventas (descuentos especiales como <strong>Jubilados</strong> y descuentos de empleado), con <strong>cualquier medio de pago</strong>.
                         <strong> Bruto</strong> = lo que marcó la balanza (sin descuento). <strong>Descuento</strong> = lo
                         que se bonificó. <strong>Neto</strong> = lo que se cobró (o se cargó a la cuenta) del cliente.
                         La diferencia contra la balanza <strong>es</strong> el descuento.
@@ -197,12 +197,12 @@ const InformesDescuentos = () => {
             {/* Tabla por empleado */}
             <div className="neo-card" style={{ padding: 0, overflowX: 'auto' }}>
                 <div style={{ padding: '0.9rem 1.1rem', fontWeight: 700, borderBottom: '1px solid var(--color-border)', display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
-                    <Users size={17} /> Por cliente con descuento
+                    <Users size={17} /> Por tipo de descuento
                 </div>
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.88rem', minWidth: 620 }}>
                     <thead>
                         <tr>
-                            <th style={{ ...headStyle, textAlign: 'left' }}>Cliente</th>
+                            <th style={{ ...headStyle, textAlign: 'left' }}>Descuento / cliente</th>
                             <th style={headStyle}>Tickets</th>
                             <th style={headStyle}>Bruto (balanza)</th>
                             <th style={headStyle}>Descuento</th>
@@ -223,7 +223,7 @@ const InformesDescuentos = () => {
                         ))}
                         {noData && (
                             <tr><td colSpan={6} style={{ ...cellStyle, textAlign: 'center', color: 'var(--color-text-muted)', padding: '2rem' }}>
-                                Sin datos de clientes con descuento en este período.
+                                Sin descuentos aplicados en este período.
                             </td></tr>
                         )}
                     </tbody>
@@ -231,9 +231,10 @@ const InformesDescuentos = () => {
             </div>
 
             <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', margin: 0 }}>
-                💡 Este informe cuenta las ventas con descuento de cliente, sin importar el medio de pago (efectivo,
-                transferencia, cuenta corriente, etc.). Los descuentos se registran cuando la venta se toma desde el punto de venta; si un ticket con descuento se
-                cobra desde <strong>Conciliación de balanza</strong>, se registra por el monto pleno (sin descuento).
+                💡 Este informe cuenta las ventas con descuento, sin importar el medio de pago (efectivo,
+                transferencia, cuenta corriente, etc.). Los descuentos especiales se eligen en <strong>Ventas</strong> antes de cobrar y
+                se administran en <strong>Descuentos Especiales</strong>. Si un ticket se cobra desde <strong>Conciliación de balanza</strong>,
+                se registra por el monto pleno (sin descuento).
             </p>
         </div>
     );

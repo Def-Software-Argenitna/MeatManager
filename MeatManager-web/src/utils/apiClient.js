@@ -587,6 +587,40 @@ export const fetchDescuentosReport = async ({ from, to }) => {
     return res.json();
 };
 
+// Descuentos especiales (jubilados, etc.): tipos de descuento por porcentaje.
+// `all: true` incluye los inactivos (para la pantalla de administracion); el POS
+// pide solo los activos.
+export const fetchSpecialDiscounts = async ({ all = false } = {}) => {
+    const res = await apiFetch(`/api/special-discounts${all ? '?all=1' : ''}`);
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudieron leer los descuentos especiales');
+    }
+    const data = await res.json();
+    return Array.isArray(data?.discounts) ? data.discounts : [];
+};
+
+export const saveSpecialDiscount = async ({ id, name, percentage, active = true }) => {
+    const res = await apiFetch(id ? `/api/special-discounts/${encodeURIComponent(id)}` : '/api/special-discounts', {
+        method: id ? 'PUT' : 'POST',
+        body: JSON.stringify({ name, percentage, active }),
+    });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo guardar el descuento');
+    }
+    return res.json();
+};
+
+export const deleteSpecialDiscount = async (id) => {
+    const res = await apiFetch(`/api/special-discounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'No se pudo eliminar el descuento');
+    }
+    return res.json();
+};
+
 export const fetchBranchTransfers = async ({ direction, status } = {}) => {
     const query = new URLSearchParams();
     if (direction) query.set('direction', direction);
