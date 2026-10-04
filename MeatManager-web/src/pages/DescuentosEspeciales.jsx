@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { Percent, Plus, Pencil, Trash2, Save, X, AlertTriangle } from 'lucide-react';
+import { Button, Modal } from '../components/ui';
 import { fetchSpecialDiscounts, saveSpecialDiscount, deleteSpecialDiscount } from '../utils/apiClient';
 import { isEffectiveAdminUser, useUser } from '../context/UserContext';
 
@@ -16,6 +17,8 @@ const DescuentosEspeciales = () => {
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
     const [form, setForm] = useState(null); // null = formulario cerrado
+    const [toDelete, setToDelete] = useState(null); // descuento pendiente de confirmar borrado
+    const [deleting, setDeleting] = useState(false);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -62,14 +65,18 @@ const DescuentosEspeciales = () => {
         }
     };
 
-    const handleDelete = async (discount) => {
-        if (!window.confirm(`¿Eliminar el descuento "${discount.name}"? Las ventas ya hechas conservan su descuento registrado.`)) return;
+    const handleConfirmDelete = async () => {
+        if (!toDelete || deleting) return;
+        setDeleting(true);
         setError(null);
         try {
-            await deleteSpecialDiscount(discount.id);
+            await deleteSpecialDiscount(toDelete.id);
             await load();
         } catch (e) {
             setError(e.message || 'No se pudo eliminar el descuento.');
+        } finally {
+            setDeleting(false);
+            setToDelete(null);
         }
     };
 
@@ -196,7 +203,7 @@ const DescuentosEspeciales = () => {
                                         <button
                                             type="button"
                                             className="neo-button"
-                                            onClick={() => handleDelete(d)}
+                                            onClick={() => setToDelete(d)}
                                             title="Eliminar"
                                             style={{ padding: '0.3rem 0.5rem' }}
                                         >
@@ -222,6 +229,24 @@ const DescuentosEspeciales = () => {
                     Solo un administrador puede crear, editar o eliminar descuentos.
                 </p>
             )}
+
+            <Modal
+                open={Boolean(toDelete)}
+                onClose={() => { if (!deleting) setToDelete(null); }}
+                title="Eliminar descuento"
+                size="sm"
+                footer={(
+                    <>
+                        <Button variant="secondary" onClick={() => setToDelete(null)} disabled={deleting}>Cancelar</Button>
+                        <Button variant="danger" icon={<Trash2 size={16} />} onClick={handleConfirmDelete} loading={deleting}>Eliminar</Button>
+                    </>
+                )}
+            >
+                <p style={{ margin: 0, color: 'var(--color-text-muted)', lineHeight: 1.5 }}>
+                    ¿Eliminar el descuento <strong style={{ color: 'var(--color-text-main)' }}>{toDelete?.name}</strong>
+                    {' '}({formatPct(toDelete?.percentage)}%)? Las ventas ya hechas conservan su descuento registrado.
+                </p>
+            </Modal>
         </div>
     );
 };
