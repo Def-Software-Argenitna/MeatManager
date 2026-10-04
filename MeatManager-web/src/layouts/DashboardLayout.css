@@ -29,7 +29,8 @@
 .route-stage {
     position: relative;
     min-height: 100%;
-    perspective: 1400px;
+    /* Sin perspective/will-change: crean un containing block y los modales
+       position:fixed quedaban recortados al alto de la pagina (no de la pantalla). */
 }
 
 .route-stage::before,
@@ -64,7 +65,6 @@
     z-index: 1;
     min-height: 100%;
     transform-origin: center center;
-    will-change: transform, opacity, filter;
     padding: 1.5rem;
 }
 
