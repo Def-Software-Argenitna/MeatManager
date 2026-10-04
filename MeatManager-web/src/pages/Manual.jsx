@@ -162,7 +162,7 @@ const Manual = () => {
                     subtitle: 'Seguimiento de descuentos aplicados',
                     steps: [
                         'Elegí fecha y sucursal antes de consultar.',
-                        'El informe muestra descuentos asociados a operaciones de cuenta corriente.',
+                        'El informe muestra los descuentos de cliente (empleados, jubilados, etc.) de todas las ventas, sin importar el medio de pago.',
                         'Revisá cliente, venta, importe original y descuento para validar cada caso.',
                         'Usá el total del período como control comercial y de autorización.',
                         'Si no aparecen resultados, verificá que existan descuentos en la sucursal y período seleccionados.'

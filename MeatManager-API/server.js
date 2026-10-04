@@ -14648,7 +14648,7 @@ app.get('/api/informes/kilos', verifyFirebaseToken, async (req, res) => {
 });
 
 // ── RUTA: GET /api/informes/descuentos ───────────────────────────────────
-// Descuentos de empleado otorgados en ventas, por dia y por empleado.
+// Descuentos de cliente (empleados, jubilados, etc.) otorgados en ventas, por dia y por cliente.
 // La balanza suma SIN descuento (bruto = SUM(subtotal)); la caja cobra el
 // neto (SUM(total)). La diferencia entre ambos es, exactamente, la suma de
 // los descuentos (SUM(client_discount_amount)). Esto le permite al comercio
@@ -14695,17 +14695,12 @@ app.get('/api/informes/descuentos', verifyFirebaseToken, async (req, res) => {
             branchParams.push(scopedBranchId);
         }
 
-        // Solo ventas con descuento efectivamente aplicado Y que hayan sido a
-        // cuenta corriente (fiado). Cuenta corriente = payment_method
-        // 'Cuenta Corriente', o pago mixto cuyo payment_breakdown incluye una
-        // parte de cuenta corriente (method_type/method_name).
+        // Todas las ventas con descuento efectivamente aplicado, sin importar el
+        // medio de pago (efectivo, transferencia, cuenta corriente, mixto). Antes
+        // solo se contaban las de cuenta corriente y los descuentos pagados en
+        // el momento (p. ej. jubilados) quedaban fuera del informe.
         const whereDto = `v.tenant_id = ? AND v.date BETWEEN ? AND ?${branchFilter}
-              AND v.client_discount_amount > 0
-              AND (
-                  LOWER(TRIM(COALESCE(v.payment_method, ''))) = 'cuenta corriente'
-                  OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta_corriente%'
-                  OR LOWER(COALESCE(v.payment_breakdown, '')) LIKE '%cuenta corriente%'
-              )`;
+              AND v.client_discount_amount > 0`;
         const whereParams = [tenantId, fromDt, toDt, ...branchParams];
 
         const [porDia] = await conn.query(
