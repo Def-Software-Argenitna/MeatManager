@@ -6,6 +6,13 @@
     gap: 1.5rem;
 }
 
+/* .animate-fade-in (global) deja un transform fijo al terminar (fill-mode forwards),
+   y un ancestro con transform pasa a ser el contenedor de los hijos position:fixed:
+   los modales (overlay) quedaban recortados al tamano de la pagina de atras. */
+.clients-container.animate-fade-in {
+    animation-fill-mode: none;
+}
+
 .clients-modal-content {
     max-width: 560px;
     width: 94%;
