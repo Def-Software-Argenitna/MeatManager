@@ -111,9 +111,10 @@ const emptyForm = {
 };
 
 const ConfiguracionPromociones = () => {
-    const { currentUser, accessProfile } = useUser();
+    const { currentUser, accessProfile, activeBranch } = useUser();
     const isAdmin = isEffectiveAdminUser(currentUser, accessProfile);
     const readOnly = !isAdmin;
+    const activeBranchId = Number(activeBranch?.id ?? accessProfile?.branch?.id ?? 0) || null;
 
     const [products, setProducts] = useState([]);
     const [categories, setCategories] = useState([]);
@@ -371,12 +372,40 @@ const ConfiguracionPromociones = () => {
         return unitRaw || 'kg';
     }, [selectedProduct]);
 
-    const promoSuggestion = useMemo(() => {
-        if (!selectedProduct) return { nextPromoNumber: 1, suggestedName: '', suggestedPlu: '' };
+    // El PLU de promo es unico por sucursal (la de la promo, o la activa si se deja en
+    // "todas") y tambien contra los productos de esa sucursal. Una promo/producto sin
+    // sucursal aplica a todas, asi que tambien choca.
+    const formBranchId = Number(form.branch_id || 0) || activeBranchId;
+    const isPromoPluTaken = (pluValue, excludeIds = []) => {
+        const plu = normalizePluCode(pluValue);
+        if (!plu) return false;
+        const excluded = new Set(excludeIds.map((idValue) => Number(idValue)));
+        const sameScope = (rowBranchId) => (
+            !formBranchId
+            || rowBranchId == null
+            || rowBranchId === ''
+            || Number(rowBranchId) === formBranchId
+        );
+        const promoTaken = (Array.isArray(promotions) ? promotions : []).some((row) => (
+            normalizePluCode(row?.promo_plu) === plu
+            && !excluded.has(Number(row?.id || 0))
+            && sameScope(row?.branch_id)
+        ));
+        if (promoTaken) return true;
+        return (Array.isArray(products) ? products : []).some((product) => (
+            Number(product?.active ?? 1) !== 0
+            && normalizePluCode(product?.plu) === plu
+            && sameScope(product?.branch_id)
+        ));
+    };
 
-        const productId = Number(selectedProduct.id);
-        const productName = String(selectedProduct.name || '').trim();
-        const basePlu = Number(normalizePluCode(selectedProduct.plu));
+    // Primer numero de promo (P1, P2...) cuyo PLU (n*1000 + PLU base) no esta tomado.
+    const buildPromoSuggestion = (product) => {
+        if (!product) return { nextPromoNumber: 1, suggestedName: '', suggestedPlu: '' };
+
+        const productId = Number(product.id);
+        const productName = String(product.name || '').trim();
+        const basePlu = Number(normalizePluCode(product.plu));
         const relatedPromos = (Array.isArray(promotions) ? promotions : []).filter((row) => Number(row?.product_id || 0) === productId);
 
         const usedNumbers = relatedPromos
@@ -386,12 +415,24 @@ const ConfiguracionPromociones = () => {
             })
             .filter((value) => Number.isFinite(value) && value > 0);
 
-        const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
+        let nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
+        if (basePlu > 0) {
+            // Tope de 50 para no ciclar: si todo esta tomado se deja el ultimo y la validacion avisa.
+            for (let guard = 0; guard < 50 && isPromoPluTaken(String((nextPromoNumber * PROMO_PLU_STEP) + basePlu)); guard += 1) {
+                nextPromoNumber += 1;
+            }
+        }
         const suggestedName = productName ? `${productName}_P${nextPromoNumber}` : '';
         const suggestedPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
 
         return { nextPromoNumber, suggestedName, suggestedPlu };
-    }, [promotions, selectedProduct]);
+    };
+
+    const promoSuggestion = useMemo(
+        () => buildPromoSuggestion(selectedProduct),
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+        [promotions, products, selectedProduct, formBranchId]
+    );
 
     const selectedBranchName = useMemo(() => {
         if (!form.branch_id) return 'Todas las sucursales';
@@ -410,17 +451,7 @@ const ConfiguracionPromociones = () => {
         }
         const product = productsById.get(productId);
         const productName = String(product?.name || '');
-        const basePlu = Number(normalizePluCode(product?.plu));
-        const relatedPromos = (Array.isArray(promotions) ? promotions : []).filter((row) => Number(row?.product_id || 0) === productId);
-        const usedNumbers = relatedPromos
-            .map((row) => {
-                const match = String(row?.promo_name || '').trim().match(PROMO_SUFFIX_REGEX);
-                return match ? Number(match[1]) : 0;
-            })
-            .filter((value) => Number.isFinite(value) && value > 0);
-        const nextPromoNumber = (usedNumbers.length ? Math.max(...usedNumbers) : 0) + 1;
-        const suggestedPromoName = productName ? `${productName}_P${nextPromoNumber}` : '';
-        const suggestedPromoPlu = basePlu > 0 ? String((nextPromoNumber * PROMO_PLU_STEP) + basePlu) : '';
+        const { suggestedName: suggestedPromoName, suggestedPlu: suggestedPromoPlu } = buildPromoSuggestion(product);
 
         setForm((prev) => ({
             ...prev,
@@ -653,13 +684,8 @@ const ConfiguracionPromociones = () => {
                 .map((idValue) => Number(idValue))
                 .filter((idValue) => Number.isFinite(idValue) && idValue > 0)
         );
-        const duplicatedPromoPlu = tierPromoPluValues.find((promoPlu) => (
-            (Array.isArray(promotions) ? promotions : []).some((row) => (
-                normalizePluCode(row?.promo_plu) === promoPlu
-                && !editingIdsSet.has(Number(row?.id || 0))
-            ))
-        ));
-        if (duplicatedPromoPlu) throw new Error(`El PLU promo ${duplicatedPromoPlu} ya existe. Usa otro código base.`);
+        const duplicatedPromoPlu = tierPromoPluValues.find((promoPlu) => isPromoPluTaken(promoPlu, [...editingIdsSet]));
+        if (duplicatedPromoPlu) throw new Error(`El PLU promo ${duplicatedPromoPlu} ya está en uso en esta sucursal (por otra promo o un producto). Usá otro código base.`);
 
         for (let i = 1; i < sorted.length; i += 1) {
             if (Math.abs(sorted[i].min_qty_kg - sorted[i - 1].min_qty_kg) < 0.0005) {
@@ -855,11 +881,12 @@ const ConfiguracionPromociones = () => {
             }
         } catch (error) {
             const msg = error.message || '';
+            // La clave unica es (cliente, sucursal, PLU): el PLU es el ultimo numero de la entrada duplicada.
             const dupPlu = msg.includes('uniq_promotions_tenant_promo_plu')
-                ? (() => { const m = msg.match(/Duplicate entry '[\d]+-(\d+)'/); return m ? m[1] : null; })()
+                ? (() => { const m = msg.match(/Duplicate entry '(?:[^']*-)?(\d+)'/); return m ? m[1] : null; })()
                 : null;
             const friendlyMsg = dupPlu
-                ? `El código PLU ${dupPlu} ya está en uso por otra promoción. Elegí un código diferente.`
+                ? `El código PLU ${dupPlu} ya está en uso por otra promoción en esta sucursal. Elegí un código diferente.`
                 : msg || 'No se pudo guardar la promoción.';
             setStatus({ type: 'error', text: friendlyMsg });
         } finally {

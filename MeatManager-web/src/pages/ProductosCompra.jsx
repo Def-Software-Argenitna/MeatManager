@@ -53,8 +53,15 @@ const ProductosCompra = () => {
         setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
         setSaleCategories(Array.isArray(saleCategoriesRows) ? saleCategoriesRows : []);
-        setPromotions(Array.isArray(promotionRows) ? promotionRows : []);
-    }, []);
+        // El PLU de promo es unico por sucursal: solo las promos de esta sucursal
+        // (o las de "todas") pueden chocar con el PLU de un producto de aca.
+        setPromotions((Array.isArray(promotionRows) ? promotionRows : []).filter((promo) => (
+            !currentBranchId
+            || promo?.branch_id == null
+            || promo.branch_id === ''
+            || Number(promo.branch_id) === currentBranchId
+        )));
+    }, [currentBranchId]);
 
     useEffect(() => {
         loadData().catch((error) => console.error('Error cargando catálogo de compras:', error));

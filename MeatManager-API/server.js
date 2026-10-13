@@ -2691,11 +2691,24 @@ async function ensureTenantScopedForeignKeys(conn) {
         }
     }
 
-    if (!(await hasIndex(conn, OPERATIONAL_DB_NAME, 'promotions', 'uniq_promotions_tenant_promo_plu'))) {
+    // El PLU de una promo es unico por sucursal (cada sucursal tiene su balanza),
+    // igual que el PLU de los productos. El indice viejo era (tenant, promo_plu) y
+    // hacia que una promo de otra sucursal bloqueara el codigo en todas las demas.
+    const [promoPluIndexCols] = await conn.query(
+        `SELECT COLUMN_NAME
+         FROM information_schema.STATISTICS
+         WHERE TABLE_SCHEMA = ? AND TABLE_NAME = 'promotions' AND INDEX_NAME = 'uniq_promotions_tenant_promo_plu'`,
+        [OPERATIONAL_DB_NAME]
+    );
+    const promoPluIndexExists = promoPluIndexCols.length > 0;
+    const promoPluIndexHasBranch = promoPluIndexCols.some((row) => row.COLUMN_NAME === 'branch_id');
+    if (!promoPluIndexExists || !promoPluIndexHasBranch) {
         try {
+            // Un solo ALTER: nunca queda la tabla sin indice entre el DROP y el ADD.
             await conn.query(
                 `ALTER TABLE \`${OPERATIONAL_DB_NAME}\`.promotions
-                 ADD UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu)`
+                 ${promoPluIndexExists ? 'DROP INDEX uniq_promotions_tenant_promo_plu,' : ''}
+                 ADD UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, branch_id, promo_plu)`
             );
         } catch (error) {
             if (!['ER_DUP_KEYNAME', 'ER_DUP_ENTRY', 'ER_CANT_CREATE_TABLE'].includes(error?.code)) {
@@ -5304,7 +5317,7 @@ function getSchemaTables() {
             INDEX idx_promotions_branch (\`${TENANT_COLUMN}\`, branch_id),
             INDEX idx_promotions_tenant_product (\`${TENANT_COLUMN}\`, product_id),
             INDEX idx_promotions_tenant_name (\`${TENANT_COLUMN}\`, product_name),
-            UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, promo_plu),
+            UNIQUE KEY uniq_promotions_tenant_promo_plu (\`${TENANT_COLUMN}\`, branch_id, promo_plu),
             CONSTRAINT promotions_product_fk FOREIGN KEY (\`${TENANT_COLUMN}\`, product_id)
                 REFERENCES products(\`${TENANT_COLUMN}\`, id) ON DELETE CASCADE
         )`,
@@ -6643,15 +6656,15 @@ async function findProductByPlu(pool, tenantId, plu, excludeProductId = null, br
     }
 }
 
-async function findPromotionByPromoPlu(pool, tenantId, plu, branchId = null) {
+async function findPromotionByPromoPlu(pool, tenantId, plu, branchId = null, { excludePromotionId = null, includeInactive = false } = {}) {
     const normalizedPlu = normalizePluValue(plu);
     if (!normalizedPlu) return null;
 
     const params = [tenantId, normalizedPlu, Number.parseInt(normalizedPlu, 10)];
-    let sql = `SELECT id, promo_name, product_name, promo_plu
+    let sql = `SELECT id, promo_name, product_name, promo_plu, branch_id
                FROM promotions
                WHERE tenant_id = ?
-                 AND COALESCE(active, 1) = 1
+                 ${includeInactive ? '' : 'AND COALESCE(active, 1) = 1'}
                  AND (
                     promo_plu = ?
                     OR (promo_plu REGEXP '^[0-9]+$' AND CAST(promo_plu AS UNSIGNED) = ?)
@@ -6661,6 +6674,10 @@ async function findPromotionByPromoPlu(pool, tenantId, plu, branchId = null) {
         // Una promo con branch_id NULL aplica a todas las sucursales, asi que tambien colisiona.
         sql += ' AND (branch_id = ? OR branch_id IS NULL)';
         params.push(normalizedBranchId);
+    }
+    if (Number.isFinite(Number(excludePromotionId)) && Number(excludePromotionId) > 0) {
+        sql += ' AND id <> ?';
+        params.push(Number(excludePromotionId));
     }
     sql += ' ORDER BY id ASC LIMIT 1';
 
@@ -6691,6 +6708,32 @@ async function assertUniqueProductPlu(pool, tenantId, plu, excludeProductId = nu
     if (promoConflict) {
         const promoLabel = String(promoConflict.promo_name || promoConflict.product_name || '').trim();
         const error = new Error(`El PLU ${normalizedPlu} ya lo usa la promocion "${promoLabel}" (promo ${promoConflict.id})`);
+        error.statusCode = 409;
+        throw error;
+    }
+}
+
+// El PLU de una promo es un slot de balanza: tiene que ser unico dentro de su sucursal
+// (y contra los productos de esa sucursal), pero se puede repetir entre sucursales.
+// Incluye promos inactivas porque el indice unico tambien las cuenta.
+async function assertUniquePromoPlu(pool, tenantId, promoPlu, excludePromotionId = null, branchId = null) {
+    const normalizedPlu = normalizePluValue(promoPlu);
+    if (!normalizedPlu) return;
+
+    const promoConflict = await findPromotionByPromoPlu(pool, tenantId, normalizedPlu, branchId, {
+        excludePromotionId,
+        includeInactive: true,
+    });
+    if (promoConflict) {
+        const promoLabel = String(promoConflict.promo_name || promoConflict.product_name || '').trim();
+        const error = new Error(`El PLU ${normalizedPlu} ya lo usa la promocion "${promoLabel}" (promo ${promoConflict.id}) en esta sucursal`);
+        error.statusCode = 409;
+        throw error;
+    }
+
+    const productConflict = await findProductByPlu(pool, tenantId, normalizedPlu, null, branchId);
+    if (productConflict) {
+        const error = new Error(`El PLU ${normalizedPlu} ya esta asignado al producto "${productConflict.name}" (producto ${productConflict.id}) en esta sucursal`);
         error.statusCode = 409;
         throw error;
     }
@@ -7093,6 +7136,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                 filtered.plu = normalizePluValue(filtered.plu);
                 await assertUniqueProductPlu(pool, tenantId, filtered.plu, null, filtered.branch_id);
             }
+            if (table === 'promotions' && Object.prototype.hasOwnProperty.call(filtered, 'promo_plu')) {
+                filtered.promo_plu = normalizePluValue(filtered.promo_plu) || null;
+                await assertUniquePromoPlu(pool, tenantId, filtered.promo_plu, null, filtered.branch_id);
+            }
             try {
                 const [result] = await pool.query('INSERT INTO ?? SET ?', [table, filtered]);
                 if (table === 'promotions') {
@@ -7143,6 +7190,12 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
                         return res.json({ ok: true, insertId: existingId, existed: true });
                     }
                 }
+                if (insertError?.code === 'ER_DUP_ENTRY' && table === 'promotions') {
+                    // Carrera entre dos altas con el mismo PLU: el indice unico (tenant, sucursal, PLU) la frena.
+                    const error = new Error(`El PLU ${filtered.promo_plu} ya lo usa otra promocion en esta sucursal`);
+                    error.statusCode = 409;
+                    throw error;
+                }
                 throw insertError;
             }
         }
@@ -7158,6 +7211,10 @@ app.post('/api/data', verifyFirebaseToken, async (req, res) => {
             if (table === 'products' && Object.prototype.hasOwnProperty.call(filtered, 'plu')) {
                 filtered.plu = normalizePluValue(filtered.plu);
                 await assertUniqueProductPlu(pool, tenantId, filtered.plu, numId, filtered.branch_id);
+            }
+            if (table === 'promotions' && Object.prototype.hasOwnProperty.call(filtered, 'promo_plu')) {
+                filtered.promo_plu = normalizePluValue(filtered.promo_plu) || null;
+                await assertUniquePromoPlu(pool, tenantId, filtered.promo_plu, numId, filtered.branch_id);
             }
             const scope = tenantWhereClause(table, tenantId);
             const strictBranchId = Number(filtered.branch_id);
@@ -14064,7 +14121,7 @@ async function storeScaleSalesLog(pool, ctx) {
                        CAST(p.plu AS CHAR) = CAST(i.plu_code AS CHAR)
                        OR CAST(p.plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
                    )
-                 ORDER BY CASE WHEN p.branch_id IS NULL THEN 1 ELSE 0 END, p.id DESC
+                 ORDER BY CASE WHEN p.branch_id = ? THEN 0 WHEN p.branch_id IS NULL THEN 2 ELSE 1 END, p.id DESC
                  LIMIT 1),
                 -- Los PLU de promo (rango 1000+, product_id<0 en el mapa) no estan en
                 -- products; su nombre vive en promotions.promo_plu. Sin esto las lineas
@@ -14075,7 +14132,7 @@ async function storeScaleSalesLog(pool, ctx) {
                        CAST(pr.promo_plu AS CHAR) = CAST(i.plu_code AS CHAR)
                        OR CAST(pr.promo_plu AS CHAR) = TRIM(LEADING '0' FROM CAST(i.plu_code AS CHAR))
                    )
-                 ORDER BY CASE WHEN pr.branch_id IS NULL THEN 1 ELSE 0 END, pr.active DESC, pr.id DESC
+                 ORDER BY CASE WHEN pr.branch_id = ? THEN 0 WHEN pr.branch_id IS NULL THEN 2 ELSE 1 END, pr.active DESC, pr.id DESC
                  LIMIT 1)
             ) AS product_name
         FROM scale_bridge_sales_item i
@@ -14084,7 +14141,7 @@ async function storeScaleSalesLog(pool, ctx) {
           AND i.ticket_id = ?
           AND i.sale_at = ?
         ORDER BY i.line_no
-    `, [tenantId, deviceId, ticketId, saleAt]);
+    `, [branchId ?? null, branchId ?? null, tenantId, deviceId, ticketId, saleAt]);
 
     const linesJson = JSON.stringify(lines.map((l) => ({
         lineNo: l.line_no,
