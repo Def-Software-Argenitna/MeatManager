@@ -37,18 +37,21 @@ const ProductosCompra = () => {
     const [items, setItems] = useState([]);
     const [products, setProducts] = useState([]);
     const [promotions, setPromotions] = useState([]);
+    const [stockCatalog, setStockCatalog] = useState([]);
     const [categories, setCategories] = useState([]);
     const [saleCategories, setSaleCategories] = useState([]);
     const [collapsedGroups, setCollapsedGroups] = useState({});
 
     const loadData = React.useCallback(async () => {
-        const [itemsRows, productRows, categoriesRows, saleCategoriesRows, promotionRows] = await Promise.all([
+        const [itemsRows, productRows, categoriesRows, saleCategoriesRows, promotionRows, stockData] = await Promise.all([
             fetchTable('purchase_items'),
             fetchProductsSafe(),
             fetchTable('categories'),
             fetchTable('product_categories'),
             fetchTable('promotions', { limit: 5000 }).catch(() => []),
+            fetchTable('stock').catch(() => []),
         ]);
+        setStockCatalog(Array.isArray(stockData) ? stockData : []);
         setItems(Array.isArray(itemsRows) ? itemsRows : []);
         setProducts(Array.isArray(productRows) ? productRows : []);
         setCategories(Array.isArray(categoriesRows) ? categoriesRows : []);
@@ -79,7 +82,8 @@ const ProductosCompra = () => {
         default_iva_rate: 10.5,
         sale_category: 'almacen',
         sale_price: '',
-        sale_plu: ''
+        sale_plu: '',
+        barcode: ''
     });
 
     // Build category map for display
@@ -179,6 +183,21 @@ const ProductosCompra = () => {
             return;
         }
 
+        const requestedBarcode = String(formData.barcode || '').trim();
+        if (requestedBarcode) {
+            const ownProductId = Number(editingItem?.product_id || existingProductCandidate?.id || 0);
+            const normalizedBarcode = requestedBarcode.toLowerCase();
+            const barcodeOwner = stockCatalog.find((row) => (
+                String(row?.barcode || '').trim().toLowerCase() === normalizedBarcode
+                && !(ownProductId > 0 && Number(row?.product_id || 0) === ownProductId)
+                && String(row?.name || '').trim().toLowerCase() !== nameTrimmed.toLowerCase()
+            ));
+            if (barcodeOwner) {
+                toast.warning(`⚠️ El código de barra ya lo usa "${barcodeOwner.name}". Usá otro.`);
+                return;
+            }
+        }
+
         const salePrice = parseFloat(formData.sale_price);
         if (Number.isNaN(salePrice) || salePrice <= 0) {
             toast.warning('⚠️ El precio de venta debe ser un numero valido.');
@@ -268,8 +287,11 @@ const ProductosCompra = () => {
                 quantity: 0,
                 unit: formData.unit,
                 updated_at: new Date().toISOString(),
-                reference: 'catalogo_compra'
+                reference: 'catalogo_compra',
+                barcode: requestedBarcode || null
             });
+        } else if (String(existingStock.barcode || '').trim() !== requestedBarcode) {
+            await saveTableRecord('stock', 'update', { barcode: requestedBarcode }, existingStock.id);
         }
 
         if (purchaseItemId && unifiedProduct?.id) {
@@ -280,7 +302,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '', barcode: '' });
     };
 
     const handleDelete = async (id) => {
@@ -321,14 +343,21 @@ const ProductosCompra = () => {
             default_iva_rate: item.default_iva_rate ?? ((item.type === 'despostada' || ANIMAL_SALE_CATEGORIES.includes(String(item.species || '').toLowerCase())) ? 10.5 : 21),
             sale_category: existingCategory,
             sale_price: productRecord?.current_price?.toString() || '',
-            sale_plu: productRecord?.plu || ''
+            sale_plu: productRecord?.plu || '',
+            barcode: String(
+                stockCatalog.find((row) => (
+                    row?.barcode
+                    && Number(row?.product_id || 0) > 0
+                    && Number(row.product_id) === Number(productRecord?.id || item.product_id || 0)
+                ))?.barcode || ''
+            ).trim()
         });
         setIsModalOpen(true);
     };
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu) });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu), barcode: '' });
         setIsModalOpen(true);
     };
 
@@ -838,6 +867,19 @@ const ProductosCompra = () => {
                                                 Sugerido ({nextSuggestedPlu}) — podés cambiarlo
                                             </div>
                                         )}
+                                    </div>
+                                </div>
+                                <div style={{ marginBottom: '1rem' }}>
+                                    <label style={{ display: 'block', marginBottom: '0.5rem' }}>Código de barra (opcional)</label>
+                                    <input
+                                        type="text"
+                                        className="neo-input"
+                                        placeholder="Escaneá o escribí el código"
+                                        value={formData.barcode}
+                                        onChange={e => setFormData({ ...formData, barcode: e.target.value })}
+                                    />
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
+                                        Para poder escanear el producto en Ventas.
                                     </div>
                                 </div>
                                 <div>
