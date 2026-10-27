@@ -202,6 +202,7 @@ export const ensureUnifiedProduct = async ({
     branchId = null,
     useForDespostada = null,
     despostadaSpecies = null,
+    appliesDiscounts = null,
     promotions = [],
     resolveConflict = promptPriceConflictResolution,
 }) => {
@@ -255,6 +256,9 @@ export const ensureUnifiedProduct = async ({
         payload.despostada_species = useForDespostada
             ? (String(despostadaSpecies || existingProduct?.despostada_species || '').trim() || null)
             : null;
+    }
+    if (appliesDiscounts !== null) {
+        payload.applies_discounts = appliesDiscounts ? 1 : 0;
     }
     if (!hasBranchScope) {
         payload.current_price = resolvedPrice > 0 ? resolvedPrice : null;

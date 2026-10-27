@@ -83,7 +83,8 @@ const ProductosCompra = () => {
         sale_category: 'almacen',
         sale_price: '',
         sale_plu: '',
-        barcode: ''
+        barcode: '',
+        applies_discounts: true
     });
 
     // Build category map for display
@@ -268,6 +269,7 @@ const ProductosCompra = () => {
             branchId: currentBranchId,
             useForDespostada: formData.use_for_despostada,
             despostadaSpecies: formData.use_for_despostada ? formData.species : null,
+            appliesDiscounts: formData.applies_discounts !== false,
         });
         const stockRows = await fetchTable('stock');
         const existingStock = (Array.isArray(stockRows) ? stockRows : []).find((item) =>
@@ -302,7 +304,7 @@ const ProductosCompra = () => {
 
         await loadData();
         setIsModalOpen(false);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '', barcode: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: '', barcode: '', applies_discounts: true });
     };
 
     const handleDelete = async (id) => {
@@ -350,14 +352,15 @@ const ProductosCompra = () => {
                     && Number(row?.product_id || 0) > 0
                     && Number(row.product_id) === Number(productRecord?.id || item.product_id || 0)
                 ))?.barcode || ''
-            ).trim()
+            ).trim(),
+            applies_discounts: Number(productRecord?.applies_discounts ?? 1) !== 0
         });
         setIsModalOpen(true);
     };
 
     const openNew = () => {
         setEditingItem(null);
-        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu), barcode: '' });
+        setFormData({ name: '', category_id: '', unit: 'kg', type: 'directo', use_for_despostada: false, is_preelaborable: false, species: 'vaca', default_iva_rate: 10.5, sale_category: 'almacen', sale_price: '', sale_plu: String(nextSuggestedPlu), barcode: '', applies_discounts: true });
         setIsModalOpen(true);
     };
 
@@ -378,6 +381,7 @@ const ProductosCompra = () => {
                 product_category_code: productRecord?.category_code ?? null,
                 use_for_despostada: Number(productRecord?.use_for_despostada ?? item?.use_for_despostada ?? (item?.type === 'despostada' ? 1 : 0)) === 1 ? 1 : 0,
                 despostada_species: productRecord?.despostada_species || item?.species || null,
+                applies_discounts: Number(productRecord?.applies_discounts ?? 1) !== 0,
             };
         });
     }, [items, products]);
@@ -433,6 +437,7 @@ const ProductosCompra = () => {
                     plu: product.plu ?? '',
                     species: product.despostada_species || null,
                     use_for_despostada: Number(product.use_for_despostada || 0) === 1 ? 1 : 0,
+                    applies_discounts: Number(product.applies_discounts ?? 1) !== 0,
                     isSaleOnly: true,
                 };
             });
@@ -626,6 +631,9 @@ const ProductosCompra = () => {
                                             {item.name}
                                             {item.isSaleOnly && (
                                                 <span style={{ marginLeft: '0.5rem', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#93c5fd', background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', padding: '0.1rem 0.4rem', borderRadius: '999px', whiteSpace: 'nowrap' }} title="Producto de venta sin artículo de compra. Podés editarle el precio igual.">solo venta</span>
+                                            )}
+                                            {!item.applies_discounts && (
+                                                <span style={{ marginLeft: '0.5rem', fontSize: '0.65rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em', color: '#fbbf24', background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', padding: '0.1rem 0.4rem', borderRadius: '999px', whiteSpace: 'nowrap' }} title="Se cobra siempre a precio de lista: no le aplican descuentos de medio de pago, especiales ni de empleado.">sin descuento</span>
                                             )}
                                         </td>
                                         <td style={{ padding: '0.45rem 0.6rem', color: 'var(--color-text-muted)' }}>{item.unit}</td>
@@ -893,6 +901,19 @@ const ProductosCompra = () => {
                                         value={formData.sale_price}
                                         onChange={e => setFormData({ ...formData, sale_price: e.target.value })}
                                     />
+                                </div>
+                                <div style={{ marginTop: '1rem' }}>
+                                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', cursor: 'pointer', fontWeight: '600' }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={formData.applies_discounts !== false}
+                                            onChange={(e) => setFormData({ ...formData, applies_discounts: e.target.checked })}
+                                        />
+                                        Aplica descuentos
+                                    </label>
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', marginTop: '0.35rem' }}>
+                                        Si lo destildás, se cobra siempre a precio de lista: no le aplican descuentos del medio de pago (ej. Cuenta DNI), especiales (jubilados) ni de empleado. Los recargos sí se cobran.
+                                    </div>
                                 </div>
                                 <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
                                     Se crea el producto base en Stock con 0 cantidad y el precio/PLU para Ventas.

@@ -1878,6 +1878,21 @@ const Ventas = () => {
         [cart, promotions, stockQtyByItem, priceFormat]
     );
     const cartTotal = cartPricing.subtotal;
+    // Articulos "no aplica descuentos" (products.applies_discounts = 0): se cobran a
+    // precio de lista. Quedan fuera del descuento empleado/especial y del % negativo
+    // del medio de pago; los recargos (% positivo) se cobran sobre todo. El server
+    // aplica la misma regla al guardar el descuento.
+    const nonDiscountableProductIds = React.useMemo(() => new Set(
+        (Array.isArray(productsCatalog) ? productsCatalog : [])
+            .filter((p) => Number(p?.applies_discounts ?? 1) === 0)
+            .map((p) => Number(p.id))
+    ), [productsCatalog]);
+    const nonDiscountableTotal = cart.reduce((sum, item) => {
+        if (!nonDiscountableProductIds.has(Number(item.productId))) return sum;
+        const line = cartPricing.lineMap.get(item.id);
+        return sum + toNumber(line?.subtotal ?? (item.price * item.quantity));
+    }, 0);
+    const discountableTotal = Math.max(0, cartTotal - nonDiscountableTotal);
     const selectedClient = clients?.find(c => Number(c.id) === Number(selectedClientId));
     const selectedClientEmployeeDiscountPct = getClientEmployeeDiscountPct(selectedClient);
     const selectedSpecialDiscount = specialDiscounts.find((d) => Number(d.id) === Number(selectedSpecialDiscountId)) || null;
@@ -1889,9 +1904,15 @@ const Ventas = () => {
     const appliedDiscountPct = specialDiscountWins ? specialDiscountPct : selectedClientEmployeeDiscountPct;
     const appliedDiscountLabel = specialDiscountWins ? String(selectedSpecialDiscount.name || '').toUpperCase() : 'EMPLEADO';
     const employeeDiscountAmount = appliedDiscountPct > 0
-        ? (cartTotal * appliedDiscountPct) / 100
+        ? (discountableTotal * appliedDiscountPct) / 100
         : 0;
     const payableSubtotal = Math.max(0, cartTotal - employeeDiscountAmount);
+    // Parte del subtotal neto que puede llevar el descuento del medio de pago.
+    const discountablePayable = Math.max(0, discountableTotal - employeeDiscountAmount);
+    const getMethodAdjustment = (percentage) => {
+        const pct = Number(percentage) || 0;
+        return ((pct < 0 ? discountablePayable : payableSubtotal) * pct) / 100;
+    };
     const selectedClientHasCurrentAccount = selectedClient?.has_current_account !== false;
     const currentAccountAvailable = Boolean(selectedClientId) && selectedClientHasCurrentAccount;
     const availableSplitMethods = React.useMemo(() => (dbPaymentMethods || []), [dbPaymentMethods]);
@@ -1901,16 +1922,29 @@ const Ventas = () => {
     }, [dbPaymentMethods]);
 
     const activeMethod = getMethodById(selectedPaymentMethod);
-    const cartAdjustment = activeMethod ? (payableSubtotal * (activeMethod.percentage || 0)) / 100 : 0;
+    const cartAdjustment = activeMethod ? getMethodAdjustment(activeMethod.percentage) : 0;
     const finalTotal = payableSubtotal + cartAdjustment;
 
     const splitPaymentSummary = React.useMemo(() => {
+        // Base que todavia puede llevar descuento de medio de pago. Lo que un medio
+        // con descuento cobra por encima de eso cubre articulos sin descuento y va
+        // a precio de lista.
+        let discountBudget = discountablePayable;
         const rows = splitPayments.map((row, index) => {
             const method = getMethodById(row.methodId);
             const chargedAmount = parseFloat(row.amount) || 0;
             const percentage = method?.percentage || 0;
             const divisor = 1 + (percentage / 100);
-            const baseAmount = divisor > 0 ? chargedAmount / divisor : 0;
+            let baseAmount;
+            if (percentage < 0 && divisor > 0) {
+                const discountedChargeCap = discountBudget * divisor;
+                baseAmount = chargedAmount <= discountedChargeCap
+                    ? chargedAmount / divisor
+                    : discountBudget + (chargedAmount - discountedChargeCap);
+                discountBudget = Math.max(0, discountBudget - Math.min(baseAmount, discountBudget));
+            } else {
+                baseAmount = divisor > 0 ? chargedAmount / divisor : 0;
+            }
             const adjustment = chargedAmount - baseAmount;
             return {
                 index,
@@ -1944,7 +1978,7 @@ const Ventas = () => {
                 rows.every(row => row.method && row.chargedAmount > 0) &&
                 Math.abs(coveredSubtotal - payableSubtotal) < 0.01,
         };
-    }, [splitPayments, cashReceived, payableSubtotal, getMethodById]);
+    }, [splitPayments, cashReceived, payableSubtotal, discountablePayable, getMethodById]);
 
     const resetPaymentState = () => {
         setSelectedPaymentMethod(null);
@@ -1960,8 +1994,7 @@ const Ventas = () => {
             setSplitPayments([]);
             return;
         }
-        const percentage = defaultMethod.percentage || 0;
-        const total = payableSubtotal * (1 + (percentage / 100));
+        const total = payableSubtotal + getMethodAdjustment(defaultMethod.percentage);
         setSplitPayments([{ methodId: defaultMethod.id, amount: total.toFixed(2) }]);
     };
 
@@ -2140,7 +2173,7 @@ const Ventas = () => {
 
             console.log("Iniciando checkout con:", { methodObj, cartTotal, cart, paymentBreakdown });
 
-            const paymentAdjustment = isMixedSale ? splitSummary.totalAdjustment : (payableSubtotal * (methodObj.percentage || 0)) / 100;
+            const paymentAdjustment = isMixedSale ? splitSummary.totalAdjustment : getMethodAdjustment(methodObj.percentage);
             const adjustment = paymentAdjustment;
             const finalTotal = isMixedSale ? splitSummary.chargedTotal : payableSubtotal + paymentAdjustment;
             const numericClientId = selectedClientId ? Number(selectedClientId) : null;
@@ -3042,6 +3075,12 @@ const Ventas = () => {
                                 <span style={{ color: 'var(--color-text-muted)' }}>Subtotal:</span>
                                 <span>${formatNumericLocale(cartTotal)}</span>
                             </div>
+                            {nonDiscountableTotal > 0 && (
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.8rem' }}>
+                                    <span style={{ color: '#fbbf24' }}>Artículos sin descuento (precio de lista):</span>
+                                    <span style={{ color: '#fbbf24' }}>${formatNumericLocale(nonDiscountableTotal)}</span>
+                                </div>
+                            )}
                             {employeeDiscountAmount > 0 && (
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5rem', fontSize: '0.9rem' }}>
                                     <span style={{ color: 'var(--color-text-muted)' }}>

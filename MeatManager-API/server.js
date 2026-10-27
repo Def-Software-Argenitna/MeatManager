@@ -2841,6 +2841,9 @@ async function ensureOperationalTenantIsolation() {
             await ensureColumn(conn, 'products', 'category_id', '`category_id` INT NULL AFTER `name`');
             await ensureColumn(conn, 'products', 'use_for_despostada', '`use_for_despostada` TINYINT(1) NOT NULL DEFAULT 0 AFTER `unit`');
             await ensureColumn(conn, 'products', 'despostada_species', '`despostada_species` VARCHAR(30) NULL AFTER `use_for_despostada`');
+            // 0 = el articulo se cobra siempre a precio de lista (sin descuento de
+            // medio de pago, especial ni de empleado). Default 1: no cambia nada.
+            await ensureColumn(conn, 'products', 'applies_discounts', '`applies_discounts` TINYINT(1) NOT NULL DEFAULT 1 AFTER `despostada_species`');
             await ensureColumn(conn, 'products', 'active', '`active` TINYINT(1) NOT NULL DEFAULT 1 AFTER `plu`');
             await ensureColumn(conn, 'products', 'deleted_at', '`deleted_at` DATETIME NULL AFTER `active`');
             await ensureColumn(conn, 'products', 'archived_plu', '`archived_plu` VARCHAR(20) NULL AFTER `deleted_at`');
@@ -10521,6 +10524,39 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             });
         }
 
+        // Articulos marcados "no aplica descuentos" (products.applies_discounts = 0,
+        // ej. mercaderia de reventa): el descuento de empleado/especial se calcula
+        // solo sobre el resto del carrito. El flag sale de la base, no del navegador.
+        const saleProductIds = [...new Set(
+            items
+                .map((it) => Number.parseInt(it?.product_id, 10))
+                .filter((n) => Number.isFinite(n) && n > 0)
+        )];
+        const nonDiscountableProductIds = new Set();
+        if (saleProductIds.length > 0) {
+            try {
+                const [nonDiscountableRows] = await conn.query(
+                    `SELECT id
+                     FROM products
+                     WHERE \`${TENANT_COLUMN}\` = ?
+                       AND id IN (${saleProductIds.map(() => '?').join(',')})
+                       AND COALESCE(applies_discounts, 1) = 0`,
+                    [tenantId, ...saleProductIds]
+                );
+                nonDiscountableRows.forEach((row) => nonDiscountableProductIds.add(Number(row.id)));
+            } catch (err) {
+                // Columna todavia no migrada (SKIP_SCHEMA_BOOT): todo aplica descuento,
+                // como antes. Nunca frenamos una venta por esto.
+                if (err?.code !== 'ER_BAD_FIELD_ERROR') throw err;
+            }
+        }
+        const nonDiscountableSubtotal = items.reduce((acc, it) => {
+            if (!nonDiscountableProductIds.has(Number.parseInt(it?.product_id, 10))) return acc;
+            const sub = parseFloat(it.subtotal);
+            return acc + (Number.isFinite(sub) ? sub : (parseFloat(it.price) || 0) * (parseFloat(it.quantity) || 0));
+        }, 0);
+        const discountableSubtotal = Math.max(0, Math.round((safeSubtotal - nonDiscountableSubtotal) * 100) / 100);
+
         let safeDiscountClientId = null;
         let safeClientDiscountPct = 0;
         let safeClientDiscountAmount = 0;
@@ -10541,7 +10577,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
             if (discountClient && discountEnabled && discountPct > 0) {
                 safeDiscountClientId = Number(discountClient.id);
                 safeClientDiscountPct = discountPct;
-                safeClientDiscountAmount = Math.round(((safeSubtotal * discountPct) / 100) * 100) / 100;
+                safeClientDiscountAmount = Math.round(((discountableSubtotal * discountPct) / 100) * 100) / 100;
             }
         }
 
@@ -10550,8 +10586,14 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
         if (safeDiscountClientId && safeClientDiscountPct === 0 && requestedDiscountPct > 0) {
             safeClientDiscountPct = requestedDiscountPct;
         }
-        if (safeDiscountClientId && safeClientDiscountAmount === 0 && Number.isFinite(requestedDiscountAmount) && requestedDiscountAmount > 0) {
-            safeClientDiscountAmount = Math.round(requestedDiscountAmount * 100) / 100;
+        // Si el carrito es todo "no aplica descuentos", el monto en 0 es correcto:
+        // no lo pisamos con el que manda el navegador.
+        if (safeDiscountClientId && safeClientDiscountAmount === 0 && discountableSubtotal > 0
+            && Number.isFinite(requestedDiscountAmount) && requestedDiscountAmount > 0) {
+            safeClientDiscountAmount = Math.min(
+                Math.round(requestedDiscountAmount * 100) / 100,
+                discountableSubtotal
+            );
         }
 
         // Descuento especial (jubilados, etc.): el % sale de la tabla, no del cliente
@@ -10582,7 +10624,7 @@ app.post('/api/ventas', verifyFirebaseToken, async (req, res) => {
                 safeSpecialDiscountName = String(specialDiscount.name || '').slice(0, 100);
                 safeDiscountClientId = null;
                 safeClientDiscountPct = specialPct;
-                safeClientDiscountAmount = Math.round(((safeSubtotal * specialPct) / 100) * 100) / 100;
+                safeClientDiscountAmount = Math.round(((discountableSubtotal * specialPct) / 100) * 100) / 100;
             }
         }
         const now = date ? new Date(date) : new Date();
