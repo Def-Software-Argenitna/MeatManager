@@ -13,6 +13,7 @@ Este archivo documenta los cambios realizados en la app durante la sesión actua
 - Se agregó el campo método de pago y la opción de cuenta corriente al registrar compras.
 - Ahora la tarjeta de cada proveedor muestra el saldo de cuenta corriente, y botones para ver movimientos y registrar pagos.
 - Se agregó la pantalla de configuración de formato de precio, permitiendo elegir entre 4 dígitos + 2 decimales o 6 dígitos sin decimales (con redondeo).
+- Se agregó la solapa "Por producto" en Kilos Vendidos: ventas de cualquier producto por rango de fechas, con buscador y exportación a CSV (ej. para rendir el pan vendido a cuenta de la fiambrería).
 
 ---
 

@@ -15278,6 +15278,93 @@ app.get('/api/informes/preelaborados-ranking', verifyFirebaseToken, async (req, 
     }
 });
 
+// ── RUTA: GET /api/informes/ventas-por-producto ──────────────────────────
+// Lo vendido por producto en un rango de fechas, de CUALQUIER categoria
+// (cortes-ranking y preelaborados-ranking filtran por categoria). Sirve para
+// productos de terceros que se venden a cuenta de otro (ej. el pan de la
+// fiambreria): ver cuanto se cobro para despues rendirle la plata.
+// Mismo criterio de unidades que preelaborados-ranking: kg y unidades aparte.
+app.get('/api/informes/ventas-por-producto', verifyFirebaseToken, async (req, res) => {
+    try {
+        const { dbName, tenantId } = await getTenantInfo(req.firebaseUser);
+        const pool = getTenantPool(dbName);
+        const accessContext = await getClientAccessContext({
+            uid: req.firebaseUser.uid,
+            email: req.firebaseUser.email,
+            _internalAdmin: req.firebaseUser?._internalAdmin || null,
+            _supportClientId: req.firebaseUser?._supportClientId || null,
+        });
+        if (accessContext) {
+            assertClientAccess(accessContext);
+            accessContext.activeBranch = await resolveRequestedActiveBranch(accessContext, req);
+        }
+        const resolvedBranchId = accessContext
+            ? await resolveOperationalBranchId({ pool, tenantId, accessContext, record: { branch_id: req.query.branch_id } })
+            : null;
+
+        const from = String(req.query.from || '').trim();
+        const to = String(req.query.to || '').trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+            return res.status(400).json({ error: 'from y to requeridos en formato YYYY-MM-DD' });
+        }
+
+        const saleDate = 'COALESCE(v.date, v.created_at)';
+        const where = ['vi.tenant_id = ?', `${saleDate} >= ?`, `${saleDate} <= ?`];
+        const params = [tenantId, `${from} 00:00:00`, `${to} 23:59:59`];
+
+        if (Number.isFinite(resolvedBranchId) && resolvedBranchId > 0) {
+            where.push('v.branch_id = ?');
+            params.push(resolvedBranchId);
+        }
+
+        const q = String(req.query.q || '').trim();
+        if (q) {
+            where.push('vi.product_name LIKE ?');
+            params.push(`%${q.replace(/[\\%_]/g, '\\$&')}%`);
+        }
+
+        // LEFT JOIN products: un item sin producto vinculado igual cuenta
+        // (por nombre), tomado como venta por peso.
+        const [rows] = await pool.query(`
+            SELECT
+                vi.product_name AS producto,
+                MAX(COALESCE(pc.name, p.category)) AS categoria,
+                ROUND(SUM(CASE WHEN COALESCE(p.unit, 'kg') = 'kg' THEN vi.quantity ELSE 0 END), 3) AS total_kg,
+                ROUND(SUM(CASE WHEN COALESCE(p.unit, 'kg') <> 'kg' THEN vi.quantity ELSE 0 END), 3) AS total_unidades,
+                ROUND(SUM(vi.subtotal), 2) AS total_vendido,
+                COUNT(DISTINCT vi.venta_id) AS veces_vendido
+            FROM ventas_items vi
+            JOIN ventas v ON v.tenant_id = vi.tenant_id AND v.id = vi.venta_id
+            LEFT JOIN products p ON p.tenant_id = vi.tenant_id AND p.id = vi.product_id
+            LEFT JOIN product_categories pc ON pc.tenant_id = p.tenant_id AND pc.id = p.category_id
+            WHERE ${where.join(' AND ')}
+            GROUP BY vi.product_name
+            ORDER BY total_vendido DESC
+        `, params);
+
+        const productos = (Array.isArray(rows) ? rows : []).map((r) => ({
+            producto: r.producto,
+            categoria: r.categoria || null,
+            total_kg: Number(r.total_kg) || 0,
+            total_unidades: Number(r.total_unidades) || 0,
+            total_vendido: Number(r.total_vendido) || 0,
+            veces_vendido: Number(r.veces_vendido) || 0,
+        }));
+
+        const totales = productos.reduce((acc, r) => {
+            acc.total_kg += r.total_kg;
+            acc.total_unidades += r.total_unidades;
+            acc.total_vendido += r.total_vendido;
+            return acc;
+        }, { total_kg: 0, total_unidades: 0, total_vendido: 0 });
+
+        res.json({ from, to, q, productos, totales });
+    } catch (err) {
+        console.error('[VENTAS-POR-PRODUCTO ERROR]', err.message);
+        res.status(500).json({ error: err.message || 'Error al obtener ventas por producto' });
+    }
+});
+
 // ── RUTA: POST /api/conciliacion/balanza/anular ──────────────────────────
 // Anula tickets de balanza PENDIENTES (estado 'open') que nunca se cobraron.
 // No mueve plata ni stock — el ticket nunca generó venta. Solo cambia el estado

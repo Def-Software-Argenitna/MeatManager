@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { RefreshCw, Scale, Download, AlertTriangle, BarChart3, Drumstick } from 'lucide-react';
+import { RefreshCw, Scale, Download, AlertTriangle, BarChart3, Drumstick, ListOrdered } from 'lucide-react';
 import { fetchKilosReport, fetchClientBranches } from '../utils/apiClient';
 import InformesCortes from './InformesCortes';
 import InformesPreelaborados from './InformesPreelaborados';
+import InformesVentasProducto from './InformesVentasProducto';
 
 const pad = (n) => String(n).padStart(2, '0');
 const toInput = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -18,7 +19,7 @@ const InformesKilos = () => {
     const weekAgo = new Date(now);
     weekAgo.setDate(now.getDate() - 6);
 
-    const [tab, setTab] = useState('kilos'); // 'kilos' | 'cortes' | 'preelaborados'
+    const [tab, setTab] = useState('kilos'); // 'kilos' | 'cortes' | 'preelaborados' | 'productos'
     const [from, setFrom] = useState(toInput(weekAgo));
     const [to, setTo] = useState(toInput(now));
     const [data, setData] = useState({ pesado: [], cobrado: [] });
@@ -122,12 +123,13 @@ const InformesKilos = () => {
 
     return (
         <div className="animate-fade-in" style={{ padding: '1.5rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            {/* Solapas: Kilos Vendidos · Ranking de Cortes · Pre-elaborados */}
+            {/* Solapas: Kilos Vendidos · Ranking de Cortes · Pre-elaborados · Por producto */}
             <div style={{ display: 'flex', gap: '0.5rem', borderBottom: '1px solid var(--color-border)', flexWrap: 'wrap' }}>
                 {[
                     { key: 'kilos', label: 'Kilos Vendidos', Icon: Scale },
                     { key: 'cortes', label: 'Ranking de Cortes', Icon: BarChart3 },
                     { key: 'preelaborados', label: 'Pre-elaborados', Icon: Drumstick },
+                    { key: 'productos', label: 'Por producto', Icon: ListOrdered },
                 ].map(({ key, label, Icon }) => {
                     const active = tab === key;
                     return (
@@ -152,6 +154,8 @@ const InformesKilos = () => {
             {tab === 'cortes' && <InformesCortes />}
 
             {tab === 'preelaborados' && <InformesPreelaborados />}
+
+            {tab === 'productos' && <InformesVentasProducto />}
 
             {tab === 'kilos' && (<>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '1rem', flexWrap: 'wrap' }}>

@@ -147,6 +147,7 @@ const Manual = () => {
                         'Compará los kilos pesados en balanza con los kilos efectivamente cobrados.',
                         'Abrí la solapa Ranking de Cortes para ordenar productos por kilos vendidos.',
                         'Filtrá por especie y por día para encontrar los cortes con mayor rotación.',
+                        'En la solapa Por producto elegí un rango de fechas y buscá cualquier producto (ej. el pan de terceros) para ver cuánto se vendió y cobró.',
                         'Investigá diferencias importantes: pueden indicar tickets pendientes, anulados o carga manual.'
                     ]
                 }
